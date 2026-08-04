@@ -37,6 +37,30 @@ cuenta (levantó los sensores HoloLens). Probar el puerto primero, la orientaci�
 
 Si falta `03f0:0580`, **no debuguear Monado** — revisar el puerto.
 
+### Matiz importante, medido en el lab (2026-08-04, tarde)
+
+"Cambiar de puerto" resultó ser una descripción incompleta de la cura. Reproducido con
+método en el lab:
+
+1. Estado inicial: enumeraba **sólo** el hub SuperSpeed (`04b4:6504`), nada detrás de él.
+   `usb3-port2: Cannot enable` + `error -71` en la rama USB2.
+2. Se movió el cable a otro puerto USB-A trasero. **El fallo se movió con el casco**:
+   pasó a `usb3-port3`, mismo `error -71`. Eso **descarta que el puerto sea la causa** — lo
+   que sí cambió es que aparecieron los `045e:0659 HoloLens Sensors`.
+3. Recién al reconectar el conjunto (cable + orientación del USB-C en el adaptador C→A)
+   enumeraron los cinco de una.
+
+O sea: los márgenes de señal de ese cable están tan justos que el resultado depende del
+contacto concreto, no de qué puerto sea. **El síntoma es progresivo, no binario** — se puede
+tener SuperSpeed sin USB2, o SuperSpeed + sensores sin companion. Criterio de corte: contar
+los cinco en `lsusb`, nunca "parece conectado".
+
+Corolario para diagnóstico: **si el companion falta, el display tampoco aparece**. Con
+`03f0:0580` ausente, `DP-0` figura `disconnected` en xrandr y el kernel no ve ningún sink
+DisplayPort nuevo, porque el panel no linkea hasta recibir la activación WMR por HID. Ver
+`DP-0 disconnected` con el casco enchufado **no** significa problema de video ni de cable
+DP: mirar primero el USB.
+
 ### El audio, cómo encontrarlo
 
 Enumera como card ALSA `USB-Audio - Generic USB Audio` (`0bda:4c15`, chip Realtek), **sin
@@ -90,10 +114,28 @@ pero `vrmonitor` de Valve crashea por `libQt5Multimedia.so.5` faltante **dentro 
 runtime container de Valve**. Camino recomendado: **OpenComposite** (OpenVR→OpenXR directo
 contra Monado, saltea SteamVR entero) — no probado aún.
 
-## 90Hz — en proceso (cap. 04)
+## 90Hz — los parches del 595-open NO lo arreglan (2026-08-04, 18:55)
 
-Bug del driver NVIDIA (5923212), no de hardware ni de Monado. Sin fix upstream hasta
-610.x inclusive. El lab con driver 595-open parcheado es el plan activo.
+Se creía: bug del driver NVIDIA (5923212), no de hardware ni de Monado; sin fix upstream
+hasta 610.x inclusive; el lab con el 595-open parcheado era el plan activo.
+
+**Medido: no alcanza.** Con los tres parches de Project-VR instalados vía DKMS y el módulo
+parcheado confirmado en memoria, los dos modos de 90Hz siguen dejando el panel apagado con
+el logo de HP — idéntico al baseline sin parches. Verificación física, seis casos, tabla
+completa en el cap. 04. El control a 60Hz corrido después dio imagen perfecta, así que el
+setup estaba sano.
+
+**La atribución "es NVIDIA, no es Monado" queda en duda.** El driver WMR de Monado manda la
+misma secuencia HID de activación para 60 y para 90Hz (`wmr_hmd.c:767`), y el "parche 90Hz"
+sólo setea `nominal_frame_interval_ns` para el pacing (`wmr_hmd.c:1992`) — no toca el panel.
+Ver la hipótesis viva en el cap. 04.
+
+### Descartado: contención de displays / dominios de reloj de la GPU
+
+Distinto del bandwidth del cable DP (más abajo): esto era sobre el display engine con
+varios heads activos. Se probó con un solo monitor y con **cero** — el casco como único
+display del sistema — y el panel sigue apagado. Además el modo 90Hz que falla consume menos
+pixel clock (428 MHz) que el modo 60Hz que anda (709 MHz). No es esto.
 
 ## Controllers: solo 3DoF
 

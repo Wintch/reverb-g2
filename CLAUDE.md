@@ -25,12 +25,39 @@ Orden real:
 ./scripts/bootstrap-lab.sh sources
 ./scripts/bootstrap-lab.sh build
 # baseline SIN parches: confirmar que 90Hz TODAVÍA falla (paso 3 del cap. 04)
-./scripts/bootstrap-lab.sh patch-nv    # y REINICIAR
+sudo ./scripts/bootstrap-lab.sh patch-nv    # y REINICIAR
 # y ahí sí, el test de 90Hz
 ```
 
 **No te saltees el baseline sin parches.** Es lo que separa "el driver 595 por sí solo
 cambió algo" de "los parches lo arreglaron", y es la única forma de saber qué reportar.
+
+### Dónde quedó todo (2026-08-04, 19:10)
+
+**El lab terminó, y el resultado es negativo: los parches del 595-open NO arreglan el 90Hz.**
+
+Reboot hecho, módulo parcheado confirmado en memoria, test corrido con verificación física
+en seis casos (tabla completa en `docs/04-lab-90hz.md`, "Paso 5 ejecutado"). Los dos modos de
+90Hz siguen dejando el panel apagado con el logo de HP, idéntico al baseline sin parches. El
+control a 60Hz se corrió *después* de los fallos y dio imagen perfecta, así que el setup
+estaba sano y el resultado es limpio.
+
+También se probó y **se descartó** una hipótesis nueva del usuario: contención de heads /
+dominios de reloj de la GPU (él ya había tenido que apagar paneles de 60Hz para llegar a
+144Hz en X11). Se probó con un solo monitor y con **cero** — el casco como único display del
+sistema — y sigue apagado. No es eso. Para repetirlo sin quedarse sin pantalla está
+`scripts/solo-hmd-test.sh`, que restaura el escritorio desde un `trap EXIT`.
+
+**La línea viva ahora es otra, y contradice lo que el proyecto venía asumiendo.** El driver
+WMR de Monado manda la misma secuencia HID de activación para 60 y para 90Hz
+(`wmr_hmd.c:767`), y el "parche 90Hz de Monado" sólo setea `nominal_frame_interval_ns` para
+el pacing (`wmr_hmd.c:1992`) — no toca el panel. O sea: **puede que al casco nunca se le pida
+cambiar a 90Hz, y que la causa raíz no esté en NVIDIA.** Es una hipótesis consistente con los
+seis resultados, no un hecho: falta la captura HID de Windows para confirmarla o matarla.
+Procedimiento completo y autocontenido en `docs/07-captura-hid-windows.md`.
+
+Pendientes que necesitan sudo (prioridad RT para Monado, zram, audio, deps de basalt) siguen
+sin hacer; ninguno bloqueaba el test.
 
 ## La regla más importante de todo el proyecto
 
@@ -68,9 +95,24 @@ Monado los reportes HID de keepalive comparado con Windows. Es una molestia, no 
 
 ## Trampas concretas que te van a morder
 
-- **`jack-in.sh` tiene hardcodeadas las salidas de video del sistema principal**
-  (`HDMI-1`, `DP-3`, `HDMI-0`). En el lab van a ser otras. Ajustá `reassert_monitors()` con
-  lo que diga `xrandr --query` antes de correrlo, o vas a apagarle monitores al usuario.
+- **El player muestra NEGRO si no encuentra su contenido por defecto.** `LoadPhotoTexture()`
+  hace `THROW` cuando el archivo no abre, y eso mata la sesión XR: el compositor queda
+  presentando en negro y todo el resto del log dice "éxito". El default apunta a
+  `~/Documents/linux_vr_base/photo360/venice_sunset.jpg`, que sólo existe en el sistema
+  principal. Pasale `HELLO_XR_PHOTO360=` a algo que exista (en el lab hay una equirect de
+  prueba en `~/vr/media/test-equirect.jpg`). Antes de culpar al modo de video, verificá en
+  el log de Monado que haya `BEGIN_SESSION` **sin** `END_SESSION` inmediato.
+- **`jack-in.sh` ya no hardcodea las salidas de video** (arreglado 2026-08-04): saca una
+  foto del layout real con `xrandr` antes de tocar los CRTC y la restaura después, ciclando
+  la rotación y usando `kscreen-doctor` en KDE. Tampoco hardcodea rutas: detecta
+  `~/Documents/linux_vr_base` o `~/vr`, y acepta `VR_BASE=` y `HMD_OUTPUT=`.
+- **`play360.sh` tenía la misma ruta hardcodeada** (arreglado 2026-08-04): apuntaba a
+  `~/Documents/linux_vr_base` y en el lab moría con "falta compilar hello_xr". Ya autodetecta
+  igual que `jack-in.sh`. Si tocás uno, sincronizá `scripts/` con la copia de `~/vr/`.
+- **`XRT_COMPOSITOR_DESIRED_MODE` del entorno**: hasta el 2026-08-04 `jack-in.sh` lo pisaba
+  con 60Hz, así que el test de 90Hz del cap. 04 corría en silencio a 60 y reportaba éxito.
+  Ya respeta el valor externo — pero **verificá siempre en el log** qué modo agarró:
+  `grep "found display mode" ~/vr/jack-in.log`.
 - **El usuario se enoja, con razón, cuando le rompés el monitor vertical.** Pasó varias
   veces. Cada vez que Monado toma `DP-0` en direct-mode, el driver NVIDIA reprograma los
   CRTC y pierde la rotación del monitor portrait — y `xrandr` sigue *reportando* "right"
@@ -87,9 +129,11 @@ Monado los reportes HID de keepalive comparado con Windows. Es una molestia, no 
   cmdline. Usá `pgrep -f "monado[-]service"`. Un PID que cambia en cada chequeo es la señal.
 - **`pkill` está bloqueado** en el entorno de Claude Code (exit 144, aborta la cadena).
   Usá `kill` sobre PIDs de `pgrep`.
-- **Falta un parche de Monado** que `bootstrap-lab.sh` no puede traer: el de Project-VR que
-  pone `nominal_frame_interval_ns = 1e9/90`. Sin él el intervalo nominal queda en 60 Hz.
-  Cap. 04, paso 5.
+- **El parche 90Hz de Monado de Project-VR** (`nominal_frame_interval_ns = 1e9/90`) **ya
+  está aplicado** en el árbol del lab desde el 2026-08-04. Se aplicó *antes* del baseline a
+  propósito, para que el único cambio entre la medición sin parches y la de después sea el
+  driver NVIDIA. `bootstrap-lab.sh` no lo trae: si rehacés `sources` desde cero, bajalo de
+  `patches/consolidated/monado/0001-*.patch` del repo de Project-VR (aplica limpio).
 
 ## Qué hay en este repo
 
@@ -101,6 +145,8 @@ docs/03-controllers.md      estado de los controllers (3DoF, límite del driver 
 docs/04-lab-90hz.md         >>> TU GUION <<<
 docs/05-resolve.md          DaVinci Resolve (otro objetivo del rig, no toca esto)
 docs/06-known-issues.md     lo descartado, con evidencia
+docs/07-captura-hid-windows.md  capturar el HID de 90Hz en Windows (se sigue SIN agente)
+docs/08-passthrough-y-limites.md  idea de passthrough + límites por marcas (no empezado)
 patches/nvidia/             los 3 parches de Project-VR para el 595-open
 patches/monado/             7 parches nuestros (companion, controllers, WMR_CAMERAS)
 patches/hello_xr-player/    3 parches: el player 360/VR180 completo
@@ -108,6 +154,9 @@ scripts/bootstrap-lab.sh    instalación automatizada del lab
 scripts/jack-in.sh          levanta el pipeline VR (AJUSTAR las salidas de video)
 scripts/play360.sh          reproduce 360/VR180/plano en el casco
 scripts/get360.sh           baja video VR de YouTube (necesita el cliente android_vr)
+scripts/solo-hmd-test.sh    test con el casco como ÚNICO display (restaura con trap EXIT)
+scripts/capture-hid.sh      captura el HID del companion por modo (usbmon, necesita root)
+scripts/analyze-hid.py      diffea capturas HID: usbmon (Linux) y TSV de tshark (Windows)
 ```
 
 Los árboles de código no vienen en el bundle: `bootstrap-lab.sh` los clona de upstream en

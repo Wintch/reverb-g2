@@ -131,6 +131,190 @@ Registrar en este capítulo: modo que funcionó, estabilidad (15+ min), temperat
 y re-correr el smoke test de video del cap. 02 (el path NVDEC/cuvid debería andar igual en
 595; verificarlo explícitamente).
 
+### Resultado del baseline — 2026-08-04, lab (Debian 13, KDE/X11, 595.71.05-open SIN parches)
+
+Verificado **físicamente**, casco puesto, con `hello_xr` mostrando una equirect de prueba
+(`ffmpeg -f lavfi -i testsrc2=size=4096x2048`, en `~/vr/media/test-equirect.jpg`):
+
+| `XRT_COMPOSITOR_DESIRED_MODE` | modo que reporta el compositor | qué se ve adentro del casco |
+|---|---|---|
+| 2 | 4320x2160@60.00 | imagen correcta + el strobe de 60Hz de siempre |
+| 0 | 2880x1440@90.00 | **panel apagado, sólo el logo de HP** |
+| 1 | 4320x2160@90.00 | **panel apagado, sólo el logo de HP** |
+
+**Conclusión: el 595-open por sí solo NO arregla el 90Hz.** El fallo es idéntico al del 550
+en el sistema principal, así que cualquier cosa que ande después del paso 4 es atribuible a
+los parches y no a la versión del driver. Control del experimento cumplido.
+
+Detalles que conviene tener a mano:
+
+- La numeración de modos **no cambió** entre el 550 y el 595 (se sospechó y se descartó):
+  el log en `XRT_COMPOSITOR_LOG=debug` confirma `Found 3 modes` y el mapeo 0=2880x1440@90,
+  1=4320x2160@90, 2=4320x2160@60.
+- En los dos modos de 90Hz la API reporta éxito completo: `BEGIN_SESSION` sin cierre,
+  frame interval de 89.999/90.001 Hz, ambos procesos con memoria en la GPU. Nada arriba del
+  driver delata el fallo. Es la regla del proyecto en estado puro.
+- Para leer la tabla de modos hace falta `XRT_COMPOSITOR_LOG=debug`: `print_modes()` usa
+  `COMP_PRINT_MODE`, que no sale en el nivel por defecto.
+
+### Paso 4 ejecutado — 2026-08-04 18:26
+
+`bootstrap-lab.sh patch-nv` corrió limpio: los tres parches pasaron el dry-run, dkms los
+aplicó sobre su copia, compiló, firmó e instaló los cinco módulos. Verificado después:
+
+- `dkms.conf` tiene las tres líneas `PATCH[0..2]` → un upgrade de kernel los re-aplica solo.
+- `/usr/src/nvidia-595.71.05/` queda **sin parchear** (dkms trabaja sobre una copia).
+- Módulos nuevos en `/lib/modules/6.12.100+deb13-amd64/updates/dkms/`.
+- La firma MOK es irrelevante acá: la máquina bootea BIOS/legacy, sin Secure Boot.
+
+**Pendiente: reiniciar.** Hasta el reboot sigue corriendo el módulo viejo sin parches.
+
+### Cómo retomar después del reboot
+
+```bash
+# 1. Confirmar que el módulo cargado es el parcheado (fecha de build, no versión:
+#    la versión sigue siendo 595.71.05 en ambos casos)
+modinfo nvidia-modeset | grep -E "^filename|^version"
+ls -l /lib/modules/$(uname -r)/updates/dkms/nvidia-modeset.ko.xz
+
+# 2. Casco enchufado: los CINCO tienen que estar (ver cap. 00)
+lsusb | grep -E "03f0:0580|045e:0659|04b4:650[46]|0bda:4c15"
+
+# 3. El test. MODE=0 primero (2880x1440@90 nativo)
+cd ~/vr && XRT_COMPOSITOR_LOG=debug XRT_COMPOSITOR_DESIRED_MODE=0 ./jack-in.sh 3dof
+grep -E "found display mode|frame interval" ~/vr/jack-in.log   # confirmar que agarró @90
+
+# 4. Contenido para ver algo (el default del player apunta al sistema principal):
+sleep 600 | XR_RUNTIME_JSON=$HOME/vr/monado/build/openxr_monado-dev.json \
+  IPC_IGNORE_VERSION=1 VK_LOADER_LAYERS_DISABLE='*' \
+  HELLO_XR_PHOTO360=$HOME/vr/media/test-equirect.jpg \
+  ./OpenXR-SDK-Source/build/src/tests/hello_xr/hello_xr --graphics Vulkan2
+
+# 5. MIRAR ADENTRO DEL CASCO. Si falla el modo 0, probar MODE=1.
+```
+
+Si anda: dejarlo 15+ min, después el smoke test de video del cap. 02 (NVDEC/cuvid en 595),
+y recién ahí planificar la instalación definitiva.
+
+### Paso 5 ejecutado — el test CON parches: FALLA (2026-08-04, 18:38–18:55)
+
+Reboot hecho, módulo parcheado confirmado cargado (`.ko` del build de las 18:26, dkms
+`installed`), los cinco USB presentes. Verificación **física** en los seis casos, el usuario
+mirando adentro del casco:
+
+| Modo | Resolución@Hz | Displays de escritorio activos | Resultado |
+|---|---|---|---|
+| 2 | 4320x2160@60 | 3 | **imagen correcta** (control) |
+| 0 | 2880x1440@90 | 3 | panel apagado, logo de HP |
+| 1 | 4320x2160@90 | 3 | panel apagado, logo de HP |
+| 0 | 2880x1440@90 | 1 (sólo DP-3) | panel apagado, logo de HP |
+| 0 | 2880x1440@90 | **0 (casco único display)** | panel apagado, logo de HP |
+
+**Conclusión: los tres parches de Project-VR para el 595-open NO arreglan el 90Hz acá.**
+El comportamiento es idéntico al baseline sin parches y al del 550 en el sistema principal.
+
+El control a 60Hz se corrió *después* de los fallos, con los parches puestos, y dio imagen
+perfecta: el setup está sano y el resultado es limpio. No es "negro en todo".
+
+### Descartado en el mismo test: contención de displays (hipótesis del usuario)
+
+Hipótesis razonable y nunca antes probada: en X11 el usuario ya había tenido que apagar sus
+paneles de 60Hz para que su monitor llegara a 144Hz, y `jack-in.sh` deja los tres monitores
+encendidos cuando Monado toma `DP-0`. Con el casco son 4 heads en una 3060 Ti — justo el
+límite. **Es una teoría distinta de la del ancho de banda del cable DP** (ya descartada en
+el cap. 06): ésta es sobre el display engine de la GPU, no sobre el enlace.
+
+Se probó y **se descarta**, en dos escalones: con un solo monitor y con **cero**. Con el
+casco como único display del sistema el panel sigue apagado. No es contención de heads ni
+de dominios de reloj.
+
+Los pixel clocks medidos, que además matan la variante "presupuesto de bandwidth agregado":
+
+| Display | Modo | Pixel clock |
+|---|---|---|
+| Casco mode 2 (**anda**) | 4320x2160@60 | 709.150 MHz |
+| Casco mode 0 (falla) | 2880x1440@90 | **428.580 MHz** |
+| Casco mode 1 (falla) | 4320x2160@90 | 905.400 MHz |
+
+El mode 0 falla consumiendo **menos** clock que el mode 2 que funciona, con los mismos
+heads encendidos. Si fuera presupuesto de ancho de banda, el mode 0 tendría que andar.
+
+Para repetir el test sin quedarse sin pantalla: `scripts/solo-hmd-test.sh` apaga todo el
+escritorio, corre el test y **restaura el layout desde un `trap EXIT`** (incluido el ciclo
+de rotación de `DP-3` con `kscreen-doctor`). Sobrevive a que el script falle.
+
+### Hipótesis viva: a nadie le está diciendo al casco que vaya a 90Hz
+
+Hallazgo de código, no medición todavía. En `src/xrt/drivers/wmr/wmr_hmd.c`:
+
+- `wmr_hmd_activate_reverb()` (línea ~767) manda **siempre la misma secuencia HID** —
+  `0x50`×4, `0x09`, `0x08`, `0x06`, y `wmr_hmd_screen_enable_reverb()`. No hay ni una rama
+  que dependa del refresh rate. La activación de 60Hz y la de 90Hz son idénticas.
+- El "parche 90Hz de Monado" (línea ~1992) sólo hace
+  `nominal_frame_interval_ns = 1e9/90.0`. Su propio comentario lo explica: existe para que
+  el bridge de SteamVR no calcule `1/0` y se caiga a 60. Es un valor **reportado hacia
+  arriba** para el pacing. **No toca el panel.**
+
+O sea: se le pide al conector DisplayPort un modo de 90Hz, pero el panel del G2 nunca
+recibe una orden de reconfigurarse. Eso es consistente con los seis resultados de arriba —
+incluido el porqué los parches de NVIDIA no movieron nada: **el problema puede no estar en
+NVIDIA.**
+
+Falta confirmar que el G2 realmente exija un comando propietario para 90Hz en vez de
+negociarlo por modeset. Camino natural: capturar el tráfico HID del casco en Windows 11
+(donde el 90Hz anda horas) y diferenciarlo contra lo que manda Monado.
+
+### Medido: Monado manda lo mismo a 60 y a 90 Hz (2026-08-04, 19:10)
+
+Ya no es sólo lectura de código. Captura con `usbmon` del companion durante el arranque de
+Monado, un archivo por modo (`scripts/capture-hid.sh`), analizado con
+`scripts/analyze-hid.py`. Toda la conversación HID de clase con el casco, completa:
+
+| Transferencia | modo 2 — 60Hz (**panel enciende**) | modo 1 — 90Hz (**panel apagado**) |
+|---|---|---|
+| `SET_REPORT` Feature `0x50` = `5001` | ×4 | ×4 |
+| `GET_REPORT` Feature `0x50` | ×4 | ×4 |
+| `GET_REPORT` Feature `0x09` | ×1 | ×1 |
+| `GET_REPORT` Feature `0x08` | ×1 | ×1 |
+| `GET_REPORT` Feature `0x06` | ×1 | ×1 |
+| `SET_REPORT` Feature `0x04` = `0401` (screen ON) | ×2 | ×2 |
+
+13 transferencias en cada caso. El diff da **cero** diferencias. Al casco se le manda
+exactamente lo mismo cuando el panel enciende y cuando no. Esto es la línea base contra la
+cual comparar Windows (cap. 07).
+
+Dos cosas para no tropezar al repetirlo:
+
+- **La captura del modo 0 no sirvió** y hay que rehacerla: el companion se re-enumeró en
+  pleno arranque (apareció recién como device 085) y Monado nunca completó la secuencia con
+  él — el archivo no tiene un solo `SET_REPORT 0x50`. Es el reset del hub USB2 del cap. 06.
+  No invalida nada: el modo 1 también es 90Hz y quedó limpio. **Criterio de captura válida:
+  tiene que haber un `SET_REPORT` Feature `0x50`.**
+- **El device address del companion cambia en cada corrida** (79, 91, 85...). Hardcodearlo
+  no sirve; `analyze-hid.py` lo detecta por el descriptor `f0038005` (`03f0:0580` en little
+  endian) y, si hay varios, se queda con el que realmente recibió comandos.
+
+Y una trampa que costó dos corridas: **el bus 3 está lleno de tráfico que parece HID y no lo
+es** — descriptores de string en UTF-16 que se leen como reportes con payloads plausibles.
+Hay que filtrar por transferencias de control de clase (`bmRequestType` 0x21/0xa1 con
+`bRequest` 0x09/0x01) o el análisis da puro ruido con cara de señal.
+
+### Pendientes que necesitan sudo (no bloquean el test de 90Hz)
+
+1. **Prioridad RT para Monado.** El log tira `Could not raise priority for thread
+   'VBlank Events'` y `'Multi Client Module'`. A 60Hz se toleraba; a 90Hz el pacing del
+   vblank es lo último que querés que compita por CPU. Necesita re-login:
+   `printf '@plugdev - rtprio 99\n@plugdev - nice -20\n@plugdev - memlock unlimited\n' | sudo tee /etc/security/limits.d/99-monado.conf`
+2. **Audio del casco fuera del medio** mientras dure el lab: regla udev
+   `72-wmr-audio-off.rules` con `ATTR{authorized}="0"` para `0bda:4c15`. No arregla el reset
+   del hub (cap. 06), sólo saca el audio del ciclo de re-enumeración.
+3. **zram** (16 GB de RAM, 12 hilos): `systemd-zram-generator`, `zram-size = ram / 2`, zstd,
+   `swap-priority = 100`, `vm.swappiness=180`. Red de seguridad para los builds, no
+   acelerador. No compilar los tres proyectos en paralelo: ninja ya satura los 12 hilos con
+   uno solo, y el pico de RAM de basalt es el que puede disparar el OOM.
+4. **Deps que le faltan a basalt**: `libbz2-dev liblz4-dev libssl-dev` (ROS arrastra más).
+   No bloquea nada mientras se use `3dof`, que es el modo de todo el trabajo de 360/video.
+
 ## Rollback
 
 - Nada del sistema principal se tocó: boot menu del BIOS → disco viejo → todo como antes.

@@ -28,7 +28,12 @@ igual pero solo con fotos.)
 ./play360.sh -s foto_equirect.jpg      # foto
 ./play360.sh -t 60 video.mp4           # límite de tiempo
 ./play360.sh -p 180 -e sbs video.mp4   # forzar proyección/estéreo si la detección falla
+./play360.sh -w 47 video.mp4           # ancho de la pantalla virtual en grados (modo flat)
 ```
+
+`play360.sh` autodetecta dónde viven los árboles igual que `jack-in.sh` (`~/Documents/linux_vr_base`
+o `~/vr`, y `VR_BASE=` lo fuerza). Hasta el 2026-08-04 lo tenía hardcodeado al sistema principal y
+en el lab moría con "falta compilar hello_xr" sin más explicación.
 
 Corrido desde una **terminal real** (no piped ni backgrounded), hay teclas de transporte:
 `espacio` pausa, `[`/`]` velocidad (0.125x–4x), `1` normal, `n` siguiente, `q` salir.
@@ -68,6 +73,42 @@ Mismo URL, distinto contenido: el cliente normal recibe un render plano monoscó
 `2160s60` = estéreo, `2160p60` = plano. Contra: `android_vr` no acepta cookies, así que
 age-restricted ⇒ solo versión plana (fallback automático).
 
+## Contenido propio: 2D → 3D con `stereo3d-pack` (2026-08-04)
+
+`~/Documents/stereo3d-pack` convierte video monocular común en estéreo (Depth Anything V2 +
+DIBR, en GPU, ~3,5 fps a 1080x1920). Es la otra fuente de contenido estéreo de este equipo además
+de YouTube, y sirve para cualquier video plano que el usuario tenga. Su puente hacia acá es
+`stereo3d-pack/tools/ver-en-casco.sh`, que llama a `play360.sh` con los flags correctos.
+
+**Lo importante para este lado**: sus salidas destapan un agujero de la cadena de detección.
+
+| salida | qué es | qué detecta el player |
+|---|---|---|
+| `--format vr180` + metadata | 3840x1920 equirect, `st3d`=2 + `sv3d/equi` bounds 0,25 | VR180 3D ✅ por metadata |
+| `--format vr180` sin metadata | 3840x1920 | VR180 3D ✅ por nombre + aspect |
+| `--format sbs` | 2160x1920, o sea 1080x1920 por ojo | **VR180 3D ❌** — debería ser PLANO 3D |
+
+El caso malo: no hay señal de contenedor que diga "plano", el nombre solo aporta el `sbs`, y el
+aspect por ojo (0,56) cae en la rama `HalfEquirect180` de `ResolvePanoLayout`. El video plano
+termina envuelto sobre una semiesfera: se ve raro, no roto. Hay que pasar `-p flat -e sbs`.
+
+Arreglarlo de verdad querría un cuarto criterio en `projection360.cpp` (por ejemplo: si el
+contenedor declaró estéreo pero **no** declaró proyección, un aspect por ojo "de video normal" es
+más probablemente plano que VR180). **No se tocó el player**: el árbol estaba congelado por el test
+de 90 Hz cuando esto se preparó, y de todos modos conviene mirar primero adentro del casco antes de
+cambiar heurísticas de detección. Queda anotado.
+
+Contra la intuición, **para material que nació plano conviene mirar el `sbs`, no el VR180**: la
+proyección a 180°x180° con `--vr-fov 65` deja el contenido ocupando 694x1036 de un lienzo de
+1920x1920 por ojo — 19% de los píxeles, el resto negro. El `sbs` va a resolución nativa sobre la
+pantalla virtual. El VR180 es para subir a YouTube o para visores que solo entienden esferas.
+
+Y un detalle que vale para todo el modo flat, no solo para esto: **`HELLO_XR_SCREEN_FOV` escala el
+3D**. La disparidad de un SBS es una fracción del ancho de imagen, así que la disparidad angular
+≈ esa fracción × el ancho aparente en grados. Pantalla más grande = más profundidad y más fatiga,
+sin tocar el archivo. Para vertical 9:16 además hay que bajarlo: con los 70° por defecto la
+pantalla queda de más de 100° de alto, más que el FOV del casco (el envoltorio calcula 47°).
+
 ## Variables de entorno
 
 | Variable | Efecto |
@@ -77,7 +118,7 @@ age-restricted ⇒ solo versión plana (fallback automático).
 | `HELLO_XR_PROJECTION=360\|180\|flat` | fuerza la proyección |
 | `HELLO_XR_STEREO=mono\|sbs\|tb` | fuerza el empaquetado estéreo |
 | `HELLO_XR_PANO_FOV=AxB` | arco del frame 180 en grados (default 180x180) |
-| `HELLO_XR_SCREEN_FOV=N` | ancho aparente de la pantalla virtual en modo flat (default 70°) |
+| `HELLO_XR_SCREEN_FOV=N` | ancho aparente de la pantalla virtual en modo flat (default 70°, flag `-w`) |
 | `HELLO_XR_VIDEO_HW=0` | fuerza decode por software |
 | `HELLO_XR_VIDEO_DIRECT=0` | desactiva NVDEC→staging directo (para A/B) |
 | `HELLO_XR_VIDEO_STATS=1` | stats de decode y de upload por separado |
@@ -131,6 +172,10 @@ Con el casco puesto y `HELLO_XR_VIDEO_STATS=1`:
 ## Pendiente / roadmap
 
 - Probar las teclas de transporte en vivo (implementadas 2026-08-04, sin test interactivo).
+- Mirar en el casco el material de `stereo3d-pack` (preparado 2026-08-04, nunca visto adentro del
+  visor): `sbs` vs `vr180`, y calibrar la profundidad con `-w`.
+- Cuarto criterio de detección para el SBS plano sin metadata (ver la sección de `stereo3d-pack`).
+  Después del test de 90 Hz: hoy el árbol del player está congelado.
 - Audio del video (mudo hoy; decode→PipeWire + A/V sync).
 - Zero-copy real CUDA↔Vulkan (importar la superficie NVDEC como imagen Vulkan, cero PCIe).
   Hoy innecesario: ya estamos a tasa completa. Es LA optimización si 90Hz+8K pide más.

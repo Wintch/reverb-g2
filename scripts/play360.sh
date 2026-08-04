@@ -7,6 +7,7 @@
 #   ./play360.sh -s foto.jpg            a still photo instead of a video
 #   ./play360.sh -p 180 -e sbs v.mp4    force the projection / stereo layout
 #   ./play360.sh -f 180x180 v.mp4       force the arc the 180 frame covers
+#   ./play360.sh -w 45 v.mp4            width of the virtual screen, in degrees (flat mode)
 #   ./play360.sh -q video.mp4           without the per-second timing stats
 #
 # The player prints what it detected before drawing anything:
@@ -31,30 +32,41 @@
 
 set -u
 
-BASE="$HOME/Documents/linux_vr_base"
-MONADO_BUILD="$BASE/monado/build"
-HELLO_XR="$BASE/OpenXR-SDK-Source/build/src/tests/hello_xr/hello_xr"
+# Dónde viven los árboles. El sistema principal los tiene en ~/Documents/linux_vr_base; el lab
+# (bootstrap-lab.sh) en ~/vr. Misma autodetección que jack-in.sh — hasta el 2026-08-04 esto estaba
+# hardcodeado al sistema principal y en el lab fallaba con "falta compilar hello_xr". VR_BASE=...
+# lo fuerza.
+if [ -n "${VR_BASE:-}" ]; then
+	:
+elif [ -d "$HOME/Documents/linux_vr_base/monado/build" ]; then
+	VR_BASE="$HOME/Documents/linux_vr_base"
+else
+	VR_BASE="$HOME/vr"
+fi
+MONADO_BUILD="$VR_BASE/monado/build"
+HELLO_XR="$VR_BASE/OpenXR-SDK-Source/build/src/tests/hello_xr/hello_xr"
 
 SECONDS_TO_RUN=300
 PHOTO=0
 STATS=1
 ENV_EXTRA=()
 
-while getopts "t:sp:e:f:qh" opt; do
+while getopts "t:sp:e:f:w:qh" opt; do
 	case "$opt" in
 		t) SECONDS_TO_RUN="$OPTARG" ;;
 		s) PHOTO=1 ;;
 		p) ENV_EXTRA+=("HELLO_XR_PROJECTION=$OPTARG") ;;
 		e) ENV_EXTRA+=("HELLO_XR_STEREO=$OPTARG") ;;
 		f) ENV_EXTRA+=("HELLO_XR_PANO_FOV=$OPTARG") ;;
+		w) ENV_EXTRA+=("HELLO_XR_SCREEN_FOV=$OPTARG") ;;
 		q) STATS=0 ;;
-		h|*) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+		h|*) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 	esac
 done
 shift $((OPTIND - 1))
 
 if [ $# -lt 1 ]; then
-	echo "usage: $0 [-t SEGUNDOS] [-s] [-p 360|180|flat] [-e mono|sbs|tb] [-f AxB] [-q] <archivo>" >&2
+	echo "usage: $0 [-t SEGUNDOS] [-s] [-p 360|180|flat] [-e mono|sbs|tb] [-f AxB] [-w GRADOS] [-q] <archivo>" >&2
 	exit 1
 fi
 FILE="$1"

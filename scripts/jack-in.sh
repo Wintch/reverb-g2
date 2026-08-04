@@ -6,11 +6,25 @@
 
 set -u
 
-MONADO_BUILD="$HOME/Documents/linux_vr_base/monado/build"
-BASALT_LIB="$HOME/Documents/linux_vr_base/basalt/build/libbasalt.so"
+# Dónde viven los árboles. El sistema principal los tiene en ~/Documents/linux_vr_base; el lab
+# (bootstrap-lab.sh) en ~/vr. Se autodetecta, y VR_BASE=... lo fuerza.
+if [ -n "${VR_BASE:-}" ]; then
+	:
+elif [ -d "$HOME/Documents/linux_vr_base/monado/build" ]; then
+	VR_BASE="$HOME/Documents/linux_vr_base"
+else
+	VR_BASE="$HOME/vr"
+fi
+
+MONADO_BUILD="$VR_BASE/monado/build"
+BASALT_LIB="$VR_BASE/basalt/build/libbasalt.so"
 SERVICE="$MONADO_BUILD/src/xrt/targets/service/monado-service"
-LOG="$HOME/Documents/linux_vr_base/jack-in.log"
+LOG="$VR_BASE/jack-in.log"
 SOCKET="/run/user/$(id -u)/monado_comp_ipc"
+
+# La salida de video por la que cuelga el casco. DP-0 en ambas máquinas hasta ahora, pero
+# no hay nada que lo garantice: HMD_OUTPUT=DP-1 ./jack-in.sh si xrandr dice otra cosa.
+HMD_OUTPUT="${HMD_OUTPUT:-DP-0}"
 
 # Mode 2 = 4320x2160@60 (supersampled render target for the 2880x1440 panel). 60Hz is forced
 # because of NVIDIA driver bug 5923212 (driver 550.163.01): at 90Hz the DP link never trains and
@@ -24,28 +38,93 @@ SOCKET="/run/user/$(id -u)/monado_comp_ipc"
 # flicker. Retry 90Hz after any NVIDIA driver upgrade.
 #
 # WMR_DISPLAY_INIT_SLEEP_SECONDS=2 (default 4) is load-bearing, see wake_panel() below.
+#
+# El modo se puede pisar desde afuera - es exactamente lo que pide el test de 90Hz del
+# cap. 04 (`XRT_COMPOSITOR_DESIRED_MODE=0 ./jack-in.sh 3dof`). Antes esta lista lo fijaba
+# en 2 sin importar el entorno, así que el test de 90Hz corría en silencio a 60Hz.
+DESIRED_MODE="${XRT_COMPOSITOR_DESIRED_MODE:-2}"
 COMMON_ENV=(
 	VIT_SYSTEM_LIBRARY_PATH="$BASALT_LIB"
-	XRT_COMPOSITOR_FORCE_NVIDIA_DISPLAY="HP Inc."
-	XRT_COMPOSITOR_DESIRED_MODE=2
+	XRT_COMPOSITOR_FORCE_NVIDIA_DISPLAY="${XRT_COMPOSITOR_FORCE_NVIDIA_DISPLAY:-HP Inc.}"
+	XRT_COMPOSITOR_DESIRED_MODE="$DESIRED_MODE"
 	XRT_NO_STDIN=1
-	WMR_DISPLAY_INIT_SLEEP_SECONDS=2
+	WMR_DISPLAY_INIT_SLEEP_SECONDS="${WMR_DISPLAY_INIT_SLEEP_SECONDS:-2}"
 )
 
-dp0_status() { xrandr --query 2>/dev/null | awk '/^DP-0/{print $2}'; }
+dp0_status() { xrandr --query 2>/dev/null | awk -v o="$HMD_OUTPUT" '$1==o{print $2}'; }
 service_pids() { pgrep -f "targets/service/monado-service"; }
 
-# Turning DP-0 off forces a CRTC reconfiguration, and the NVIDIA driver silently drops DP-3's
-# rotation transform when that happens (xrandr still REPORTS "right", but the panel shows
-# landscape). Re-assert the full desktop layout so the portrait monitor stays portrait.
-# Toggling rotation off first is what actually forces the driver to reprogram the CRTC.
-# This is also needed after Monado acquires the display, not just after `--off`.
+# Apagar el display del casco fuerza una reconfiguración de CRTCs, y ahí el driver NVIDIA
+# pierde en silencio la rotación del monitor portrait (xrandr sigue REPORTANDO "right"
+# mientras el panel muestra landscape). Hay que re-asertar el layout entero, y no sólo tras
+# el `--off`: también después de que Monado toma el display.
+#
+# Antes esto estaba hardcodeado con las salidas del sistema principal, lo cual en cualquier
+# otra máquina reordena o apaga monitores que no tienen nada que ver. Ahora se saca una foto
+# del layout REAL antes de tocar nada y se restaura esa foto.
+MONITOR_LAYOUT=()
+
+snapshot_monitors() {
+	local line
+	MONITOR_LAYOUT=()
+	while IFS= read -r line; do
+		[ -n "$line" ] && MONITOR_LAYOUT+=("$line")
+	done < <(xrandr --query | awk -v hmd="$HMD_OUTPUT" '
+		function flush(  ) {
+			if (cur != "" && mode != "") print cur "|" mode "|" pos "|" rot "|" prim
+			cur = ""; mode = ""; pos = ""; rot = "normal"; prim = ""
+		}
+		/^[^ \t]/ {
+			flush()
+			if ($2 != "connected" || $1 == hmd) next
+			cur = $1
+			for (i = 3; i <= NF; i++) {
+				if ($i == "primary") { prim = "primary"; continue }
+				if ($i ~ /^[0-9]+x[0-9]+\+[-0-9]+\+[-0-9]+$/) {
+					split($i, g, "+"); pos = g[2] "x" g[3]
+					n = $(i + 1)
+					if (n == "left" || n == "right" || n == "inverted") rot = n
+					break
+				}
+			}
+			if (pos == "") cur = ""   # conectado pero sin CRTC: no lo tocamos
+			next
+		}
+		# El modo activo es el de la línea con "*". La geometría de arriba ya viene rotada
+		# (1080x1920), así que el modo hay que sacarlo de acá o --mode falla.
+		/\*/ { if (cur != "" && mode == "") mode = $1 }
+		END { flush() }
+	')
+}
+
 reassert_monitors() {
-	xrandr --output DP-3 --rotate normal 2>/dev/null
-	sleep 1
-	xrandr --output HDMI-1 --mode 1920x1080 --pos 0x0 --rotate normal \
-	       --output DP-3   --mode 1920x1080 --pos 1920x0 --rotate right --primary \
-	       --output HDMI-0 --mode 1920x1080 --pos 3000x0 --rotate normal 2>/dev/null
+	local entry name mode pos rot prim args=() rotated=()
+
+	[ ${#MONITOR_LAYOUT[@]} -gt 0 ] || return 0
+
+	for entry in "${MONITOR_LAYOUT[@]}"; do
+		IFS='|' read -r name mode pos rot prim <<<"$entry"
+		args+=(--output "$name" --mode "$mode" --pos "${pos/x/+}" --rotate "$rot")
+		[ "$prim" = "primary" ] && args+=(--primary)
+		[ "$rot" != "normal" ] && rotated+=("$name:$rot")
+	done
+
+	# Ciclar la rotación a none es lo que realmente obliga al driver a reprogramar el CRTC:
+	# re-pedir la rotación que xrandr ya cree tener es un no-op.
+	for entry in "${rotated[@]}"; do
+		xrandr --output "${entry%%:*}" --rotate normal 2>/dev/null
+	done
+	[ ${#rotated[@]} -gt 0 ] && sleep 1
+
+	xrandr "${args[@]}" 2>/dev/null
+
+	# En KDE, Plasma tiene su propia idea del layout y puede volver a pisar lo de xrandr;
+	# kscreen-doctor habla con el mismo daemon, así que la rotación queda pegada.
+	if [ ${#rotated[@]} -gt 0 ] && command -v kscreen-doctor >/dev/null 2>&1; then
+		for entry in "${rotated[@]}"; do
+			kscreen-doctor "output.${entry%%:*}.rotation.${entry##*:}" >/dev/null 2>&1
+		done
+	fi
 }
 
 wait_for_companion() {
@@ -145,8 +224,13 @@ if [ "$(dp0_status)" != "connected" ]; then
 	}
 fi
 
-echo "Freeing the headset's display from the desktop (DP-0)..."
-xrandr --output DP-0 --off
+# La foto se saca ACÁ: el layout todavía está intacto, y el casco (que ya despertó) queda
+# fuera de ella por el filtro de HMD_OUTPUT.
+snapshot_monitors
+echo "Desktop layout: ${MONITOR_LAYOUT[*]:-<ninguno detectado>}"
+
+echo "Freeing the headset's display from the desktop ($HMD_OUTPUT)..."
+xrandr --output "$HMD_OUTPUT" --off
 sleep 8   # let X/NVIDIA fully release the CRTC before Vulkan tries to lease it - without this,
           # vkAcquireXlibDisplayEXT races and fails with VK_ERROR_UNKNOWN. 3s was not always enough.
 
