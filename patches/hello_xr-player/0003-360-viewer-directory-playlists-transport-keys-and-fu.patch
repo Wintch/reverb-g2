@@ -1,0 +1,759 @@
+From d6ee9ecb6f58adb0b7587ce79eb82c63caea2699 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Tue, 4 Aug 2026 16:00:20 -0300
+Subject: [PATCH 3/3] 360 viewer: directory playlists, transport keys, and
+ full-rate 8K60
+
+Playlist
+--------
+HELLO_XR_VIDEO360 may now name a directory: every video in it plays once, sorted by name,
+wrapping at the end. Each track tears down and rebuilds the whole video chain (Video360,
+staging ring, plane images, conversion pass, skybox texture) since the next file may have a
+different resolution and projection - the mode banner reprints per track. A file that will
+not open is skipped, not fatal. A single file keeps looping forever as before.
+
+The rebuild exposed a latent assumption: OpenVideoTexture began with m_cmdBuffer.Begin(),
+which asserts unless the buffer is freshly Initialized - true at startup, false when
+arriving mid-playback from a rendered frame (state Executable). Clear() first.
+
+Transport keys (playercontrol.{h,cpp})
+--------------------------------------
+space pause/resume, [ ] speed steps 0.125x-4x, 1 normal, n next track, q/ESC quit. The
+stdin thread in main.cpp (previously "any key quits") now feeds these; on a pipe there are
+no keys and EOF still ends the run, so the timed test invocations behave as always.
+
+Speed works by accumulating wall time into the playback clock scaled by the current rate,
+so pausing is rate 0 and there is no discontinuity to patch up. The clock also now starts
+at the first frame's pts rather than 0, which stops files whose timestamps do not start at
+zero from having their opening skipped. Decoding never pauses - back-pressure through the
+buffer ring holds the decoder naturally.
+
+Frame ring: 5 -> 8 buffers
+--------------------------
+At 8K60 the decoder averaged full rate but its per-frame jitter (keyframes) kept draining
+a 3-frame cushion: the renderer found nothing new on ~25% of frames ("renderer starves"
+in the stats), which the user saw as stutter. Three more buffers (+126 MB host RAM at 8K,
+negligible at 4K) absorb it completely.
+
+Measured end to end, 8K VR180 stereo 60fps file, after this commit:
+  decode 59-61 fps | upload 60.0 fps | 0 starves | render thread 6.3 ms
+i.e. the full file rate. The remaining flicker the user reports is the G2's 60Hz
+low-persistence backlight strobe itself - only 90Hz fixes that (lab, cap. 04).
+---
+ src/tests/hello_xr/CMakeLists.txt            |   2 +
+ src/tests/hello_xr/graphicsplugin_vulkan.cpp | 192 +++++++++++++++++--
+ src/tests/hello_xr/main.cpp                  |  20 +-
+ src/tests/hello_xr/playercontrol.cpp         | 139 ++++++++++++++
+ src/tests/hello_xr/playercontrol.h           |  45 +++++
+ src/tests/hello_xr/video360.cpp              |  56 +++++-
+ src/tests/hello_xr/video360.h                |  25 ++-
+ 7 files changed, 448 insertions(+), 31 deletions(-)
+ create mode 100644 src/tests/hello_xr/playercontrol.cpp
+ create mode 100644 src/tests/hello_xr/playercontrol.h
+
+diff --git a/src/tests/hello_xr/CMakeLists.txt b/src/tests/hello_xr/CMakeLists.txt
+index 4252f14..b2a794e 100644
+--- a/src/tests/hello_xr/CMakeLists.txt
++++ b/src/tests/hello_xr/CMakeLists.txt
+@@ -29,6 +29,7 @@ set(LOCAL_HEADERS
+     pch.h
+     platformdata.h
+     platformplugin.h
++    playercontrol.h
+     projection360.h
+     swapchain_image_data.h
+     video360.h
+@@ -52,6 +53,7 @@ set(LOCAL_SOURCE
+     platformplugin_factory.cpp
+     platformplugin_posix.cpp
+     platformplugin_win32.cpp
++    playercontrol.cpp
+     projection360.cpp
+     swapchain_image_data.cpp
+     video360.cpp
+diff --git a/src/tests/hello_xr/graphicsplugin_vulkan.cpp b/src/tests/hello_xr/graphicsplugin_vulkan.cpp
+index 224b158..8bf3227 100644
+--- a/src/tests/hello_xr/graphicsplugin_vulkan.cpp
++++ b/src/tests/hello_xr/graphicsplugin_vulkan.cpp
+@@ -19,6 +19,12 @@
+ #include "stb_image.h"
+ 
+ #include "video360.h"
++#include "playercontrol.h"
++
++#include <algorithm>
++#include <cctype>
++#include <filesystem>
++#include <system_error>
+ 
+ #ifdef USE_ONLINE_VULKAN_SHADERC
+ #include <shaderc/shaderc.hpp>
+@@ -1127,19 +1133,107 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+     // Opens an equirectangular video and sets up the NV12 upload + GPU conversion resources
+     // that UpdateVideoTexture uses each frame. Returns false if the file could not be decoded,
+     // so the caller can fall back to a still photo.
++    // Frees everything OpenVideoTexture built, in the reverse order it was built, so the next
++    // track can come in at a different resolution. The Video360 goes first: its decode thread
++    // writes into the staging memory, so that memory cannot be unmapped until the thread has
++    // been joined - which is what ~Video360 does.
++    void DestroyVideoResources() {
++        m_video.reset();
++        vkDeviceWaitIdle(m_vkDevice);
++
++        auto dropPipeline = [this](VkPipeline& h) { if (h) { vkDestroyPipeline(m_vkDevice, h, nullptr); h = VK_NULL_HANDLE; } };
++        auto dropModule = [this](VkShaderModule& h) { if (h) { vkDestroyShaderModule(m_vkDevice, h, nullptr); h = VK_NULL_HANDLE; } };
++        auto dropView = [this](VkImageView& h) { if (h) { vkDestroyImageView(m_vkDevice, h, nullptr); h = VK_NULL_HANDLE; } };
++        auto dropImage = [this](VkImage& h) { if (h) { vkDestroyImage(m_vkDevice, h, nullptr); h = VK_NULL_HANDLE; } };
++        auto dropMemory = [this](VkDeviceMemory& h) { if (h) { vkFreeMemory(m_vkDevice, h, nullptr); h = VK_NULL_HANDLE; } };
++
++        // Conversion pass. The framebuffer references the render pass and the target view, so
++        // it has to go before either of them.
++        if (m_videoConvertFb) { vkDestroyFramebuffer(m_vkDevice, m_videoConvertFb, nullptr); m_videoConvertFb = VK_NULL_HANDLE; }
++        dropPipeline(m_videoConvertPipeline);
++        dropModule(m_videoVertModule);
++        dropModule(m_videoFragModule);
++        if (m_videoConvertPipeLayout) {
++            vkDestroyPipelineLayout(m_vkDevice, m_videoConvertPipeLayout, nullptr);
++            m_videoConvertPipeLayout = VK_NULL_HANDLE;
++        }
++        if (m_videoConvertDescPool) {  // frees m_videoConvertDescSet with it
++            vkDestroyDescriptorPool(m_vkDevice, m_videoConvertDescPool, nullptr);
++            m_videoConvertDescPool = VK_NULL_HANDLE;
++            m_videoConvertDescSet = VK_NULL_HANDLE;
++        }
++        if (m_videoConvertSetLayout) {
++            vkDestroyDescriptorSetLayout(m_vkDevice, m_videoConvertSetLayout, nullptr);
++            m_videoConvertSetLayout = VK_NULL_HANDLE;
++        }
++        if (m_videoConvertPass) { vkDestroyRenderPass(m_vkDevice, m_videoConvertPass, nullptr); m_videoConvertPass = VK_NULL_HANDLE; }
++        dropView(m_videoRgbTargetView);
++        if (m_videoYuvSampler) { vkDestroySampler(m_vkDevice, m_videoYuvSampler, nullptr); m_videoYuvSampler = VK_NULL_HANDLE; }
++
++        // Staging ring. The memory was mapped at creation and never unmapped since.
++        for (size_t i = 0; i < m_videoStaging.size(); i++) {
++            vkDestroyBuffer(m_vkDevice, m_videoStaging[i], nullptr);
++            vkUnmapMemory(m_vkDevice, m_videoStagingMemory[i]);
++            vkFreeMemory(m_vkDevice, m_videoStagingMemory[i], nullptr);
++        }
++        m_videoStaging.clear();
++        m_videoStagingMemory.clear();
++
++        // Y/UV plane images, then the skybox texture itself.
++        dropView(m_videoYView);
++        dropImage(m_videoYImage);
++        dropMemory(m_videoYMemory);
++        dropView(m_videoUVView);
++        dropImage(m_videoUVImage);
++        dropMemory(m_videoUVMemory);
++        DestroySkyboxTexture();
++    }
++
++    void DestroySkyboxTexture() {
++        if (m_photoDescriptorPool) {  // frees m_photoDescriptorSet with it
++            vkDestroyDescriptorPool(m_vkDevice, m_photoDescriptorPool, nullptr);
++            m_photoDescriptorPool = VK_NULL_HANDLE;
++            m_photoDescriptorSet = VK_NULL_HANDLE;
++        }
++        if (m_photoSampler) { vkDestroySampler(m_vkDevice, m_photoSampler, nullptr); m_photoSampler = VK_NULL_HANDLE; }
++        if (m_photoImageView) { vkDestroyImageView(m_vkDevice, m_photoImageView, nullptr); m_photoImageView = VK_NULL_HANDLE; }
++        if (m_photoImage) { vkDestroyImage(m_vkDevice, m_photoImage, nullptr); m_photoImage = VK_NULL_HANDLE; }
++        if (m_photoImageMemory) { vkFreeMemory(m_vkDevice, m_photoImageMemory, nullptr); m_photoImageMemory = VK_NULL_HANDLE; }
++    }
++
++    // Moves to the next file in the playlist, rebuilding everything for its geometry. A file
++    // that will not open is skipped rather than fatal - one bad download should not end
++    // playback - but if none of them open we give up and leave the last good frame on screen.
++    void AdvanceTrack() {
++        const size_t count = m_playlist.size();
++        for (size_t attempt = 0; attempt < count; attempt++) {
++            DestroyVideoResources();
++            m_videoMode = false;
++            m_playlistIndex = (m_playlistIndex + 1) % count;
++            Log::Write(Log::Level::Info, Fmt("playlist: %zu/%zu", m_playlistIndex + 1, count));
++            if (OpenVideoTexture(m_playlist[m_playlistIndex])) return;
++            Log::Write(Log::Level::Warning, Fmt("playlist: skipping '%s'", m_playlist[m_playlistIndex].c_str()));
++        }
++        Log::Write(Log::Level::Error, "playlist: no file in the list could be opened, stopping playback");
++    }
++
+     bool OpenVideoTexture(const std::string& path) {
+-        if (!m_video.Open(path)) return false;
++        m_video = std::make_unique<Video360>();
++        if (!m_video->Open(path)) return false;
++        // A single file loops forever, as it always has. A real playlist plays each file once
++        // and moves on, wrapping at the end.
++        m_video->SetLoop(m_playlist.size() < 2);
+ 
+-        m_panoLayout = ResolvePanoLayout(m_video.DetectedLayout(), path, m_video.Width(), m_video.Height());
+-        AnnounceSkybox(path, m_video.Width(), m_video.Height(), m_video.FrameRate(), m_video.CodecName());
++        m_panoLayout = ResolvePanoLayout(m_video->DetectedLayout(), path, m_video->Width(), m_video->Height());
++        AnnounceSkybox(path, m_video->Width(), m_video->Height(), m_video->FrameRate(), m_video->CodecName());
+ 
+         // Cap the mip chain: it is regenerated every frame, and a 4K pano in the eye buffer
+         // rarely minifies past level ~5. The full 12-level chain was pure per-frame overhead.
+-        CreateSkyboxTexture(m_video.Width(), m_video.Height(), 6);
++        CreateSkyboxTexture(m_video->Width(), m_video->Height(), 6);
+ 
+-        CreateVideoPlaneImage((uint32_t)m_video.Width(), (uint32_t)m_video.Height(), VK_FORMAT_R8_UNORM, &m_videoYImage,
++        CreateVideoPlaneImage((uint32_t)m_video->Width(), (uint32_t)m_video->Height(), VK_FORMAT_R8_UNORM, &m_videoYImage,
+                               &m_videoYMemory, &m_videoYView);
+-        CreateVideoPlaneImage((uint32_t)m_video.Width() / 2, (uint32_t)m_video.Height() / 2, VK_FORMAT_R8G8_UNORM,
++        CreateVideoPlaneImage((uint32_t)m_video->Width() / 2, (uint32_t)m_video->Height() / 2, VK_FORMAT_R8G8_UNORM,
+                               &m_videoUVImage, &m_videoUVMemory, &m_videoUVView);
+ 
+         // A ring of staging buffers, each mapped once and never unmapped, handed to the decoder
+@@ -1149,8 +1243,8 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+         //
+         // This replaced a single buffer plus a per-frame memcpy from decoder-owned memory,
+         // which cost 8.9 ms of render-thread time per 8K frame - over half a 60Hz budget.
+-        m_videoUVOffset = (VkDeviceSize)((m_video.YBytes() + 255) & ~size_t(255));
+-        const VkDeviceSize stagingSize = m_videoUVOffset + (VkDeviceSize)m_video.UVBytes();
++        m_videoUVOffset = (VkDeviceSize)((m_video->YBytes() + 255) & ~size_t(255));
++        const VkDeviceSize stagingSize = m_videoUVOffset + (VkDeviceSize)m_video->UVBytes();
+ 
+         std::vector<Video360Buffer> frameBuffers;
+         for (size_t i = 0; i < Video360::kFrameBuffers; i++) {
+@@ -1177,12 +1271,17 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+                                          (size_t)Video360::kFrameBuffers, stagingSize / (1024.0 * 1024.0),
+                                          Video360::kFrameBuffers * stagingSize / (1024.0 * 1024.0)));
+ 
+-        m_video.SetFrameBuffers(std::move(frameBuffers));
++        m_video->SetFrameBuffers(std::move(frameBuffers));
+ 
+         CreateVideoConvertResources();
+ 
+         // Clear to black so the first frames have something valid to sample: the image is still
+         // in UNDEFINED layout, and the decoder needs a moment before its first frame is due.
++        //
++        // Clear() first, not just Begin(): on the very first call the command buffer is freshly
++        // Initialized, but when a playlist advances we arrive here straight out of a rendered
++        // frame with the buffer still Executable, and Begin() asserts on that.
++        m_cmdBuffer.Clear();
+         m_cmdBuffer.Begin();
+         VkImageMemoryBarrier toDst{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+         toDst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+@@ -1213,7 +1312,7 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+         m_cmdBuffer.Clear();
+ 
+         // Everything the decoder writes into now exists, so let it run.
+-        if (!m_video.Start()) return false;
++        if (!m_video->Start()) return false;
+ 
+         m_videoMode = true;
+         return true;
+@@ -1223,7 +1322,7 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+     // into the skybox texture, and regenerates its mip chain. Cheap to call when nothing is
+     // due - the decoder returns null and this becomes a no-op.
+     void UpdateVideoTexture() {
+-        const int slot = m_video.AcquireCurrentSlot();
++        const int slot = m_video->AcquireCurrentSlot();
+         if (slot < 0) return;
+         const VkBuffer staging = m_videoStaging[slot];
+ 
+@@ -1298,7 +1397,7 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+         vkCmdBindPipeline(m_cmdBuffer.buf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_videoConvertPipeline);
+         vkCmdBindDescriptorSets(m_cmdBuffer.buf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_videoConvertPipeLayout, 0, 1,
+                                 &m_videoConvertDescSet, 0, nullptr);
+-        const int32_t pushFlags[4] = {m_video.FullRange() ? 1 : 0, m_video.Bt709() ? 1 : 0, 0, 0};
++        const int32_t pushFlags[4] = {m_video->FullRange() ? 1 : 0, m_video->Bt709() ? 1 : 0, 0, 0};
+         vkCmdPushConstants(m_cmdBuffer.buf, m_videoConvertPipeLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pushFlags),
+                            pushFlags);
+         vkCmdDraw(m_cmdBuffer.buf, 3, 1, 0, 0);
+@@ -1330,7 +1429,7 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+                 const double secs = std::chrono::duration<double>(now - windowStart).count();
+                 Log::Write(Log::Level::Info, Fmt("video upload: %.1f frames/s to the skybox (file is %.1f) | "
+                                                  "render thread %.2f ms mean, %.2f ms max - gpu copy+convert+mips",
+-                                                 uploads / secs, m_video.FrameRate(), sumMs / uploads, maxMs));
++                                                 uploads / secs, m_video->FrameRate(), sumMs / uploads, maxMs));
+                 uploads = 0;
+                 sumMs = maxMs = 0.0;
+                 windowStart = now;
+@@ -1354,11 +1453,57 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+                        (slash == std::string::npos ? path : path.substr(slash + 1)).c_str()));
+     }
+ 
+-    // HELLO_XR_VIDEO360 wins over HELLO_XR_PHOTO360 when both are set.
++    // Builds the play order. A plain file is a one-entry list; a directory becomes every video
++    // in it, sorted by name so the order is predictable and repeatable rather than whatever
++    // the filesystem happens to hand back.
++    void BuildPlaylist(const std::string& path) {
++        std::error_code ec;
++        if (!std::filesystem::is_directory(path, ec)) {
++            m_playlist.push_back(path);
++            return;
++        }
++
++        static const char* kExtensions[] = {".mp4", ".m4v", ".mkv", ".mov", ".webm", ".avi", ".ts", ".mpg", ".mpeg"};
++        for (const auto& entry : std::filesystem::directory_iterator(path, ec)) {
++            if (!entry.is_regular_file(ec)) continue;
++            std::string ext = entry.path().extension().string();
++            std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
++            for (const char* known : kExtensions) {
++                if (ext == known) {
++                    m_playlist.push_back(entry.path().string());
++                    break;
++                }
++            }
++        }
++        std::sort(m_playlist.begin(), m_playlist.end());
++
++        if (m_playlist.empty()) {
++            Log::Write(Log::Level::Warning, Fmt("playlist: no video files in '%s'", path.c_str()));
++            return;
++        }
++        Log::Write(Log::Level::Info, Fmt("playlist: %zu video%s in '%s'", m_playlist.size(),
++                                         m_playlist.size() == 1 ? "" : "s", path.c_str()));
++        for (size_t i = 0; i < m_playlist.size(); i++) {
++            const std::string& p = m_playlist[i];
++            const size_t slash = p.find_last_of('/');
++            Log::Write(Log::Level::Info,
++                       Fmt("  %2zu. %s", i + 1, (slash == std::string::npos ? p : p.substr(slash + 1)).c_str()));
++        }
++    }
++
++    // HELLO_XR_VIDEO360 wins over HELLO_XR_PHOTO360 when both are set. It may name a single
++    // file or a directory to play through.
+     void InitSkybox() {
+         const char* videoPath = getenv("HELLO_XR_VIDEO360");
+         if (videoPath != nullptr && videoPath[0] != '\0') {
+-            if (OpenVideoTexture(videoPath)) return;
++            BuildPlaylist(videoPath);
++            for (size_t attempt = 0; attempt < m_playlist.size(); attempt++) {
++                if (OpenVideoTexture(m_playlist[m_playlistIndex])) return;
++                Log::Write(Log::Level::Warning, Fmt("playlist: skipping '%s'", m_playlist[m_playlistIndex].c_str()));
++                DestroyVideoResources();
++                m_playlistIndex = (m_playlistIndex + 1) % m_playlist.size();
++            }
++            m_playlist.clear();
+             Log::Write(Log::Level::Warning, "video360: falling back to the still photo skybox");
+         }
+         LoadPhotoTexture();
+@@ -1517,7 +1662,13 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+         // so swapping the texture between them would show each eye a different instant in
+         // time. This also halves the per-frame upload and mip-generation cost.
+         if (m_videoMode && eye == 0) {
+-            UpdateVideoTexture();
++            // End of the track: rebuild everything for the next file. This is a hitch - a full
++            // device idle plus reallocation - but it only happens between videos, and the next
++            // file may have a different resolution, so there is nothing to reuse.
++            m_video->SetRate(PlayerControl::Rate());
++            const bool skip = PlayerControl::TakeNextTrackRequest() && m_playlist.size() > 1;
++            if (skip || (m_playlist.size() > 1 && m_video->Finished())) AdvanceTrack();
++            if (m_videoMode) UpdateVideoTexture();
+         }
+ 
+         VulkanSwapchainImageData* swapchainData;
+@@ -1700,8 +1851,15 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+     int m_texHeight{0};
+     uint32_t m_texMipLevels{1};
+ 
+-    Video360 m_video;
++    // Recreated per playlist track: a new file can have a different resolution, codec and
++    // projection, so everything downstream of it has to be rebuilt too.
++    std::unique_ptr<Video360> m_video;
+     bool m_videoMode{false};
++
++    // Files to play back to back. One entry (or a single file given directly) loops forever;
++    // several play in turn and wrap around at the end.
++    std::vector<std::string> m_playlist;
++    size_t m_playlistIndex{0};
+     // One staging buffer per decoder frame slot; index with what AcquireCurrentSlot() returns.
+     std::vector<VkBuffer> m_videoStaging;
+     std::vector<VkDeviceMemory> m_videoStagingMemory;
+diff --git a/src/tests/hello_xr/main.cpp b/src/tests/hello_xr/main.cpp
+index 40d513a..3749811 100644
+--- a/src/tests/hello_xr/main.cpp
++++ b/src/tests/hello_xr/main.cpp
+@@ -9,6 +9,9 @@
+ #include "platformplugin.h"
+ #include "graphicsplugin.h"
+ #include "openxr_program.h"
++#include "playercontrol.h"
++
++#include <cstdlib>
+ 
+ #if defined(_WIN32)
+ // Favor the high performance NVIDIA or AMD GPUs
+@@ -296,12 +299,21 @@ int main(int argc, char* argv[]) {
+ 
+         std::shared_ptr<PlatformData> data = std::make_shared<PlatformData>();
+ 
+-        // Spawn a thread to wait for a keypress
++        // One thread reading stdin drives the transport controls. It used to be "any key
++        // quits"; now only q/ESC/EOF do, and the rest are pause, speed and track skip. On a
++        // pipe (the timed `sleep N | hello_xr` runs) there are no keys and getchar returns EOF
++        // when the pipe closes, which still ends the run exactly as before.
+         static bool quitKeyPressed = false;
++        PlayerControl::BeginRawInput();
++        std::atexit(PlayerControl::EndRawInput);
+         auto exitPollingThread = std::thread{[] {
+-            Log::Write(Log::Level::Info, "Press any key to shutdown...");
+-            (void)getchar();
+-            quitKeyPressed = true;
++            Log::Write(Log::Level::Info, PlayerControl::HelpLine());
++            while (!quitKeyPressed) {
++                const int c = getchar();
++                PlayerControl::HandleKey(c);
++                if (PlayerControl::QuitRequested()) quitKeyPressed = true;
++                if (c == EOF) break;
++            }
+         }};
+         exitPollingThread.detach();
+ 
+diff --git a/src/tests/hello_xr/playercontrol.cpp b/src/tests/hello_xr/playercontrol.cpp
+new file mode 100644
+index 0000000..5de17e1
+--- /dev/null
++++ b/src/tests/hello_xr/playercontrol.cpp
+@@ -0,0 +1,139 @@
++#include "pch.h"
++#include "common.h"
++#include "logger.h"
++#include "playercontrol.h"
++
++#include <cstdio>
++
++#if defined(XR_OS_LINUX) || defined(XR_OS_APPLE)
++#include <termios.h>
++#include <unistd.h>
++#endif
++
++namespace PlayerControl {
++namespace {
++
++// The speeds the [ and ] keys step through. 1.0 is the resting point.
++constexpr double kRates[] = {0.125, 0.25, 0.5, 1.0, 2.0, 4.0};
++constexpr int kRateCount = (int)(sizeof(kRates) / sizeof(kRates[0]));
++constexpr int kNormalRateIndex = 3;
++
++std::atomic<int> g_rateIndex{kNormalRateIndex};
++std::atomic<bool> g_paused{false};
++std::atomic<bool> g_nextTrack{false};
++std::atomic<bool> g_quit{false};
++
++#if defined(XR_OS_LINUX) || defined(XR_OS_APPLE)
++termios g_savedTermios{};
++bool g_rawActive = false;
++#endif
++
++void ReportRate() {
++    if (g_paused) {
++        Log::Write(Log::Level::Info, "player: EN PAUSA (espacio para seguir)");
++    } else {
++        Log::Write(Log::Level::Info, Fmt("player: velocidad %gx", kRates[g_rateIndex.load()]));
++    }
++}
++
++}  // namespace
++
++double Rate() { return g_paused ? 0.0 : kRates[g_rateIndex.load()]; }
++
++bool IsPaused() { return g_paused; }
++
++void TogglePause() {
++    g_paused = !g_paused;
++    ReportRate();
++}
++
++void Slower() {
++    int i = g_rateIndex.load();
++    if (i > 0) g_rateIndex = i - 1;
++    g_paused = false;
++    ReportRate();
++}
++
++void Faster() {
++    int i = g_rateIndex.load();
++    if (i < kRateCount - 1) g_rateIndex = i + 1;
++    g_paused = false;
++    ReportRate();
++}
++
++void NormalSpeed() {
++    g_rateIndex = kNormalRateIndex;
++    g_paused = false;
++    ReportRate();
++}
++
++bool TakeNextTrackRequest() { return g_nextTrack.exchange(false); }
++
++bool QuitRequested() { return g_quit; }
++
++bool HandleKey(int c) {
++    switch (c) {
++        case ' ':
++            TogglePause();
++            return true;
++        case '[':
++        case ',':
++        case '-':
++            Slower();
++            return true;
++        case ']':
++        case '.':
++        case '+':
++        case '=':
++            Faster();
++            return true;
++        case '1':
++            NormalSpeed();
++            return true;
++        case 'n':
++        case 'N':
++            g_nextTrack = true;
++            Log::Write(Log::Level::Info, "player: siguiente");
++            return true;
++        case 'q':
++        case 'Q':
++        case 27:   // ESC
++        case 3:    // Ctrl-C, which raw mode would otherwise swallow
++        case 4:    // Ctrl-D
++        case EOF:  // the pipe on stdin closed - this is how a timed run ends
++            g_quit = true;
++            return true;
++        default:
++            return false;
++    }
++}
++
++void BeginRawInput() {
++#if defined(XR_OS_LINUX) || defined(XR_OS_APPLE)
++    // Only meaningful on a real terminal. Under `sleep N | hello_xr` stdin is a pipe, the
++    // keys go nowhere, and the run ends on EOF - which is exactly what we want there.
++    if (!isatty(STDIN_FILENO)) return;
++    if (tcgetattr(STDIN_FILENO, &g_savedTermios) != 0) return;
++
++    termios raw = g_savedTermios;
++    raw.c_lflag &= (tcflag_t)~(ICANON | ECHO);  // deliver each keypress, do not print it
++    raw.c_cc[VMIN] = 1;
++    raw.c_cc[VTIME] = 0;
++    if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) != 0) return;
++    g_rawActive = true;
++#endif
++}
++
++void EndRawInput() {
++#if defined(XR_OS_LINUX) || defined(XR_OS_APPLE)
++    if (!g_rawActive) return;
++    tcsetattr(STDIN_FILENO, TCSANOW, &g_savedTermios);
++    g_rawActive = false;
++#endif
++}
++
++const char* HelpLine() {
++    return "  Teclas: [espacio] pausa   [ ] velocidad   1 normal   n siguiente   q salir";
++}
++
++}  // namespace PlayerControl
+diff --git a/src/tests/hello_xr/playercontrol.h b/src/tests/hello_xr/playercontrol.h
+new file mode 100644
+index 0000000..2ecc2a5
+--- /dev/null
++++ b/src/tests/hello_xr/playercontrol.h
+@@ -0,0 +1,45 @@
++// Keyboard transport controls for the 360 viewer.
++//
++// The input is a global (the process's stdin, read by one thread in main.cpp) and the
++// consumer sits deep inside the render loop, so the state between them is a small set of
++// atomics rather than a parameter threaded through the graphics plugin interface.
++//
++//   space   pause / resume
++//   [  ]    slower / faster (1x, 0.5x, 0.25x, 2x ...)
++//   1       back to normal speed
++//   n       next file in the playlist
++//   q ESC   quit
++
++#pragma once
++
++#include <atomic>
++
++namespace PlayerControl {
++
++// Playback speed. 0 means paused; the previous speed is remembered across a pause.
++double Rate();
++void TogglePause();
++void Slower();
++void Faster();
++void NormalSpeed();
++bool IsPaused();
++
++// Set by 'n', cleared by whoever acts on it. Ignored when there is only one file.
++bool TakeNextTrackRequest();
++
++// True once a quit key has been pressed.
++bool QuitRequested();
++
++// Feeds one character from the terminal. Returns false if the key was not a control key,
++// so the caller can decide what to do with it.
++bool HandleKey(int c);
++
++// Puts the terminal into non-canonical, no-echo mode so single keypresses arrive without
++// Enter, and restores it at exit. Safe to call when stdin is not a terminal (does nothing).
++void BeginRawInput();
++void EndRawInput();
++
++// One line describing the controls, for the startup banner.
++const char* HelpLine();
++
++}  // namespace PlayerControl
+diff --git a/src/tests/hello_xr/video360.cpp b/src/tests/hello_xr/video360.cpp
+index 5bf07ac..10f78b4 100644
+--- a/src/tests/hello_xr/video360.cpp
++++ b/src/tests/hello_xr/video360.cpp
+@@ -16,6 +16,9 @@ bool Video360::Open(const std::string&) {
+ }
+ void Video360::SetFrameBuffers(std::vector<Video360Buffer>) {}
+ bool Video360::Start() { return false; }
++void Video360::SetLoop(bool) {}
++void Video360::SetRate(double) {}
++bool Video360::Finished() const { return true; }
+ bool Video360::IsOpen() const { return false; }
+ int Video360::Width() const { return 0; }
+ int Video360::Height() const { return 0; }
+@@ -135,7 +138,19 @@ struct Video360::Impl {
+     bool opened{false};
+     bool started{false};
+ 
+-    std::chrono::steady_clock::time_point clockStart;
++    // Playlist support: stop at the end of the file instead of rewinding, and let the caller
++    // see when the last frame has had its time on screen.
++    bool loop{true};
++    std::atomic<bool> decodeDone{false};
++    double finalPts{0.0};  // pts of the last frame queued; guarded by mutex
++
++    // Playback clock. Wall time is accumulated into playbackTime scaled by the current rate,
++    // rather than being read as (now - start): that way pausing (rate 0) or slowing down
++    // mid-playback just changes how fast the clock runs from here on, with no discontinuity
++    // and nothing to recompute.
++    std::chrono::steady_clock::time_point lastTick;
++    double playbackTime{0.0};
++    std::atomic<double> rate{1.0};
+     bool clockStarted{false};
+ 
+     // HELLO_XR_VIDEO_STATS: what the decode thread costs, and whether it is the bottleneck.
+@@ -335,9 +350,11 @@ struct Video360::Impl {
+             int ret = av_read_frame(fmt, packet);
+ 
+             if (ret == AVERROR_EOF) {
+-                // Flush whatever the decoder is still holding, then rewind and keep going.
++                // Flush whatever the decoder is still holding, then either rewind and keep
++                // going or stop so the caller can move on to the next file in a playlist.
+                 avcodec_send_packet(dec, nullptr);
+                 DrainDecoder(frame, swFrame, loopOffset, lastPts);
++                if (!loop) break;
+                 avcodec_flush_buffers(dec);
+                 loopOffset = lastPts + frameDuration;
+                 if (av_seek_frame(fmt, streamIndex, 0, AVSEEK_FLAG_BACKWARD) < 0) {
+@@ -365,6 +382,10 @@ struct Video360::Impl {
+         av_frame_free(&swFrame);
+         av_frame_free(&frame);
+         av_packet_free(&packet);
++
++        // Set last: AcquireCurrentSlot only calls it "finished" once the queue has drained too,
++        // so the final frames still get their time on screen.
++        decodeDone = true;
+     }
+ 
+     // Pulls every frame the decoder can currently produce, writes it as NV12 into a free
+@@ -428,6 +449,7 @@ struct Video360::Impl {
+             {
+                 std::lock_guard<std::mutex> lock(mutex);
+                 queue.push_back(QueuedFrame{slot, pts + loopOffset});
++                finalPts = pts + loopOffset;
+             }
+ 
+             if (wantStats) {
+@@ -600,6 +622,22 @@ bool Video360::Start() {
+     return true;
+ }
+ 
++void Video360::SetLoop(bool loop) { m_impl->loop = loop; }
++void Video360::SetRate(double rate) { m_impl->rate = (rate > 0.0) ? rate : 0.0; }
++
++bool Video360::Finished() const {
++    Impl& impl = *m_impl;
++    if (impl.loop || !impl.started) return false;
++    if (!impl.decodeDone) return false;
++
++    std::lock_guard<std::mutex> lock(impl.mutex);
++    if (!impl.queue.empty()) return false;
++    // The decoder never produced anything at all - a broken file. Say finished so a playlist
++    // moves on instead of sitting on a black skybox forever.
++    if (!impl.clockStarted) return true;
++    return impl.playbackTime >= impl.finalPts + impl.frameDuration;
++}
++
+ bool Video360::IsOpen() const { return m_impl->opened; }
+ int Video360::Width() const { return m_impl->width; }
+ int Video360::Height() const { return m_impl->height; }
+@@ -619,14 +657,20 @@ int Video360::AcquireCurrentSlot() {
+     std::unique_lock<std::mutex> lock(impl.mutex);
+ 
+     // Start the clock on the first frame rather than at Start(), so however long the decoder
+-    // took to spin up does not count as playback time already elapsed.
++    // took to spin up does not count as playback time already elapsed. Starting it AT the
++    // first frame's pts (not at zero) also means a file whose timestamps do not begin at zero
++    // does not have its opening seconds skipped.
++    const auto now = std::chrono::steady_clock::now();
+     if (!impl.clockStarted) {
+         if (impl.queue.empty()) return -1;
+-        impl.clockStart = std::chrono::steady_clock::now();
++        impl.playbackTime = impl.queue.front().pts;
++        impl.lastTick = now;
+         impl.clockStarted = true;
++    } else {
++        impl.playbackTime += std::chrono::duration<double>(now - impl.lastTick).count() * impl.rate.load();
++        impl.lastTick = now;
+     }
+-
+-    const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - impl.clockStart).count();
++    const double elapsed = impl.playbackTime;
+ 
+     // Advance to the newest frame whose presentation time has passed. The loop (rather than a
+     // single pop) means that if rendering stalls we skip stale frames instead of playing them
+diff --git a/src/tests/hello_xr/video360.h b/src/tests/hello_xr/video360.h
+index 7047b4d..7e96531 100644
+--- a/src/tests/hello_xr/video360.h
++++ b/src/tests/hello_xr/video360.h
+@@ -39,10 +39,15 @@ struct Video360Buffer {
+ 
+ class Video360 {
+    public:
+-    // How many frame buffers the caller should provide. Three deep is enough to absorb
+-    // decode-time spikes (keyframes cost far more than P-frames) without adding real latency,
+-    // plus one held by the renderer and one being written = five.
+-    static constexpr size_t kFrameBuffers = 5;
++    // How many frame buffers the caller should provide: one held by the renderer, one being
++    // written, and the rest absorbing decode-time jitter.
++    //
++    // This was five, which left only three frames of slack - and at 8K60 that was measured to
++    // be too thin: the decoder averaged the full 59 fps but its per-frame time varies enough
++    // (keyframes cost far more than P-frames) that the queue kept running dry, and the
++    // renderer found nothing new to upload on ~25% of frames. Eight costs 3 more frames of
++    // host memory - 126 MB at 8K, nothing at 4K - and covers the jitter.
++    static constexpr size_t kFrameBuffers = 8;
+ 
+     Video360();
+     ~Video360();
+@@ -54,6 +59,18 @@ class Video360 {
+     // caller can size its buffers from Width()/Height(). Returns false (and logs) on failure.
+     bool Open(const std::string& path);
+ 
++    // Whether to rewind and keep going at the end of the file (the default) or stop and let
++    // Finished() go true, which is what a playlist wants. Call before Start().
++    void SetLoop(bool loop);
++
++    // Playback speed. 1.0 is normal, 0.5 is half speed, 0 pauses. Safe to change at any time:
++    // it only affects how fast the clock runs from that point on. Decoding is unaffected -
++    // the decoder simply waits longer for the renderer to hand buffers back.
++    void SetRate(double rate);
++
++    // True once the last frame has had its turn on screen. Always false when looping.
++    bool Finished() const;
++
+     // Hands over the destination buffers. Must be called after Open() and before Start(),
+     // with at least two buffers (kFrameBuffers is the sane number).
+     void SetFrameBuffers(std::vector<Video360Buffer> buffers);
+-- 
+2.47.3
+

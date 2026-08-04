@@ -1,0 +1,1519 @@
+From cf4cd294b9b5b30c1cf85afa8db6b1dd3c83cdfb Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Tue, 4 Aug 2026 15:33:53 -0300
+Subject: [PATCH 2/3] 360 viewer: decoder writes straight into GPU memory, plus
+ VR180/flat/stereo support
+
+Upload path
+-----------
+The render thread used to memcpy every decoded frame from decoder-owned memory into a
+single Vulkan staging buffer: 8.9 ms per 8K frame, more than half a 60Hz budget, on the
+thread that can least afford it. Now the graphics backend allocates a ring of mapped
+staging buffers and hands them to Video360 as its frame ring, so a decoded frame is
+already where the GPU wants it. Video360 gains a two-phase startup (Open -> SetFrameBuffers
+-> Start) and returns slot indices instead of pointers.
+
+Better still, NVDEC's VRAM->RAM transfer is pointed straight at the staging slot, so there
+is one PCIe crossing instead of two plus a memcpy. Falls back to the old copy path if the
+driver will not take the layout (10-bit sources, where sw_format is P010 rather than NV12).
+HELLO_XR_VIDEO_DIRECT=0 disables it for A/B measurement.
+
+Also: av_find_best_stream returns ffmpeg's *default* decoder, which for AV1 is libdav1d -
+and libdav1d has no hwaccel, so a card with a working AV1 NVDEC block silently decoded 8K
+AV1 on the CPU with nothing in the logs to explain it. Now, when hardware decode is wanted,
+we look for a decoder that can actually reach CUDA.
+
+Measured, 8K real footage:
+  HEVC 8-bit 30fps:   19 fps, 14.5 ms/frame  ->  30.0 fps, 8.2 ms/frame
+  AV1 VR180 60fps:    24 fps, 12.4 ms/frame  ->  ~50 fps, 6.5 ms/frame
+
+Projection
+----------
+The skybox shader only ever did full-sphere equirectangular mono. It now also does 180
+half-equirectangular and flat (a virtual screen), each of which can be stereo packed
+side-by-side or over-under, with the eye split applied after the spherical mapping so the
+mapping never has to know about it.
+
+Detecting which is which matters because the layouts are ambiguous from the pixel
+dimensions alone - a 2:1 frame is either 360 mono or VR180 side-by-side, and guessing wrong
+looks plausible rather than broken. projection360.cpp resolves it from, in order: explicit
+HELLO_XR_PROJECTION / HELLO_XR_STEREO overrides, the container's own sv3d/st3d boxes,
+filename conventions, and finally the aspect ratio. Whatever it settles on is printed as a
+banner with the resolution, per-eye resolution and frame rate before anything is drawn -
+there is no way to see the mode once the headset is on.
+
+get360.sh
+---------
+Two fixes worth their own note. ffprobe prints multiple -show_entries fields in its own
+order, not the order asked for, so the positional read was assigning width to $CODEC and so
+on; each field is now probed separately. And YouTube serves 360/VR video only to the
+`android_vr` player client - everyone else silently gets a flat monoscopic rendering at
+much lower resolution (3136x1764 mono vs 7680x4096 stereo on the same URL). The script now
+asks for android_vr first, falling back to the cookie-capable client for age-restricted
+videos. 8-bit AV1 and VP9 no longer get re-encoded, since NVDEC handles them directly.
+---
+ src/tests/hello_xr/CMakeLists.txt            |   2 +
+ src/tests/hello_xr/graphicsplugin_vulkan.cpp | 135 +++++--
+ src/tests/hello_xr/projection360.cpp         | 290 ++++++++++++++
+ src/tests/hello_xr/projection360.h           |  63 +++
+ src/tests/hello_xr/video360.cpp              | 399 +++++++++++++++----
+ src/tests/hello_xr/video360.h                |  66 ++-
+ src/tests/hello_xr/vulkan_shaders/frag.glsl  |  57 ++-
+ src/tests/hello_xr/vulkan_utils.h            |   9 +-
+ 8 files changed, 878 insertions(+), 143 deletions(-)
+ create mode 100644 src/tests/hello_xr/projection360.cpp
+ create mode 100644 src/tests/hello_xr/projection360.h
+
+diff --git a/src/tests/hello_xr/CMakeLists.txt b/src/tests/hello_xr/CMakeLists.txt
+index 8fa5d29..4252f14 100644
+--- a/src/tests/hello_xr/CMakeLists.txt
++++ b/src/tests/hello_xr/CMakeLists.txt
+@@ -29,6 +29,7 @@ set(LOCAL_HEADERS
+     pch.h
+     platformdata.h
+     platformplugin.h
++    projection360.h
+     swapchain_image_data.h
+     video360.h
+     vulkan_utils.h
+@@ -51,6 +52,7 @@ set(LOCAL_SOURCE
+     platformplugin_factory.cpp
+     platformplugin_posix.cpp
+     platformplugin_win32.cpp
++    projection360.cpp
+     swapchain_image_data.cpp
+     video360.cpp
+ )
+diff --git a/src/tests/hello_xr/graphicsplugin_vulkan.cpp b/src/tests/hello_xr/graphicsplugin_vulkan.cpp
+index 9b60472..224b158 100644
+--- a/src/tests/hello_xr/graphicsplugin_vulkan.cpp
++++ b/src/tests/hello_xr/graphicsplugin_vulkan.cpp
+@@ -839,7 +839,9 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+         int width, height, channels;
+         stbi_uc* pixels = stbi_load(photoPath.c_str(), &width, &height, &channels, STBI_rgb_alpha);
+         if (!pixels) THROW(Fmt("Failed to load 360 photo '%s': %s", photoPath.c_str(), stbi_failure_reason()));
+-        Log::Write(Log::Level::Info, Fmt("Loaded 360 photo '%s' (%dx%d)", photoPath.c_str(), width, height));
++
++        m_panoLayout = ResolvePanoLayout(PanoLayout{}, photoPath, width, height);
++        AnnounceSkybox(photoPath, width, height, 0.0, "");
+ 
+         VkDeviceSize imageSize = (VkDeviceSize)width * height * 4;
+ 
+@@ -1128,6 +1130,9 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+     bool OpenVideoTexture(const std::string& path) {
+         if (!m_video.Open(path)) return false;
+ 
++        m_panoLayout = ResolvePanoLayout(m_video.DetectedLayout(), path, m_video.Width(), m_video.Height());
++        AnnounceSkybox(path, m_video.Width(), m_video.Height(), m_video.FrameRate(), m_video.CodecName());
++
+         // Cap the mip chain: it is regenerated every frame, and a 4K pano in the eye buffer
+         // rarely minifies past level ~5. The full 12-level chain was pure per-frame overhead.
+         CreateSkyboxTexture(m_video.Width(), m_video.Height(), 6);
+@@ -1137,20 +1142,42 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+         CreateVideoPlaneImage((uint32_t)m_video.Width() / 2, (uint32_t)m_video.Height() / 2, VK_FORMAT_R8G8_UNORM,
+                               &m_videoUVImage, &m_videoUVMemory, &m_videoUVView);
+ 
+-        // One staging buffer for the whole run, mapped once and never unmapped. NV12 is
+-        // 1.5 bytes/pixel - ~12MB at 4K vs the 32MB the old RGBA path pushed per frame.
++        // A ring of staging buffers, each mapped once and never unmapped, handed to the decoder
++        // as its frame ring: it writes NV12 straight in here, so the render thread's only job
++        // is to point a vkCmdCopyBufferToImage at whichever one is due. NV12 is 1.5 bytes per
++        // pixel, so ~12MB per buffer at 4K and ~47MB at 8K.
++        //
++        // This replaced a single buffer plus a per-frame memcpy from decoder-owned memory,
++        // which cost 8.9 ms of render-thread time per 8K frame - over half a 60Hz budget.
+         m_videoUVOffset = (VkDeviceSize)((m_video.YBytes() + 255) & ~size_t(255));
+-        VkBufferCreateInfo bufInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+-        bufInfo.size = m_videoUVOffset + (VkDeviceSize)m_video.UVBytes();
+-        bufInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+-        bufInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+-        XRC_CHECK_THROW_VKCMD(vkCreateBuffer(m_vkDevice, &bufInfo, nullptr, &m_videoStaging));
++        const VkDeviceSize stagingSize = m_videoUVOffset + (VkDeviceSize)m_video.UVBytes();
+ 
+-        VkMemoryRequirements memReq{};
+-        vkGetBufferMemoryRequirements(m_vkDevice, m_videoStaging, &memReq);
+-        m_memAllocator.Allocate(memReq, &m_videoStagingMemory);
+-        XRC_CHECK_THROW_VKCMD(vkBindBufferMemory(m_vkDevice, m_videoStaging, m_videoStagingMemory, 0));
+-        XRC_CHECK_THROW_VKCMD(vkMapMemory(m_vkDevice, m_videoStagingMemory, 0, bufInfo.size, 0, &m_videoStagingMapped));
++        std::vector<Video360Buffer> frameBuffers;
++        for (size_t i = 0; i < Video360::kFrameBuffers; i++) {
++            VkBufferCreateInfo bufInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
++            bufInfo.size = stagingSize;
++            bufInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
++            bufInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
++            VkBuffer buf{VK_NULL_HANDLE};
++            XRC_CHECK_THROW_VKCMD(vkCreateBuffer(m_vkDevice, &bufInfo, nullptr, &buf));
++
++            VkMemoryRequirements memReq{};
++            vkGetBufferMemoryRequirements(m_vkDevice, buf, &memReq);
++            VkDeviceMemory mem{VK_NULL_HANDLE};
++            m_memAllocator.Allocate(memReq, &mem);
++            XRC_CHECK_THROW_VKCMD(vkBindBufferMemory(m_vkDevice, buf, mem, 0));
++            void* mapped = nullptr;
++            XRC_CHECK_THROW_VKCMD(vkMapMemory(m_vkDevice, mem, 0, stagingSize, 0, &mapped));
++
++            m_videoStaging.push_back(buf);
++            m_videoStagingMemory.push_back(mem);
++            frameBuffers.push_back(Video360Buffer{(uint8_t*)mapped, (uint8_t*)mapped + m_videoUVOffset});
++        }
++        Log::Write(Log::Level::Info, Fmt("video360: %zu staging buffers of %.1f MB (%.0f MB total, host-visible)",
++                                         (size_t)Video360::kFrameBuffers, stagingSize / (1024.0 * 1024.0),
++                                         Video360::kFrameBuffers * stagingSize / (1024.0 * 1024.0)));
++
++        m_video.SetFrameBuffers(std::move(frameBuffers));
+ 
+         CreateVideoConvertResources();
+ 
+@@ -1185,6 +1212,9 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+         m_cmdBuffer.Wait();
+         m_cmdBuffer.Clear();
+ 
++        // Everything the decoder writes into now exists, so let it run.
++        if (!m_video.Start()) return false;
++
+         m_videoMode = true;
+         return true;
+     }
+@@ -1193,16 +1223,13 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+     // into the skybox texture, and regenerates its mip chain. Cheap to call when nothing is
+     // due - the decoder returns null and this becomes a no-op.
+     void UpdateVideoTexture() {
+-        const Video360Frame* frame = m_video.AcquireCurrentFrame();
+-        if (frame == nullptr) return;
++        const int slot = m_video.AcquireCurrentSlot();
++        if (slot < 0) return;
++        const VkBuffer staging = m_videoStaging[slot];
+ 
+         const bool stats = getenv("HELLO_XR_VIDEO_STATS") != nullptr;
+         const auto uploadStart = std::chrono::steady_clock::now();
+ 
+-        memcpy(m_videoStagingMapped, frame->y, m_video.YBytes());
+-        memcpy((uint8_t*)m_videoStagingMapped + m_videoUVOffset, frame->uv, m_video.UVBytes());
+-        const auto copyDone = std::chrono::steady_clock::now();
+-
+         m_cmdBuffer.Clear();
+         m_cmdBuffer.Begin();
+ 
+@@ -1227,14 +1254,13 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+         yRegion.bufferOffset = 0;
+         yRegion.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+         yRegion.imageExtent = {(uint32_t)m_texWidth, (uint32_t)m_texHeight, 1};
+-        vkCmdCopyBufferToImage(m_cmdBuffer.buf, m_videoStaging, m_videoYImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &yRegion);
++        vkCmdCopyBufferToImage(m_cmdBuffer.buf, staging, m_videoYImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &yRegion);
+ 
+         VkBufferImageCopy uvRegion{};
+         uvRegion.bufferOffset = m_videoUVOffset;
+         uvRegion.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+         uvRegion.imageExtent = {(uint32_t)m_texWidth / 2, (uint32_t)m_texHeight / 2, 1};
+-        vkCmdCopyBufferToImage(m_cmdBuffer.buf, m_videoStaging, m_videoUVImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+-                               &uvRegion);
++        vkCmdCopyBufferToImage(m_cmdBuffer.buf, staging, m_videoUVImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &uvRegion);
+ 
+         VkImageMemoryBarrier planeToRead[2];
+         for (int i = 0; i < 2; i++) {
+@@ -1285,33 +1311,49 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+         m_cmdBuffer.Wait();
+         m_cmdBuffer.Clear();
+ 
+-        // HELLO_XR_VIDEO_STATS=1: how many frames actually reached the screen, and what the
+-        // staging copy + mip chain cost. If the upload rate sits below the file's frame rate,
+-        // the decoder is not keeping up and playback is dropping frames.
++        // HELLO_XR_VIDEO_STATS=1: how many frames actually reached the screen and what they
++        // cost the render thread. This is now pure GPU time (record + submit + wait for the
++        // copy, conversion and mip chain) - there is no CPU copy left on this side. Compare it
++        // against the "video decode:" line the decoder logs: if uploads/s sits below the file's
++        // frame rate while the decoder keeps up, the render loop is the bottleneck.
+         if (stats) {
+             static uint64_t uploads = 0;
+-            static double sumMs = 0.0, maxMs = 0.0, sumCopyMs = 0.0;
++            static double sumMs = 0.0, maxMs = 0.0;
+             static auto windowStart = std::chrono::steady_clock::now();
+ 
+             const auto now = std::chrono::steady_clock::now();
+             const double ms = std::chrono::duration<double, std::milli>(now - uploadStart).count();
+-            sumCopyMs += std::chrono::duration<double, std::milli>(copyDone - uploadStart).count();
+             sumMs += ms;
+             if (ms > maxMs) maxMs = ms;
+ 
+             if (++uploads >= 60) {
+                 const double secs = std::chrono::duration<double>(now - windowStart).count();
+-                Log::Write(Log::Level::Info,
+-                           Fmt("video stats: %.1f frames/s uploaded | total mean %.2f ms max %.2f ms "
+-                               "(staging memcpy %.2f ms, gpu copy+mips %.2f ms)",
+-                               uploads / secs, sumMs / uploads, maxMs, sumCopyMs / uploads, (sumMs - sumCopyMs) / uploads));
++                Log::Write(Log::Level::Info, Fmt("video upload: %.1f frames/s to the skybox (file is %.1f) | "
++                                                 "render thread %.2f ms mean, %.2f ms max - gpu copy+convert+mips",
++                                                 uploads / secs, m_video.FrameRate(), sumMs / uploads, maxMs));
+                 uploads = 0;
+-                sumMs = maxMs = sumCopyMs = 0.0;
++                sumMs = maxMs = 0.0;
+                 windowStart = now;
+             }
+         }
+     }
+ 
++    // Says out loud what is about to be shown. Once the headset is on there is no other way to
++    // tell a VR180 file being rendered as a 360 one (which looks plausible, just wrong) from a
++    // correct reading - so the mode, the resolution and the frame rate go on the terminal
++    // before anything is drawn.
++    void AnnounceSkybox(const std::string& path, int width, int height, double fps, const std::string& codec) {
++        const size_t slash = path.find_last_of('/');
++        Log::Write(Log::Level::Info,
++                   Fmt("\n"
++                       "  ============================================================\n"
++                       "%s\n"
++                       "  %s\n"
++                       "  ============================================================",
++                       PanoBanner(m_panoLayout, width, height, fps, codec).c_str(),
++                       (slash == std::string::npos ? path : path.substr(slash + 1)).c_str()));
++    }
++
+     // HELLO_XR_VIDEO360 wins over HELLO_XR_PHOTO360 when both are set.
+     void InitSkybox() {
+         const char* videoPath = getenv("HELLO_XR_VIDEO360");
+@@ -1466,10 +1508,15 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+                     int64_t /*swapchainFormat*/, const std::vector<Cube>& /*cubes*/) override {
+         CHECK(layerView.subImage.imageArrayIndex == 0);  // Texture arrays not supported.
+ 
+-        // RenderView runs once per eye. Upload on the first eye only: both eyes sample the same
+-        // mono panorama, and swapping the texture between them would show each eye a different
+-        // instant in time. This also halves the per-frame upload and mip-generation cost.
+-        if (m_videoMode && (m_renderViewCalls++ % 2) == 0) {
++        // RenderView runs once per eye, left then right, so the call parity IS the eye index.
++        // (The plugin interface does not carry one, and both eyes come from a single packed
++        // frame anyway - the stereo split happens in the shader, not here.)
++        const int eye = (int)(m_renderViewCalls++ % 2);
++
++        // Upload on the left eye only: the two eyes are two halves of the SAME decoded frame,
++        // so swapping the texture between them would show each eye a different instant in
++        // time. This also halves the per-frame upload and mip-generation cost.
++        if (m_videoMode && eye == 0) {
+             UpdateVideoTexture();
+         }
+ 
+@@ -1583,6 +1630,12 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+         XrMatrix4x4f_CreateFromQuaternion(&pushConstants.mvp, &pose.orientation);
+         pushConstants.tintColor = {tanf(layerView.fov.angleLeft), tanf(layerView.fov.angleRight),
+                                    tanf(layerView.fov.angleUp), tanf(layerView.fov.angleDown)};
++        PanoEyeUvTransform(m_panoLayout, eye, &pushConstants.uvScaleOffset[0], &pushConstants.uvScaleOffset[2]);
++        pushConstants.panoFov[0] = m_panoLayout.halfFovX;
++        pushConstants.panoFov[1] = m_panoLayout.halfFovY;
++        pushConstants.mode[0] = (m_panoLayout.projection == PanoProjection::HalfEquirect180)   ? 1
++                                : (m_panoLayout.projection == PanoProjection::Flat)           ? 2
++                                                                                              : 0;
+         vkCmdPushConstants(m_cmdBuffer.buf, m_pipelineLayout.layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                            sizeof(pushConstants), &pushConstants);
+ 
+@@ -1638,6 +1691,10 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+     VkDescriptorSet m_ComputeDescriptorSet;
+ 
+     // Equirect photo texture, sampled as a skybox.
++    // How the loaded image maps onto the sphere (360 / VR180 / flat) and how the two eyes are
++    // packed into it. Resolved once at load time and fed to the skybox shader every frame.
++    PanoLayout m_panoLayout;
++
+     // 360 skybox texture, shared by the photo and video paths.
+     int m_texWidth{0};
+     int m_texHeight{0};
+@@ -1645,9 +1702,9 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+ 
+     Video360 m_video;
+     bool m_videoMode{false};
+-    VkBuffer m_videoStaging{VK_NULL_HANDLE};
+-    VkDeviceMemory m_videoStagingMemory{VK_NULL_HANDLE};
+-    void* m_videoStagingMapped{nullptr};
++    // One staging buffer per decoder frame slot; index with what AcquireCurrentSlot() returns.
++    std::vector<VkBuffer> m_videoStaging;
++    std::vector<VkDeviceMemory> m_videoStagingMemory;
+     VkDeviceSize m_videoUVOffset{0};
+ 
+     // NV12 plane textures the decoder output is uploaded into each frame.
+diff --git a/src/tests/hello_xr/projection360.cpp b/src/tests/hello_xr/projection360.cpp
+new file mode 100644
+index 0000000..d74a89f
+--- /dev/null
++++ b/src/tests/hello_xr/projection360.cpp
+@@ -0,0 +1,290 @@
++#include "pch.h"
++#include "common.h"
++#include "logger.h"
++#include "projection360.h"
++
++#include <algorithm>
++#include <cctype>
++#include <cmath>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++
++namespace {
++
++std::string LowerBasename(const std::string& path) {
++    const size_t slash = path.find_last_of('/');
++    std::string name = (slash == std::string::npos) ? path : path.substr(slash + 1);
++    std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return (char)std::tolower(c); });
++    return name;
++}
++
++bool Contains(const std::string& haystack, const char* needle) { return haystack.find(needle) != std::string::npos; }
++
++// Env value matching, case-insensitive, empty/unset -> false.
++bool EnvIs(const char* name, std::initializer_list<const char*> values) {
++    const char* v = getenv(name);
++    if (v == nullptr || v[0] == '\0') return false;
++    std::string s(v);
++    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return (char)std::tolower(c); });
++    for (const char* candidate : values) {
++        if (s == candidate) return true;
++    }
++    return false;
++}
++
++bool EnvSet(const char* name) {
++    const char* v = getenv(name);
++    return v != nullptr && v[0] != '\0';
++}
++
++}  // namespace
++
++const char* PanoProjectionName(PanoProjection p) {
++    switch (p) {
++        case PanoProjection::Equirect360:
++            return "360 equirectangular";
++        case PanoProjection::HalfEquirect180:
++            return "180 half-equirectangular";
++        case PanoProjection::Flat:
++            return "flat (not panoramic)";
++        default:
++            return "unknown";
++    }
++}
++
++const char* PanoStereoName(PanoStereo s) {
++    switch (s) {
++        case PanoStereo::Mono:
++            return "mono";
++        case PanoStereo::SideBySide:
++            return "stereo side-by-side";
++        case PanoStereo::TopBottom:
++            return "stereo over-under";
++        default:
++            return "unknown";
++    }
++}
++
++PanoLayout ResolvePanoLayout(PanoLayout detected, const std::string& path, int width, int height) {
++    PanoLayout out = detected;
++    const char* projectionSource = (out.projection != PanoProjection::Unknown) ? "container metadata" : nullptr;
++    const char* stereoSource = (out.stereo != PanoStereo::Unknown) ? "container metadata" : nullptr;
++
++    // 1. Explicit overrides always win - metadata in the wild is wrong often enough that
++    //    there has to be a way to say "no, it is really this".
++    if (EnvIs("HELLO_XR_PROJECTION", {"180", "vr180", "half"})) {
++        out.projection = PanoProjection::HalfEquirect180;
++        projectionSource = "HELLO_XR_PROJECTION";
++    } else if (EnvIs("HELLO_XR_PROJECTION", {"360", "equirect", "full"})) {
++        out.projection = PanoProjection::Equirect360;
++        projectionSource = "HELLO_XR_PROJECTION";
++    } else if (EnvIs("HELLO_XR_PROJECTION", {"flat", "2d", "plano", "screen"})) {
++        out.projection = PanoProjection::Flat;
++        projectionSource = "HELLO_XR_PROJECTION";
++    } else if (EnvSet("HELLO_XR_PROJECTION") && !EnvIs("HELLO_XR_PROJECTION", {"auto"})) {
++        Log::Write(Log::Level::Warning, Fmt("HELLO_XR_PROJECTION='%s' not understood (use 180, 360, flat or auto)",
++                                            getenv("HELLO_XR_PROJECTION")));
++    }
++
++    if (EnvIs("HELLO_XR_STEREO", {"mono", "2d", "none"})) {
++        out.stereo = PanoStereo::Mono;
++        stereoSource = "HELLO_XR_STEREO";
++    } else if (EnvIs("HELLO_XR_STEREO", {"sbs", "lr", "side-by-side", "sidebyside"})) {
++        out.stereo = PanoStereo::SideBySide;
++        stereoSource = "HELLO_XR_STEREO";
++    } else if (EnvIs("HELLO_XR_STEREO", {"tb", "ou", "top-bottom", "topbottom", "over-under"})) {
++        out.stereo = PanoStereo::TopBottom;
++        stereoSource = "HELLO_XR_STEREO";
++    } else if (EnvSet("HELLO_XR_STEREO") && !EnvIs("HELLO_XR_STEREO", {"auto"})) {
++        Log::Write(Log::Level::Warning,
++                   Fmt("HELLO_XR_STEREO='%s' not understood (use mono, sbs, tb or auto)", getenv("HELLO_XR_STEREO")));
++    }
++
++    // 2. Filename conventions. Cameras and rigs write these consistently enough to be worth
++    //    trusting over a bare aspect ratio, and re-encodes routinely lose the MP4 boxes.
++    const std::string name = LowerBasename(path);
++    if (out.projection == PanoProjection::Unknown) {
++        if (Contains(name, "vr180") || Contains(name, "_180") || Contains(name, "-180") || Contains(name, ".180") ||
++            Contains(name, "180_") || Contains(name, "180-")) {
++            out.projection = PanoProjection::HalfEquirect180;
++            projectionSource = "filename";
++        } else if (Contains(name, "360")) {
++            out.projection = PanoProjection::Equirect360;
++            projectionSource = "filename";
++        }
++    }
++    if (out.stereo == PanoStereo::Unknown) {
++        if (Contains(name, "sbs") || Contains(name, "_lr") || Contains(name, "3dh") || Contains(name, "half-sbs")) {
++            out.stereo = PanoStereo::SideBySide;
++            stereoSource = "filename";
++        } else if (Contains(name, "_tb") || Contains(name, "_ou") || Contains(name, "3dv") || Contains(name, "over-under") ||
++                   Contains(name, "overunder")) {
++            out.stereo = PanoStereo::TopBottom;
++            stereoSource = "filename";
++        }
++    }
++
++    // 3. Aspect ratio, resolving whichever field is still open. Each panoramic layout implies
++    //    a per-eye aspect of 2:1 (360) or 1:1 (180), so once one field is known the other
++    //    follows. Anything that matches none of them is most likely not panoramic at all.
++    const double aspect = (height > 0) ? (double)width / (double)height : 2.0;
++    auto near = [aspect](double target) { return aspect > target * 0.9 && aspect < target * 1.1; };
++
++    if (out.projection != PanoProjection::Unknown && out.stereo == PanoStereo::Unknown) {
++        double monoAspect;
++        switch (out.projection) {
++            case PanoProjection::Equirect360:
++                monoAspect = 2.0;
++                break;
++            case PanoProjection::HalfEquirect180:
++                monoAspect = 1.0;
++                break;
++            default:  // flat: no canonical shape, so only a wild aspect suggests packing
++                monoAspect = aspect;
++                break;
++        }
++        if (near(monoAspect * 2.0)) {
++            out.stereo = PanoStereo::SideBySide;
++        } else if (near(monoAspect / 2.0)) {
++            out.stereo = PanoStereo::TopBottom;
++        } else {
++            out.stereo = PanoStereo::Mono;
++        }
++        stereoSource = "aspect ratio";
++    } else if (out.projection == PanoProjection::Unknown && out.stereo != PanoStereo::Unknown) {
++        double perEye = aspect;
++        if (out.stereo == PanoStereo::SideBySide) perEye = aspect / 2.0;
++        if (out.stereo == PanoStereo::TopBottom) perEye = aspect * 2.0;
++        if (perEye > 1.8) {
++            out.projection = PanoProjection::Equirect360;
++        } else if (perEye > 1.4) {
++            out.projection = PanoProjection::Flat;  // 16:9 per eye: an ordinary 3D movie
++        } else {
++            out.projection = PanoProjection::HalfEquirect180;
++        }
++        projectionSource = "aspect ratio";
++    } else if (out.projection == PanoProjection::Unknown) {
++        // Nothing known at all. 2:1 is the classic mono 360 pano and the case that has been
++        // working here, so it keeps that reading; 4:1 can only be 360 side-by-side. A 1:1
++        // frame is far more often VR180 mono than 360 over-under. Everything else - 16:9 in
++        // particular - is an ordinary video.
++        if (near(2.0)) {
++            out.projection = PanoProjection::Equirect360;
++            out.stereo = PanoStereo::Mono;
++        } else if (near(4.0)) {
++            out.projection = PanoProjection::Equirect360;
++            out.stereo = PanoStereo::SideBySide;
++        } else if (near(1.0)) {
++            out.projection = PanoProjection::HalfEquirect180;
++            out.stereo = PanoStereo::Mono;
++        } else if (near(0.5)) {
++            out.projection = PanoProjection::HalfEquirect180;
++            out.stereo = PanoStereo::TopBottom;
++        } else {
++            out.projection = PanoProjection::Flat;
++            out.stereo = PanoStereo::Mono;
++        }
++        projectionSource = stereoSource = "aspect ratio";
++    }
++
++    // 4. Angular size. For 180 this is the arc the frame spans (a true VR180 file is 180x180,
++    //    but YouTube's "mesh" VR180 re-encode packs a slightly different shape, so it is worth
++    //    being able to nudge). For flat it is how big the virtual screen is.
++    const double perEyeAspect = aspect / ((out.stereo == PanoStereo::SideBySide) ? 2.0 : 1.0) *
++                                ((out.stereo == PanoStereo::TopBottom) ? 2.0 : 1.0);
++    const double kDeg2Rad = 3.14159265358979323846 / 180.0;
++    if (out.projection == PanoProjection::HalfEquirect180) {
++        double fovX = 180.0, fovY = 180.0;
++        const char* v = getenv("HELLO_XR_PANO_FOV");
++        if (v != nullptr && v[0] != '\0') {
++            double a = 0.0, b = 0.0;
++            const int n = sscanf(v, "%lfx%lf", &a, &b);
++            if (n >= 1 && a > 0.0) {
++                fovX = a;
++                fovY = (n >= 2 && b > 0.0) ? b : a;
++            } else {
++                Log::Write(Log::Level::Warning, Fmt("HELLO_XR_PANO_FOV='%s' not understood (use e.g. 180x180)", v));
++            }
++        }
++        out.halfFovX = (float)(fovX * 0.5 * kDeg2Rad);
++        out.halfFovY = (float)(fovY * 0.5 * kDeg2Rad);
++    } else if (out.projection == PanoProjection::Flat) {
++        double screenFovX = 70.0;  // a comfortable "big TV across the room"
++        const char* v = getenv("HELLO_XR_SCREEN_FOV");
++        if (v != nullptr && v[0] != '\0') {
++            const double a = atof(v);
++            if (a > 1.0 && a < 170.0) {
++                screenFovX = a;
++            } else {
++                Log::Write(Log::Level::Warning, Fmt("HELLO_XR_SCREEN_FOV='%s' out of range (1..170 degrees)", v));
++            }
++        }
++        out.halfFovX = (float)tan(screenFovX * 0.5 * kDeg2Rad);
++        out.halfFovY = (float)(out.halfFovX / (perEyeAspect > 0.01 ? perEyeAspect : 1.777));
++    }
++
++    Log::Write(Log::Level::Info, Fmt("projection: %s, %s (%dx%d, %.2f:1) [projection from %s, stereo from %s]",
++                                     PanoProjectionName(out.projection), PanoStereoName(out.stereo), width, height, aspect,
++                                     projectionSource ? projectionSource : "default", stereoSource ? stereoSource : "default"));
++
++    // A 2:1 file that is really VR180 side-by-side looks exactly like a 360 mono file, and
++    // getting it wrong is confusing rather than obviously broken - so say how to correct it.
++    if (strcmp(projectionSource ? projectionSource : "", "aspect ratio") == 0) {
++        Log::Write(Log::Level::Info,
++                   "projection: guessed from the aspect ratio - the file said nothing. Override with "
++                   "HELLO_XR_PROJECTION=180|360|flat and HELLO_XR_STEREO=mono|sbs|tb.");
++    }
++
++    return out;
++}
++
++std::string PanoBanner(const PanoLayout& layout, int width, int height, double fps, const std::string& codec) {
++    const bool stereo = (layout.stereo == PanoStereo::SideBySide || layout.stereo == PanoStereo::TopBottom);
++    int eyeW = width, eyeH = height;
++    if (layout.stereo == PanoStereo::SideBySide) eyeW /= 2;
++    if (layout.stereo == PanoStereo::TopBottom) eyeH /= 2;
++
++    std::string mode;
++    switch (layout.projection) {
++        case PanoProjection::Equirect360:
++            mode = stereo ? "360 3D" : "360";
++            break;
++        case PanoProjection::HalfEquirect180:
++            mode = stereo ? "VR180 3D" : "VR180";
++            break;
++        default:
++            mode = stereo ? "PLANO 3D" : "PLANO";
++            break;
++    }
++
++    std::string line = Fmt("  MODO: %s", mode.c_str());
++    if (stereo) {
++        line += Fmt(" (%s%s)", layout.stereo == PanoStereo::SideBySide ? "side-by-side" : "over-under",
++                    layout.swapEyes ? ", ojos invertidos" : "");
++    }
++    line += Fmt("\n  Archivo: %dx%d", width, height);
++    if (stereo) line += Fmt("  ->  %dx%d por ojo", eyeW, eyeH);
++    if (fps > 0.0) line += Fmt("  |  %.2f fps", fps);
++    if (!codec.empty()) line += Fmt("  |  %s", codec.c_str());
++    return line;
++}
++
++void PanoEyeUvTransform(const PanoLayout& layout, int eye, float outScale[2], float outOffset[2]) {
++    outScale[0] = outScale[1] = 1.0f;
++    outOffset[0] = outOffset[1] = 0.0f;
++
++    const int packed = layout.swapEyes ? (1 - eye) : eye;
++    switch (layout.stereo) {
++        case PanoStereo::SideBySide:
++            outScale[0] = 0.5f;
++            outOffset[0] = (packed == 0) ? 0.0f : 0.5f;
++            break;
++        case PanoStereo::TopBottom:
++            outScale[1] = 0.5f;
++            outOffset[1] = (packed == 0) ? 0.0f : 0.5f;
++            break;
++        default:
++            break;
++    }
++}
+diff --git a/src/tests/hello_xr/projection360.h b/src/tests/hello_xr/projection360.h
+new file mode 100644
+index 0000000..0fee7a9
+--- /dev/null
++++ b/src/tests/hello_xr/projection360.h
+@@ -0,0 +1,63 @@
++// How a panoramic frame maps onto the sphere, and how the two eyes are packed into it.
++//
++// Five layouts cover essentially everything in the wild, and three of them are ambiguous from
++// the pixel dimensions alone:
++//
++//   360 mono          2:1     <- ambiguous with 180 stereo side-by-side
++//   360 stereo TB     1:1     <- ambiguous with 180 mono
++//   360 stereo SBS    4:1
++//   180 mono          1:1
++//   180 stereo SBS    2:1     <- by far the most common VR180 camera output
++//   180 stereo TB     1:2
++//
++// So the aspect ratio is the last resort. In order: an explicit HELLO_XR_PROJECTION /
++// HELLO_XR_STEREO override, then the container's own metadata (the MP4 `sv3d` and `st3d`
++// boxes, which every VR180 camera and YouTube VR export writes), then filename conventions,
++// then the aspect ratio.
++
++#pragma once
++
++#include <string>
++
++enum class PanoProjection {
++    Unknown,
++    Equirect360,      // full sphere
++    HalfEquirect180,  // front hemisphere: azimuth -90..+90, full 180 vertically
++    Flat,             // not panoramic at all - an ordinary frame on a virtual screen
++};
++
++enum class PanoStereo {
++    Unknown,
++    Mono,
++    SideBySide,  // left eye in the left half
++    TopBottom,   // left eye on top
++};
++
++struct PanoLayout {
++    PanoProjection projection{PanoProjection::Unknown};
++    PanoStereo stereo{PanoStereo::Unknown};
++    bool swapEyes{false};  // the packed frame holds the right eye first
++
++    // Half-angles in radians for HalfEquirect180 (default 90 deg each, i.e. a true 180x180
++    // hemisphere), or half-extents in tangent units for Flat. Set by ResolvePanoLayout.
++    float halfFovX{0.0f};
++    float halfFovY{0.0f};
++};
++
++// Fills in whatever `detected` left Unknown, using (in order) the environment overrides,
++// filename conventions and the frame aspect ratio. Logs what it settled on and why. `path` may
++// be empty. Never returns Unknown in either field.
++PanoLayout ResolvePanoLayout(PanoLayout detected, const std::string& path, int width, int height);
++
++// The sub-rectangle of the frame belonging to one eye, as a texture-coordinate scale and
++// offset. eye 0 is left, 1 is right; identity for mono. Applied after the spherical mapping,
++// so the mapping itself never has to know about stereo packing.
++void PanoEyeUvTransform(const PanoLayout& layout, int eye, float outScale[2], float outOffset[2]);
++
++const char* PanoProjectionName(PanoProjection p);
++const char* PanoStereoName(PanoStereo s);
++
++// One short human-readable line describing what is about to be shown - "what mode am I in"
++// is otherwise invisible once the headset is on, and a VR180 file mistaken for a 360 one
++// looks plausible rather than obviously wrong.
++std::string PanoBanner(const PanoLayout& layout, int width, int height, double fps, const std::string& codec);
+diff --git a/src/tests/hello_xr/video360.cpp b/src/tests/hello_xr/video360.cpp
+index da33c90..5bf07ac 100644
+--- a/src/tests/hello_xr/video360.cpp
++++ b/src/tests/hello_xr/video360.cpp
+@@ -14,15 +14,20 @@ bool Video360::Open(const std::string&) {
+     Log::Write(Log::Level::Error, "video360: built without ffmpeg, cannot play video");
+     return false;
+ }
++void Video360::SetFrameBuffers(std::vector<Video360Buffer>) {}
++bool Video360::Start() { return false; }
+ bool Video360::IsOpen() const { return false; }
+ int Video360::Width() const { return 0; }
+ int Video360::Height() const { return 0; }
+ size_t Video360::YBytes() const { return 0; }
+ size_t Video360::UVBytes() const { return 0; }
++double Video360::FrameRate() const { return 0.0; }
++std::string Video360::CodecName() const { return "none"; }
++PanoLayout Video360::DetectedLayout() const { return PanoLayout{}; }
+ bool Video360::FullRange() const { return false; }
+ bool Video360::Bt709() const { return true; }
+ bool Video360::HwDecodeActive() const { return false; }
+-const Video360Frame* Video360::AcquireCurrentFrame() { return nullptr; }
++int Video360::AcquireCurrentSlot() { return -1; }
+ 
+ #else
+ 
+@@ -41,14 +46,11 @@ extern "C" {
+ #include <libavutil/hwcontext.h>
+ #include <libavutil/imgutils.h>
+ #include <libavutil/pixdesc.h>
++#include <libavutil/spherical.h>
++#include <libavutil/stereo3d.h>
+ }
+ 
+ namespace {
+-// How many decoded frames to keep ahead of playback. Three is enough to absorb decode-time
+-// spikes (keyframes are much more expensive than P-frames) without adding real latency;
+-// each one costs Width*Height*1.5 bytes of host memory, ~12MB at 4096x2048.
+-constexpr size_t kQueueDepth = 3;
+-
+ std::string AvErr(int err) {
+     char buf[AV_ERROR_MAX_STRING_SIZE]{};
+     av_strerror(err, buf, sizeof(buf));
+@@ -63,13 +65,45 @@ AVPixelFormat PickHwFormat(AVCodecContext* ctx, const AVPixelFormat* fmts) {
+     }
+     return avcodec_default_get_format(ctx, fmts);
+ }
++
++// av_hwframe_transfer_data only honours a caller-provided destination when the frame looks
++// referenced (dst->buf[0] != NULL); otherwise it quietly allocates its own and our pointers
++// are ignored. Wrap the mapped staging memory in a buffer whose free callback does nothing.
++void NoopFree(void*, uint8_t*) {}
++
++bool EnvOff(const char* name) {
++    const char* v = getenv(name);
++    return v != nullptr && v[0] == '0';
++}
++
++bool DecoderCanUseCuda(const AVCodec* codec) {
++    for (int i = 0;; i++) {
++        const AVCodecHWConfig* cfg = avcodec_get_hw_config(codec, i);
++        if (cfg == nullptr) return false;
++        if (cfg->pix_fmt == AV_PIX_FMT_CUDA && (cfg->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX) != 0) return true;
++    }
++}
++
++// av_find_best_stream hands back ffmpeg's *default* decoder for the codec, and for AV1 that is
++// libdav1d - which has no hwaccel at all. The result is that a card with a perfectly good AV1
++// NVDEC block silently decodes 8K AV1 on the CPU: measured here at 25 fps on a 60 fps file,
++// with no error anywhere to explain it. So when hardware decode is wanted, go looking for a
++// decoder that can actually reach it.
++const AVCodec* PickHwCapableDecoder(AVCodecID id, const AVCodec* fallback) {
++    void* iter = nullptr;
++    while (const AVCodec* c = av_codec_iterate(&iter)) {
++        if (c->id != id || !av_codec_is_decoder(c)) continue;
++        if (DecoderCanUseCuda(c)) return c;
++    }
++    return fallback;
++}
+ }  // namespace
+ 
+ struct Video360::Impl {
+-    struct Frame {
+-        std::vector<uint8_t> y;   // tightly packed, width*height
+-        std::vector<uint8_t> uv;  // interleaved CbCr, (width/2)*(height/2)*2
+-        double pts{0.0};          // seconds since playback start, already loop-adjusted
++    // A frame in flight, identified by which caller-provided buffer holds it.
++    struct QueuedFrame {
++        int slot{-1};
++        double pts{0.0};  // seconds since playback start, already loop-adjusted
+     };
+ 
+     AVFormatContext* fmt{nullptr};
+@@ -80,94 +114,147 @@ struct Video360::Impl {
+     int height{0};
+     double timeBase{0.0};
+     double frameDuration{1.0 / 30.0};  // fallback when a frame carries no usable pts
++    std::string codecName{"unknown"};
++    PanoLayout layout;  // whatever the container declared; Unknown fields mean "it did not say"
+ 
+     std::atomic<bool> hwActive{false};
+     std::atomic<bool> fullRange{false};
+     std::atomic<bool> bt709{true};
+     bool warnedFormat{false};
+ 
++    std::vector<Video360Buffer> buffers;
++    std::vector<uint8_t> rowScratch;  // see NormalizeToNv12
++
+     std::thread thread;
+     std::mutex mutex;
+     std::condition_variable spaceAvailable;
+-    std::condition_variable frameAvailable;
+-    std::deque<Frame> queue;
++    std::deque<QueuedFrame> queue;
++    std::deque<int> freeSlots;
++    int currentSlot{-1};  // held by the renderer, off-limits to the decoder
+     std::atomic<bool> quit{false};
+     bool opened{false};
+-
+-    // The frame currently uploaded to the GPU. Held so AcquireCurrentFrame can return a
+-    // stable pointer, and so we can tell "nothing new" from "here is a new frame".
+-    Frame current;
+-    Video360Frame currentView;
+-    bool haveCurrent{false};
++    bool started{false};
+ 
+     std::chrono::steady_clock::time_point clockStart;
+     bool clockStarted{false};
+ 
++    // HELLO_XR_VIDEO_STATS: what the decode thread costs, and whether it is the bottleneck.
++    bool wantStats{false};
++    bool directXfer{true};   // HELLO_XR_VIDEO_DIRECT=0 disables, for A/B measurement
++    bool directWorks{true};  // cleared on the first failure, never retried
++    uint64_t statFrames{0};
++    double statDecodeMs{0.0};
++    double statWriteMs{0.0};
++    uint64_t statStalls{0};    // decoder had to wait for the renderer to free a buffer
++    uint64_t statStarved{0};   // renderer asked for a frame and the queue was empty
++    std::chrono::steady_clock::time_point statWindow;
++
++    // Destination frame for the NVDEC VRAM->RAM transfer, pointed at the current staging slot.
++    AVFrame* xferFrame{nullptr};
++
+     ~Impl() {
+         quit = true;
+         spaceAvailable.notify_all();
+-        frameAvailable.notify_all();
+         if (thread.joinable()) thread.join();
++        if (xferFrame) av_frame_free(&xferFrame);
+         if (dec) avcodec_free_context(&dec);
+         if (hwDevice) av_buffer_unref(&hwDevice);
+         if (fmt) avformat_close_input(&fmt);
+     }
+ 
+-    // Copies an arbitrary decoded frame into tightly-packed 8-bit NV12. Handles the formats
+-    // this pipeline actually meets: NV12 (NVDEC transfer output), YUV420P/YUVJ420P (software
+-    // h264/hevc), and the 10-bit variants P010/YUV420P10 (downshifted to 8 bit - HDR grading
+-    // is out of scope for a VR skybox).
+-    bool NormalizeToNv12(const AVFrame* f, Frame& out) {
++    size_t YBytes() const { return (size_t)width * height; }
++    size_t UVBytes() const { return (size_t)width * height / 2; }
++
++    // Points a hand-built AVFrame at a staging slot so NVDEC copies VRAM straight into memory
++    // the GPU can already read - one PCIe crossing instead of "VRAM -> system RAM -> memcpy
++    // -> staging". Returns false if the transfer refuses the layout, in which case the caller
++    // falls back to transferring into an ffmpeg-owned frame and normalizing from it.
++    bool TransferDirect(const AVFrame* hw, const Video360Buffer& dst) {
++        av_frame_unref(xferFrame);
++        xferFrame->format = AV_PIX_FMT_NV12;
++        xferFrame->width = width;
++        xferFrame->height = height;
++        xferFrame->data[0] = dst.y;
++        xferFrame->linesize[0] = width;
++        xferFrame->data[1] = dst.uv;
++        xferFrame->linesize[1] = width;  // interleaved CbCr at half height, so same pitch as Y
++        xferFrame->buf[0] = av_buffer_create(dst.y, YBytes(), NoopFree, nullptr, AV_BUFFER_FLAG_READONLY);
++        if (xferFrame->buf[0] == nullptr) return false;
++
++        const int ret = av_hwframe_transfer_data(xferFrame, hw, 0);
++        if (ret < 0) {
++            Log::Write(Log::Level::Info,
++                       Fmt("video360: direct NVDEC transfer into staging not accepted (%s), using the copy path",
++                           AvErr(ret).c_str()));
++            return false;
++        }
++        // The transfer may have replaced our pointers if it decided to reallocate after all.
++        return xferFrame->data[0] == dst.y;
++    }
++
++    // Copies an arbitrary decoded frame into tightly-packed 8-bit NV12 in a caller-provided
++    // buffer. Handles the formats this pipeline actually meets: NV12 (NVDEC transfer output),
++    // YUV420P/YUVJ420P (software h264/hevc), and the 10-bit variants P010/YUV420P10
++    // (downshifted to 8 bit - HDR grading is out of scope for a VR skybox).
++    //
++    // The destination is very likely write-combined memory (Vulkan HOST_VISIBLE), where a
++    // partial cache-line write forces the write-combine buffer to flush - so the byte-strided
++    // interleave paths build each row in a small cached scratch and blit it out whole. The
++    // NV12 path needs no such trick: it is already a full-row memcpy.
++    bool NormalizeToNv12(const AVFrame* f, const Video360Buffer& out) {
+         const int w = width, h = height;
+         const int cw = w / 2, ch = h / 2;
+-        out.y.resize((size_t)w * h);
+-        out.uv.resize((size_t)cw * ch * 2);
+ 
+         switch (f->format) {
+             case AV_PIX_FMT_NV12:
+-                for (int r = 0; r < h; r++) memcpy(out.y.data() + (size_t)r * w, f->data[0] + (size_t)r * f->linesize[0], w);
++                for (int r = 0; r < h; r++) memcpy(out.y + (size_t)r * w, f->data[0] + (size_t)r * f->linesize[0], w);
+                 for (int r = 0; r < ch; r++)
+-                    memcpy(out.uv.data() + (size_t)r * cw * 2, f->data[1] + (size_t)r * f->linesize[1], (size_t)cw * 2);
++                    memcpy(out.uv + (size_t)r * cw * 2, f->data[1] + (size_t)r * f->linesize[1], (size_t)cw * 2);
+                 return true;
+             case AV_PIX_FMT_YUV420P:
+             case AV_PIX_FMT_YUVJ420P:
+-                for (int r = 0; r < h; r++) memcpy(out.y.data() + (size_t)r * w, f->data[0] + (size_t)r * f->linesize[0], w);
++                for (int r = 0; r < h; r++) memcpy(out.y + (size_t)r * w, f->data[0] + (size_t)r * f->linesize[0], w);
+                 for (int r = 0; r < ch; r++) {
+                     const uint8_t* u = f->data[1] + (size_t)r * f->linesize[1];
+                     const uint8_t* v = f->data[2] + (size_t)r * f->linesize[2];
+-                    uint8_t* dst = out.uv.data() + (size_t)r * cw * 2;
++                    uint8_t* dst = rowScratch.data();
+                     for (int c = 0; c < cw; c++) {
+                         dst[c * 2 + 0] = u[c];
+                         dst[c * 2 + 1] = v[c];
+                     }
++                    memcpy(out.uv + (size_t)r * cw * 2, dst, (size_t)cw * 2);
+                 }
+                 return true;
+             case AV_PIX_FMT_P010LE:  // data in the high 10 of 16 bits -> high byte is the 8-bit value
+                 for (int r = 0; r < h; r++) {
+                     const uint8_t* src = f->data[0] + (size_t)r * f->linesize[0];
+-                    uint8_t* dst = out.y.data() + (size_t)r * w;
++                    uint8_t* dst = rowScratch.data();
+                     for (int c = 0; c < w; c++) dst[c] = src[c * 2 + 1];
++                    memcpy(out.y + (size_t)r * w, dst, (size_t)w);
+                 }
+                 for (int r = 0; r < ch; r++) {
+                     const uint8_t* src = f->data[1] + (size_t)r * f->linesize[1];
+-                    uint8_t* dst = out.uv.data() + (size_t)r * cw * 2;
++                    uint8_t* dst = rowScratch.data();
+                     for (int c = 0; c < cw * 2; c++) dst[c] = src[c * 2 + 1];
++                    memcpy(out.uv + (size_t)r * cw * 2, dst, (size_t)cw * 2);
+                 }
+                 return true;
+             case AV_PIX_FMT_YUV420P10LE:  // data in the low 10 bits -> >>2
+                 for (int r = 0; r < h; r++) {
+                     const uint16_t* src = (const uint16_t*)(f->data[0] + (size_t)r * f->linesize[0]);
+-                    uint8_t* dst = out.y.data() + (size_t)r * w;
++                    uint8_t* dst = rowScratch.data();
+                     for (int c = 0; c < w; c++) dst[c] = (uint8_t)(src[c] >> 2);
++                    memcpy(out.y + (size_t)r * w, dst, (size_t)w);
+                 }
+                 for (int r = 0; r < ch; r++) {
+                     const uint16_t* u = (const uint16_t*)(f->data[1] + (size_t)r * f->linesize[1]);
+                     const uint16_t* v = (const uint16_t*)(f->data[2] + (size_t)r * f->linesize[2]);
+-                    uint8_t* dst = out.uv.data() + (size_t)r * cw * 2;
++                    uint8_t* dst = rowScratch.data();
+                     for (int c = 0; c < cw; c++) {
+                         dst[c * 2 + 0] = (uint8_t)(u[c] >> 2);
+                         dst[c * 2 + 1] = (uint8_t)(v[c] >> 2);
+                     }
++                    memcpy(out.uv + (size_t)r * cw * 2, dst, (size_t)cw * 2);
+                 }
+                 return true;
+             default:
+@@ -197,10 +284,48 @@ struct Video360::Impl {
+         }
+     }
+ 
++    // Takes a buffer the renderer is not using. Blocks while every buffer is spoken for,
++    // which is the natural back-pressure that keeps the decoder from running ahead.
++    int TakeFreeSlot() {
++        std::unique_lock<std::mutex> lock(mutex);
++        if (freeSlots.empty()) statStalls++;
++        spaceAvailable.wait(lock, [this] { return quit || !freeSlots.empty(); });
++        if (quit) return -1;
++        const int slot = freeSlots.front();
++        freeSlots.pop_front();
++        return slot;
++    }
++
++    void ReturnSlot(int slot) {
++        std::lock_guard<std::mutex> lock(mutex);
++        freeSlots.push_back(slot);
++    }
++
++    void ReportStats() {
++        const auto now = std::chrono::steady_clock::now();
++        const double secs = std::chrono::duration<double>(now - statWindow).count();
++        uint64_t starved;
++        {
++            std::lock_guard<std::mutex> lock(mutex);
++            starved = statStarved;
++            statStarved = 0;
++        }
++        Log::Write(Log::Level::Info,
++                   Fmt("video decode: %.1f frames/s produced | decode %.2f ms, write-to-staging %.2f ms "
++                       "| %llu waits for a free buffer, %llu renderer starves%s",
++                       statFrames / secs, statDecodeMs / statFrames, statWriteMs / statFrames,
++                       (unsigned long long)statStalls, (unsigned long long)starved,
++                       (hwActive ? (directWorks ? " | NVDEC direct-to-staging" : " | NVDEC + copy") : " | software decode")));
++        statFrames = 0;
++        statDecodeMs = statWriteMs = 0.0;
++        statStalls = 0;
++        statWindow = now;
++    }
++
+     void DecodeLoop() {
+         AVPacket* packet = av_packet_alloc();
+         AVFrame* frame = av_frame_alloc();
+-        AVFrame* swFrame = av_frame_alloc();  // destination for NVDEC VRAM->RAM transfers
++        AVFrame* swFrame = av_frame_alloc();  // fallback destination for NVDEC VRAM->RAM transfers
+         // Every loop of the video adds the full playback duration to this, so the pts handed
+         // to the consumer keeps increasing monotonically and the wall clock never rewinds.
+         double loopOffset = 0.0;
+@@ -242,48 +367,75 @@ struct Video360::Impl {
+         av_packet_free(&packet);
+     }
+ 
+-    // Pulls every frame the decoder can currently produce, normalizes it to NV12 and queues it.
++    // Pulls every frame the decoder can currently produce, writes it as NV12 into a free
++    // staging slot and queues that slot.
+     void DrainDecoder(AVFrame* frame, AVFrame* swFrame, double loopOffset, double& lastPts) {
+         while (!quit) {
++            const auto tDecodeStart = std::chrono::steady_clock::now();
+             int ret = avcodec_receive_frame(dec, frame);
+             if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) return;
+             if (ret < 0) {
+                 Log::Write(Log::Level::Warning, Fmt("video360: receive_frame: %s", AvErr(ret).c_str()));
+                 return;
+             }
++            const auto tDecodeEnd = std::chrono::steady_clock::now();
+ 
+             int64_t ts = frame->best_effort_timestamp;
+             double pts = (ts == AV_NOPTS_VALUE) ? lastPts + frameDuration : ts * timeBase;
+             lastPts = pts;
+ 
+-            const AVFrame* src = frame;
++            const int slot = TakeFreeSlot();
++            if (slot < 0) {
++                av_frame_unref(frame);
++                return;
++            }
++
++            const auto tWriteStart = std::chrono::steady_clock::now();
++            bool ok;
+             if (frame->format == AV_PIX_FMT_CUDA) {
+-                // NVDEC decoded into VRAM; pull the NV12 surface back to system memory. (The
+-                // upload side puts it straight back on the GPU - a zero-copy Vulkan interop
+-                // exists but is far more code; at ~720MB/s for 4K30 this round trip is cheap.)
+-                av_frame_unref(swFrame);
+-                if ((ret = av_hwframe_transfer_data(swFrame, frame, 0)) < 0) {
+-                    Log::Write(Log::Level::Warning, Fmt("video360: hwframe transfer: %s", AvErr(ret).c_str()));
+-                    av_frame_unref(frame);
+-                    continue;
+-                }
+-                av_frame_copy_props(swFrame, frame);
+                 hwActive = true;
+-                src = swFrame;
++                // Preferred: NVDEC writes the NV12 surface straight into the mapped staging
++                // slot. Falls back to an ffmpeg-owned system-memory frame plus a normalize
++                // pass if the driver will not take our layout.
++                ok = directXfer && directWorks && TransferDirect(frame, buffers[slot]);
++                if (ok) {
++                    CaptureColorInfo(frame);
++                } else {
++                    if (directXfer && directWorks) directWorks = false;
++                    av_frame_unref(swFrame);
++                    if ((ret = av_hwframe_transfer_data(swFrame, frame, 0)) < 0) {
++                        Log::Write(Log::Level::Warning, Fmt("video360: hwframe transfer: %s", AvErr(ret).c_str()));
++                        av_frame_unref(frame);
++                        ReturnSlot(slot);
++                        continue;
++                    }
++                    av_frame_copy_props(swFrame, frame);
++                    CaptureColorInfo(swFrame);
++                    ok = NormalizeToNv12(swFrame, buffers[slot]);
++                }
++            } else {
++                CaptureColorInfo(frame);
++                ok = NormalizeToNv12(frame, buffers[slot]);
+             }
++            const auto tWriteEnd = std::chrono::steady_clock::now();
+ 
+-            Frame out;
+-            out.pts = pts + loopOffset;
+-            CaptureColorInfo(src);
+-            const bool ok = NormalizeToNv12(src, out);
+             av_frame_unref(frame);
+-            if (!ok) continue;
++            if (!ok) {
++                ReturnSlot(slot);
++                continue;
++            }
+ 
+-            std::unique_lock<std::mutex> lock(mutex);
+-            spaceAvailable.wait(lock, [this] { return quit || queue.size() < kQueueDepth; });
+-            if (quit) return;
+-            queue.push_back(std::move(out));
+-            frameAvailable.notify_one();
++            {
++                std::lock_guard<std::mutex> lock(mutex);
++                queue.push_back(QueuedFrame{slot, pts + loopOffset});
++            }
++
++            if (wantStats) {
++                statFrames++;
++                statDecodeMs += std::chrono::duration<double, std::milli>(tDecodeEnd - tDecodeStart).count();
++                statWriteMs += std::chrono::duration<double, std::milli>(tWriteEnd - tWriteStart).count();
++                if (statFrames >= 60) ReportStats();
++            }
+         }
+     }
+ };
+@@ -312,6 +464,14 @@ bool Video360::Open(const std::string& path) {
+     }
+ 
+     AVStream* stream = impl.fmt->streams[impl.streamIndex];
++    const bool wantHw = !EnvOff("HELLO_XR_VIDEO_HW");
++    if (wantHw && !DecoderCanUseCuda(codec)) {
++        const AVCodec* better = PickHwCapableDecoder(stream->codecpar->codec_id, codec);
++        if (better != codec) {
++            Log::Write(Log::Level::Info, Fmt("video360: '%s' cannot use NVDEC, switching to '%s'", codec->name, better->name));
++            codec = better;
++        }
++    }
+     impl.dec = avcodec_alloc_context3(codec);
+     if (!impl.dec) return false;
+     if ((ret = avcodec_parameters_to_context(impl.dec, stream->codecpar)) < 0) {
+@@ -325,8 +485,6 @@ bool Video360::Open(const std::string& path) {
+ 
+     // NVDEC via ffmpeg's CUDA hwaccel. Uses the dlopened driver libraries (libcuda/libnvcuvid),
+     // no CUDA toolkit involved. HELLO_XR_VIDEO_HW=0 forces the software decoder.
+-    const char* hwEnv = getenv("HELLO_XR_VIDEO_HW");
+-    const bool wantHw = !(hwEnv && hwEnv[0] == '0');
+     if (wantHw) {
+         ret = av_hwdevice_ctx_create(&impl.hwDevice, AV_HWDEVICE_TYPE_CUDA, nullptr, nullptr, 0);
+         if (ret < 0) {
+@@ -351,17 +509,93 @@ bool Video360::Open(const std::string& path) {
+     if (stream->avg_frame_rate.num > 0 && stream->avg_frame_rate.den > 0) {
+         impl.frameDuration = av_q2d(AVRational{stream->avg_frame_rate.den, stream->avg_frame_rate.num});
+     }
++    if (impl.width <= 0 || impl.height <= 0 || (impl.width % 2) != 0 || (impl.height % 2) != 0) {
++        Log::Write(Log::Level::Error, Fmt("video360: %dx%d is not a usable even-sized frame", impl.width, impl.height));
++        return false;
++    }
++
++    impl.codecName = codec->name ? codec->name : "unknown";
++
++    // What the file says about itself. VR180 cameras and YouTube's VR streams both write these
++    // (MP4 `st3d` for the stereo packing, `sv3d` for the projection); plenty of re-encodes drop
++    // them, which is what the filename and aspect-ratio fallbacks in ResolvePanoLayout are for.
++    const AVPacketSideData* sd = av_packet_side_data_get(stream->codecpar->coded_side_data,
++                                                         stream->codecpar->nb_coded_side_data, AV_PKT_DATA_STEREO3D);
++    if (sd != nullptr && sd->size >= sizeof(AVStereo3D)) {
++        const AVStereo3D* s3d = (const AVStereo3D*)sd->data;
++        switch (s3d->type) {
++            case AV_STEREO3D_2D:
++                impl.layout.stereo = PanoStereo::Mono;
++                break;
++            case AV_STEREO3D_SIDEBYSIDE:
++                impl.layout.stereo = PanoStereo::SideBySide;
++                break;
++            case AV_STEREO3D_TOPBOTTOM:
++                impl.layout.stereo = PanoStereo::TopBottom;
++                break;
++            default:
++                Log::Write(Log::Level::Warning,
++                           Fmt("video360: stereo layout '%s' is not supported, treating the frame as mono",
++                               av_stereo3d_type_name(s3d->type)));
++                impl.layout.stereo = PanoStereo::Mono;
++                break;
++        }
++        // AV_STEREO3D_FLAG_INVERT means the right eye is packed first.
++        impl.layout.swapEyes = (s3d->flags & AV_STEREO3D_FLAG_INVERT) != 0;
++    }
++
++    sd = av_packet_side_data_get(stream->codecpar->coded_side_data, stream->codecpar->nb_coded_side_data,
++                                 AV_PKT_DATA_SPHERICAL);
++    if (sd != nullptr && sd->size >= sizeof(AVSphericalMapping)) {
++        const AVSphericalMapping* sph = (const AVSphericalMapping*)sd->data;
++        switch (sph->projection) {
++            case AV_SPHERICAL_EQUIRECTANGULAR:
++                impl.layout.projection = PanoProjection::Equirect360;
++                break;
++            case AV_SPHERICAL_EQUIRECTANGULAR_TILE:
++                // A cropped equirect. Only the full-frame case maps cleanly onto our shader,
++                // and a half-width tile is exactly how some tools write VR180.
++                impl.layout.projection = PanoProjection::HalfEquirect180;
++                break;
++            case AV_SPHERICAL_HALF_EQUIRECTANGULAR:
++                impl.layout.projection = PanoProjection::HalfEquirect180;
++                break;
++            default:
++                Log::Write(Log::Level::Warning,
++                           Fmt("video360: projection '%s' is not supported", av_spherical_projection_name(sph->projection)));
++                break;
++        }
++    }
++
++    impl.wantStats = getenv("HELLO_XR_VIDEO_STATS") != nullptr;
++    impl.directXfer = !EnvOff("HELLO_XR_VIDEO_DIRECT");
++    impl.xferFrame = av_frame_alloc();
++    if (!impl.xferFrame) return false;
++    impl.rowScratch.resize((size_t)impl.width + 64);
+ 
+     Log::Write(Log::Level::Info, Fmt("video360: '%s' %dx%d %s @ %.2f fps (decode: %s)", path.c_str(), impl.width,
+                                      impl.height, codec->name, 1.0 / impl.frameDuration,
+                                      impl.dec->hw_device_ctx ? "NVDEC requested" : "software"));
+-    if (impl.width != impl.height * 2) {
+-        Log::Write(Log::Level::Warning,
+-                   Fmt("video360: %dx%d is not 2:1 - equirectangular video is expected to be, the image will look wrong",
+-                       impl.width, impl.height));
+-    }
+ 
+     impl.opened = true;
++    return true;
++}
++
++void Video360::SetFrameBuffers(std::vector<Video360Buffer> buffers) {
++    m_impl->buffers = std::move(buffers);
++    m_impl->freeSlots.clear();
++    for (int i = 0; i < (int)m_impl->buffers.size(); i++) m_impl->freeSlots.push_back(i);
++}
++
++bool Video360::Start() {
++    Impl& impl = *m_impl;
++    if (!impl.opened || impl.started) return false;
++    if (impl.buffers.size() < 2) {
++        Log::Write(Log::Level::Error, "video360: Start() before SetFrameBuffers(), or fewer than two buffers");
++        return false;
++    }
++    impl.statWindow = std::chrono::steady_clock::now();
++    impl.started = true;
+     impl.thread = std::thread([&impl] { impl.DecodeLoop(); });
+     return true;
+ }
+@@ -369,22 +603,25 @@ bool Video360::Open(const std::string& path) {
+ bool Video360::IsOpen() const { return m_impl->opened; }
+ int Video360::Width() const { return m_impl->width; }
+ int Video360::Height() const { return m_impl->height; }
+-size_t Video360::YBytes() const { return (size_t)m_impl->width * m_impl->height; }
+-size_t Video360::UVBytes() const { return (size_t)m_impl->width * m_impl->height / 2; }
++size_t Video360::YBytes() const { return m_impl->YBytes(); }
++size_t Video360::UVBytes() const { return m_impl->UVBytes(); }
++double Video360::FrameRate() const { return m_impl->frameDuration > 0.0 ? 1.0 / m_impl->frameDuration : 0.0; }
++std::string Video360::CodecName() const { return m_impl->codecName; }
++PanoLayout Video360::DetectedLayout() const { return m_impl->layout; }
+ bool Video360::FullRange() const { return m_impl->fullRange; }
+ bool Video360::Bt709() const { return m_impl->bt709; }
+ bool Video360::HwDecodeActive() const { return m_impl->hwActive; }
+ 
+-const Video360Frame* Video360::AcquireCurrentFrame() {
++int Video360::AcquireCurrentSlot() {
+     Impl& impl = *m_impl;
+-    if (!impl.opened) return nullptr;
++    if (!impl.started) return -1;
+ 
+     std::unique_lock<std::mutex> lock(impl.mutex);
+ 
+-    // Start the clock on the first frame rather than at Open(), so however long the decoder
++    // Start the clock on the first frame rather than at Start(), so however long the decoder
+     // took to spin up does not count as playback time already elapsed.
+     if (!impl.clockStarted) {
+-        if (impl.queue.empty()) return nullptr;
++        if (impl.queue.empty()) return -1;
+         impl.clockStart = std::chrono::steady_clock::now();
+         impl.clockStarted = true;
+     }
+@@ -393,20 +630,22 @@ const Video360Frame* Video360::AcquireCurrentFrame() {
+ 
+     // Advance to the newest frame whose presentation time has passed. The loop (rather than a
+     // single pop) means that if rendering stalls we skip stale frames instead of playing them
+-    // back in slow motion.
++    // back in slow motion. Every buffer we move past goes straight back to the decoder.
+     bool advanced = false;
+     while (!impl.queue.empty() && impl.queue.front().pts <= elapsed) {
+-        impl.current = std::move(impl.queue.front());
++        if (impl.currentSlot >= 0) impl.freeSlots.push_back(impl.currentSlot);
++        impl.currentSlot = impl.queue.front().slot;
+         impl.queue.pop_front();
+-        impl.haveCurrent = true;
+         advanced = true;
+     }
+-    if (advanced) impl.spaceAvailable.notify_all();
+-
+-    if (!advanced) return nullptr;
+-    impl.currentView.y = impl.current.y.data();
+-    impl.currentView.uv = impl.current.uv.data();
+-    return &impl.currentView;
++    if (advanced) {
++        impl.spaceAvailable.notify_all();
++        return impl.currentSlot;
++    }
++    // Nothing due. If the queue is also empty the decoder is behind, which is worth counting
++    // separately from "the renderer is simply faster than the frame rate".
++    if (impl.queue.empty() && impl.wantStats) impl.statStarved++;
++    return -1;
+ }
+ 
+ #endif  // HAVE_FFMPEG
+diff --git a/src/tests/hello_xr/video360.h b/src/tests/hello_xr/video360.h
+index 731f8db..7047b4d 100644
+--- a/src/tests/hello_xr/video360.h
++++ b/src/tests/hello_xr/video360.h
+@@ -1,13 +1,22 @@
+ // 360 equirectangular video source for the hello_xr photo/video skybox.
+ //
+-// Decodes a video file on a background thread into a small ring of NV12 frames and hands
+-// the render loop whichever frame is due according to a wall clock. Playback loops forever.
++// Decodes a video file on a background thread and hands the render loop whichever frame is
++// due according to a wall clock. Playback loops forever.
+ //
+ // Decode is NVDEC (ffmpeg CUDA hwaccel) when available, with automatic fallback to software
+ // decode (HELLO_XR_VIDEO_HW=0 forces the fallback). Either way the output is normalized to
+ // 8-bit NV12 (tightly packed Y plane + interleaved half-res CbCr plane) and the YUV->RGB
+ // conversion happens on the GPU in a fragment shader - there is no libswscale in the loop,
+ // which was measured to cost more CPU than the decode itself at 4K.
++//
++// The decoder does NOT own its output frames: the caller hands it a set of buffers via
++// SetFrameBuffers() and the decode thread writes NV12 straight into them. The point is that
++// the graphics backend can pass mapped Vulkan staging memory, so a decoded frame is already
++// where the GPU wants it and the render thread never copies anything. At 8K that memcpy was
++// measured at 8.9 ms per frame on the render thread - more than half a 60Hz frame budget.
++//
++// Hence the three-step startup: Open() (learn the geometry) -> SetFrameBuffers() (the caller
++// can now size its allocations) -> Start() (begin decoding).
+ 
+ #pragma once
+ 
+@@ -15,25 +24,43 @@
+ #include <cstdint>
+ #include <memory>
+ #include <string>
++#include <vector>
++
++#include "projection360.h"
+ 
+-// One decoded frame, normalized to tightly-packed 8-bit NV12.
+-// y is Width()*Height() bytes; uv is interleaved CbCr, (Width()/2)*(Height()/2)*2 bytes.
+-struct Video360Frame {
+-    const uint8_t* y{nullptr};
+-    const uint8_t* uv{nullptr};
++// Where one decoded frame goes. Memory is owned by the caller and must stay valid and mapped
++// for the lifetime of the Video360. y is Width()*Height() bytes; uv is interleaved CbCr,
++// Width()*Height()/2 bytes. Both are written sequentially, never read - safe for the
++// write-combined host memory Vulkan hands out.
++struct Video360Buffer {
++    uint8_t* y{nullptr};
++    uint8_t* uv{nullptr};
+ };
+ 
+ class Video360 {
+    public:
++    // How many frame buffers the caller should provide. Three deep is enough to absorb
++    // decode-time spikes (keyframes cost far more than P-frames) without adding real latency,
++    // plus one held by the renderer and one being written = five.
++    static constexpr size_t kFrameBuffers = 5;
++
+     Video360();
+     ~Video360();
+ 
+     Video360(const Video360&) = delete;
+     Video360& operator=(const Video360&) = delete;
+ 
+-    // Opens the file and starts the decode thread. Returns false (and logs) on failure.
++    // Opens the file and reads the stream geometry. Does not decode anything yet, so the
++    // caller can size its buffers from Width()/Height(). Returns false (and logs) on failure.
+     bool Open(const std::string& path);
+ 
++    // Hands over the destination buffers. Must be called after Open() and before Start(),
++    // with at least two buffers (kFrameBuffers is the sane number).
++    void SetFrameBuffers(std::vector<Video360Buffer> buffers);
++
++    // Starts the decode thread. Returns false if no buffers were set.
++    bool Start();
++
+     bool IsOpen() const;
+     int Width() const;
+     int Height() const;
+@@ -41,18 +68,29 @@ class Video360 {
+     size_t YBytes() const;   // Width() * Height()
+     size_t UVBytes() const;  // Width() * Height() / 2
+ 
+-    // Colorimetry of the stream, for the GPU conversion shader. Stable after Open() using
+-    // stream metadata; unspecified streams fall back to the HD/SD heuristic (>=720p -> BT.709).
++    // Frames per second the file declares. Useful to sanity-check what the pipeline sustains.
++    double FrameRate() const;
++
++    // Name of the video codec, for the "now playing" banner.
++    std::string CodecName() const;
++
++    // What the container says about projection and stereo packing (the MP4 `sv3d`/`st3d`
++    // boxes). Either field may come back Unknown; feed the result to ResolvePanoLayout().
++    PanoLayout DetectedLayout() const;
++
++    // Colorimetry of the stream, for the GPU conversion shader. Stable after the first frame
++    // using stream metadata; unspecified streams fall back to the HD/SD heuristic (>=720p ->
++    // BT.709).
+     bool FullRange() const;
+     bool Bt709() const;
+ 
+     // True when NVDEC is actually decoding (not merely requested).
+     bool HwDecodeActive() const;
+ 
+-    // Returns the frame that should be on screen now, or nullptr when the frame already
+-    // uploaded is still the correct one (i.e. nothing new is due yet). The returned pointer
+-    // stays valid until the next call.
+-    const Video360Frame* AcquireCurrentFrame();
++    // Index of the buffer that should be on screen now, or -1 when the frame already uploaded
++    // is still the correct one (i.e. nothing new is due yet). The returned buffer stays valid
++    // and untouched by the decoder until the next call that returns a different index.
++    int AcquireCurrentSlot();
+ 
+    private:
+     struct Impl;
+diff --git a/src/tests/hello_xr/vulkan_shaders/frag.glsl b/src/tests/hello_xr/vulkan_shaders/frag.glsl
+index def5a53..ca12562 100644
+--- a/src/tests/hello_xr/vulkan_shaders/frag.glsl
++++ b/src/tests/hello_xr/vulkan_shaders/frag.glsl
+@@ -9,10 +9,17 @@
+ 
+ #define PI 3.14159265359
+ 
++#define PROJ_360  0   // full equirectangular sphere
++#define PROJ_180  1   // half-equirectangular: a hemisphere in front of you
++#define PROJ_FLAT 2   // ordinary rectangular video on a virtual screen
++
+ layout (std140, push_constant) uniform buf
+ {
+-    mat4 viewRotation;   // eye orientation: view space -> world space
+-    vec4 fovTangents;    // tan(angleLeft), tan(angleRight), tan(angleUp), tan(angleDown)
++    mat4 viewRotation;    // eye orientation: view space -> world space
++    vec4 fovTangents;     // tan(angleLeft), tan(angleRight), tan(angleUp), tan(angleDown)
++    vec4 uvScaleOffset;   // xy scale, zw offset: this eye's sub-rectangle of a stereo frame
++    vec4 panoFov;         // 180: half-angles in radians. flat: half-extents of the screen.
++    ivec4 mode;           // x: PROJ_*
+ } ubuf;
+ 
+ layout (set = 0, binding = 0) uniform sampler2D equirectTex;
+@@ -28,19 +35,53 @@ void main()
+     float xv = mix(ubuf.fovTangents.x, ubuf.fovTangents.y, s);  // left -> right
+     float yv = mix(ubuf.fovTangents.z, ubuf.fovTangents.w, t);  // up -> down
+ 
+-    // View space looks down -Z. Rotate the ray into world space; no translation, the photo is at infinity.
++    // View space looks down -Z. Rotate the ray into world space; no translation, the image is at infinity.
+     vec3 dir = normalize(mat3(ubuf.viewRotation) * vec3(xv, yv, -1.0));
+ 
+-    vec2 uv = vec2(atan(dir.x, -dir.z) / (2.0 * PI) + 0.5,
+-                   acos(clamp(dir.y, -1.0, 1.0)) / PI);
++    vec2 uv;
++    float inside = 1.0;
++    bool wraps = false;
++
++    if (ubuf.mode.x == PROJ_FLAT) {
++        // A virtual screen floating straight ahead. Rays going sideways or backwards miss it.
++        float depth = -dir.z;
++        vec2 screen = dir.xy / max(depth, 1e-4);
++        uv = screen / vec2(ubuf.panoFov.x, -ubuf.panoFov.y) * 0.5 + 0.5;
++        inside = (depth > 0.0 && all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)))) ? 1.0 : 0.0;
++    } else {
++        // Equirectangular: horizontal angle -> u, vertical angle -> v.
++        float az = atan(dir.x, -dir.z);            // 0 straight ahead, +/-PI behind
++        float el = asin(clamp(dir.y, -1.0, 1.0));  // +PI/2 straight up
++
++        if (ubuf.mode.x == PROJ_180) {
++            // The frame only holds the hemisphere in front of you; everything else stays black
++            // instead of smearing the edge columns across the back of your head.
++            uv = vec2(az / (2.0 * ubuf.panoFov.x) + 0.5, 0.5 - el / (2.0 * ubuf.panoFov.y));
++            inside = (all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)))) ? 1.0 : 0.0;
++        } else {
++            uv = vec2(az / (2.0 * PI) + 0.5, 0.5 - el / PI);
++            wraps = true;
++        }
++    }
+ 
+     // u wraps from 1 back to 0 at the seam behind the viewer. The implicit derivative there is
+     // ~1.0 instead of ~0, which would drive the mip selection to the smallest level and paint a
+     // blocky band across the seam - so unwrap the derivatives and select the mip explicitly.
++    //
++    // The derivatives are taken unconditionally, before anything is masked: in a quad where
++    // some pixels had taken a different branch they would otherwise be undefined.
+     vec2 dx = dFdx(uv);
+     vec2 dy = dFdy(uv);
+-    dx.x -= round(dx.x);
+-    dy.x -= round(dy.x);
++    if (wraps) {
++        dx.x -= round(dx.x);
++        dy.x -= round(dy.x);
++    }
++
++    // Finally pick this eye's half of a stereo frame. Identity for mono footage, so the
++    // mapping above never has to know how the two eyes are packed.
++    uv = uv * ubuf.uvScaleOffset.xy + ubuf.uvScaleOffset.zw;
++    dx *= ubuf.uvScaleOffset.xy;
++    dy *= ubuf.uvScaleOffset.xy;
+ 
+-    FragColor = textureGrad(equirectTex, uv, dx, dy);
++    FragColor = vec4(textureGrad(equirectTex, uv, dx, dy).rgb * inside, 1.0);
+ }
+diff --git a/src/tests/hello_xr/vulkan_utils.h b/src/tests/hello_xr/vulkan_utils.h
+index e29fd17..59052aa 100644
+--- a/src/tests/hello_xr/vulkan_utils.h
++++ b/src/tests/hello_xr/vulkan_utils.h
+@@ -935,9 +935,14 @@ struct RenderTarget {
+     VkDevice m_vkDevice{VK_NULL_HANDLE};
+ };
+ 
++// Matches the push_constant block in vulkan_shaders/frag.glsl. std140, so every member is
++// 16-byte aligned and this comes to 112 bytes - inside the 128 bytes Vulkan guarantees.
+ struct VulkanUniformBuffer {
+-    XrMatrix4x4f mvp;
+-    XrColor4f tintColor;
++    XrMatrix4x4f mvp;         // eye orientation, view space -> world space
++    XrColor4f tintColor;      // fov tangents: left, right, up, down
++    float uvScaleOffset[4];   // this eye's sub-rectangle of a stereo frame
++    float panoFov[4];         // 180: half-angles in radians. flat: half-extents of the screen.
++    int32_t mode[4];          // x: 0 = 360 equirect, 1 = 180 half-equirect, 2 = flat screen
+ };
+ 
+ // Simple vertex MVP xform, tint color & color fragment shader layout
+-- 
+2.47.3
+

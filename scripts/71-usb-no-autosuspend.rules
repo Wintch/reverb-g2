@@ -15,3 +15,8 @@ ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="2109", TEST=="power/control", 
 ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="03f0", TEST=="power/control", ATTR{power/control}="on"
 ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="04b4", TEST=="power/control", ATTR{power/control}="on"
 ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="045e", TEST=="power/control", ATTR{power/control}="on"
+
+# Reverb G2 audio codec (Realtek, behind the headset's USB 2.0 hub). Added 2026-08-04, the
+# first time this device ever enumerated on this rig - it was missing from the original rule
+# because a bad USB-A port kept the whole USB 2.0 branch from coming up.
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="0bda", ATTR{idProduct}=="4c15", TEST=="power/control", ATTR{power/control}="on"

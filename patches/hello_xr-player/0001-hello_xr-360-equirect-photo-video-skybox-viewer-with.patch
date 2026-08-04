@@ -1,8 +1,8 @@
 From a940a320076350ff76a7e5928dc8b2688f21215d Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Tue, 4 Aug 2026 12:04:02 -0300
-Subject: [PATCH] hello_xr: 360 equirect photo/video skybox viewer with NVDEC
- decode
+Subject: [PATCH 1/3] hello_xr: 360 equirect photo/video skybox viewer with
+ NVDEC decode
 
 Replaces the spinning-cube scene with an equirectangular skybox renderer
 driven from OpenXR eye poses, for viewing 360 photos and videos on an HMD:

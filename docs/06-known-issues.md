@@ -53,6 +53,29 @@ Esto explica también el síntoma que el usuario venía sufriendo en Windows des
 (device de audio que aparece, se mutea y desaparece). Nunca fue un problema de sistema
 operativo.
 
+## Caídas del hub USB2 bajo carga: NO es la fuente (2026-08-04, tarde)
+
+Con el panel encendido, el hub USB 2.0 interno (`04b4:6506`) se resetea cada tanto y se
+lleva al companion `03f0:0580` y al audio. Desconexión limpia + re-enumeración limpia, sin
+`error -71`. Medido a la mañana con gradiente de carga: 0/10 drops sin Monado → 6/15 con
+panel + render. Eso parecía un brownout, y la conclusión de la mañana fue "cambiar la
+fuente DC".
+
+**Esa conclusión está retirada.** Evidencia del usuario: en **Windows 11 el mismo casco,
+misma fuente, mismo todo, anduvo HORAS a 90Hz** (que consume más que nuestro 60Hz) sin una
+sola caída. Si faltara corriente, Windows caería igual — el hardware no sabe qué OS corre.
+Lo único frágil en Windows fue siempre el audio (device que aparece, se mutea, desaparece),
+o sea la rama de audio es problemática en ambos OS por su cuenta.
+
+Reproducido además 2 veces hoy: companion caído durante horas de uso → `kill` a Monado →
+**vuelve solo a los ~5 segundos**. Un problema eléctrico no se arregla cerrando un proceso.
+
+**Hipótesis vigente:** el driver WMR de Monado maneja los reportes HID (keepalive/estado)
+distinto que el stack de Windows, y algo de ese tráfico — o su ausencia — hace que el
+firmware del casco recicle el hub. Correlaciona con carga porque Monado bajo carga cambia
+su timing de HID. Pendiente: instrumentar `wmr_hmd.c` (logging de cada report + timestamps)
+la próxima vez que se caiga. **No comprar fuente.**
+
 ## Basalt SLAM diverge (6DoF de cabeza)
 
 ~3° de error medio entre frames con el casco INMÓVIL (spam de `det(Q1Jl)==0`). Se usa
