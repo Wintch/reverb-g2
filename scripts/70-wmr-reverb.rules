@@ -1,0 +1,10 @@
+# HP Reverb G2 / Windows Mixed Reality - grant plugdev group rw access to hidraw + raw usb nodes
+# HP QHMD (HMD display board), Microsoft HoloLens Sensors (WMR IMU/tracking cameras), Cypress WMR hub
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="03f0", MODE="0664", GROUP="plugdev"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="045e", MODE="0664", GROUP="plugdev"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="04b4", MODE="0664", GROUP="plugdev"
+
+# Raw USB device nodes (libusb bulk/control transfers for the tracking cameras)
+SUBSYSTEM=="usb", ATTR{idVendor}=="03f0", MODE="0664", GROUP="plugdev"
+SUBSYSTEM=="usb", ATTR{idVendor}=="045e", MODE="0664", GROUP="plugdev"
+SUBSYSTEM=="usb", ATTR{idVendor}=="04b4", MODE="0664", GROUP="plugdev"

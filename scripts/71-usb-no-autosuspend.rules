@@ -1,0 +1,17 @@
+# Reverb G2 rig - disable USB autosuspend for devices that must never sleep.
+#
+# Background: the root filesystem lives on a USB-attached SATA SSD, and the
+# headset's companion board (03f0:0580) is physically flaky. Letting the kernel
+# autosuspend either of them (usbcore.autosuspend=2 is the distro default) has
+# caused full-system hangs. Install to /etc/udev/rules.d/ and reload.
+
+# JMicron JMS578 enclosure (root SSD)
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="152d", ATTR{idProduct}=="0578", TEST=="power/control", ATTR{power/control}="on"
+
+# VIA Labs hubs (carry the SSD and audio devices)
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="2109", TEST=="power/control", ATTR{power/control}="on"
+
+# HP Reverb G2: QHMD companion board, WMR hub, HoloLens sensors
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="03f0", TEST=="power/control", ATTR{power/control}="on"
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="04b4", TEST=="power/control", ATTR{power/control}="on"
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="045e", TEST=="power/control", ATTR{power/control}="on"
