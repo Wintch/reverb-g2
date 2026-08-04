@@ -1,7 +1,7 @@
 From 2a9a37e523b5e2c5e7c67adc4e1e23d523576e50 Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Tue, 4 Aug 2026 12:17:31 -0300
-Subject: [PATCH 6/6] d/wmr: Tolerate transient read errors in the BT
+Subject: [PATCH 6/7] d/wmr: Tolerate transient read errors in the BT
  controller thread
 
 A single os_hid_read error permanently broke the direct-Bluetooth read

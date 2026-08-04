@@ -1,0 +1,69 @@
+From e2492cce00dfa3f4ce3a18c5dd0aa28a07b275b9 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Tue, 4 Aug 2026 14:09:47 -0300
+Subject: [PATCH 7/7] wmr: add WMR_CAMERAS=0 to skip tracking camera streaming
+
+The tracking cameras push ~2560x480 continuously. For orientation-only content
+(360 photo/video, skyboxes) nothing consumes those frames, so allow skipping the
+stream entirely.
+
+Note: this was written to test whether camera traffic was destabilising the
+headset's USB 2.0 branch. It is NOT - measurements showed the instability tracks
+panel power draw, not camera traffic. Kept because skipping an unused 2560x480
+stream is worthwhile on its own for 3DoF use.
+---
+ src/xrt/drivers/wmr/wmr_hmd.c | 31 +++++++++++++++++++++++--------
+ 1 file changed, 23 insertions(+), 8 deletions(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_hmd.c b/src/xrt/drivers/wmr/wmr_hmd.c
+index 86d79730a..51c97c7ed 100644
+--- a/src/xrt/drivers/wmr/wmr_hmd.c
++++ b/src/xrt/drivers/wmr/wmr_hmd.c
+@@ -71,6 +71,11 @@
+ //! Specifies whether the user wants to use a SLAM tracker.
+ DEBUG_GET_ONCE_BOOL_OPTION(wmr_slam, "WMR_SLAM", true)
+ 
++//! Whether to stream the tracking cameras at all. Turning them off keeps the headset's
++//! USB 2.0 branch (companion board: HID control + audio) stable on marginal cables, at the
++//! cost of SLAM and hand tracking. Only useful for orientation-only content.
++DEBUG_GET_ONCE_BOOL_OPTION(wmr_cameras, "WMR_CAMERAS", true)
++
+ //! Specifies whether the user wants to use a SLAM tracker.
+ DEBUG_GET_ONCE_NUM_OPTION(sleep_seconds, "WMR_DISPLAY_INIT_SLEEP_SECONDS", 4)
+ 
+@@ -2033,14 +2038,24 @@ wmr_hmd_create(enum wmr_headset_type hmd_type,
+ 		return;
+ 	}
+ 
+-	// Stream data source into sinks (if populated)
+-	bool stream_started = xrt_fs_slam_stream_start(wh->tracking.source, &sinks);
+-	if (!stream_started) {
+-		//! @todo Could reach this due to !XRT_HAVE_LIBUSB but the HMD should keep working
+-		WMR_WARN(wh, "Failed to start WMR source");
+-		wmr_hmd_destroy(&wh->base);
+-		wh = NULL;
+-		return;
++	// Stream data source into sinks (if populated).
++	//
++	// The tracking cameras push ~2560x480 continuously over the headset's SuperSpeed branch.
++	// On cables/ports where the USB 2.0 branch is marginal, that traffic is enough to knock
++	// the companion board (HID control + audio) off the bus every few seconds. For
++	// orientation-only use (360 photo/video, skyboxes) nothing consumes the camera frames
++	// anyway, so allow skipping the stream entirely and keep the audio link stable.
++	if (!debug_get_bool_option_wmr_cameras()) {
++		WMR_INFO(wh, "Camera streaming disabled (WMR_CAMERAS=0) - no SLAM or hand tracking.");
++	} else {
++		bool stream_started = xrt_fs_slam_stream_start(wh->tracking.source, &sinks);
++		if (!stream_started) {
++			//! @todo Could reach this due to !XRT_HAVE_LIBUSB but the HMD should keep working
++			WMR_WARN(wh, "Failed to start WMR source");
++			wmr_hmd_destroy(&wh->base);
++			wh = NULL;
++			return;
++		}
+ 	}
+ 
+ 	// Hand over hololens sensor device to reading thread.
+-- 
+2.47.3
+

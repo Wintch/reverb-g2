@@ -1,7 +1,7 @@
 From 979f0c47d01d4aa02f006f7902b2bcec3c087ac1 Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Tue, 4 Aug 2026 12:17:31 -0300
-Subject: [PATCH 3/6] d/wmr: Fix controller input handling (sticks, grip click,
+Subject: [PATCH 3/7] d/wmr: Fix controller input handling (sticks, grip click,
  haptic name, timestamps)
 
 - Thumbsticks: the 0..0x0FFF range around a 0x07FF centre overshoots

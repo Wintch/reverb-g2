@@ -1,7 +1,7 @@
 From cf993b813ed1deecd559310fb5e34e46e629e216 Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Tue, 4 Aug 2026 12:17:31 -0300
-Subject: [PATCH 4/6] d/wmr: Retry controller firmware reads and shrink the
+Subject: [PATCH 4/7] d/wmr: Retry controller firmware reads and shrink the
  failure window
 
 On the tunnelled (headset-radio) transport, firmware commands share the

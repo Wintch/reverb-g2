@@ -1,7 +1,7 @@
 From fd1c7adc2f09577875029396be7ae0010da0f4ef Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Tue, 4 Aug 2026 12:17:31 -0300
-Subject: [PATCH 5/6] d/wmr: Re-request controller status periodically, bound
+Subject: [PATCH 5/7] d/wmr: Re-request controller status periodically, bound
  the startup wait
 
 The controller status request was sent exactly once at startup. If

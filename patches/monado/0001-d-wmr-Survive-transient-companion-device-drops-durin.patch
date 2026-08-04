@@ -1,7 +1,7 @@
 From e39e411dc2e0cd2de725fe38744dc248df5bfdfc Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Tue, 4 Aug 2026 12:10:39 -0300
-Subject: [PATCH 1/6] d/wmr: Survive transient companion device drops during
+Subject: [PATCH 1/7] d/wmr: Survive transient companion device drops during
  startup
 
 The HP Reverb G2's companion HID device (03f0:0580) routinely drops off
