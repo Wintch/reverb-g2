@@ -1,0 +1,37 @@
+From c5a86b490ccc72e0ca0c80b61fb6503d27801c45 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Tue, 4 Aug 2026 12:10:39 -0300
+Subject: [PATCH 2/6] t/steamvr_drv: Add $ORIGIN RPATH so bundled deps resolve
+ in pressure-vessel
+
+SteamVR's vrserver runs inside Valve's Steam Linux Runtime container,
+which has neither the host's locally-built libraries nor its
+LD_LIBRARY_PATH. Setting an $ORIGIN RPATH on driver_monado.so lets a
+deployment bundle the driver's dependencies next to the .so inside
+steamvr-monado/bin/linux64/, which is the only mechanism that works from
+inside the sandbox.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/xrt/targets/steamvr_drv/CMakeLists.txt | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/src/xrt/targets/steamvr_drv/CMakeLists.txt b/src/xrt/targets/steamvr_drv/CMakeLists.txt
+index 52d6f5c77..256edc9d2 100644
+--- a/src/xrt/targets/steamvr_drv/CMakeLists.txt
++++ b/src/xrt/targets/steamvr_drv/CMakeLists.txt
+@@ -65,6 +65,11 @@ set_target_properties(driver_monado PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${PLUGI
+ # don't add lib prefix to driver_monado.so
+ set_target_properties(driver_monado PROPERTIES PREFIX "")
+ 
++# Look for bundled dependencies alongside the .so first - needed so the driver
++# can find libs (e.g. libhidapi-libusb) that aren't present inside SteamVR's
++# sandboxed Steam Linux Runtime container.
++set_target_properties(driver_monado PROPERTIES BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN")
++
+ install(
+ 	DIRECTORY "${PROJECT_BINARY_DIR}/steamvr-monado"
+ 	DESTINATION "${CMAKE_INSTALL_PREFIX}/share"
+-- 
+2.47.3
+

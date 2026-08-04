@@ -1,0 +1,491 @@
+From 0e0f98c165238437d907d2391adc10a8ef40c30f Mon Sep 17 00:00:00 2001
+From: Ashish Kumar Singh <ashishkmr472@gmail.com>
+Date: Thu, 21 May 2026 14:25:26 -0400
+Subject: [PATCH 2/3] nvkms/nvidia-drm: enable Wayland DRM-lease of VR HMDs
+
+Make NVIDIA-driven VR HMDs leasable and presentable over wp_drm_lease on Wayland
+(the kernel equivalent of the X11 "xrandr --set non-desktop 1" + Xorg flip-
+permission path):
+
+- Flag the HMD's native (largest-area) timing as RandR-preferred so preferred-
+  only mode scans (SteamVR's vrcompositor) select it.  [nvkms-modepool.c]
+- Expose the existing isVrHmd device bit to DRM as connector non_desktop=1, so
+  the compositor advertises the HMD over wp_drm_lease and keeps it out of desktop
+  atomic commits.  [nvkms-kapi.h x2, nvkms-kapi.c, nvidia-drm-connector.c]
+- Grant a DRM lessee flip permission on its leased head: per-apiHead
+  lesseeFlipPermissive, set at CREATE_LEASE and cleared at REVOKE_LEASE, honored
+  in nvCheckLayerPermissions().  [nvkms-api.h, nvkms-types.h, nvkms.c,
+  nvkms-flip.c, nvidia-drm-drv.c]
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ kernel-open/common/inc/nvkms-kapi.h           | 19 +++++
+ kernel-open/nvidia-drm/nvidia-drm-connector.c |  5 ++
+ kernel-open/nvidia-drm/nvidia-drm-drv.c       | 79 +++++++++++++++++--
+ src/nvidia-modeset/include/nvkms-types.h      |  4 +
+ src/nvidia-modeset/interface/nvkms-api.h      | 27 +++++++
+ .../kapi/interface/nvkms-kapi.h               | 19 +++++
+ src/nvidia-modeset/kapi/src/nvkms-kapi.c      | 25 ++++++
+ src/nvidia-modeset/src/nvkms-flip.c           |  6 ++
+ src/nvidia-modeset/src/nvkms-modepool.c       | 59 ++++++++++++++
+ src/nvidia-modeset/src/nvkms.c                | 27 +++++++
+ 10 files changed, 264 insertions(+), 6 deletions(-)
+
+diff --git a/kernel-open/common/inc/nvkms-kapi.h b/kernel-open/common/inc/nvkms-kapi.h
+index 34ed6c8e..08c5bd6a 100644
+--- a/kernel-open/common/inc/nvkms-kapi.h
++++ b/kernel-open/common/inc/nvkms-kapi.h
+@@ -513,6 +513,10 @@ struct NvKmsKapiDynamicDisplayParams {
+     /* [OUT] VRR status */
+     NvBool vrrSupported;
+ 
++    /* [OUT] True for VR HMD (MSFT-VR EDID + IS_DIRECTMODE_DISPLAY).
++     * DRM uses this to set connector->display_info.non_desktop. */
++    NvBool isVrHmd;
++
+     /* [IN/OUT] EDID of connected monitor/ Input to override EDID */
+     struct {
+         NvU16  bufferSize;
+@@ -756,6 +760,21 @@ struct NvKmsKapiFunctionsTable {
+         struct NvKmsKapiDevice *device
+     );
+ 
++    /*!
++     * Mark an apiHead as lessee-permissive (or clear it). Bypasses the
++     * per-popen flipPermissions check for that head so a DRM lessee's
++     * separate /dev/nvidia-modeset fd can flip without GRANT_PERMISSIONS.
++     * Called from CREATE_LEASE / REVOKE_LEASE in nv_drm.
++     *
++     * \return NV_TRUE on success, NV_FALSE on failure.
++     */
++    NvBool (*setLesseeFlipPermissive)
++    (
++        struct NvKmsKapiDevice *device,
++        NvU32 apiHead,
++        NvBool permissive
++    );
++
+     /*!
+      * Registers for notification, via
+      * NvKmsKapiAllocateDeviceParams::eventCallback, of the events specified
+diff --git a/kernel-open/nvidia-drm/nvidia-drm-connector.c b/kernel-open/nvidia-drm/nvidia-drm-connector.c
+index 2d5483a7..82227535 100644
+--- a/kernel-open/nvidia-drm/nvidia-drm-connector.c
++++ b/kernel-open/nvidia-drm/nvidia-drm-connector.c
+@@ -147,6 +147,11 @@ __nv_drm_detect_encoder(struct NvKmsKapiDynamicDisplayParams *pDetectParams,
+             }
+         }
+ 
++        /* Force non_desktop for VR HMDs: MSFT-VR EDID extension marks them
++         * via a VSDB, not the standard EDID flag the kernel parses. */
++        nv_connector->base.display_info.non_desktop =
++            pDetectParams->isVrHmd ? 1 : 0;
++
+         return true;
+     }
+ 
+diff --git a/kernel-open/nvidia-drm/nvidia-drm-drv.c b/kernel-open/nvidia-drm/nvidia-drm-drv.c
+index e4ae38a0..3b3cb173 100644
+--- a/kernel-open/nvidia-drm/nvidia-drm-drv.c
++++ b/kernel-open/nvidia-drm/nvidia-drm-drv.c
+@@ -1676,9 +1676,12 @@ static void nv_drm_finish_revoking_objects(struct drm_device *dev,
+ 
+     nv_drm_for_each_crtc(crtc, dev) {
+         struct nv_drm_crtc *nv_crtc = to_nv_crtc(crtc);
+-        if (nv_crtc->modeset_permission_filep &&
+-            nv_drm_is_in_objects(crtc->base.id, objects, objects_count)) {
+-            nv_crtc->modeset_permission_filep = NULL;
++        if (nv_drm_is_in_objects(crtc->base.id, objects, objects_count)) {
++            if (nv_crtc->modeset_permission_filep) {
++                nv_crtc->modeset_permission_filep = NULL;
++            }
++            nvKms->setLesseeFlipPermissive(to_nv_device(dev)->pDevice,
++                                           nv_crtc->head, NV_FALSE);
+         }
+     }
+ 
+@@ -1689,10 +1692,74 @@ static void nv_drm_finish_revoking_objects(struct drm_device *dev,
+ #endif
+ }
+ 
++/*
++ * After CREATE_LEASE, mark each leased CRTC's apiHead lesseeFlipPermissive so
++ * the lessee's separate NVKMS popen (e.g. libnvidia-vulkan.so on the
++ * VK_KHR_display path) can flip without a GRANT_PERMISSIONS handshake.
++ */
++static void nv_drm_finish_creating_lease(struct drm_device *dev,
++                                         struct drm_file *filep,
++                                         unsigned int cmd, unsigned long arg)
++{
++    unsigned int ioc_size;
++    struct drm_mode_create_lease create_lease;
++    struct drm_master *lessor, *lessee;
++    struct nv_drm_device *nv_dev = to_nv_device(dev);
++    struct drm_crtc *crtc;
++#if NV_DRM_MODESET_LOCK_ALL_END_ARGUMENT_COUNT == 3
++    int ret = 0;
++    struct drm_modeset_acquire_ctx ctx;
++#endif
++
++    ioc_size = _IOC_SIZE(cmd);
++    if (ioc_size > sizeof(create_lease)) {
++        return;
++    }
++    if (copy_from_user(&create_lease, (void __user *)arg, ioc_size) != 0) {
++        return;
++    }
++
++    lessor = nv_drm_file_get_master(filep);
++    if (lessor == NULL) {
++        return;
++    }
++
++    mutex_lock(&dev->mode_config.idr_mutex);
++    lessee = nv_drm_find_lessee(lessor, create_lease.lessee_id);
++    if (lessee == NULL) {
++        mutex_unlock(&dev->mode_config.idr_mutex);
++        return;
++    }
++
++#if NV_DRM_MODESET_LOCK_ALL_END_ARGUMENT_COUNT == 3
++    DRM_MODESET_LOCK_ALL_BEGIN(dev, ctx, DRM_MODESET_ACQUIRE_INTERRUPTIBLE,
++                               ret);
++#else
++    mutex_lock(&dev->mode_config.mutex);
++#endif
++
++    nv_drm_for_each_crtc(crtc, dev) {
++        if (idr_find(&lessee->leases, crtc->base.id) != NULL) {
++            struct nv_drm_crtc *nv_crtc = to_nv_crtc(crtc);
++            nvKms->setLesseeFlipPermissive(nv_dev->pDevice, nv_crtc->head,
++                                           NV_TRUE);
++        }
++    }
++
++#if NV_DRM_MODESET_LOCK_ALL_END_ARGUMENT_COUNT == 3
++    DRM_MODESET_LOCK_ALL_END(dev, ctx, ret);
++#else
++    mutex_unlock(&dev->mode_config.mutex);
++#endif
++    mutex_unlock(&dev->mode_config.idr_mutex);
++}
++
+ /*
+  * Wrapper around drm_ioctl to hook in to upstream ioctl.
+  *
+- * Currently used to add additional handling to REVOKE_LEASE.
++ * Used to add additional handling to CREATE_LEASE and REVOKE_LEASE: bridge
++ * DRM-lease state to NVKMS flip permissions so the lessee's separate
++ * /dev/nvidia-modeset fd can flip on leased heads.
+  */
+ static long nv_drm_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+ {
+@@ -1704,7 +1771,6 @@ static long nv_drm_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+     int objects_count = 0;
+ 
+     if (cmd == DRM_IOCTL_MODE_REVOKE_LEASE) {
+-        // Save the revoked objects before revoking.
+         nv_drm_get_revoked_objects(dev, file_priv, cmd, arg, &objects,
+                                    &objects_count);
+     }
+@@ -1713,11 +1779,12 @@ static long nv_drm_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+ 
+     if (cmd == DRM_IOCTL_MODE_REVOKE_LEASE && objects) {
+         if (retcode == 0) {
+-            // If revoking was successful, finish revoking the objects.
+             nv_drm_finish_revoking_objects(dev, file_priv, objects,
+                                            objects_count);
+         }
+         nv_drm_free(objects);
++    } else if (cmd == DRM_IOCTL_MODE_CREATE_LEASE && retcode == 0) {
++        nv_drm_finish_creating_lease(dev, file_priv, cmd, arg);
+     }
+ 
+     return retcode;
+diff --git a/src/nvidia-modeset/include/nvkms-types.h b/src/nvidia-modeset/include/nvkms-types.h
+index 8a22ec95..020b60eb 100644
+--- a/src/nvidia-modeset/include/nvkms-types.h
++++ b/src/nvidia-modeset/include/nvkms-types.h
+@@ -1302,6 +1302,10 @@ typedef struct _NVEvoDevRec {
+ 
+     struct {
+         NvU32 numLayers;
++        /* Set when this apiHead's CRTC is DRM-leased; bypasses the per-popen
++         * flipPermissions check so the lessee's separate /dev/nvidia-modeset
++         * fd can flip without GRANT_PERMISSIONS. Managed by nv_drm. */
++        NvBool lesseeFlipPermissive;
+     } apiHead[NVKMS_MAX_HEADS_PER_DISP];
+ } NVDevEvoRec;
+ 
+diff --git a/src/nvidia-modeset/interface/nvkms-api.h b/src/nvidia-modeset/interface/nvkms-api.h
+index b06086a7..bb9f7614 100644
+--- a/src/nvidia-modeset/interface/nvkms-api.h
++++ b/src/nvidia-modeset/interface/nvkms-api.h
+@@ -272,6 +272,7 @@ enum NvKmsIoctlCommand {
+     NVKMS_IOCTL_DISABLE_VBLANK_SEM_CONTROL,
+     NVKMS_IOCTL_ACCEL_VBLANK_SEM_CONTROLS,
+     NVKMS_IOCTL_FRAMEBUFFER_CONSOLE_DISABLED,
++    NVKMS_IOCTL_SET_LESSEE_FLIP_PERMISSIVE,
+ };
+ 
+ 
+@@ -4331,4 +4332,30 @@ struct NvKmsFramebufferConsoleDisabledParams {
+     struct NvKmsFramebufferConsoleDisabledReply reply;
+ };
+ 
++/*
++ * NVKMS_IOCTL_SET_LESSEE_FLIP_PERMISSIVE
++ *
++ * Set/clear an apiHead's lesseeFlipPermissive flag. When set,
++ * nvCheckLayerPermissions() returns TRUE for any popen on that head, bridging
++ * DRM lease (master rights on leased objects) and NVKMS per-popen permissions
++ * (which normally require a GRANT_PERMISSIONS handshake the DRM-lease path
++ * never triggers). Called by nv_drm from CREATE_LEASE / REVOKE_LEASE. Kernel-
++ * mode clients only.
++ */
++
++struct NvKmsSetLesseeFlipPermissiveRequest {
++    NvKmsDeviceHandle deviceHandle;
++    NvU32 apiHead;
++    NvBool permissive;
++};
++
++struct NvKmsSetLesseeFlipPermissiveReply {
++    NvU32 padding;
++};
++
++struct NvKmsSetLesseeFlipPermissiveParams {
++    struct NvKmsSetLesseeFlipPermissiveRequest request;
++    struct NvKmsSetLesseeFlipPermissiveReply reply;
++};
++
+ #endif /* NVKMS_API_H */
+diff --git a/src/nvidia-modeset/kapi/interface/nvkms-kapi.h b/src/nvidia-modeset/kapi/interface/nvkms-kapi.h
+index 34ed6c8e..08c5bd6a 100644
+--- a/src/nvidia-modeset/kapi/interface/nvkms-kapi.h
++++ b/src/nvidia-modeset/kapi/interface/nvkms-kapi.h
+@@ -513,6 +513,10 @@ struct NvKmsKapiDynamicDisplayParams {
+     /* [OUT] VRR status */
+     NvBool vrrSupported;
+ 
++    /* [OUT] True for VR HMD (MSFT-VR EDID + IS_DIRECTMODE_DISPLAY).
++     * DRM uses this to set connector->display_info.non_desktop. */
++    NvBool isVrHmd;
++
+     /* [IN/OUT] EDID of connected monitor/ Input to override EDID */
+     struct {
+         NvU16  bufferSize;
+@@ -756,6 +760,21 @@ struct NvKmsKapiFunctionsTable {
+         struct NvKmsKapiDevice *device
+     );
+ 
++    /*!
++     * Mark an apiHead as lessee-permissive (or clear it). Bypasses the
++     * per-popen flipPermissions check for that head so a DRM lessee's
++     * separate /dev/nvidia-modeset fd can flip without GRANT_PERMISSIONS.
++     * Called from CREATE_LEASE / REVOKE_LEASE in nv_drm.
++     *
++     * \return NV_TRUE on success, NV_FALSE on failure.
++     */
++    NvBool (*setLesseeFlipPermissive)
++    (
++        struct NvKmsKapiDevice *device,
++        NvU32 apiHead,
++        NvBool permissive
++    );
++
+     /*!
+      * Registers for notification, via
+      * NvKmsKapiAllocateDeviceParams::eventCallback, of the events specified
+diff --git a/src/nvidia-modeset/kapi/src/nvkms-kapi.c b/src/nvidia-modeset/kapi/src/nvkms-kapi.c
+index a607f17b..1a12cdf9 100644
+--- a/src/nvidia-modeset/kapi/src/nvkms-kapi.c
++++ b/src/nvidia-modeset/kapi/src/nvkms-kapi.c
+@@ -1125,6 +1125,28 @@ static NvBool RevokeSubOwnership
+                                  sizeof(paramsRevoke));
+ }
+ 
++static NvBool SetLesseeFlipPermissive
++(
++    struct NvKmsKapiDevice *device,
++    NvU32 apiHead,
++    NvBool permissive
++)
++{
++    struct NvKmsSetLesseeFlipPermissiveParams params = { };
++
++    if (device->hKmsDevice == 0x0) {
++        return NV_TRUE;
++    }
++
++    params.request.deviceHandle = device->hKmsDevice;
++    params.request.apiHead = apiHead;
++    params.request.permissive = permissive;
++
++    return nvkms_ioctl_from_kapi(device->pKmsOpen,
++                                 NVKMS_IOCTL_SET_LESSEE_FLIP_PERMISSIVE,
++                                 &params, sizeof(params));
++}
++
+ static NvBool DeclareEventInterest
+ (
+     const struct NvKmsKapiDevice *device,
+@@ -1535,6 +1557,8 @@ static NvBool GetDynamicDisplayInfo(
+     }
+ 
+     params->connected = pParamsDpyDynamic->reply.connected;
++    params->isVrHmd =
++        pParamsDpyDynamic->reply.isVirtualRealityHeadMountedDisplay;
+ 
+     params->maxWidthInPixels  = pParamsDpyDynamic->reply.maxWidthInPixels;
+     params->maxHeightInPixels = pParamsDpyDynamic->reply.maxHeightInPixels;
+@@ -4022,6 +4046,7 @@ NvBool nvKmsKapiGetFunctionsTableInternal
+     funcsTable->revokePermissions    = RevokePermissions;
+     funcsTable->grantSubOwnership    = GrantSubOwnership;
+     funcsTable->revokeSubOwnership   = RevokeSubOwnership;
++    funcsTable->setLesseeFlipPermissive = SetLesseeFlipPermissive;
+ 
+     funcsTable->declareEventInterest = DeclareEventInterest;
+ 
+diff --git a/src/nvidia-modeset/src/nvkms-flip.c b/src/nvidia-modeset/src/nvkms-flip.c
+index d95ead28..db806934 100644
+--- a/src/nvidia-modeset/src/nvkms-flip.c
++++ b/src/nvidia-modeset/src/nvkms-flip.c
+@@ -50,6 +50,12 @@ NvBool nvCheckLayerPermissions(
+     const NvU8 allLayersMask = NVBIT(pDevEvo->apiHead[apiHead].numLayers) - 1;
+     NvU8 layerMask = 0;
+ 
++    /* DRM-lease: nv_drm marks leased heads permissive so the lessee's separate
++     * NVKMS popen (no GRANT_PERMISSIONS handshake) can flip. */
++    if (pDevEvo->apiHead[apiHead].lesseeFlipPermissive) {
++        return TRUE;
++    }
++
+     layerMask = pFlipPermissions->head[apiHead].layerMask;
+ 
+     /*
+diff --git a/src/nvidia-modeset/src/nvkms-modepool.c b/src/nvidia-modeset/src/nvkms-modepool.c
+index c88bac93..8ee39305 100644
+--- a/src/nvidia-modeset/src/nvkms-modepool.c
++++ b/src/nvidia-modeset/src/nvkms-modepool.c
+@@ -354,6 +354,52 @@ ValidateModeIndexEdid(NVDpyEvoPtr pDpyEvo,
+         return FALSE;
+     }
+ 
++    /*
++     * G2-Linux fix: for VR headsets, flag the native (highest-resolution)
++     * panel mode as preferred.
++     *
++     * VR HMDs (HP Reverb G2, other Windows Mixed Reality headsets, ...)
++     * advertise their full-resolution native panel mode through a DisplayID
++     * timing block (DisplayID 1.x Type I or DisplayID 2.0 Type VII), while
++     * the EDID base block's preferred detailed timing is a lower-resolution
++     * compatibility mode. VR compositors that search only an output's
++     * *preferred* RandR modes when looking for a direct-mode HMD display —
++     * SteamVR's vrcompositor in particular — can never select the native
++     * mode unless it is flagged preferred.
++     *
++     * The display itself identifies as a headset via the Microsoft VR
++     * Vendor-Specific Data Block (CTA-861 extension), so this is scoped to
++     * VR/AR HMDs and never alters preferred-mode reporting for ordinary
++     * monitors. For an HMD the highest-resolution timing is by definition
++     * the native panel mode, regardless of which block carried it, so we
++     * pick the largest mode by area then refresh rate. Additive: the EDID
++     * DTD preferred flag, set further down, is left intact.
++     */
++    int preferredVrModeIndex = -1;
++    {
++        const MSFT_VSDB_PARSED_INFO *pMsftVsdb =
++            &pDpyEvo->parsedEdid.info.msftVsdbInfo;
++        NvBool isVrHeadset =
++            pMsftVsdb->valid &&
++            (pMsftVsdb->primaryUseCase == MSFT_VSDB_FOR_VIRTUAL_REALITY_HEADSETS ||
++             pMsftVsdb->primaryUseCase == MSFT_VSDB_FOR_AUGMENTED_REALITY);
++
++        if (isVrHeadset) {
++            NvU32 bestArea = 0, bestRrx1k = 0;
++            int j;
++            for (j = 0; j < pDpyEvo->parsedEdid.info.total_timings; j++) {
++                const NVT_TIMING *t = &pDpyEvo->parsedEdid.info.timing[j];
++                NvU32 area = (NvU32)t->HVisible * (NvU32)t->VVisible;
++                if (area > bestArea ||
++                    (area == bestArea && t->etc.rrx1k > bestRrx1k)) {
++                    bestArea = area;
++                    bestRrx1k = t->etc.rrx1k;
++                    preferredVrModeIndex = j;
++                }
++            }
++        }
++    }
++
+     /* Scan through all EDID modes. */
+ 
+     for (i = 0; i < pDpyEvo->parsedEdid.info.total_timings; i++) {
+@@ -495,6 +541,19 @@ ValidateModeIndexEdid(NVDpyEvoPtr pDpyEvo,
+             }
+         }
+ 
++        /*
++         * G2-Linux fix: for a VR headset, also flag the native (largest)
++         * panel mode as preferred — see the scan near the top of this
++         * function that computes preferredVrModeIndex. This is what lets
++         * SteamVR's vrcompositor, which matches only an output's preferred
++         * RandR modes, select the G2's native 4320x2160 mode instead of the
++         * low-resolution EDID compatibility timing.
++         */
++        if (i == preferredVrModeIndex) {
++
++            pReply->preferredMode = TRUE;
++        }
++
+         /*
+          * If the NVT_TIMING was patched for 3DVision above, then the
+          * NvModeTimings generated from it, when passed to
+diff --git a/src/nvidia-modeset/src/nvkms.c b/src/nvidia-modeset/src/nvkms.c
+index 865fbf05..89b80896 100644
+--- a/src/nvidia-modeset/src/nvkms.c
++++ b/src/nvidia-modeset/src/nvkms.c
+@@ -4930,6 +4930,32 @@ static NvBool FramebufferConsoleDisabled(
+     return TRUE;
+ }
+ 
++static NvBool SetLesseeFlipPermissive(
++    struct NvKmsPerOpen *pOpen,
++    void *pParamsVoid)
++{
++    const struct NvKmsSetLesseeFlipPermissiveParams *pParams = pParamsVoid;
++    struct NvKmsPerOpenDev *pOpenDev =
++        GetPerOpenDev(pOpen, pParams->request.deviceHandle);
++
++    if (pOpenDev == NULL) {
++        return FALSE;
++    }
++    if (pOpen->clientType != NVKMS_CLIENT_KERNEL_SPACE) {
++        return FALSE;
++    }
++    if (!nvKmsOpenDevHasSubOwnerPermissionOrBetter(pOpenDev)) {
++        return FALSE;
++    }
++    if (pParams->request.apiHead >= ARRAY_LEN(pOpenDev->pDevEvo->apiHead)) {
++        return FALSE;
++    }
++
++    pOpenDev->pDevEvo->apiHead[pParams->request.apiHead].lesseeFlipPermissive =
++        pParams->request.permissive;
++    return TRUE;
++}
++
+ /*!
+  * Perform the ioctl operation requested by the client.
+  *
+@@ -5056,6 +5082,7 @@ NvBool nvKmsIoctl(
+         ENTRY(NVKMS_IOCTL_DISABLE_VBLANK_SEM_CONTROL, DisableVblankSemControl),
+         ENTRY(NVKMS_IOCTL_ACCEL_VBLANK_SEM_CONTROLS, AccelVblankSemControls),
+         ENTRY(NVKMS_IOCTL_FRAMEBUFFER_CONSOLE_DISABLED, FramebufferConsoleDisabled),
++        ENTRY(NVKMS_IOCTL_SET_LESSEE_FLIP_PERMISSIVE, SetLesseeFlipPermissive),
+     };
+ 
+     struct NvKmsPerOpen *pOpen = pOpenVoid;
+-- 
+2.53.0
+

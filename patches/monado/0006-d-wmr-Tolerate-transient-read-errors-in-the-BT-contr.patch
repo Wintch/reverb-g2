@@ -1,0 +1,62 @@
+From 2a9a37e523b5e2c5e7c67adc4e1e23d523576e50 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Tue, 4 Aug 2026 12:17:31 -0300
+Subject: [PATCH 6/6] d/wmr: Tolerate transient read errors in the BT
+ controller thread
+
+A single os_hid_read error permanently broke the direct-Bluetooth read
+thread while the xdev stayed registered, leaving a mute controller.
+Only give up after 10 consecutive errors, pacing retries at 100ms.
+Same class of fix as the HMD companion-device read tolerance.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/xrt/drivers/wmr/wmr_bt_controller.c | 16 ++++++++++++++--
+ src/xrt/drivers/wmr/wmr_bt_controller.h |  3 +++
+ 2 files changed, 17 insertions(+), 2 deletions(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_bt_controller.c b/src/xrt/drivers/wmr/wmr_bt_controller.c
+index c91385ed4..8a9ab4d84 100644
+--- a/src/xrt/drivers/wmr/wmr_bt_controller.c
++++ b/src/xrt/drivers/wmr/wmr_bt_controller.c
+@@ -55,9 +55,21 @@ read_packets(struct wmr_bt_connection *conn)
+ 	DRV_TRACE_IDENT(read_packets_got);
+ 
+ 	if (size < 0) {
+-		WMR_ERROR(conn, "WMR Controller (Bluetooth): Error reading from device");
+-		return false;
++		/* Transient read errors happen when the radio link hiccups; a single one
++		 * used to permanently break this thread while the xdev stayed registered,
++		 * leaving a mute controller. Only give up after several in a row. */
++		conn->consecutive_read_errors++;
++		if (conn->consecutive_read_errors >= 10) {
++			WMR_ERROR(conn, "WMR Controller (Bluetooth): %d consecutive read errors, giving up",
++			          conn->consecutive_read_errors);
++			return false;
++		}
++		WMR_DEBUG(conn, "WMR Controller (Bluetooth): Error reading from device (%d in a row)",
++		          conn->consecutive_read_errors);
++		os_nanosleep(U_TIME_1MS_IN_NS * 100);
++		return true;
+ 	}
++	conn->consecutive_read_errors = 0;
+ 	if (size == 0) {
+ 		WMR_TRACE(conn, "WMR Controller (Bluetooth): No data to read from device");
+ 		return true; // No more messages, return.
+diff --git a/src/xrt/drivers/wmr/wmr_bt_controller.h b/src/xrt/drivers/wmr/wmr_bt_controller.h
+index 80f984482..95e985df3 100644
+--- a/src/xrt/drivers/wmr/wmr_bt_controller.h
++++ b/src/xrt/drivers/wmr/wmr_bt_controller.h
+@@ -36,6 +36,9 @@ struct wmr_bt_connection
+ 	struct os_thread_helper controller_thread;
+ 
+ 	struct os_mutex hid_lock;
++
++	//! Transient-read-error streak; the read thread only gives up after several in a row.
++	int consecutive_read_errors;
+ };
+ 
+ struct xrt_device *
+-- 
+2.47.3
+

@@ -1,0 +1,45 @@
+From 10c39ddee0e8695977403f4005e999287f7bd0e4 Mon Sep 17 00:00:00 2001
+From: Ashish Kumar Singh <ashishkmr472@gmail.com>
+Date: Thu, 21 May 2026 14:25:26 -0400
+Subject: [PATCH 3/3] dp: force maximum link config for the HP Reverb G2 (EDID
+ ManufID 0x220E)
+
+The G2 trains at 2 DP lanes instead of HBR3 x4 without a workaround; add a
+forceMaxLinkConfig entry keyed on its EDID ManufID, matching NVIDIA's existing
+per-device WAR entries. NVIDIA bug 5923212.
+
+Other WMR HMDs need the same WAR but must be gated on ManufID + the specific HMD
+ProductID, since most vendor ManufIDs are shared with their ordinary monitors;
+left as a documented extension point.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ src/common/displayport/src/dp_wardatabase.cpp | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/src/common/displayport/src/dp_wardatabase.cpp b/src/common/displayport/src/dp_wardatabase.cpp
+index 74daf1e7..a075e8ed 100644
+--- a/src/common/displayport/src/dp_wardatabase.cpp
++++ b/src/common/displayport/src/dp_wardatabase.cpp
+@@ -547,6 +547,18 @@ void Edid::applyEdidWorkArounds(NvU32 warFlag, const DpMonitorDenylistData *pDen
+             }
+             break;
+ 
++        // HP Reverb G2 VR headset (and other HP HMDs)
++        // ManufID 0x220E = 'HPN' = HP Inc.
++        // Workaround for NVIDIA bug 5923212: the G2 trains at 2 DP lanes
++        // instead of 4 on NVIDIA Linux without this WAR, capping it to
++        // 2880x1440@60. Forcing max link config (HBR3 x4) is the first step
++        // toward enabling 4320x2160 native modes.
++        case 0x220E:
++            this->WARFlags.forceMaxLinkConfig = true;
++            DP_PRINTF(DP_NOTICE, "DP-WAR> Force maximum link config for HP HMD (Reverb G2 / similar).");
++            DP_PRINTF(DP_NOTICE, "DP-WAR>   workaround for NVIDIA bug 5923212");
++            break;
++
+         // CMN
+         case 0xAE0D:
+             if (ProductID == 0x1747)
+-- 
+2.53.0
+

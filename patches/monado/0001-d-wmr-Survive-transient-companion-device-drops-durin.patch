@@ -1,0 +1,63 @@
+From e39e411dc2e0cd2de725fe38744dc248df5bfdfc Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Tue, 4 Aug 2026 12:10:39 -0300
+Subject: [PATCH 1/6] d/wmr: Survive transient companion device drops during
+ startup
+
+The HP Reverb G2's companion HID device (03f0:0580) routinely drops off
+the USB bus and re-enumerates while the headset display powers up (the
+same fault is observable under Windows, where its audio function appears
+and disappears - it is a physical-layer weakness of the G2 cable/board).
+
+Two consequences inside the driver:
+
+1. control_read_packets() treated any os_hid_read error as fatal and
+   returned false, which breaks the whole wmr_run_thread read loop -
+   killing the HMD IMU feed and all tunnelled controller packet delivery
+   over an unrelated, transient companion hiccup. Log at debug level and
+   keep the thread alive instead.
+
+2. The screen-enable command sent during wmr_hmd_activate_reverb() can be
+   silently lost if the companion device drops right around activation
+   (HID_SEND only logs on failure). Re-send it after the settle sleep;
+   the command is idempotent.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/xrt/drivers/wmr/wmr_hmd.c | 12 ++++++++++--
+ 1 file changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_hmd.c b/src/xrt/drivers/wmr/wmr_hmd.c
+index 0e7da4619..2f10ff344 100644
+--- a/src/xrt/drivers/wmr/wmr_hmd.c
++++ b/src/xrt/drivers/wmr/wmr_hmd.c
+@@ -586,9 +586,12 @@ control_read_packets(struct wmr_hmd *wh)
+ 	os_mutex_unlock(&wh->hid_lock);
+ 
+ 	if (size < 0) {
+-		WMR_ERROR(wh, "Error reading from companion (HMD control) device. Call to os_hid_read returned %i",
++		// The companion device can transiently drop off and re-enumerate while the
++		// headset display is powering up. Don't kill the whole read thread (which
++		// also drives tracking camera/IMU reads) over a read error here.
++		WMR_DEBUG(wh, "Error reading from companion (HMD control) device. Call to os_hid_read returned %i",
+ 		          size);
+-		return false;
++		return true;
+ 	}
+ 	if (size == 0) {
+ 		WMR_TRACE(wh, "No more data to read");
+@@ -779,6 +782,11 @@ wmr_hmd_activate_reverb(struct wmr_hmd *wh)
+ 	uint64_t seconds = debug_get_num_option_sleep_seconds();
+ 	os_nanosleep(U_TIME_1S_IN_NS * seconds);
+ 
++	// The companion HID device can transiently drop off and re-enumerate right around
++	// activation, which can silently lose the screen-enable command sent above. Resend it
++	// now that things have had time to settle, so the panel doesn't stay stuck off/blank.
++	wmr_hmd_screen_enable_reverb(wh, wh->hmd_screen_enable);
++
+ 	return 0;
+ }
+ 
+-- 
+2.47.3
+

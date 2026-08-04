@@ -1,0 +1,223 @@
+From 27bbc4cd223ee423917bcbb7df57ebe6b93d4f82 Mon Sep 17 00:00:00 2001
+From: Ashish Kumar Singh <ashishkmr472@gmail.com>
+Date: Thu, 21 May 2026 14:25:26 -0400
+Subject: [PATCH 1/3] nvkms: VESA DisplayID/DSC/VSDB spec-correctness fixes for
+ VR HMDs
+
+Four independent conformance fixes that let high-resolution VR-HMD panels
+(HP Reverb G2 and other WMR headsets) enumerate their native modes:
+
+- DisplayID 2.0 Type-VII: walk descriptors by spec stride
+  (sizeof(desc) + payload_bytes_len) instead of only when payload_bytes_len == 0,
+  which silently dropped every descriptor on payload-bearing blocks (the G2's
+  4320x2160 native mode vanished). NVIDIA bug 5923212.  [nvt_displayid20.c]
+- DSC PPS: correct the RC QP tables (rows 9-14) and ofs_und8[11] to the VESA
+  DSC 1.1 RC model; the prior values broke the 90 Hz DSC handshake.  [nvt_dsc_pps.c]
+- DSC flatnessDetThresh: derive from bits_per_component per the DSC PPS; the two
+  DP sites used a bitsPerPixelX16-based shift NVIDIA's own comment flagged wrong.
+  [nvkms-evo3.c, nvkms-evo4.c]
+- MSFT VSDB: read primaryUseCase for VSDB version >= 1 (a fixed field present in
+  every version; WMR HMDs ship version 1), so VR headsets are identified.
+  [nvt_edidext_861.c]
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ src/common/modeset/timing/nvt_displayid20.c | 26 ++++++++++++++-------
+ src/common/modeset/timing/nvt_dsc_pps.c     | 18 +++++++-------
+ src/common/modeset/timing/nvt_edidext_861.c | 22 ++++++++++-------
+ src/nvidia-modeset/src/nvkms-evo3.c         | 11 +++++----
+ src/nvidia-modeset/src/nvkms-evo4.c         | 11 +++++----
+ 5 files changed, 55 insertions(+), 33 deletions(-)
+
+diff --git a/src/common/modeset/timing/nvt_displayid20.c b/src/common/modeset/timing/nvt_displayid20.c
+index 527a35ac..993087d0 100644
+--- a/src/common/modeset/timing/nvt_displayid20.c
++++ b/src/common/modeset/timing/nvt_displayid20.c
+@@ -596,16 +596,23 @@ parseDisplayId20Timing7(
+     pTiming7Block = (const DISPLAYID_2_0_TIMING_7_BLOCK *)pDataBlock;
+ 
+     // Based on the DisplayID_2_0_E7 spec:
+-    // the Future descriptor can be defined with more than 20 Byte per descriptor without creating a new timing type
+-    if (pTiming7Block->header.payload_bytes_len == 0)
++    // the Future descriptor can be defined with more than 20 Byte per descriptor without creating a new timing type.
++    //
++    // G2-Linux fix: previously, the body of this block was only executed when
++    // payload_bytes_len == 0, which silently dropped *all* Type 7 descriptors
++    // for blocks where the revision carries optional payload bytes. VR HMDs
++    // (HP Reverb G2, Bigscreen Beyond) use such blocks for their native modes.
++    // Now we always walk descriptors at the correct stride.
+     {
+-        if (pDataBlock->data_bytes % sizeof(DISPLAYID_2_0_TIMING_7_DESCRIPTOR) != 0)
++        NvU8 stride = (NvU8)(sizeof(DISPLAYID_2_0_TIMING_7_DESCRIPTOR) + pTiming7Block->header.payload_bytes_len);
++
++        if (pDataBlock->data_bytes % stride != 0)
+         {
+             return NVT_STATUS_ERR;
+         }
+ 
+         revision = pTiming7Block->header.revision;
+-        descriptorCount = pDataBlock->data_bytes / (sizeof(DISPLAYID_2_0_TIMING_7_DESCRIPTOR) + pTiming7Block->header.payload_bytes_len);
++        descriptorCount = pDataBlock->data_bytes / stride;
+ 
+         if (descriptorCount < 1 || descriptorCount > DISPLAYID_2_0_TIMING_7_MAX_DESCRIPTORS)
+         {
+@@ -619,8 +626,11 @@ parseDisplayId20Timing7(
+ 
+         for (i = 0; i < descriptorCount; i++)
+         {
++            const DISPLAYID_2_0_TIMING_7_DESCRIPTOR *pDesc =
++                (const DISPLAYID_2_0_TIMING_7_DESCRIPTOR *)
++                (((const NvU8 *)pTiming7Block->descriptors) + (NvU32)i * stride);
+             NVMISC_MEMSET(&newTiming, 0, sizeof(newTiming));
+-            if (parseDisplayId20Timing7Descriptor(&pTiming7Block->descriptors[i], &newTiming, startSeqNumber+i) == NVT_STATUS_SUCCESS)
++            if (parseDisplayId20Timing7Descriptor(pDesc, &newTiming, startSeqNumber+i) == NVT_STATUS_SUCCESS)
+             {
+                 newTiming.etc.flag |= (revision >= DISPLAYID_2_0_TYPE7_DSC_PASSTHRU_REVISION && pTiming7Block->header.dsc_passthrough == 1) ?
+                                       NVT_FLAG_DISPLAYID_T7_DSC_PASSTHRU :
+@@ -628,16 +638,16 @@ parseDisplayId20Timing7(
+ 
+                 if (revision >= DISPLAYID_2_0_TYPE7_YCC420_SUPPORT_REVISION)
+                 {
+-                    newTiming.etc.flag |= pTiming7Block->descriptors[i].options.is_preferred_or_ycc420 ? NVT_FLAG_DISPLAYID_T7_T8_EXPLICT_YUV420 : 0;
++                    newTiming.etc.flag |= pDesc->options.is_preferred_or_ycc420 ? NVT_FLAG_DISPLAYID_T7_T8_EXPLICT_YUV420 : 0;
+ 
+-                    if (pTiming7Block->descriptors[i].options.is_preferred_or_ycc420) // YCC 420 support
++                    if (pDesc->options.is_preferred_or_ycc420) // YCC 420 support
+                     {
+                         UPDATE_BPC_FOR_COLORFORMAT(newTiming.etc.yuv420, 0, 1, 1, 1, 0, 1);
+                     }
+                 }
+                 else
+                 {
+-                    newTiming.etc.flag |= pTiming7Block->descriptors[i].options.is_preferred_or_ycc420 ? NVT_FLAG_DISPLAYID_DTD_PREFERRED_TIMING : 0;
++                    newTiming.etc.flag |= pDesc->options.is_preferred_or_ycc420 ? NVT_FLAG_DISPLAYID_DTD_PREFERRED_TIMING : 0;
+                 }
+ 
+                 NVT_SNPRINTF((char *)newTiming.etc.name, sizeof(newTiming.etc.name), "DID20-Type7:#%2d:%dx%dx%3d.%03dHz/%s",
+diff --git a/src/common/modeset/timing/nvt_dsc_pps.c b/src/common/modeset/timing/nvt_dsc_pps.c
+index ce6d6a79..d100c57d 100644
+--- a/src/common/modeset/timing/nvt_dsc_pps.c
++++ b/src/common/modeset/timing/nvt_dsc_pps.c
+@@ -187,12 +187,12 @@ static const NvU8 minqp444_8b[15][37]={
+        ,{ 5, 5, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0}
+        ,{ 5, 5, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0}
+        ,{ 5, 5, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 0, 0, 0}
+-       ,{ 6, 5, 5, 4, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 1, 1, 1, 1, 1, 1, 0, 0, 0}
++       ,{ 6, 5, 5, 4, 3, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 1, 1, 1, 1, 1, 1, 0, 0, 0}  // [9] col4: 4->3 (VESA DSC 1.1)
+        ,{ 6, 6, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 4, 4, 4, 4, 4, 4, 4, 4, 4, 3, 3, 3, 3, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 0}
+        ,{ 6, 6, 6, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 4, 4, 4, 4, 4, 4, 4, 4, 4, 3, 3, 2, 2, 2, 2, 1, 1, 1, 1, 0}
+        ,{ 6, 6, 6, 6, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 4, 4, 4, 4, 3, 3, 2, 2, 2, 2, 1, 1, 1, 1, 0}
+-       ,{ 9, 9, 9, 9, 8, 8, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 6, 6, 5, 5, 5, 5, 4, 4, 3, 3, 3, 3, 2, 2, 1, 1, 1}
+-       ,{14,14,13,13,12,12,12,12,11,11,10,10,10,10, 9, 9, 9, 8, 8, 8, 7, 7, 7, 7, 6, 6, 5, 5, 5, 5, 4, 4, 4, 3, 3, 3, 3}
++       ,{ 9, 9, 9, 9, 7, 8, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 6, 6, 5, 5, 5, 5, 4, 4, 3, 3, 3, 3, 2, 2, 1, 1, 1}  // [13] col4: 8->7 (VESA DSC 1.1)
++       ,{14,14,13,13,13,12,12,12,11,11,10,10,10,10, 9, 9, 9, 8, 8, 8, 7, 7, 7, 7, 6, 6, 5, 5, 5, 5, 4, 4, 4, 3, 3, 3, 3}  // [14] col4: 12->13 (VESA DSC 1.1)
+ };
+ 
+ static const NvU8 maxqp444_8b[15][37]={
+@@ -206,11 +206,11 @@ static const NvU8 maxqp444_8b[15][37]={
+        ,{10,10, 9, 9, 8, 8, 8, 8, 8, 8, 8, 8, 8, 7, 7, 6, 5, 5, 4, 4, 4, 4, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1}
+        ,{11,11,10,10, 9, 9, 9, 9, 9, 9, 8, 8, 8, 7, 7, 6, 6, 5, 5, 5, 5, 5, 4, 4, 4, 4, 3, 3, 2, 2, 2, 2, 2, 2, 1, 1, 1}
+        ,{12,11,11,10,10,10, 9, 9, 9, 9, 9, 9, 9, 8, 8, 7, 6, 6, 5, 5, 5, 5, 4, 4, 4, 4, 3, 3, 2, 2, 2, 2, 2, 2, 1, 1, 1}
+-       ,{12,12,11,11,10,10,10,10,10,10, 9, 9, 9, 8, 8, 7, 7, 6, 6, 6, 5, 5, 4, 4, 4, 4, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 1}
+-       ,{12,12,12,11,11,11,10,10,10,10, 9, 9, 9, 9, 8, 8, 8, 7, 7, 7, 6, 6, 5, 5, 5, 5, 4, 4, 3, 3, 3, 3, 2, 2, 2, 2, 1}
+-       ,{12,12,12,12,11,11,11,11,11,10,10, 9, 9, 9, 8, 8, 8, 7, 7, 7, 6, 6, 5, 5, 5, 5, 4, 4, 3, 3, 3, 3, 2, 2, 2, 2, 1}
+-       ,{13,13,13,13,12,12,11,11,11,11,10,10,10,10, 9, 9, 8, 8, 8, 8, 7, 7, 6, 6, 6, 6, 5, 5, 4, 4, 4, 4, 3, 3, 2, 2, 2}
+-       ,{15,15,14,14,13,13,13,13,12,12,11,11,11,11,10,10,10, 9, 9, 9, 8, 8, 8, 8, 7, 7, 6, 6, 6, 6, 5, 5, 5, 4, 4, 4, 4}
++       ,{12,12,11,11,11,10,10,10,10,10, 9, 9, 9, 8, 8, 7, 7, 6, 6, 6, 5, 5, 4, 4, 4, 4, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 1}  // [10] col4: 10->11 (VESA DSC 1.1)
++       ,{12,12,12,11,12,11,10,10,10,10, 9, 9, 9, 9, 8, 8, 8, 7, 7, 7, 6, 6, 5, 5, 5, 5, 4, 4, 3, 3, 3, 3, 2, 2, 2, 2, 1}  // [11] col4: 11->12 (VESA DSC 1.1)
++       ,{12,12,12,12,13,11,11,11,11,10,10, 9, 9, 9, 8, 8, 8, 7, 7, 7, 6, 6, 5, 5, 5, 5, 4, 4, 3, 3, 3, 3, 2, 2, 2, 2, 1}  // [12] col4: 11->13 (VESA DSC 1.1)
++       ,{13,13,13,13,13,12,11,11,11,11,10,10,10,10, 9, 9, 8, 8, 8, 8, 7, 7, 6, 6, 6, 6, 5, 5, 4, 4, 4, 4, 3, 3, 2, 2, 2}  // [13] col4: 12->13 (VESA DSC 1.1)
++       ,{15,15,14,14,15,13,13,13,12,12,11,11,11,11,10,10,10, 9, 9, 9, 8, 8, 8, 8, 7, 7, 6, 6, 6, 6, 5, 5, 5, 4, 4, 4, 4}  // [14] col4: 13->15 (VESA DSC 1.1)
+ };
+ 
+ static const NvU8 minqp444_10b[15][49]={
+@@ -934,7 +934,7 @@ DSC_PpsCalcRcParam
+             //else
+             {
+                 const NvU32 ofs_und6[] = { 0, -2, -2, -4, -6, -6, -8, -8, -8, -10, -10, -12, -12, -12, -12 };
+-                const NvU32 ofs_und8[] = { 2, 0, 0, -2, -4, -6, -8, -8, -8, -10, -10, -10, -12, -12, -12 };
++                const NvU32 ofs_und8[] = { 2, 0, 0, -2, -4, -6, -8, -8, -8, -10, -10, -12, -12, -12, -12 };  // [11]: -10->-12 (VESA DSC 1.1)
+                 const NvU32 ofs_und12[] = { 2, 0, 0, -2, -4, -6, -8, -8, -8, -10, -10, -10, -12, -12, -12 };
+                 const NvU32 ofs_und15[] = { 10, 8, 6, 4, 2, 0, -2, -4, -6, -8, -10, -10, -12, -12, -12 };
+ 
+diff --git a/src/common/modeset/timing/nvt_edidext_861.c b/src/common/modeset/timing/nvt_edidext_861.c
+index bf262514..00d07089 100644
+--- a/src/common/modeset/timing/nvt_edidext_861.c
++++ b/src/common/modeset/timing/nvt_edidext_861.c
+@@ -3800,15 +3800,21 @@ void parseEdidMsftVsdbBlock(VSDB_DATA *pVsdb, MSFT_VSDB_PARSED_INFO *pVsdbInfo)
+ 
+             pVsdbInfo->desktopUsage = pMsftVsdbPayload->desktopUsage;
+             pVsdbInfo->thirdPartyUsage = pMsftVsdbPayload->thirdPartyUsage;
+-            pVsdbInfo->valid = NV_TRUE;
+-        }
+-        // Version 3 is the latest version of MSFT VSDB at the time of writing this code
+-        // Any update from newer version will be ignored and be parsed as Version 3, till
+-        // we have an explicit handling for newer version here.
+-        if (pVsdbInfo->version >= 3)
+-        {
+-            // Primary Use case is valid from Version 3 and is ignored on previous versions.
++
++            // G2-Linux fix: the Primary Use Case is a fixed 5-bit field in the
++            // second payload byte (NVT_MSFT_VSDB_PAYLOAD::primaryUseCase) and
++            // is present for every VSDB version, not just version 3. Windows
++            // Mixed Reality headsets (HP Reverb G2, Samsung Odyssey, ...) ship
++            // a version-1 MSFT VSDB with this byte set to
++            // MSFT_VSDB_FOR_VIRTUAL_REALITY_HEADSETS, and edid-decode reads it
++            // unconditionally. Reading it for version >= 1 is safe: devices
++            // that predate the field leave those bits 0 (UNDEFINED). Without
++            // this, NVT cannot identify a VR headset and downstream consumers
++            // (e.g. preferred-mode selection for the native panel resolution)
++            // cannot special-case it.
+             pVsdbInfo->primaryUseCase = pMsftVsdbPayload->primaryUseCase;
++
++            pVsdbInfo->valid = NV_TRUE;
+         }
+     }
+ }
+diff --git a/src/nvidia-modeset/src/nvkms-evo3.c b/src/nvidia-modeset/src/nvkms-evo3.c
+index 13c5b1f0..06fa4a15 100644
+--- a/src/nvidia-modeset/src/nvkms-evo3.c
++++ b/src/nvidia-modeset/src/nvkms-evo3.c
+@@ -7214,10 +7214,13 @@ static void EvoSetDpDscParams(const NVDispEvoRec *pDispEvo,
+ 
+     nvAssert(pDscInfo->type == NV_DSC_INFO_EVO_TYPE_DP);
+ 
+-    // XXX: I'm pretty sure that this is wrong.
+-    // BitsPerPixelx16 is something like (24 * 16) = 384, and 2 << (384 - 8) is
+-    // an insanely large number.
+-    flatnessDetThresh = (2 << (pDscInfo->dp.bitsPerPixelX16 - 8)); /* ??? */
++    // Fix: use bits_per_component from PPS byte 3 [7:4], not bitsPerPixelX16.
++    // DSC spec: flatness_det_thresh = 2 << (bpc - 8).
++    // PPS DW[0] packs bytes [3][2][1][0] as [31:24][23:16][15:8][7:0].
++    {
++        NvU32 bpc = (pDscInfo->dp.pps[0] >> 28) & 0xF; // PPS byte 3 bits[7:4]
++        flatnessDetThresh = (bpc >= 8) ? (2 << (bpc - 8)) : 2;
++    }
+ 
+     nvAssert((pDscInfo->dp.dscMode == NV_DSC_EVO_MODE_DUAL) ||
+                 (pDscInfo->dp.dscMode == NV_DSC_EVO_MODE_SINGLE));
+diff --git a/src/nvidia-modeset/src/nvkms-evo4.c b/src/nvidia-modeset/src/nvkms-evo4.c
+index a2b94b16..e44a0d96 100644
+--- a/src/nvidia-modeset/src/nvkms-evo4.c
++++ b/src/nvidia-modeset/src/nvkms-evo4.c
+@@ -1413,10 +1413,13 @@ static void EvoSetDpDscParamsC9(const NVDispEvoRec *pDispEvo,
+ 
+     nvAssert(pDscInfo->type == NV_DSC_INFO_EVO_TYPE_DP);
+ 
+-    // XXX: I'm pretty sure that this is wrong.
+-    // BitsPerPixelx16 is something like (24 * 16) = 384, and 2 << (384 - 8) is
+-    // an insanely large number.
+-    flatnessDetThresh = (2 << (pDscInfo->dp.bitsPerPixelX16 - 8)); /* ??? */
++    // Fix: use bits_per_component from PPS byte 3 [7:4], not bitsPerPixelX16.
++    // DSC spec: flatness_det_thresh = 2 << (bpc - 8).
++    // PPS DW[0] packs bytes [3][2][1][0] as [31:24][23:16][15:8][7:0].
++    {
++        NvU32 bpc = (pDscInfo->dp.pps[0] >> 28) & 0xF;
++        flatnessDetThresh = (bpc >= 8) ? (2 << (bpc - 8)) : 2;
++    }
+ 
+     nvAssert((pDscInfo->dp.dscMode == NV_DSC_EVO_MODE_DUAL) ||
+                 (pDscInfo->dp.dscMode == NV_DSC_EVO_MODE_SINGLE));
+-- 
+2.53.0
+

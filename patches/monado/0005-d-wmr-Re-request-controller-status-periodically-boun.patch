@@ -1,0 +1,96 @@
+From fd1c7adc2f09577875029396be7ae0010da0f4ef Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Tue, 4 Aug 2026 12:17:31 -0300
+Subject: [PATCH 5/6] d/wmr: Re-request controller status periodically, bound
+ the startup wait
+
+The controller status request was sent exactly once at startup. If
+controller creation then failed on a transient fw-read error - or the
+controllers were simply powered on late - that controller stayed absent
+for the whole session. Re-request from the read thread every 5s while a
+controller slot is empty; this is one small packet when they are off,
+and also makes late-powered controllers appear.
+
+Also bound the startup wait for the first status report (was an
+unbounded os_cond_wait - a lost reply hung wmr_hmd_create forever,
+resolving the @todo that was already there).
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/xrt/drivers/wmr/wmr_hmd.c | 41 ++++++++++++++++++++++++++++++-----
+ 1 file changed, 36 insertions(+), 5 deletions(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_hmd.c b/src/xrt/drivers/wmr/wmr_hmd.c
+index 2f10ff344..86d79730a 100644
+--- a/src/xrt/drivers/wmr/wmr_hmd.c
++++ b/src/xrt/drivers/wmr/wmr_hmd.c
+@@ -659,6 +659,9 @@ control_read_packets(struct wmr_hmd *wh)
+  *
+  */
+ 
++static bool
++wmr_hmd_request_controller_status(struct wmr_hmd *wh);
++
+ static void *
+ wmr_run_thread(void *ptr)
+ {
+@@ -673,10 +676,32 @@ wmr_run_thread(void *ptr)
+ #endif
+ 
+ 
++	int64_t next_controller_status_req_ns = 0;
++
+ 	os_thread_helper_lock(&wh->oth);
+ 	while (os_thread_helper_is_running_locked(&wh->oth)) {
+ 		os_thread_helper_unlock(&wh->oth);
+ 
++		/* Retry controller discovery: controller creation can fail on a transient
++		 * fw-read error over the shared tunnelled transport, and the initial status
++		 * request used to be sent exactly once - leaving that controller absent for
++		 * the whole session. Re-request while a slot is empty (also picks up
++		 * controllers that are powered on after the service started). Cheap when
++		 * the controllers are simply off: one small packet every few seconds. */
++		if (wh->hmd_desc->hmd_type == WMR_HEADSET_REVERB_G2 ||
++		    wh->hmd_desc->hmd_type == WMR_HEADSET_SAMSUNG_800ZAA) {
++			int64_t now_ns = os_monotonic_get_ns();
++			if (now_ns >= next_controller_status_req_ns) {
++				os_mutex_lock(&wh->controller_status_lock);
++				bool missing = wh->controller[0] == NULL || wh->controller[1] == NULL;
++				os_mutex_unlock(&wh->controller_status_lock);
++				if (missing) {
++					wmr_hmd_request_controller_status(wh);
++				}
++				next_controller_status_req_ns = now_ns + (int64_t)5 * U_TIME_1S_IN_NS;
++			}
++		}
++
+ 		// Does not block.
+ 		if (!control_read_packets(wh)) {
+ 			break;
+@@ -2034,12 +2059,18 @@ wmr_hmd_create(enum wmr_headset_type hmd_type,
+ 
+ 		os_mutex_lock(&wh->controller_status_lock);
+ 		if (wmr_hmd_request_controller_status(wh)) {
+-			/* @todo: Add a timed version of os_cond_wait and a timeout? */
+-			/* This will be signalled from the reader thread */
+-			while (!wh->have_left_controller_status && !wh->have_right_controller_status) {
+-				os_cond_wait(&wh->controller_status_cond, &wh->controller_status_lock);
++			/* Signalled from the reader thread. Bounded: if the status reply is
++			 * lost (flaky companion USB), an unbounded wait hung startup forever
++			 * here - the reader thread now re-requests status periodically, so
++			 * missing controllers still appear later. */
++			const int64_t deadline_ns = os_monotonic_get_ns() + (int64_t)3 * U_TIME_1S_IN_NS;
++			while (!wh->have_left_controller_status && !wh->have_right_controller_status &&
++			       os_monotonic_get_ns() < deadline_ns) {
++				os_mutex_unlock(&wh->controller_status_lock);
++				os_nanosleep(U_TIME_1MS_IN_NS * 20);
++				os_mutex_lock(&wh->controller_status_lock);
+ 			}
+-			have_controller_status = true;
++			have_controller_status = wh->have_left_controller_status || wh->have_right_controller_status;
+ 		}
+ 		os_mutex_unlock(&wh->controller_status_lock);
+ 
+-- 
+2.47.3
+
