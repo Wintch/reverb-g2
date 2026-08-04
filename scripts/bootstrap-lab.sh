@@ -93,9 +93,17 @@ do_deps() {
 		libeigen3-dev libusb-1.0-0-dev libudev-dev libhidapi-dev \
 		libgl-dev libglx-dev libglvnd-dev libxcb-randr0-dev libx11-xcb-dev \
 		libxrandr-dev libxxf86vm-dev libxcb-glx0-dev libwayland-dev wayland-protocols \
+		libdrm-dev \
 		libavcodec-dev libavformat-dev libavutil-dev libswscale-dev ffmpeg \
 		libopencv-dev libboost-all-dev libtbb-dev libfmt-dev \
 		x11-xserver-utils pciutils usbutils time
+	# libdrm-dev NO es opcional aunque nada falle sin él: la lógica de Monado es
+	#   XRT_HAVE_WAYLAND DEPENDS WAYLAND_FOUND WAYLAND_SCANNER_FOUND WAYLAND_PROTOCOLS_FOUND LIBDRM_FOUND
+	# así que sin libdrm-dev se cae Wayland ENTERO — y con él XRT_HAVE_WAYLAND_DIRECT, que es
+	# el backend de DRM lease. cmake no avisa: sólo deja las opciones en OFF y compila igual.
+	# El síntoma aparece mucho después, en runtime:
+	#   "Could not find target factory with identifier 'direct_wayland'"
+	# Costó una sesión entera (2026-08-04). Ver docs/04, sección de Wayland.
 
 	echo "### Reglas udev del casco"
 	$SUDO cp "$REPO_DIR/scripts/70-wmr-reverb.rules" "$REPO_DIR/scripts/71-usb-no-autosuspend.rules" /etc/udev/rules.d/

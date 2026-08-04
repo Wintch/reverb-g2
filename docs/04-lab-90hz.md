@@ -361,6 +361,74 @@ vale. Tiene que aparecer el path de Wayland/lease.
 Y después, como siempre: **mirar adentro del casco.** La API va a reportar 90.0 fps felices
 con el panel negro.
 
+### Wayland ejecutado: bloqueado en KWin, pero con tres descartes medidos (2026-08-04, 20:05)
+
+No llegó a haber test de 90Hz: el path de DRM lease no se pudo levantar. Pero el camino dejó
+cosas verificadas que valen más que el intento.
+
+**1. El parche 0002 FUNCIONA. Medido, no deducido.** El conector del casco está marcado
+`non-desktop=1` y KWin lo deja afuera del escritorio (lista sólo los 3 monitores). Leído del
+kernel con `scripts/drmprops.c`:
+
+```
+connector 130  type=10  CONNECTED  modes=3
+    non-desktop  = 1
+    mode: 4320x2160@90
+    mode: 2880x1440@90
+    mode: 4320x2160@60
+```
+
+Con lo cual: **el lado del driver NVIDIA está haciendo su parte.** Los tres modos están
+expuestos, el HMD está marcado como arrendable. Lo que falta está más arriba.
+
+**2. Monado estaba compilado SIN Wayland, y nada lo delataba.** El síntoma en runtime era
+`Could not find target factory with identifier 'direct_wayland'`. Causa raíz: faltaba
+**`libdrm-dev`**, y la lógica de CMake de Monado es
+
+```cmake
+option_with_deps(XRT_HAVE_WAYLAND ... DEPENDS WAYLAND_FOUND WAYLAND_SCANNER_FOUND
+                 WAYLAND_PROTOCOLS_FOUND LIBDRM_FOUND)
+```
+
+o sea que sin libdrm se cae Wayland **entero**, y con él `XRT_HAVE_WAYLAND_DIRECT`. CMake no
+avisa: deja las opciones en OFF y compila igual. `bootstrap-lab.sh` traía `libwayland-dev` y
+`wayland-protocols` pero no `libdrm-dev` — ya corregido, con el comentario de por qué.
+Reconfigurado y recompilado: `WAYLAND: ON`, `WAYLAND_DIRECT: ON`.
+
+**3. Con todo eso resuelto, KWin no ofrece el conector.** Monado ve el device pero cero
+conectores:
+
+```
+INFO [_drm_lease_device_drm_fd] Available DRM lease device: /dev/dri/card0
+INFO [comp_window_direct_wayland_init] Found no connectors available for direct mode
+```
+
+Ese síntoma exacto está reportado en el [foro de NVIDIA](https://forums.developer.nvidia.com/t/nvidia-proprietary-non-open-modules-completely-unable-to-acquire-a-drm-lease-on-any-display-server-all-known-nvidia-drivers-any-hardware/341244)
+como fallo de DRM lease con drivers NVIDIA, sin resolver al 16-nov-2025. El hilo es sobre los
+módulos cerrados, pero hay un reporte con módulos **open** en RTX 4080. Plasma 6.3.6 todavía
+no tiene el toggle de "VR Mode / Display Leasing" (está en un MR draft de KWin).
+
+**Trampa para el que siga:** `XRT_COMPOSITOR_FORCE_VK_DISPLAY` **no es una alternativa
+inocente.** Enumera todos los displays del sistema y con índice `0` agarró el monitor LG del
+usuario, no el casco (`Will use display: LG Electronics LG ULTRAGEAR (HDMI-0)`), y segfalleó.
+Si se prueba, hay que identificar primero el índice del HMD.
+
+#### Lo que Project-VR realmente necesita (y sube el costo de replicarlo)
+
+Releyendo su README con foco en el runtime: **no es sólo "GNOME en vez de KDE".** Usan
+GNOME 50 / mutter 50.1 **con parches propios a Mutter**, SteamVR como runtime, su fork de
+WMR cargado dentro de `vrserver`, y su propio orquestador (`g2-studio` / `infra/g2ctl`).
+
+El matiz que deja la puerta abierta: sus parches a Mutter son para que *"el escritorio no se
+cuelgue durante/después de VR"* (ciclo de vida del lease, freezes de input/render) — **no**
+para que el lease funcione en primer lugar. Así que Mutter *sin* parchear debería igual
+ofrecer el conector, y eso es lo que discrimina si el problema es KWin o es NVIDIA.
+
+**Siguiente test, en orden de costo:** instalar GNOME y probar una sesión GNOME Wayland con
+`jack-in-wayland.sh`. Si Mutter ofrece el conector, el problema era KWin y se sigue por ahí.
+Si tampoco lo ofrece, el problema es NVIDIA + DRM lease, coincide con el hilo del foro, y hay
+que decidir si vale replicar el stack entero de Project-VR o quedarse en 60Hz.
+
 ### Pendientes que necesitan sudo (no bloquean el test de 90Hz)
 
 1. **Prioridad RT para Monado.** El log tira `Could not raise priority for thread

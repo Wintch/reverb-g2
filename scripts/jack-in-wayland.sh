@@ -46,12 +46,18 @@ echo "Arrancando Monado (modo $MODE) por DRM lease... log: $LOG"
 # WMR_DISPLAY_INIT_SLEEP_SECONDS=2 es load-bearing igual que en X11: el panel se apaga
 # solo a los ~3s si no le llega senal de video, y con el default de 4s Monado despierta
 # cuando ya se apago.
-XRT_COMPOSITOR_FORCE_WAYLAND_DIRECT=1 \
-XRT_COMPOSITOR_DESIRED_MODE="$MODE" \
-XRT_COMPOSITOR_LOG=debug \
-WMR_SLAM=0 WMR_CAMERAS=0 \
-WMR_DISPLAY_INIT_SLEEP_SECONDS=2 \
-    "$SERVICE" > "$LOG" 2>&1 &
+#
+# XRT_NO_STDIN=1 tambien es obligatorio: sin eso Monado registra stdin en epoll y, lanzado
+# en background, muere con 'epoll_ctl(stdin) failed' -> IPC_MAINLOOP_FAILED_TO_INIT antes
+# de llegar siquiera al compositor. setsid + stdbuf -oL mantienen el log vivo (usar
+# `script` para darle un pty bufferea tanto que las fallas se vuelven ilegibles).
+env XRT_COMPOSITOR_FORCE_WAYLAND_DIRECT=1 \
+    XRT_COMPOSITOR_DESIRED_MODE="$MODE" \
+    XRT_COMPOSITOR_LOG=debug \
+    XRT_NO_STDIN=1 \
+    WMR_SLAM=0 WMR_CAMERAS=0 \
+    WMR_DISPLAY_INIT_SLEEP_SECONDS=2 \
+    setsid stdbuf -oL -eL "$SERVICE" < /dev/null > "$LOG" 2>&1 &
 
 SVC=$!
 for _i in $(seq 1 30); do
