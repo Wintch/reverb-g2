@@ -299,6 +299,68 @@ es** — descriptores de string en UTF-16 que se leen como reportes con payloads
 Hay que filtrar por transferencias de control de clase (`bmRequestType` 0x21/0xa1 con
 `bRequest` 0x09/0x01) o el análisis da puro ruido con cara de señal.
 
+### GIRO: el 90Hz en NVIDIA SÍ funciona — Project-VR lo tiene andando (2026-08-04, 19:30)
+
+Búsqueda en las fuentes, después de cerrar el lab. Cambia el plan entero.
+
+[Project-VR](https://github.com/AshishKumar4/Project-VR) —el repo de donde salieron nuestros
+tres parches— **reporta el G2 corriendo a `4320x2160 @ 90 Hz` en una RTX 4080 con el mismo
+`nvidia-driver-595-open` y los mismos parches.** No es un problema abierto: es un problema
+resuelto que a nosotros no nos anduvo.
+
+Y ahora se sabe **por qué** el 60 anda y el 90 no: **el modo de 90Hz usa DSC (Display Stream
+Compression)**. El parche 0001 arregla las tablas de rate-control DSC 1.1 y el parsing de
+DisplayID 2.0 — textualmente, *"needed for the 90 Hz handshake to succeed"*.
+
+Eso explica de una por qué **todos** los razonamientos por ancho de banda fallaron: el
+nuestro del display engine, el del usuario sobre los paneles, y la teoría de los 2 lanes que
+circula en el [hilo de NVIDIA](https://forums.developer.nvidia.com/t/reverb-g2-unable-to-drive-more-than-60hz-mode-on-nvidia/337744).
+Con DSC el pixel clock crudo no es el limitante — lo que importa es si el handshake de
+compresión se completa. Anotarlo: fue el tercer descarte de una teoría de bandwidth.
+
+Estado del bug upstream: NVIDIA confirma el **5923212**, lo reproduce, sigue en investigación,
+y el último reporte del hilo (**19 de julio de 2026**) dice que persiste en **610.43.02**.
+Esperar upstream no es plan.
+
+**Muere la hipótesis del comando HID** de la sección anterior: Project-VR llega a 90Hz con
+parches al driver de video, sin ningún comando propietario. La secuencia HID idéntica que
+medimos es correcta y suficiente. `docs/07` (captura en Windows) queda como material
+archivado — **no hace falta bootear Windows.**
+
+#### Las dos diferencias con el setup que funciona
+
+1. **Ampere vs Ada.** Ellos validaron en RTX 4080 (AD103); acá hay una 3060 Ti (GA104). El
+   README de `patches/nvidia/` afirma que el path `nvkms-evo3.c` de Ampere está cubierto,
+   pero eso es lectura de código y el resultado empírico dice que no.
+2. **X11 direct-mode vs Wayland DRM lease.** Nuestro log dice `Selected NVIDIA Direct-Mode
+   backend!` con `VK_EXT_acquire_xlib_display`. Project-VR corre **Wayland con DRM lease**, y
+   el parche 0002 se llama literalmente `enable-Wayland-DRM-lease-of-VR-HMDs`. El README
+   sostiene que esa maquinaria es código muerto en X11 — otra afirmación sin verificar.
+
+La segunda es gratis de probar y es la única variable de setup que se puede cambiar sin
+comprar hardware. Va primero.
+
+### Probar Wayland + DRM lease
+
+```bash
+# 1. Cerrar sesion y elegir "Plasma" (NO "Plasma (X11)") en SDDM.
+# 2. Reanudar el agente si hace falta:  claude --continue
+# 3. El HMD NO tiene que aparecer en Configuracion > Pantallas. Si aparece, KWin lo tomo
+#    como monitor y el parche 0002 (marcarlo non-desktop) no esta haciendo efecto.
+cd ~/vr && ./jack-in-wayland.sh 1     # 1 = 4320x2160@90, el modo de Project-VR
+```
+
+`jack-in-wayland.sh` es mucho más simple que `jack-in.sh`: con DRM lease no hay que pelearle
+el display a X, así que **no toca ningún monitor del escritorio** — no hay liberación de
+`DP-0`, ni ciclado de CRTC, ni el problema de la rotación del portrait.
+
+**Lo que hay que mirar en la salida** (el script lo imprime solo): el backend elegido. Si
+sigue diciendo `Selected NVIDIA Direct-Mode backend!`, el DRM lease no se usó y el test no
+vale. Tiene que aparecer el path de Wayland/lease.
+
+Y después, como siempre: **mirar adentro del casco.** La API va a reportar 90.0 fps felices
+con el panel negro.
+
 ### Pendientes que necesitan sudo (no bloquean el test de 90Hz)
 
 1. **Prioridad RT para Monado.** El log tira `Could not raise priority for thread
