@@ -429,6 +429,83 @@ ofrecer el conector, y eso es lo que discrimina si el problema es KWin o es NVID
 Si tampoco lo ofrece, el problema es NVIDIA + DRM lease, coincide con el hilo del foro, y hay
 que decidir si vale replicar el stack entero de Project-VR o quedarse en 60Hz.
 
+### GNOME/mutter ejecutado: el lease anda, el 90Hz sigue fallando (2026-08-04, 20:45)
+
+El test discriminante del bloque anterior está corrido, y contesta las dos preguntas que
+tenía pendientes — una a favor y otra en contra.
+
+**1. El culpable del lease era KWin, no NVIDIA.** Con GNOME 48.7 / mutter 48.7 de Debian 13,
+**sin ningún parche**, el conector del casco aparece ofrecido para arrendar. Leído con
+`wayland-info` (`scripts/check-lease.sh`):
+
+```
+interface: 'wp_drm_lease_device_v1', version: 1, name: 35
+	path: /dev/dri/card0
+	connector:
+		id: 130
+		name: DP-1
+		description: HPN
+```
+
+| | KWin 6.3.6 | mutter 48.7 |
+|---|---|---|
+| anuncia `wp_drm_lease_device_v1` | sí | sí |
+| ofrece conectores | **cero** | **conector 130 `DP-1 (HPN)`** |
+| lease otorgado | no | **sí** |
+
+Y Monado lo toma sin pelear:
+
+```
+INFO  [_lease_connector_done] [/dev/dri/card0] connector DP-1 (HPN) id: 130
+DEBUG [_lease_fd] Lease granted
+DEBUG [compositor_try_window] Target backend wayland-direct initialized!
+DEBUG [get_primary_display_mode] found display mode 4320x2160@90.00
+```
+
+Esto **descarta el hilo del foro de NVIDIA** para nuestro caso: el 595.71.05-open concede
+leases perfectamente. El bug era del compositor. Los parches a mutter de Project-VR no hacen
+falta para levantar el lease, tal como se había predicho.
+
+**2. Y sin embargo el 90Hz falla exactamente igual.** Verificación física, el usuario con el
+casco puesto:
+
+| modo | vía | lease | modo tomado | qué se ve adentro |
+|---|---|---|---|---|
+| 1 | Wayland DRM lease | otorgado | `4320x2160@90.00` | **logo de HP, panel muerto** |
+| 2 | Wayland DRM lease | otorgado | `4320x2160@60.00` | **imagen perfecta** |
+
+El control a 60Hz se corrió *después* del fallo, por la misma vía y con el mismo lease, así
+que el path está sano y el resultado es limpio. Con esto son **ocho** fallos de 90Hz.
+
+**Lo que esto cierra.** Cambiamos la ruta de video entera — X11 NVIDIA Direct-Mode →
+Wayland DRM lease, dos mecanismos que casi no comparten código del lado del driver — y el
+fallo no se movió: mismo síntoma exacto, mismo logo de HP. Sumado a que el 595-open parcheado
+falló igual que el sin parchear, ya casi no queda superficie del lado de NVIDIA donde la
+causa pueda estar escondida.
+
+**Lo que esto refuerza.** La hipótesis del bloque "a nadie le está diciendo al casco que vaya
+a 90Hz" (`wmr_hmd.c:767`, misma secuencia HID para 60 y para 90) es ahora la única que explica
+los ocho resultados. Sigue siendo hipótesis: Project-VR reporta el G2 a `4320x2160@90`, pero
+con SteamVR y su fork de WMR dentro de `vrserver`, no con el driver WMR de Monado — puede que
+manden un HID que nosotros no.
+
+**Siguiente paso, y es el único que convierte esto en hecho:** la captura HID de Windows de
+`docs/07-captura-hid-windows.md`, diffeada con `scripts/analyze-hid.py` contra nuestras
+`~/vr/hid-mode{0,1,2}.txt`. No necesita agente.
+
+#### Trampa que costó un ciclo de debug: el player sale con EOF en stdin
+
+`hello_xr` v3 lee las teclas de transporte de stdin, y **`EOF` es su forma de terminar**
+(`case EOF: // the pipe on stdin closed - this is how a timed run ends`). Lanzarlo con
+`< /dev/null` lo mata en menos de un segundo, con **exit 0 y sin una línea de error**: en el
+log de Monado se ve `client_connected`, los swapchains creados y destruidos, y
+`client_disconnected`, sin ningún `BEGIN_SESSION` de la app. Parece un fallo del compositor y
+no lo es. La forma correcta es la documentada: `sleep N | hello_xr ...`.
+
+Ojo que esto choca con `XRT_NO_STDIN=1`, que sí hace falta para **monado-service** (sin él
+muere con `epoll_ctl(stdin) failed`). Son dos procesos distintos: al servicio se le saca
+stdin, al player hay que dárselo vivo.
+
 ### Pendientes que necesitan sudo (no bloquean el test de 90Hz)
 
 1. **Prioridad RT para Monado.** El log tira `Could not raise priority for thread

@@ -32,9 +32,27 @@ sudo ./scripts/bootstrap-lab.sh patch-nv    # y REINICIAR
 **No te saltees el baseline sin parches.** Es lo que separa "el driver 595 por sí solo
 cambió algo" de "los parches lo arreglaron", y es la única forma de saber qué reportar.
 
-### Dónde quedó todo (2026-08-04, 19:10)
+### Dónde quedó todo (2026-08-04, 20:45)
 
-**El lab terminó, y el resultado es negativo: los parches del 595-open NO arreglan el 90Hz.**
+**Se probó la segunda vía de display entera — Wayland + DRM lease en GNOME/mutter — y el
+90Hz falla idéntico. Ocho fallos ya. La causa casi no puede estar en NVIDIA.**
+
+El lease **funciona**: mutter 48.7 de Debian 13, sin parches, ofrece el conector del casco
+(`connector 130 DP-1 (HPN)`), Monado lo arrienda y toma `4320x2160@90.00`. Eso descarta el
+hilo del foro de NVIDIA sobre DRM lease: **el culpable de ese bloqueo era KWin**, que anuncia
+el device pero ofrece cero conectores. Y sin embargo, con el lease otorgado y el modo de 90
+tomado, el panel sigue muerto con el logo de HP. El control a 60Hz por la **misma** vía dio
+imagen perfecta. Tabla y logs en `docs/04-lab-90hz.md`, "GNOME/mutter ejecutado".
+
+Cambiamos X11 Direct-Mode por Wayland DRM lease — dos mecanismos que casi no comparten código
+del lado del driver — y el síntoma no se movió. Sumado a que el 595-open parcheado falló igual
+que el sin parchear, la hipótesis del HID (abajo) quedó como la única que explica los ocho
+resultados. **El siguiente paso, y el único que la convierte en hecho, es la captura HID de
+Windows: `docs/07-captura-hid-windows.md`.** No necesita agente.
+
+Para chequear el lease sin levantar Monado: `scripts/check-lease.sh`.
+
+#### Lo anterior (2026-08-04, 19:10): los parches del 595-open NO arreglan el 90Hz
 
 Reboot hecho, módulo parcheado confirmado en memoria, test corrido con verificación física
 en seis casos (tabla completa en `docs/04-lab-90hz.md`, "Paso 5 ejecutado"). Los dos modos de
@@ -102,6 +120,16 @@ Monado los reportes HID de keepalive comparado con Windows. Es una molestia, no 
   principal. Pasale `HELLO_XR_PHOTO360=` a algo que exista (en el lab hay una equirect de
   prueba en `~/vr/media/test-equirect.jpg`). Antes de culpar al modo de video, verificá en
   el log de Monado que haya `BEGIN_SESSION` **sin** `END_SESSION` inmediato.
+- **El player sale solo si le das `< /dev/null`.** `hello_xr` v3 lee las teclas de transporte
+  de stdin y trata `EOF` como "fin de corrida temporizada": lanzado con stdin cerrado muere en
+  menos de un segundo, con **exit 0 y sin una sola línea de error**. En el log de Monado se ve
+  `client_connected`, swapchains creados y destruidos, y `client_disconnected`, sin ningún
+  `BEGIN_SESSION` de la app — parece un fallo del compositor y no lo es. Usá `sleep N |
+  hello_xr ...`. Ojo que **monado-service** necesita lo contrario (`XRT_NO_STDIN=1`, si no
+  muere con `epoll_ctl(stdin) failed`): al servicio se le saca stdin, al player se le da vivo.
+- **Para Wayland hay que elegir bien la sesión en SDDM:** aparecen **dos** entradas llamadas
+  sólo "GNOME", una Wayland y otra X11. Elegí "GNOME on Wayland". Y KWin no sirve para el
+  lease. `scripts/check-lease.sh` lo verifica en dos segundos antes de perder tiempo.
 - **`jack-in.sh` ya no hardcodea las salidas de video** (arreglado 2026-08-04): saca una
   foto del layout real con `xrandr` antes de tocar los CRTC y la restaura después, ciclando
   la rotación y usando `kscreen-doctor` en KDE. Tampoco hardcodea rutas: detecta
@@ -155,6 +183,9 @@ scripts/jack-in.sh          levanta el pipeline VR (AJUSTAR las salidas de video
 scripts/play360.sh          reproduce 360/VR180/plano en el casco
 scripts/get360.sh           baja video VR de YouTube (necesita el cliente android_vr)
 scripts/solo-hmd-test.sh    test con el casco como ÚNICO display (restaura con trap EXIT)
+scripts/check-lease.sh      ¿el compositor Wayland ofrece el conector del casco? (sin Monado)
+scripts/jack-in-wayland.sh  levanta el pipeline VR por DRM lease (Wayland; necesita GNOME)
+scripts/drmprops.c          lee non-desktop/modos del conector directo del kernel
 scripts/capture-hid.sh      captura el HID del companion por modo (usbmon, necesita root)
 scripts/analyze-hid.py      diffea capturas HID: usbmon (Linux) y TSV de tshark (Windows)
 ```

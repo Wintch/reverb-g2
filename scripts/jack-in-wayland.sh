@@ -22,7 +22,9 @@ SOCKET="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/monado_comp_ipc"
 
 if [ "${XDG_SESSION_TYPE:-}" != "wayland" ]; then
     echo "Esto necesita una sesion WAYLAND (XDG_SESSION_TYPE=${XDG_SESSION_TYPE:-unset})." >&2
-    echo "Cerra sesion y elegi 'Plasma' (no 'Plasma (X11)') en SDDM." >&2
+    echo "Cerra sesion y elegi 'GNOME on Wayland' en SDDM." >&2
+    echo "OJO: hay DOS entradas llamadas solo 'GNOME' -- una es Wayland y la otra X11." >&2
+    echo "     KWin no sirve para esto: no ofrece el conector para lease (cap. 04)." >&2
     exit 1
 fi
 
@@ -66,17 +68,26 @@ for _i in $(seq 1 30); do
     sleep 1
 done
 
+# El socket aparece ANTES de que el compositor termine de loguear el backend y el modo,
+# asi que grepear apenas lo vemos sale vacio y parece un fallo. Esperamos al marcador.
+for _i in $(seq 1 20); do
+    grep -q "found display mode" "$LOG" && break
+    sleep 1
+done
+
 echo
 echo "=== backend de compositor elegido ==="
-# ESTO es lo que hay que mirar. En X11 decia "Selected NVIDIA Direct-Mode backend!".
-# Si en Wayland sigue diciendo lo mismo, el DRM lease NO se uso y el test no vale.
-grep -iE "Selected .* backend|direct wayland|drm.?lease|lease" "$LOG" | head -8 \
-    || echo "  (nada -- revisa el log entero)"
+# ESTO es lo que hay que mirar. El string correcto lo emite compositor_try_window:
+#   "Target backend wayland-direct initialized!"   <- se uso DRM lease, el test vale
+# En X11 decia "Selected NVIDIA Direct-Mode backend!". Si aparece eso, el lease NO se uso.
+# Nada de `| head` aca: head sale 0 siempre y se come el `|| echo` de la rama vacia.
+OUT="$(grep -iE "Target backend|Selected .* backend|lease|Found no connectors" "$LOG")"
+[ -n "$OUT" ] && echo "$OUT" || echo "  (nada -- revisa el log entero)"
 
 echo
 echo "=== modo de video tomado ==="
-grep -E "found display mode|frame interval" "$LOG" | tail -3 \
-    || echo "  (no encontro modo -- el HMD puede no estar arrendable)"
+OUT="$(grep -E "found display mode|frame interval" "$LOG" | tail -3)"
+[ -n "$OUT" ] && echo "$OUT" || echo "  (no encontro modo -- el HMD puede no estar arrendable)"
 
 echo
 if [ -S "$SOCKET" ]; then
