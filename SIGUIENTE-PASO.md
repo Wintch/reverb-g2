@@ -1,92 +1,56 @@
-# Siguiente paso — pasar el disco raíz de USB a SATA
+# Siguiente paso — probar el handshake de activación WMR
 
-Estado al 2026-08-04, tarde.
+Estado al 2026-08-04, noche.
 
-## Qué hay que hacer
+## Lo que se resolvió hoy
 
-Sacar el **Crucial CT240BX500SSD1** del enclosure USB JMicron y enchufarlo a un
-**puerto SATA de la placa**. Eso elimina la causa raíz del cuelgue total de la
-máquina: hoy el disco raíz y el casco comparten el mismo controlador xHCI.
+**Fase 0 cerrada.** El disco raíz salió del enclosure USB y está en SATA
+(`tran=sata`, controlador `0000:02:00.1`, AHCI 6 Gbps, cero errores ATA). El casco
+quedó solo en su xHCI `07:00.3`. `scripts/check-usb-split.sh` da OK.
 
-Procedimiento completo y verificaciones en `docs/00-hardware-usb.md`,
-**Procedimiento 1**.
+**El fallo "físico incurable" del casco era un puerto USB-A malo.** Ver
+`docs/06-known-issues.md`, primera sección — está reescrita con la evidencia del
+kernel (`error -71`, error 7-14 de WMR) y la lista de enumeración correcta.
 
-### Necesitás tener a mano
+**El audio del G2 anda.** Card ALSA `Generic USB Audio` (`0bda:4c15`), confirmado
+audible. Probar siempre al 100% de volumen: el device reporta mal su escala de dB.
 
-- Un **cable de datos SATA** (los mothers traen 1 o 2 en la caja) ← lo único que
-  puede faltar y hay que comprar.
-- Un conector **SATA de alimentación** libre en la fuente.
-- Destornillador para abrir el enclosure JMicron.
+## Lo que falta
 
-### Los pasos, corto
+`DP-0` sigue `disconnected` — el panel no enciende. Los puertos DisplayPort de la
+GPU están descartados (test cruzado con el monitor vertical: el monitor da link en
+los dos, el casco en ninguno).
 
-1. Apagar del todo y desenchufar de la corriente.
-2. Abrir el enclosure, sacar el SSD.
-3. SSD → `SATA1` del mother + poder SATA de la fuente.
-4. Fijarlo donde entre (bahía 2.5", o apoyado/atado — no tiene partes móviles).
-5. Encender → **BIOS** → poner ese disco primero en el orden de arranque.
-   El disco deja de ser "USB HDD" y pasa a ser SATA; no todos los BIOS reordenan solos.
+**Hipótesis a testear:** el casco nunca recibe el handshake de activación WMR, que
+va por HID al companion `03f0:0580` y lo manda el runtime. Sin él el casco queda en
+reposo — apaga el amplificador de audio a los ~20s (síntoma observado y medido) y no
+enciende el panel. Nunca se pudo probar antes porque el companion no enumeraba.
 
-## Por qué esto y no mover puertos USB
+### Procedimiento
 
-Ya se probó, dos veces, y **no hay solución por USB en esta máquina**:
+1. **Volver los cables como estaban**: monitor vertical a su puerto DisplayPort
+   original (vuelve a ser `DP-3`), casco a `DP-0`. Hoy se intercambiaron para
+   diagnosticar y el swap ya dio su respuesta.
+   Sin esto, `jack-in.sh` no funciona bien: tiene hardcodeado `DP-3` y configura las
+   tres salidas en un solo comando `xrandr`, así que si una no existe falla entero.
+2. Verificar que enumeren los cinco devices USB (lista en `docs/06-known-issues.md`).
+3. `./jack-in.sh 3dof` y mirar si `DP-0` pasa a `connected`.
 
-- Mover el **SSD** de puerto (mañana): `4-3.1` → `4-4`. Mismo xHCI `07:00.3`.
-- Mover el **casco** de puerto (tarde): `4-1` → `4-2`. Mismo xHCI `07:00.3`.
+### Pendiente menor
 
-Sondeo con `scripts/find-port.sh` → mapa físico definitivo: **los 4 puertos USB3
-del panel trasero son todos del CPU (`07:00.3`)**. Los 3 USB3 del chipset
-(`02:00.0`/usb2) existen solo en headers internos y **el gabinete no tiene panel
-frontal cableado**, así que son inalcanzables. Callejón sin salida.
-
-En cambio el controlador SATA del chipset (`02:00.1`) tiene **6 puertos AHCI
-libres, ninguno ocupado**, y el disco ya es SATA — está dentro de un puente USB
-sin necesidad.
-
-## El arranque no se rompe (verificado antes de tocar nada)
-
-| chequeo | resultado |
-|---|---|
-| `/etc/fstab` | usa `UUID=` para `/` y swap → el cambio de nombre de dispositivo es irrelevante |
-| initramfs | contiene `ahci`; `MODULES=most` |
-| modo de arranque | **BIOS/legacy** (no existe `/sys/firmware/efi`), tabla `dos` |
-| bootloader | MBR en el propio disco → viaja con el disco |
-
-Único punto de intervención posible: el orden de arranque en el BIOS (paso 5).
-
-## Al volver a bootear
-
-```bash
-~/Documents/linux_vr_base/reverb-g2-linux/scripts/check-usb-split.sh
-```
-
-Debe decir:
+Agregar el device de audio a `scripts/71-usb-no-autosuspend.rules` — la regla no lo
+cubre porque `0bda:4c15` no existía cuando se escribió:
 
 ```
-Disco raíz (sda): tran=sata  ctrl=0000:02:00.1
-RESULTADO: OK — el disco raíz ya NO está en USB
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="0bda", ATTR{idProduct}=="4c15", TEST=="power/control", ATTR{power/control}="on"
 ```
 
-Si dice OK → **test de estrés** (`docs/00-hardware-usb.md`, procedimiento 4).
-Ese es el gate para retomar el resto del proyecto.
+(Hoy ya figura en `control=on` por su cuenta, así que no es lo que causa el corte de
+audio a los 20s — pero conviene fijarlo.)
 
-## Ya hecho de la Fase 0
+## Cola después de esto
 
-- ✅ `71-usb-no-autosuspend.rules` instalada y aplicada (SSD, QHMD, sensores en
-  `power/control=on`).
-- ✅ `usermod -aG adm,systemd-journal brunduk` — activo, `journalctl -k` accesible.
-- ❌ Separación del disco → **esto es lo que falta**, ahora por SATA.
-
-## Después del gate, la cola pendiente
-
-1. Verificación visual en el casco del player 360 con NVDEC (branch `g2-360-viewer`).
-2. Test 10/10 de conexión de controllers (branch `g2-controllers`).
-3. Lab dual-boot 90 Hz (manual cap. 04).
-
-## Ojo aparte (no bloquea esto)
-
-En el último chequeo el **`03f0:0580` (QHMD companion) no estaba enumerado** — solo
-el hub y los sensores. Es el fallo físico conocido del cable (ver
-`docs/06-known-issues.md`), no tiene que ver con el cambio de puerto. Tenerlo en
-cuenta antes de cualquier prueba con el casco: si no aparece en `lsusb`, Monado va
-a caer en Simulated HMD.
+1. Test de estrés (`docs/00-hardware-usb.md`, procedimiento 4) — el gate original.
+2. Verificación visual del player 360 con NVDEC (branch `g2-360-viewer`).
+3. Test 10/10 de conexión de controllers (branch `g2-controllers`).
+4. Lab dual-boot 90 Hz (manual cap. 04).
