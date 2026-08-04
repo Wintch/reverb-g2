@@ -22,27 +22,71 @@ xHCI 02:00.0 (chipset A520)  → usb1 (480M) + usb2 (10G, 3 puertos)
    usb2         VACÍO  ← acá va el disco
 ```
 
-## Procedimiento 1 — mover el disco (APAGADO, nunca en caliente)
+## Descartado: mover cosas de puerto USB (medido 2026-08-04, tarde)
 
-1. Apagar la máquina del todo (es el disco raíz: no se replantea en caliente).
-2. Cambiar el cable USB del enclosure del SSD a otro puerto físico del gabinete/panel
-   trasero — buscamos uno que cuelgue del controlador `02:00.0`. En placas AM4 con
-   chipset A520, los puertos del chipset suelen ser un cluster distinto del de los
-   puertos "CPU"; no hay serigrafía confiable, así que se verifica por software.
-3. Bootear y verificar:
+Se probó y **no hay solución por USB en esta máquina**. Dos intentos, ambos fallidos:
 
-   ```bash
-   readlink -f /sys/block/sda
-   # DEBE contener: 0000:02:00.0
-   # Si sigue diciendo 0000:07:00.3 → apagar y probar otro puerto.
-   ```
+- **Mover el SSD de puerto** (2026-08-04, mañana): pasó de `4-3.1` a `4-4` — otro conector
+  físico, mismo xHCI `07:00.3`.
+- **Mover el casco de puerto** (2026-08-04, tarde): pasó de `4-1` a `4-2` — otra vez el
+  mismo `07:00.3`.
 
-4. Confirmar velocidad y que el casco quedó solo en su bus:
+Sondeando con `scripts/find-port.sh` se confirmó el mapa físico definitivo:
 
-   ```bash
-   lsusb -t          # sda (JMicron/uas) bajo el root hub de usb2; casco en usb3/usb4
-   cat /sys/bus/usb/devices/*/speed
-   ```
+| controlador | bus | puertos | dónde están físicamente |
+|---|---|---|---|
+| `07:00.3` (Matisse, CPU) | usb3 (480M) / usb4 (10G) | 4 + 4 | **los 4 USB3 azules del panel trasero** |
+| `02:00.0` (chipset A520) | usb1 (480M) | 9 | los 2 USB2 traseros (ahí el receiver Logitech en `1-8`) + headers |
+| `02:00.0` (chipset A520) | usb2 (10G) | 3 | **solo headers internos — el gabinete no tiene panel frontal cableado** |
+
+El panel trasero tiene 6 puertos: 2 USB2 + 4 USB3. Los 4 USB3 son **todos** del CPU
+(coincide con los 4 puertos de `usb4`). Los 3 puertos USB3 del chipset — los únicos que
+servirían — existen únicamente en headers internos que este gabinete no expone.
+
+**Conclusión: el barajado de puertos USB es un callejón sin salida.** Ir directo al
+Procedimiento 1.
+
+## Procedimiento 1 — mover el disco raíz a SATA (APAGADO)
+
+El `sda` es un **Crucial CT240BX500SSD1**, o sea un **SSD SATA de 2.5" metido en un
+enclosure USB JMicron JMS578**. La placa tiene el controlador SATA del chipset
+(`02:00.1`, AMD 500 Series) con **6 puertos AHCI (`ata1`..`ata6`), todos vacíos**.
+Sacarlo del enclosure y enchufarlo a SATA resuelve el problema de raíz:
+
+- el casco queda solo en `07:00.3`, sin nada que compartir → desaparece la causa del cuelgue;
+- se sale del techo del JMS578 (~430 MB/s) a SATA III (~550 MB/s);
+- y lo más importante, el filesystem raíz deja de colgar de un bus que se resetea solo.
+
+### Verificado de antemano — el arranque NO se rompe
+
+| chequeo | resultado |
+|---|---|
+| `/etc/fstab` | usa `UUID=` para `/` y para swap → el cambio de nombre de dispositivo es irrelevante |
+| initramfs | contiene `ahci`; `MODULES=most` en `initramfs.conf` |
+| modo de arranque | **BIOS/legacy** (no existe `/sys/firmware/efi`), tabla de particiones `dos` |
+| bootloader | MBR en el propio disco → viaja con el disco |
+| puertos SATA | 6 libres |
+
+### Pasos
+
+1. Apagar del todo y desenchufar de la corriente (es el disco raíz: nunca en caliente).
+2. Abrir el enclosure JMicron y sacar el SSD.
+3. Conectarlo a `SATA1` del mother + un conector **SATA de alimentación** de la fuente.
+4. Fijarlo donde se pueda (bahía de 2.5", o apoyado/atado — es SSD, sin partes móviles).
+5. Encender, **entrar al BIOS y poner ese disco primero en el orden de arranque**. Es el
+   único paso que puede requerir intervención: el disco deja de ser "USB HDD" y pasa a ser
+   SATA, y no todos los BIOS reordenan solos.
+
+**Lo único que puede faltar físicamente:** un **cable de datos SATA** (los mothers traen
+1 o 2 en la caja) y un conector SATA de poder libre en la fuente.
+
+### Verificación al volver
+
+```bash
+./scripts/check-usb-split.sh
+# Debe dar OK: el SSD ya no aparece en USB en absoluto.
+lsblk -o NAME,SIZE,TRAN,MODEL   # sda debe decir TRAN=sata, no usb
+```
 
 ## Procedimiento 2 — matar el autosuspend de disco y casco
 
@@ -104,5 +148,8 @@ siguientes (NVDEC, controllers, lab 90Hz).
 
 La falla del companion board del casco es **física** (pasa igual en Windows; cable/conector
 sospechoso — ver `06-known-issues.md`). Separar los buses no la cura: solo evita que esa
-falla arrastre al disco del sistema. A mediano plazo el fix de fondo es mover `/` a un
-disco interno (el NVMe hoy es 100% NTFS/Windows).
+falla arrastre al disco del sistema. El Procedimiento 1 (pasar `/` a SATA) es exactamente
+ese fix de fondo — el NVMe sigue siendo 100% NTFS/Windows y no se toca.
+
+Una vez movido el SSD a SATA, el enclosure JMS578 queda libre y es perfectamente usable
+para otra cosa (backups, discos externos), solo que nunca más para el filesystem raíz.
