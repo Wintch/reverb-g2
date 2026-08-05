@@ -1,5 +1,37 @@
 # Contexto para el agente del lab de 90Hz
 
+> ## ESTADO AL 2026-08-05 — leer esto antes que el resto
+>
+> El lab ya corrió y el bug del bpc está **cerrado y publicado**:
+>
+> - **PR en NVIDIA:** https://github.com/NVIDIA/open-gpu-kernel-modules/pull/1275
+> - **Hilo del foro:** post 379240, revisión 6, corregido y con los tres adjuntos
+> - Con el parche, el status HID de 33 bytes del casco queda idéntico byte a byte al de Windows
+>
+> **Sigue abierto:** los dos modos de 90 Hz no muestran imagen (el panel enciende y parpadea
+> en blanco); el de 60 Hz anda.
+>
+> ### Lo próximo, ya preparado y verificado: `docs/16-lab-vblank.md`
+>
+> En los tres modos nativos del EDID, "90 Hz" y "vblank corto" están **perfectamente
+> confundidos**: el único modo que anda es también el único con vblank largo. `docs/16` arma
+> el factorial 2x2 que falta para separarlos, más un barrido de refresh.
+>
+> - `experiments/vblank/g2-vblank-test.edid` — el factorial completo en un solo EDID
+> - `experiments/vblank/sweep-70-75-80.edid` — la primera ronda del barrido
+> - `scripts/edid-tool.py inject-mode` — genera cualquier variante
+>
+> **Correr el PREFLIGHT de `docs/16` primero.** Ya pasó una vez de empezar a medir en el
+> sistema principal, que tiene el 550 propietario sin parchear: ahí el clamp a 6 bpc está
+> activo y el resultado sale confundido con el bug que justamente sacamos del medio.
+>
+> ### Publicación
+>
+> El repo se va a publicar en GitHub (`Wintch/reverb-g2-linux`). Hay dos bloqueos, ver
+> `docs/17-publicacion.md`. La clave SSH del lab ya está generada en `~/.ssh/id_ed25519`.
+> La identidad de git de este repo ya apunta a gmail.
+
+
 Estás en una instalación **nueva y limpia** de Debian 13, en un SSD dedicado, cuyo único
 propósito es probar si el HP Reverb G2 puede correr a **90 Hz** con el driver NVIDIA
 595-open parcheado. Este repo es todo el conocimiento acumulado del proyecto. Leelo antes
@@ -32,7 +64,43 @@ sudo ./scripts/bootstrap-lab.sh patch-nv    # y REINICIAR
 **No te saltees el baseline sin parches.** Es lo que separa "el driver 595 por sí solo
 cambió algo" de "los parches lo arreglaron", y es la única forma de saber qué reportar.
 
-### Dónde quedó todo (2026-08-05, 05:15) — el parche del bpc anda a medias, y se agotó el software
+### Dónde quedó todo (2026-08-05, 09:15) — reporte publicado; hay que EDITARLO
+
+El reporte se publicó: [hilo 379240](https://forums.developer.nvidia.com/t/hp-reverb-g2-clamped-to-6-bpc-because-its-edid-leaves-color-depth-undefined-root-cause-found-two-line-patch-but-90-hz-still-fails-to-light/379240)
+(sin respuestas todavía). Llegó feedback externo de seis ítems; el triage completo, con cada
+uno contrastado contra lo ya medido, está en **`docs/15-feedback-triage.md`**.
+
+**Lo urgente: el post publicado tiene un error y hay que editarlo antes de que lo lea más
+gente.** Dice *"its DisplayID 2.0 extension carries only a Type VII timing block"*. Es
+DisplayID **1.2** y el bloque es Type I. La conclusión no cambia y el argumento queda **más
+fuerte**: `nvt_edid.c:1101` bifurca por versión (`(pExt[1] & 0xF0) == 0x20`), así que el G2 va
+por el parser DisplayID 1.3, que **nunca escribe `digital.bpc`** — o sea que el clamp a 6 bpc
+es inevitable para *cualquier* sink DP con DisplayID 1.x que deje la profundidad sin declarar.
+
+Cuerpo completo corregido, listo para pegar sobre el original, en **`docs/14`**. Adjuntos ya
+armados en `forum-attachments/` (EDID crudo + EDID de repro a 8 bpc + decode anotado, el
+parche, y el `nvidia-bug-report.log.gz`). También hay texto listo para abrir el issue en
+`NVIDIA/open-gpu-kernel-modules`.
+
+**Del feedback, lo que ya estaba cerrado** (no rehacerlo):
+
+- *"Aplicá los parches de Project-VR sobre el de bpc y bisecá"* — ya están aplicados los tres
+  (`PATCH[0..2]` en `dkms.conf`) más el `0004`. El resultado actual **es** el stack completo
+  en GA104. Y no hay caso positivo verificado en Ada del cual portar nada.
+- *"Puede ser el color space"* — lo cierra el propio EDID: CTA-861 byte 3 = `0x00`, el casco no
+  anuncia YCbCr 4:4:4 ni 4:2:2. El enlace es RGB obligatoriamente en los tres modos.
+- *"Compará el modeline derivado del EDID contra el que programa nvkms"* — hecho a mano
+  (`scripts/edid-tool.py decode`): coinciden exactamente en los tres modos. No hay segunda
+  causa raíz ahí.
+
+**Lo que sigue abierto, en orden:** (2) barrido de refresh 61/72/75/80 Hz — el que más
+discrimina, y se destraba volviendo a X11 con `Option "CustomEDID"`, que se había descartado
+por conveniencia y no por técnica; (3) captura USBPcap en Windows de la transición 60→90 (el
+desensamblado del Oasis acota lo que ese binario puede mandar, no lo que pasa por el bus, y
+quedan sin mirar los Detours de `driver_oasis.dll`); (4) DPCD por RM control call, caro y
+probablemente redundante.
+
+#### Lo anterior (2026-08-05, 05:15) — el parche del bpc anda a medias, y se agotó el software
 
 **Actualización (01:50): se agotó también el firmware.** `NVreg_EnableGpuFirmwareLogs=1`
 activado y probado — el driver dice explícitamente que le falta `gsp_log_ga10x.bin` para
@@ -233,7 +301,9 @@ docs/10-recursos.md         índice de fuentes: driver de HP, FCC, chips, parque
 docs/11-panorama-hmd-linux.md  ¿es sólo NVIDIA? otros cascos, DK2, y dónde publicar
 docs/12-protocolo-g2.md     >>> REFERENCIA DEL PROTOCOLO <<< todo lo que sabemos del casco
 docs/13-bug-6bpc.md         >>> EL BUG <<< NVIDIA clava el G2 en 6 bits por color
-docs/14-nvidia-report.md    >>> REPORTE LISTO <<< para publicar en el foro de NVIDIA
+docs/14-nvidia-report.md    >>> REPORTE PUBLICADO <<< + el cuerpo corregido para editarlo
+docs/15-feedback-triage.md  el feedback externo al reporte, ítem por ítem, con veredicto
+forum-attachments/          los adjuntos del hilo, ya armados y listos para subir
 windows-kit/                paquete de captura para Windows (se empaqueta en windows-kit.7z)
 patches/nvidia/             los 3 parches de Project-VR para el 595-open
 patches/monado/             7 parches nuestros (companion, controllers, WMR_CAMERAS)
@@ -245,6 +315,7 @@ scripts/get360.sh           baja video VR de YouTube (necesita el cliente androi
 scripts/solo-hmd-test.sh    test con el casco como ÚNICO display (restaura con trap EXIT)
 scripts/check-lease.sh      ¿el compositor Wayland ofrece el conector del casco? (sin Monado)
 scripts/xref.py             xrefs de strings en binarios PE, sólo con binutils
+scripts/edid-tool.py        decodifica el EDID del casco y genera variantes (bpc, checksum)
 scripts/jack-in-wayland.sh  levanta el pipeline VR por DRM lease (Wayland; necesita GNOME)
 scripts/drmprops.c          lee non-desktop/modos del conector directo del kernel
 scripts/capture-hid.sh      captura el HID del companion por modo (usbmon, necesita root)
