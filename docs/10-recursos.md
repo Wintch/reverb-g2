@@ -158,3 +158,28 @@ no está al alcance. Las fotos internas sí, y de ahí salen los part numbers.
 Datos administrativos útiles: fecha de concesión 2020-06-05 (A85Q) y 2020-09-30 (A85R),
 laboratorio SGS Taiwan, TCB Telefication B.V., modelo declarado `A85Q`/`A85R`, banda
 2402-2480 MHz (Bluetooth de los controllers), potencia 0.015 W.
+
+### Fotos internas de la FCC: analizadas, y NO dan part numbers (2026-08-05)
+
+Bajadas y procesadas con `scripts/pdf2md.py` (78 imágenes extraídas de los dos expedientes).
+**Las páginas están escaneadas a ~130 DPI**: la placa del G2, de ~100 mm, ocupa unos 680
+píxeles, o sea ~7 px/mm. Una serigrafía de chip mide menos que eso. Se amplió hasta 10× y el
+integrado principal es un cuadrado negro sin texto.
+
+Lo que sí se obtuvo:
+
+- **Serigrafías legibles en la placa del G2 (`A85Q`)**: `MCU Download` — cabezal de
+  programación, presumiblemente del STM32 — y **`DES JTAG`** junto a un conector. `DES` es muy
+  probablemente *deserializer*, o sea el chip de video: **hay un JTAG accesible al puente**.
+  Dato guardado por si algún día hace falta hablarle directo.
+- **El `A85R` es el Omnicept**, y sus fotos son de la placa de **eye-tracking de Tobii** (el
+  logo se lee perfecto). Es otro SKU y otra placa: no sirve para la cadena de video.
+- Placa principal del G2: ~100 mm de ancho.
+
+**Por qué no vale la pena insistir.** Esta línea existía cuando creíamos que el fallo estaba
+en el casco. El A/B de la RX 7800 XT (issue #332 de Monado) muestra que **el mismo casco, con
+el mismo puente y los mismos paneles, llega a 90 Hz con AMD**. El hardware del casco está
+exonerado, y el part number exacto del driver de backlight ya no cambia ninguna decisión.
+
+Si alguna vez hiciera falta, el camino no es la FCC —su resolución es la que es— sino un
+teardown de la comunidad con fotos macro, o abrir el casco. Ninguno vale el riesgo hoy.
