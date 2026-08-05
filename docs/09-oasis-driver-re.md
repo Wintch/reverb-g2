@@ -148,9 +148,28 @@ volvió a citar como "la única que explica los resultados". Corregido.
 qué del enlace de video a 90 Hz no le gusta al casco — ver el análisis de ancho de banda en
 `docs/04-lab-90hz.md`, que también deja mal parada a la teoría de DSC.
 
+## Cerrado despues (2026-08-05)
+
+- **`unlock_wmr.exe`** resulto ser mucho mas que su nombre: maneja **direct mode y estado de
+  display** (`DirectModeHelper_Ctor`, `DisableDirectMode`, `SetDisplayState`, `Direct Mode: %s`,
+  *"Device does not need manual activation of the display"*), usando
+  `Windows.Devices.Display.Core`. Y trae rutas por fabricante de GPU: `ADL2_Display_*` y
+  `agsSetDisplayMode` para **AMD**. O sea que en Windows una app puede pedir timings
+  arbitrarios; en Linux NVIDIA no lo permite (medido: `vkCreateDisplayModeKHR` y
+  `drmModeSetCrtc` rechazan todo lo que no este en el EDID).
+- **`MROEMFwHost.dll`** es **exclusivamente el actualizador de firmware**: `BeginUpdate`,
+  `CommitBuffer`, `CompleteUpdate`, verificacion de checksum, `WriteData`. Busca los reports
+  por *usage* HID. Su `ReadDeviceInfo` sirve para decidir si hay que actualizar, no para leer
+  estado del panel. **No hay camino ahi para consultar al ANX7530 en runtime.** Anotar que ese
+  binario SI puede escribir firmware al casco: territorio en el que no conviene meterse sin
+  una razon muy buena.
+- **`client_utility.exe`** es un helper de la API de Steam (`STEAMSCREENSHOTS_INTERFACE_VERSION003`)
+  y nada mas.
+
+Con eso los cuatro binarios del driver de HP quedan abiertos y sin nada mas que sacar.
+
 ## Suelto, sin mirar
 
-- `unlock/unlock_wmr.exe` (611 KB) y `bin/win64/client_utility.exe`.
 - `driver_oasis.dll` tiene secciones `.detourc`/`.detourd`: usa Microsoft Detours para
   hookear APIs. No se investigó qué hookea.
 - Las particiones se montaron read-only en `/mnt/win{3,4,5}`. Desmontar con

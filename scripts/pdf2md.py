@@ -23,6 +23,46 @@ TEXT_OPS = re.compile(rb"\((?:[^()\\]|\\.)*\)\s*Tj|\[(?:[^\[\]\\]|\\.)*\]\s*TJ")
 STR_IN = re.compile(rb"\((?:[^()\\]|\\.)*\)")
 
 
+def png_encode(w, h, channels, raw):
+    """Arma un PNG a mano desde pixeles crudos. Sin PIL: el sistema no la tiene."""
+    import struct
+    color = {1: 0, 3: 2, 4: 6}.get(channels)
+    if color is None:
+        return None
+    stride = w * channels
+    if len(raw) < stride * h:
+        return None
+    # PNG exige un byte de filtro por fila (0 = sin filtro)
+    body = b"".join(b"\x00" + raw[y * stride:(y + 1) * stride] for y in range(h))
+
+    def chunk(tag, data):
+        return (struct.pack(">I", len(data)) + tag + data +
+                struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF))
+
+    return (b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, color, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(body, 6))
+            + chunk(b"IEND", b""))
+
+
+def img_geometry(d):
+    """Saca ancho, alto, bits y canales del diccionario del XObject."""
+    def num(key):
+        m = re.search(rb"/" + key + rb"\s+(\d+)", d)
+        return int(m.group(1)) if m else None
+    w, h = num(b"Width"), num(b"Height")
+    bpc = num(b"BitsPerComponent") or 8
+    if b"/DeviceRGB" in d:
+        ch = 3
+    elif b"/DeviceCMYK" in d:
+        ch = 4
+    elif b"/DeviceGray" in d or b"/CalGray" in d:
+        ch = 1
+    else:
+        ch = None
+    return w, h, bpc, ch
+
+
 def unescape(s):
     s = s[1:-1]
     s = s.replace(rb"\(", b"(").replace(rb"\)", b")").replace(rb"\\", b"\\")
@@ -67,7 +107,13 @@ def main():
             except zlib.error:
                 continue
             if b"/Image" in d or b"/Subtype /Image" in d:
-                otros.append(("flate-raw", len(dec), d[:180]))
+                # Imagen cruda comprimida con Flate: la reconstruimos como PNG a mano.
+                w, h, bpc, ch = img_geometry(d)
+                png = png_encode(w, h, ch, dec) if (w and h and ch and bpc == 8) else None
+                if png:
+                    images.append(("png", png))
+                else:
+                    otros.append((f"flate-raw {w}x{h} bpc={bpc} ch={ch}", len(dec), d[:180]))
                 continue
             chunks = []
             for t in TEXT_OPS.finditer(dec):
