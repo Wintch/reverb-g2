@@ -1471,3 +1471,6 @@
 [14377.505852] nvidia-modeset: DPCONN> |  (VIDEO) |
 [14377.608408] nvidia-modeset: DPCONN> Notify Attach End
 [14379.628640] nvidia-modeset: DPCONN> Delayed HDCP Cap read called.
+[14402.679711] nvidia-modeset: DPCONN> Notify detach begin
+[14402.733904] nvidia-modeset: DPCONN> Notify detach end
+[14402.805915] nvidia-modeset: DP> IRQ

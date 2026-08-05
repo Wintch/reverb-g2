@@ -29,3 +29,7 @@ swapchain: 2 imagenes, formato 51, 4320x2160
   [  12.0s] 60.00 fps presentados  (modo pedido 60.000 Hz)
   [  15.0s] 60.01 fps presentados  (modo pedido 60.000 Hz)
   [  18.0s] 60.00 fps presentados  (modo pedido 60.000 Hz)
+  [  21.1s] 60.00 fps presentados  (modo pedido 60.000 Hz)
+  [  24.1s] 59.99 fps presentados  (modo pedido 60.000 Hz)
+
+resumen: 1460 frames en 25.0 s = 58.37 fps (modo pedido 60.000 Hz)
