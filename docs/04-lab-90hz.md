@@ -770,6 +770,81 @@ Refuerzos del mismo barrido:
 - Otro usuario (`Kukeltje`) reporto ver `DMA CMT ERR` en el canal HID `0x03 DEBUG` durante el
   intento de 90Hz. **Pendiente**: cazarlo en nuestro rig (`scripts/hunt-debug.py`).
 
+### El log de firmware del casco, leido en texto plano (2026-08-05, 00:30)
+
+**El G2 emite su propio log de firmware por HID**, en ASCII, por el canal `0x03 DEBUG` de la
+interfaz HoloLens Sensors. Paquetes de 509 bytes con varias entradas concatenadas:
+
+```
+magic "Dlo+" | 4 bytes timestamp | 2 bytes secuencia | 1 byte nivel | texto ASCII
+```
+
+Capturas reales: `RequestImuDisable forSpi=0`, `ImuDisable Req=0 Spi=0`,
+`RequestImuEnable forSpi=0`, `ICMStart`, `ICM start status=0`,
+`ERROR: CommandSet st 0, cmd 0, reqCmd 23`.
+
+**El canal esta MUDO hasta que alguien hace la secuencia de configuracion del casco.** Nuestro
+`hmd-vk` no la hace y no salia nada; `monado-service` si la hace y el canal empieza a hablar.
+Herramienta: `scripts/fwlog.py`.
+
+#### Y el control lo desactiva como pista
+
+En el issue #332 de Monado otro usuario reporto `DMA CMT ERR` en este canal durante el intento
+de 90Hz. **Aca no aparece.** Lo que si aparece es un error repetitivo cada 5 s:
+
+| | 90Hz (falla) | 60Hz (anda) |
+|---|---|---|
+| `ERROR: CommandSet st 0, cmd 0, reqCmd 23` | cada 5 s | **cada 5 s** |
+
+Esta en los DOS: no discrimina. Es ruido del subsistema de controllers
+(`reqCmd 23` = `0x17 CONTROLLER_STATUS`).
+
+**Lo importante es lo que NO esta: el firmware no loguea un solo error de panel a 90Hz.** Mide
+el timing correcto (ver el bloque del DEVICE_STATUS) y no se queja de nada. Y el panel igual
+no prende.
+
+### BOM: el ANX7530 tiene margen justo, y su hoja dice "hasta 4K x 2K @ 60Hz"
+
+- **Puente `ANX7530`** (Analogix): DP 1.4 de entrada y **dos transmisores MIPI-DSI
+  independientes, uno por panel, de 8 lanes a 1.5 Gbps/lane = 12 Gbps por salida**. Por panel
+  a 90Hz: 2160x2160 x 90 x 24bpp = **10.08 Gbps**. Entra, con poco margen. Su product brief
+  titula **"hasta 4K x 2K @ 60Hz"**.
+- **Paneles**: teardown de un usuario da la parte `AA029M48000 REV.02`, rotulada "JDP".
+  Candidato comercial **Sharp LS029B3SX06/06A**: 2.9", 2160x2160, CG-Silicon LTPS, MIPI-DSI de
+  2 canales x 4 lanes, **sin backlight integrado**. Sin confirmacion de Sharp que nombre al G2.
+- **`ANX7688`**: su datasheet lo pone del lado host (HDMI2.0+USB3.1 -> USB-C). **Que hace
+  dentro del casco no lo explica ninguna fuente.**
+- **Driver de backlight**: sin dato publico.
+
+#### Expedientes FCC localizados (grantee Quanta, codigo HFS)
+
+| FCC ID | fecha | producto |
+|---|---|---|
+| HFS-A85P | 2019-03-21 | Reverb G1 |
+| **HFS-A85Q** | 2020-06-05 | **hipotesis: G2 base** |
+| HFS-A85R | 2020-09-30 | G2 Omnicept (SKU HP **VR3000-0XX**) |
+| HFS-A85KL / -A85KR | 2020-08 | controllers izq/der |
+
+Las **fotos internas de PCB** de A85Q y A85R estan localizadas
+(`fccid.io/HFS-A85Q/Internal-Photos/...`) pero **no leidas**: son PDFs escaneados sin capa de
+texto y ningun proxy pudo hacerles OCR. **Es el hueco mas barato de tapar: alguien con un
+navegador las abre y las mira.**
+
+#### Parque instalado: no hay cifra de ventas
+
+**No existe ninguna cifra oficial de ventas** del G2 ni de WMR — ni de HP, ni de Microsoft, ni
+en IDC/Counterpoint. La unica serie real es el Steam Hardware Survey, que agrega todo WMR:
+
+| fecha | WMR entre usuarios VR de Steam |
+|---|---|
+| jun-2018 | 6.25% |
+| 2019 | pico ~10% |
+| sep-2022 y dic-2023 | ~5% |
+| **jul-2026** | **1.99%** |
+
+Sigue en 1.99% **despues** de que Windows 11 24H2 (oct-2024) saco el soporte nativo. No hay
+ninguna estimacion publica de cuantos siguen en uso.
+
 ### Pendientes que necesitan sudo (no bloquean el test de 90Hz)
 
 1. **Prioridad RT para Monado.** El log tira `Could not raise priority for thread
