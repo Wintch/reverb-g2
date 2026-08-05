@@ -141,3 +141,33 @@ como tal en el historial del proyecto).
 Dato adicional encontrado: hay reportes de "black screen at 90Hz" con el Portal original de
 Microsoft mismo, en AMD y en NVIDIA — el 90 Hz del G2 parece frágil incluso en la plataforma
 de referencia, no un problema exclusivo de este lab o de Linux.
+
+## Update (2026-08-05, noche): capturas reales en Windows — sin pixel clock especial, sin comando USB extra
+
+Con acceso real a una máquina Windows con el mismo casco, se leyó el timing ACTIVO con CRU
+(Custom Resolution Utility) mientras el 90Hz andaba: `2880x1440 @ 89.999 Hz (428.58 MHz)`,
+`htotal=2980 vtotal=1598`. **Es exactamente el DTD del bloque base del EDID, sin modificar un
+bit** — mismo pixel clock, mismos totales. Windows no usa ningún timing especial ni fuera de
+banda para este modo: es el que el propio EDID publica.
+
+Esto cambia el marco de la pregunta abierta más arriba (¿hay un pixel clock "especial"
+cacheado en el driver de Windows?): no lo hay, al menos no en el sentido de un valor mágico
+distinto del EDID. Windows usa igual de "sin trucos" el modo de 60Hz (709.15 MHz,
+DisplayID descriptor #2) y el de 90Hz (428.58 MHz, DTD del bloque base) — los dos, EDID puro.
+Lo que separa a uno de otro no es el pixel clock en sí, es específicamente cruzar el umbral
+de refresh, consistente con lo que ya decía el factorial de este mismo hilo.
+
+También se capturó por USB (Wireshark + USBPcap) el momento exacto de un cambio de refresh
+EN VIVO en Windows (60→90Hz y 90→60Hz, sin desconectar el casco). **No aparece ningún comando
+HID adicional en la transición** — sólo el reporte de estado de siempre (`DEVICE_STATUS`,
+33 bytes) actualizando refresh/htotal/vtotal, idéntico en forma al que ya se ve en régimen
+estable. Esto descarta también una secuencia de activación oculta por USB específica de
+Windows.
+
+Con esto, del lado de las herramientas de usuario en Windows (Wireshark/USBPcap, CRU,
+HWiNFO64, GPU-Z, el propio panel de NVIDIA) no queda nada más para mirar: ni EDID especial,
+ni comando USB oculto, ni DSC visible (el Reverb G2 ni siquiera aparece como display
+seleccionable en el panel de NVIDIA ni en Configuración de Windows, al estar en modo
+directo/HMD). Lo que sigue siendo invisible desde acá es exactamente lo que se preguntaba
+arriba: qué pasa en el link training de DisplayPort (DPCD/AUX) o adentro del firmware GSP
+cerrado — ninguna herramienta de usuario llega ahí en ningún SO.
