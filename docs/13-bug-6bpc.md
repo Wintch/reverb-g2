@@ -217,6 +217,27 @@ real encontrado y confirmado, y dos callejones más cerrados con evidencia. Lo q
 requiere o mucho más tiempo de GPU debugging invasivo, o la colaboración de alguien con
 acceso al código cerrado.
 
+## Habilitando los logs del firmware GSP (2026-08-05, 01:45)
+
+La GPU (RTX 3060 Ti = GA104) usa firmware **GSP** (`/lib/firmware/nvidia/595.71.05/gsp_ga10x.bin`):
+buena parte de la lógica del resource manager — probablemente incluido el link training de
+DisplayPort y la negociación del modo — corre en un microcontrolador **dentro de la GPU**, no
+en el módulo de kernel abierto que leemos. Eso explica por qué `nvidia_modeset.debug` estaba
+topeado en 7 líneas: no hay más para loguear del lado de Linux, la decisión pasa por otro lado.
+
+Encontrado en `nv-reg.h`: **`NVreg_EnableGpuFirmwareLogs`** — hace que el propio firmware GSP
+mande sus logs al host. Por default, en un build de release, está deshabilitado
+(`gpu_mgr.c:1024`: la rama `ENABLE_ON_DEBUG` sólo se activa si el driver es un build
+`DEBUG`/`DEVELOP`, que no es nuestro caso). Hay que forzarlo con `NVreg_EnableGpuFirmwareLogs=1`.
+
+Se descartó `NVreg_ResmanDebugLevel` en el camino: su default ya es `~0` (todos los bits),
+que es la misma pinta que tenía el `debug` de `nvidia_modeset` cuando resultó topeado — huele
+a lo mismo, prints de host compilados afuera en un build de release.
+
+`scripts/enable-gsp-logs.sh` escribe `/etc/modprobe.d/99-nvidia-gsp-logs.conf` con esa opción.
+**Requiere reiniciar**: el parámetro es del módulo `nvidia` (core), que carga antes que
+`nvidia-modeset` — no se puede activar en caliente como hicimos con el `debug` de modeset.
+
 ## Estado
 
 - [x] Cadena causal del bpc verificada en el código y contra tres mediciones independientes
