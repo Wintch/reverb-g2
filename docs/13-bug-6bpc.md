@@ -19,7 +19,7 @@ no enciende.
 |---|---|---|
 | 1 | El EDID del casco deja la profundidad sin declarar | byte `0x14` = `0x80`: digital, bits 6-4 = `000` = *undefined*, EDID 1.4 |
 | 2 | El parser lo convierte en `bpc = 0` | `nvt_edid.c:932`, rama `default:` |
-| 3 | Nada lo sobreescribe | el DisplayID 2.0 del casco sólo trae un bloque Type VII (tag `0x03`); **no tiene Display Parameters (`0x21`)**, que es lo único que reasignaría `digital.bpc` (`nvt_edidext_displayid20.c:314`) |
+| 3 | Nada lo sobreescribe | la extensión del casco es **DisplayID 1.2** (byte de versión `0x12`), y `nvt_edid.c:1101` sólo llama al parser 2.x si `(pExt[1] & 0xF0) == 0x20`. En todo el árbol `digital.bpc` se escribe en dos lugares: `nvt_edid.c:914-932` y `nvt_edidext_displayid20.c:314` (Display Parameters de DisplayID **2.x**) — **el parser 1.3 no lo toca nunca** |
 | 4 | **`bpc < 8` clava el máximo en 6** | `nvkms-dpy.c:3456` |
 | 5 | Al no pedirse nada, se usa el máximo | `ChooseColorBpc()` devuelve `max` si `requested == UNKNOWN` |
 | 6 | El enlace corre a 18 bpp | `nvidia-modeset: DPCONN> Notify Attach Begin (Head 0, pclk 428580000 raster 2980 x 1598  18 bpp)` |
@@ -84,6 +84,43 @@ Dos señales, y conviene mirar las dos:
 Si el byte 18 pasa a `08` y el panel **sigue** sin encender a 90 Hz, entonces el bpc era un bug
 real pero no *el* bug — y habría que seguir con el byte 11, que es la otra diferencia contra
 Windows (`0x14`=20 en Linux contra `0x1e`=30 en Windows a 90 Hz).
+
+### Corrección del 2026-08-05 (post-publicación): es DisplayID 1.2, no 2.0
+
+El reporte publicado en el foro dice *"its DisplayID 2.0 extension carries only a Type VII
+timing block"*. **Es incorrecto**, y el error viene de acá. El bloque 2 del EDID empieza con
+`70 12 79 00 00 03 00 28`: el `0x12` es versión 1 revisión 2, o sea **DisplayID 1.2**, y el
+bloque de datos tag `0x03` de 40 bytes son **dos descriptores Type I Detailed Timing** de 20
+bytes (el tag `0x03` recién es Type VII en DisplayID 2.0 — de ahí la confusión).
+
+La conclusión no cambia y el argumento queda **más fuerte**: no es que a este DisplayID le
+falte el bloque de Display Parameters, es que para **cualquier** sink con extensión DisplayID
+1.x el único sitio que podría reasignar `digital.bpc` es inalcanzable por construcción. El
+clamp a 6 bpc es inevitable para todo sink DP que deje la profundidad sin declarar en el
+bloque base y no traiga DisplayID 2.x con Display Parameters.
+
+Corrección redactada para postear en el hilo: `docs/14`, "Reply #1".
+
+### Los modelines derivados del EDID coinciden exactamente con lo que programa nvkms
+
+Decodificado a mano el 2026-08-05, para descartar una segunda causa raíz en la derivación de
+modos:
+
+| fuente | pclk | H act/fp/sync/bp | V act/fp/sync/bp | refresh |
+|---|---|---|---|---|
+| DisplayID desc #1 (preferred) | 905.40 MHz | 4320 / 50 / 4 / 46 | 2160 / 16 / 2 / 98 | 90.00 Hz |
+| DisplayID desc #2 | 709.15 MHz | 4320 / 50 / 4 / 46 | 2160 / 14 / 2 / 498 | 60.00 Hz |
+| DTD del bloque base | 428.58 MHz | 2880 / 50 / 4 / 46 | 1440 / 18 / 2 / 138 | 90.00 Hz |
+
+Los tres con polaridad `+H +V`, y los tres idénticos a lo que reporta `drmModeGetConnector` y
+al raster del log (`raster 2980 x 1598`, `pclk 428580000`). **No hay segunda causa raíz acá.**
+
+### El color space lo cierra el propio EDID
+
+La extensión CTA-861 (bloque 1) tiene **byte 3 = `0x00`**: el casco no anuncia YCbCr 4:4:4 ni
+4:2:2. El enlace es RGB obligatoriamente en los tres modos — no hay variable de color space
+que pueda diferir entre el modo que anda y los que fallan. Esto es independiente de la
+búsqueda en los logs de `nvidia_modeset`, que ya había dado cero.
 
 ## Por qué importa más allá del G2
 

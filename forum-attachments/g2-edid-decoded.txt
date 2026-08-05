@@ -1,0 +1,76 @@
+EDID: 384 bytes, 3 block(s)
+
+--- block 0 (tag 0x00) checksum ok
+  00: 00 ff ff ff ff ff ff 00 22 0e c1 36 0a 51 ec eb
+  10: 2b 1e 01 04 80 0b 05 78 0e cb a0 a3 55 4d 99 27
+  20: 0e 50 54 00 00 00 00 00 00 00 00 00 00 00 00 00
+  30: 00 00 00 00 00 00 6a a7 40 64 b0 a0 9e 50 32 04
+  40: 22 04 6e 32 00 00 00 1e 00 00 00 10 00 00 00 00
+  50: 00 00 00 00 00 00 00 00 00 00 00 00 00 10 00 00
+  60: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 10
+  70: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 e8
+
+--- block 1 (tag 0x02) checksum ok
+  00: 02 03 1a 00 75 5c 12 ca 01 07 ee 44 82 ce af e7
+  10: 58 44 82 0a 73 f2 69 05 a5 2f 00 00 00 00 00 00
+  20: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  30: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  40: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  50: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  60: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  70: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 45
+
+--- block 2 (tag 0x70) checksum ok
+  00: 70 12 79 00 00 03 00 28 ab 61 01 88 df 10 63 00
+  10: 31 80 03 00 6f 08 73 00 0f 80 01 00 02 15 01 08
+  20: df 10 63 00 31 80 03 00 6f 08 01 02 0d 80 01 00
+  30: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  40: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  50: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  60: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  70: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 07 90
+
+Video Input Definition (byte 0x14) = 0x80
+  bit 7      : 1 = digital input
+  bits 6-4   : 000 = color bit depth undefined   <-- nothing declared
+  bits 3-0   : 0000 = digital interface
+
+Base block detailed timing descriptors
+  DTD #0 (offset 0x36)
+    pixel clock : 428.58 MHz
+    horizontal  : 2880 active + 50 front + 4 sync + 46 back = 2980 total
+    vertical    : 1440 active + 18 front + 2 sync + 138 back = 1598 total
+    sync        : +H +V
+    refresh     : 89.999 Hz
+
+
+Block 1: CTA-861, revision 3
+  byte 3 = 0x00
+    native DTD count      : 0
+    YCbCr 4:2:2 supported : False
+    YCbCr 4:4:4 supported : False
+    basic audio           : False
+    underscan             : False
+
+Block 2: DisplayID extension, version byte 0x12 = DisplayID 1.2
+  nvidia nvt path : DisplayID 1.3 parser (nvt_edid.c gates 2.x on (pExt[1] & 0xF0) == 0x20)
+  section bytes   : 121
+  extension count : 0
+  data block tag 0x03, revision 0, payload 40 bytes
+    = Type I Detailed Timing, 2 descriptor(s) of 20 bytes
+
+  descriptor #1 [preferred]
+    pixel clock : 905.40 MHz
+    horizontal  : 4320 active + 50 front + 4 sync + 46 back = 4420 total
+    vertical    : 2160 active + 16 front + 2 sync + 98 back = 2276 total
+    sync        : +H +V
+    refresh     : 90.001 Hz
+
+  descriptor #2
+    pixel clock : 709.15 MHz
+    horizontal  : 4320 active + 50 front + 4 sync + 46 back = 4420 total
+    vertical    : 2160 active + 14 front + 2 sync + 498 back = 2674 total
+    sync        : +H +V
+    refresh     : 60.000 Hz
+
+
