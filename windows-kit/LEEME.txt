@@ -1,0 +1,92 @@
+================================================================================
+  KIT DE CAPTURA EN WINDOWS  —  HP Reverb G2 a 90 Hz
+  Proyecto: soporte del G2 en Linux.  Fecha: 2026-08-05
+================================================================================
+
+QUE ESTAMOS BUSCANDO, EN UNA LINEA
+----------------------------------
+En Linux el casco a 90 Hz muestra el logo de HP y no engancha. En Windows anda.
+Ya sabemos que NO es un comando HID de modo (desensamblamos el driver de HP: no
+existe). Lo que queremos ahora es leer, CON EL CASCO ANDANDO A 90 Hz EN WINDOWS,
+los dos canales que el propio casco emite — y compararlos byte a byte con lo que
+emite en Linux cuando falla.
+
+Canal 1  DEVICE_STATUS         del companion 03f0:0580  (reporte 0x05, 33 bytes)
+Canal 2  LOG DE FIRMWARE       del HoloLens Sensors 045e:0659 (reporte 0x03, 509 bytes)
+
+Lo que ya medimos en Linux, para que sepas contra que se compara:
+
+  60 Hz ANDA   05 00 01 01 00 3c 00 00 00 05 2c 1e 02 00 77 00 ...
+  90 Hz FALLA  05 00 01 01 00 5a 00 00 00 0c 1a 14 02 00 77 00 ...
+                           ^^          ^^ ^^ ^^ ^^
+                        refresh      estos NO sabemos que son
+
+  byte 5      = refresh en decimal (0x3c=60, 0x5a=90)   [confirmado]
+  bytes 19-20 = htotal little-endian                    [confirmado]
+  bytes 21-22 = vtotal little-endian                    [confirmado]
+  bytes 9,10,12,14,15 y 24-31 = DESCONOCIDOS            <-- el objetivo
+
+Si en Windows, con el panel encendido a 90, esos bytes son distintos a los
+nuestros, ahi esta la diferencia. Si son identicos, el casco esta en el mismo
+estado en los dos sistemas y la causa esta en otra capa. Los dos resultados
+sirven.
+
+
+PREPARACION (una sola vez, requiere un reinicio)
+------------------------------------------------
+1. Instalar Wireshark:  https://www.wireshark.org/download.html
+2. EN EL INSTALADOR, TILDAR EL COMPONENTE "USBPcap". No viene tildado por defecto.
+3. REINICIAR. USBPcap instala un filter driver y no anda hasta el reboot.
+
+
+CAPTURA  (aprox. 15 minutos)
+-----------------------------
+1. Conectar el casco y dejar que Windows lo levante. Confirmar que anda a 90 Hz
+   (la app de HP / SteamVR con el driver Oasis).
+
+2. Abrir "cmd" COMO ADMINISTRADOR, ir a esta carpeta, y correr:
+
+       capturar.bat
+
+   El .bat lista las interfaces USBPcap y te pide elegir cual. Es la del root hub
+   donde esta enchufado el casco: si no sabes cual, corre el .bat una vez por cada
+   una — captura 5 segundos y te dice si vio al casco.
+
+3. Con la captura corriendo, PONETE EL CASCO y confirma que ves imagen a 90 Hz.
+   Mira 30 segundos. Movete un poco. Despues cortá con Ctrl+C.
+
+4. Si podes, repetí lo mismo forzando 60 Hz en la configuracion de WMR/SteamVR y
+   guardalo aparte. Nos da el control del lado de Windows.
+
+
+LO QUE TENES QUE TRAER DE VUELTA
+---------------------------------
+   windows-90hz.pcapng      (y windows-60hz.pcapng si lo hiciste)
+   windows-90hz.tsv         (los genera el .bat)
+   captura-nvidia.png       ver abajo
+
+Copialos a un pendrive o a una particion que se vea desde Linux.
+
+
+EXTRA, 2 MINUTOS, Y VALE MUCHO
+-------------------------------
+Con el casco andando a 90 Hz:
+
+   Panel de control de NVIDIA -> Ayuda -> Informacion del sistema
+
+Sacale una captura de pantalla. Ahi figura si el display usa DSC (Display Stream
+Compression). Nosotros calculamos que a 90 Hz no hace falta, pero NUNCA
+verificamos si el driver la activa igual. Es un agujero de nuestro propio
+razonamiento y esta captura lo tapa.
+
+
+SI ALGO NO SALE
+----------------
+- El .tsv sale vacio  -> el device address esta mal, o elegiste la interfaz
+  USBPcap equivocada. Probá otra.
+- No aparece USBPcap en Wireshark -> no reiniciaste, o no tildaste el componente
+  en el instalador.
+- Windows no te deja elegir 60 Hz -> no importa, el de 90 es el que necesitamos.
+
+No hace falta que entiendas la salida. Traela y la analizamos en Linux con
+analizar-windows.py, que esta en esta misma carpeta.
