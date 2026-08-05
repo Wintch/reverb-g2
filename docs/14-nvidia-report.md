@@ -1,15 +1,16 @@
 # 14 — Reporte para NVIDIA (borrador listo para publicar)
 
-**Antes de publicar, verificá vos mismo:**
-- La URL del hilo y el número de bug interno (`337744` / `5923212`) salieron de una
-  investigación automatizada anterior, no de que nosotros hayamos leído el hilo con nuestros
-  propios ojos en esta sesión. Abrilo y confirmá que sigue existiendo y que el número es
-  correcto antes de citarlo como propio.
-- Lo mismo con la referencia al issue #332 de Monado y al usuario `dimitriscr` (A/B con
-  AMD): es una cita de segunda mano. Si la incluís, abrí el issue primero y confirmá que dice
-  lo que decimos que dice.
+**Verificado por el usuario (2026-08-05):**
+- El hilo y el bug `5923212` están confirmados — el usuario abrió el hilo y el número es
+  correcto. Se puede citar tal cual.
+- **El dato de AMD (issue #332 de Monado, `dimitriscr`) se decidió NO incluir.** No se
+  verificó de primera mano, y aunque fuera cierto no ayuda al reporte: decirle a NVIDIA
+  "funciona con la competencia" no aporta nada a que sus ingenieros entiendan la causa. El
+  reporte ya es sólido sin eso — tiene código citado con línea exacta, un parche que
+  funciona, y verificación física con protocolo. Por eso ese dato ya estaba fuera del cuerpo
+  principal; queda confirmado que se mantiene así.
 - Todo lo demás en este reporte (patch, mediciones, bytes, logs) es nuestro, medido en este
-  rig esta noche, y podés citarlo con confianza.
+  rig, y se cita con confianza.
 
 Lo que sigue está en inglés porque es para el foro de NVIDIA. Copialo tal cual, o editalo.
 
