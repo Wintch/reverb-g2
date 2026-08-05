@@ -93,6 +93,22 @@ SLA. Check for a notification email, or ask to have it checked.
 
 ---
 
+## Pendiente adicional (2026-08-05): perfil de power de la GPU
+
+Hipótesis del usuario, todavía sin correr: en Windows siempre se recomienda forzar el panel
+de NVIDIA a **"Prefer Maximum Performance"** para VR — dejarlo en el default ("Adaptive",
+reloj dinámico) puede causar problemas. En Linux el 595-open también arranca en PowerMizer
+adaptativo por default. Si el firmware GSP cerrado que decide el enganche a 90Hz (ver
+`docs/13-bug-6bpc.md`) es sensible al estado de reloj en el momento del modeset, un
+downclock en el momento equivocado podría explicar por qué el panel no llega a sincronizar.
+
+No se investigó todavía. Cuando se retome: revisar con `nvidia-smi -q -d PERFORMANCE` o
+`nvidia-settings` el P-state real durante el intento de modeset a 90Hz, y probar forzando
+máximo rendimiento (`nvidia-settings -a '[gpu:0]/GPUPowerMizerMode=1'` o el mecanismo
+equivalente en el 595-open) antes de correr el experimento del vblank o en paralelo con él.
+
+---
+
 ## Standing convention decided this session
 
 **No `Co-Authored-By: Claude` trailer on commits, and no repo-level AI disclaimer either.**
