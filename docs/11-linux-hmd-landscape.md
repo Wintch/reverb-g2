@@ -45,23 +45,44 @@ Por eso el test con una AMD prestada sigue siendo el experimento más valioso di
 ## El precedente Oculus / DK2: más débil de lo que esperábamos
 
 El **DK2 sí llegaba a sus 75Hz nativos en Linux** (reportes humanos consistentes de 2015).
-Pero es estructuralmente distinto al G2 en tres ejes, y por eso no sirve como precedente:
+Pero es estructuralmente distinto al G2 en cuatro ejes, y por eso no sirve como precedente:
 
-1. Modo **extendido de X11**, no direct-mode ni DRM lease.
-2. Panel sin secuencia de activación tipo WMR — cualquier GPU que le tire el modeline lo trata
+1. **DK2 y CV1 son HDMI, no DisplayPort** (investigado 2026-08-05). Esto es el eje más
+   importante de los cuatro, más que los otros tres juntos: HDMI es TMDS de reloj fijo, sin
+   AUX channel ni link training negociado — nunca pasa por la clase de problema que tenemos
+   nosotros (negociación DPCD/bpc/lane count). El G2 no tiene esa salida: el ANX7530 es un
+   puente DisplayPort nativo. La familia Oculus **evitó** este problema en vez de resolverlo.
+2. Modo **extendido de X11**, no direct-mode ni DRM lease.
+3. Panel sin secuencia de activación tipo WMR — cualquier GPU que le tire el modeline lo trata
    como un monitor más.
-3. NVIDIA propietario ~340–352.x sobre Kepler/Maxwell: **una generación entera antes** del bug
-   que perseguimos (Turing/Ampere/Blackwell).
+4. NVIDIA propietario ~340–352.x sobre Kepler/Maxwell: **una generación entera antes** del bug
+   que perseguimos (Turing/Ampere/Blackwell) — y antes del split GSP. En esa época la
+   validación de modo vivía en el driver del host, parcheable (de ahí que existiera
+   `Option "ModeValidation" "AllowNonEdidModes"` en xorg.conf, ver abajo). Con el 595-open
+   esa lógica emigró a firmware GSP cerrado — el mismo muro que ya documentó `docs/13`.
 
 Además esas fuentes describen el setup como "funciona", sin verificación física rigurosa.
 
 **CV1 (90Hz) y Rift S (80Hz)** —los dos con arquitectura de activación más parecida a WMR—
-no tienen ningún reporte limpio de refresh nativo verificado, **ni tampoco de que fallen**.
-Silencio en ambos sentidos. El soporte Linux de toda la familia post-DK2 es 100% comunitario:
-Oculus pausó su SDK de Linux en mayo de 2015 y nunca lo retomó.
+tampoco tienen el problema: CV1 también es HDMI 1.3, y lo único "raro" es que no manda
+hotplug hasta que un comando USB lo habilita (resuelto en la capa HDMI/HPD, no en timing DP).
+No tienen ningún reporte limpio de refresh nativo verificado en Linux, **ni tampoco de que
+fallen**. Silencio en ambos sentidos. El soporte Linux de toda la familia post-DK2 es 100%
+comunitario: Oculus pausó su SDK de Linux en mayo de 2015 y nunca lo retomó.
 
-**Conclusión honesta: la familia Oculus no aporta precedente de que NVIDIA+Linux logre refresh
-alto en un HMD con activación no trivial.**
+**HTC Vive / Vive Pro:** el Vive original (2016) también es HDMI. DisplayPort recién entra
+con el Vive Pro (2018), y para el Vive Pro 2 (2021) HTC trabajó con AMD/NVIDIA para soportar
+**DSC** — no se encontró ningún caso documentado de MST real (streams independientes por ojo)
+en ningún HMD de esta generación, ni Rift ni Vive. La feature "horizontal line splitting" del
+ANX7530 (ver `docs/19`) parece genérica del chip, sin precedente de uso para destrabar
+refresh — queda como hipótesis de prioridad baja.
+
+**Conclusión honesta: la familia Oculus no aporta precedente de que NVIDIA+Linux logre
+refresh alto en un HMD con negociación DisplayPort real.** El patrón 2014-2018 fue evitar el
+problema (HDMI) en vez de resolverlo, y el único truco de esa época que sí aplicaría hoy
+(`AllowNonEdidModes`, bypass de la validación de modo contra el EDID) apunta a una capa que
+en el 595-open ya no es patcheable por estar en firmware GSP cerrado. Igual es gratis
+probarlo — no cuesta nada y podría sorprender.
 
 ## Panorama de HMDs en Linux hoy
 
