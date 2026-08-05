@@ -137,8 +137,10 @@ Microsoft y HP lo abandonaron: hay miles funcionando y nadie lo recicló bien.
 
 ## Expedientes FCC: qué hay y qué no (verificado 2026-08-05)
 
-Grantee **Quanta Computer Inc**, código **HFS**. Los índices de los dos expedientes están
-guardados en `docs/FCC ID HFS-A85*.pdf` y se procesan con `scripts/pdf2md.py`.
+Grantee **Quanta Computer Inc**, código **HFS**. Los expedientes son públicos:
+[HFS-A85Q](https://fccid.io/HFS-A85Q) (G2) y [HFS-A85R](https://fccid.io/HFS-A85R)
+(Omnicept). No los guardamos acá — bajálos de ahí y procesálos con `scripts/pdf2md.py`,
+que convierte el PDF a markdown y extrae las imágenes sin dependencias.
 
 | documento | A85Q (G2) | A85R (Omnicept) | estado |
 |---|---|---|---|
@@ -161,7 +163,8 @@ laboratorio SGS Taiwan, TCB Telefication B.V., modelo declarado `A85Q`/`A85R`, b
 
 ### Fotos internas de la FCC: analizadas, y NO dan part numbers (2026-08-05)
 
-Bajadas y procesadas con `scripts/pdf2md.py` (78 imágenes extraídas de los dos expedientes).
+Bajadas de fccid.io y procesadas con `scripts/pdf2md.py` (78 imágenes extraídas de los dos
+expedientes; los PDFs no están en el repo).
 **Las páginas están escaneadas a ~130 DPI**: la placa del G2, de ~100 mm, ocupa unos 680
 píxeles, o sea ~7 px/mm. Una serigrafía de chip mide menos que eso. Se amplió hasta 10× y el
 integrado principal es un cuadrado negro sin texto.
