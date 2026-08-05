@@ -3,4 +3,5 @@ nv-report-*/
 windows-kit.7z
 nv-report-*/build/
 scripts/.private-patterns
-*.pdf
+*.[Pp][Dd][Ff]
+__pycache__/

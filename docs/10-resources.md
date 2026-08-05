@@ -145,9 +145,35 @@ Microsoft y HP lo abandonaron: hay miles funcionando y nadie lo recicló bien.
 
 ## Lo que falta conseguir
 
-1. **Datasheet del Analogix ANX7530.** Límites de pixel clock, requisitos de MIPI, y sobre
-   todo si el refresh de salida depende del firmware o se adapta al input.
-2. **Driver WMR original de la Microsoft Store** — la otra implementación del panel.
+1. ~~**Datasheet del Analogix ANX7530.**~~ **Conseguido (2026-08-05):** el Product Brief
+   oficial (AA-004263-PB-7, Analogix, may-2018), alojado por el propio fabricante en
+   [analogix.com](https://www.analogix.com/en/system/files/AA-004263-PB-7-ANX7530_Product_Brief.pdf)
+   — no se versiona el PDF acá (tiene aviso de copyright de reproducción, mismo criterio que
+   los PDF de FCC más abajo). Es sólo el brief de
+   marketing (2 páginas, sin mapa de registros), pero confirma dos cosas por fuente
+   primaria: el link de DisplayPort tope es **HBR2.5 (6.75 Gbps/lane), no HBR3**, y hay una
+   línea de spec explícita — **"DisplayPort Receiver Input Bandwidth supports up to 4K x 2K
+   x 60Hz"** — que declara el techo de refresh, no sólo de bandwidth. Detalle y cómo esto se
+   cruza con el factorial de `docs/16` en `docs/19-nvidia-bug-5923212-followup.md`. Sigue
+   pendiente el datasheet técnico completo (con registros/PLL) si en algún momento hace
+   falta ir más profundo — Analogix normalmente lo entrega bajo NDA, no está público.
+2. ~~**Driver WMR original de la Microsoft Store**~~ **Investigado (2026-08-05): no es lo
+   que hace falta.** El `id=56265` y el zip de archive.org resultaron ser el mismo
+   contenido: `HololensSensors_*.zip` (4.7–6.9 MB), el driver de **sensores/IMU**
+   (`HID\VID_045E`, tracking), no el pipeline de display — no menciona ANX7530, DisplayPort
+   ni 90Hz porque no es ese componente. El listado de archive.org sí trae por separado los
+   `.cab` de `Microsoft-Windows-Holographic-Desktop-FOD-Package` (~1.5 GB c/u, Win10/11
+   varias builds) — el Feature-on-Demand real del shell holográfico — sin extraer todavía;
+   se puede listar con `cabextract -l` sin bajar el paquete entero, pendiente si hace falta.
+   **Más importante: esto probablemente no cierra nada.** El propio Oasis (cap. 09, ya
+   desensamblado) no toca timing de video en absoluto — sólo HID/USB para tracking y
+   `Display Enable`. Si el driver que SÍ logra 90 Hz no toca el modo de video, la
+   negociación de refresh corre entera por el driver NVIDIA de Windows (estándar del SO), no
+   por ningún componente de Microsoft/HP — así que ni el FOD ni el portal original van a
+   explicar el mecanismo. Detalle en `docs/19-nvidia-bug-5923212-followup.md`. También se
+   encontraron reportes de "black screen at 90Hz" con el Portal original de Microsoft en AMD
+   y NVIDIA — el 90 Hz del G2 parece frágil incluso en la plataforma de referencia, no
+   exclusivo de este lab.
 3. `unlock_wmr.exe`, `MROEMFwHost.dll`, `client_utility.exe`, `DriverTracing.wprp`.
 4. Un **dump del firmware** del casco, si `MROEMFwHost` deja leerlo
    (`OemFwDevice_ReadDeviceInfo`).
