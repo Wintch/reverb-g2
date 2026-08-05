@@ -123,12 +123,27 @@ else:
         bad(f"{len(dirty)} blob(s) contain private patterns:")
         for sha, path, pat in dirty:
             print(f"        {sha[:12]}  {path}  <- {pat}")
-        print("\n        To strip them from history:")
-        unique = sorted({s for s, _, _ in dirty})
-        print("            printf '%s\\n' " + " ".join(u[:12] for u in unique)
-              + " > /tmp/shas")
-        print("            git filter-repo --force --strip-blobs-with-ids /tmp/shas")
-        print("        and then force-push, because this rewrites history.")
+
+        # A blob that no commit references is not in the inventory, so it would never be
+        # pushed — but it is still sitting in this clone's object store, typically left
+        # behind by an earlier filter-repo. That needs a gc, not another history rewrite,
+        # and telling you to force-push would not remove it.
+        reachable = sorted({s for s, _, _ in dirty if s in inventory})
+        unreachable = sorted({s for s, _, _ in dirty if s not in inventory})
+
+        if unreachable:
+            print(f"\n        {len(unreachable)} of these are UNREACHABLE (path '?'): no commit")
+            print("        references them, so they would not be pushed. They are local")
+            print("        leftovers. Drop them from this clone with:")
+            print("            git reflog expire --expire=now --all")
+            print("            git gc --prune=now")
+        if reachable:
+            print(f"\n        {len(reachable)} are reachable and WOULD be published."
+                  " To strip them from history:")
+            print("            printf '%s\\n' " + " ".join(u[:12] for u in reachable)
+                  + " > /tmp/shas")
+            print("            git filter-repo --force --strip-blobs-with-ids /tmp/shas")
+            print("        and then force-push, because this rewrites history.")
     else:
         ok(f"no private pattern in any of the {len(blobs)} blobs (binaries and .gz included)")
 
