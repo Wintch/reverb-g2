@@ -325,6 +325,22 @@ int main(int argc, char **argv)
 	VkSurfaceFormatKHR *fmts = calloc(nfmt ? nfmt : 1, sizeof(*fmts));
 	vkGetPhysicalDeviceSurfaceFormatsKHR(phys, surface, &nfmt, fmts);
 
+	// El EDID del G2 NO declara profundidad de color (byte 0x14 = 0x80, "indefinida"), asi
+	// que la fuente elige. NVIDIA en Linux cae a 6 bits por color (nvidia-modeset loguea
+	// "18 bpp", y el casco reporta 6 en el byte 18 de su DEVICE_STATUS); Windows usa 8 y a
+	// 90Hz anda. HMD_VK_FORMAT permite probar si el formato del swapchain mueve esa eleccion.
+	printf("formatos de la surface (%u):\n", nfmt);
+	for (uint32_t i = 0; i < nfmt; i++)
+		printf("  [%u] format=%d colorSpace=%d\n", i, fmts[i].format, fmts[i].colorSpace);
+	uint32_t fmt_idx = 0;
+	const char *fmt_env = getenv("HMD_VK_FORMAT");
+	if (fmt_env) {
+		uint32_t want = (uint32_t)atoi(fmt_env);
+		if (want < nfmt) fmt_idx = want;
+		else fprintf(stderr, "  HMD_VK_FORMAT=%u fuera de rango, uso 0\n", want);
+	}
+	printf("usando formato [%u] = %d\n", fmt_idx, fmts[fmt_idx].format);
+
 	uint32_t nimg = scaps.minImageCount < 2 ? 2 : scaps.minImageCount;
 	if (scaps.maxImageCount && nimg > scaps.maxImageCount) nimg = scaps.maxImageCount;
 
@@ -332,8 +348,8 @@ int main(int argc, char **argv)
 		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
 		.surface = surface,
 		.minImageCount = nimg,
-		.imageFormat = fmts[0].format,
-		.imageColorSpace = fmts[0].colorSpace,
+		.imageFormat = fmts[fmt_idx].format,
+		.imageColorSpace = fmts[fmt_idx].colorSpace,
 		.imageExtent = extent,
 		.imageArrayLayers = 1,
 		.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
@@ -349,7 +365,7 @@ int main(int argc, char **argv)
 	vkGetSwapchainImagesKHR(dev, swap, &nsi, NULL);
 	VkImage *imgs = calloc(nsi, sizeof(*imgs));
 	vkGetSwapchainImagesKHR(dev, swap, &nsi, imgs);
-	printf("swapchain: %u imagenes, formato %d, %ux%u\n", nsi, fmts[0].format,
+	printf("swapchain: %u imagenes, formato %d, %ux%u\n", nsi, fmts[fmt_idx].format,
 	       extent.width, extent.height);
 
 	VkCommandPoolCreateInfo pci = { .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,

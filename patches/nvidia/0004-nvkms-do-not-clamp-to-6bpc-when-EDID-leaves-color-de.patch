@@ -1,0 +1,65 @@
+From: reverb-g2-linux lab <noreply@example.com>
+Date: Wed, 5 Aug 2026 04:00:00 -0300
+Subject: [PATCH 4/4] nvkms: do not clamp to 6 bpc when the EDID leaves color
+ depth undefined
+
+An EDID 1.4 digital sink may leave the "Color Bit Depth" field of the Video Input
+Definition byte (0x14, bits 6-4) set to 000 = "undefined". nvt_edid.c parses that
+into `input.u.digital.bpc = 0`:
+
+    default :
+        pInfo->input.u.digital.bpc = 0;
+        break;
+
+nvDpyGetOutputColorFormatInfo() then tests `bpc < 8` for DisplayPort sinks, which
+is true for that 0, and clamps the display to 6 bpc:
+
+    } else if (...digital.bpc < 8) {
+        colorFormatsInfo.rgb444.maxBpc = ..._BPC_6;
+        colorFormatsInfo.yuv444.maxBpc = ..._BPC_UNKNOWN;
+
+Since ChooseColorBpc() returns `max` when nothing specific was requested, such a
+sink ends up driven at 6 bpc (18 bpp) for every mode.
+
+"Undefined" means the sink did not declare a depth, not that it wants 6. The DSI
+branch of this very function already treats the unknown case as 8:
+
+    default:
+        nvAssert(!"Unsupported bpc for DSI");
+        // fall through
+    case 8:
+        colorFormatsInfo.rgb444.maxBpc = ..._BPC_8;
+
+so DP and DSI disagree on the same input today. Windows drives the same sinks at
+8 bpc.
+
+Found on an HP Reverb G2 (EDID 1.4, ManufID 0x220E, byte 0x14 = 0x80, and a
+DisplayID 2.0 extension that carries no Display Parameters block, so nothing
+overrides the parsed 0). Measured on the wire:
+
+  nvidia-modeset: DPCONN> Notify Attach Begin (Head 0, pclk 428580000
+                          raster 2980 x 1598  18 bpp)
+
+and the headset's own status report says 6 bits per component on Linux against 8
+on Windows with the same GPU. Its 90 Hz modes do not light the panel at 6 bpc;
+its 60 Hz mode does.
+
+Treat 0 as "not declared" and let it fall through to the 8 bpc default.
+---
+ src/nvidia-modeset/src/nvkms-dpy.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/nvidia-modeset/src/nvkms-dpy.c b/src/nvidia-modeset/src/nvkms-dpy.c
+--- a/src/nvidia-modeset/src/nvkms-dpy.c
++++ b/src/nvidia-modeset/src/nvkms-dpy.c
+@@ -3453,7 +3453,8 @@
+                     colorFormatsInfo.rgb444.maxBpc =
+                         NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_10;
+                     colorFormatsInfo.yuv444.maxBpc =
+                         NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_10;
+-                } else if (pDpyEvo->parsedEdid.info.input.u.digital.bpc < 8) {
++                } else if (pDpyEvo->parsedEdid.info.input.u.digital.bpc != 0 &&
++                           pDpyEvo->parsedEdid.info.input.u.digital.bpc < 8) {
+                     colorFormatsInfo.rgb444.maxBpc =
+                         NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_6;
+                     colorFormatsInfo.yuv444.maxBpc =

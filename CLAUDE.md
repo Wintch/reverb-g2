@@ -32,7 +32,23 @@ sudo ./scripts/bootstrap-lab.sh patch-nv    # y REINICIAR
 **No te saltees el baseline sin parches.** Es lo que separa "el driver 595 por sí solo
 cambió algo" de "los parches lo arreglaron", y es la única forma de saber qué reportar.
 
-### Dónde quedó todo (2026-08-04, 20:45)
+### Dónde quedó todo (2026-08-05, 04:00) — ENCONTRAMOS EL BUG
+
+**El EDID del G2 no declara su profundidad de color, y NVIDIA interpreta ese "no declarado"
+como 6 bits por componente.** Maneja el enlace a 18 bpp en todos los modos; Windows, con la
+misma GPU, usa 8. A 60 Hz el panel tolera los 6 bits; a 90 Hz no enciende.
+
+Está en una línea de `nvkms-dpy.c` (`bpc < 8`, y el `0` de "undefined" cae ahí). Cadena causal
+completa, el parche y cómo verificarlo: **`docs/13-bug-6bpc.md`**.
+
+Tres mediciones independientes coinciden: el log de `nvidia-modeset` dice `18 bpp`, el propio
+casco reporta `06` en el byte 18 de su `DEVICE_STATUS` contra `08` en Windows, y el código
+fuente explica por qué.
+
+Estado: parche escrito (`patches/nvidia/0004-*.patch`), falta compilarlo y probarlo con
+`sudo ./scripts/apply-bpc-patch.sh` + reboot.
+
+#### Lo anterior (2026-08-04, 20:45)
 
 **Se probó la segunda vía de display entera — Wayland + DRM lease en GNOME/mutter — y el
 90Hz falla idéntico. Ocho fallos ya. La causa casi no puede estar en NVIDIA.**
@@ -196,6 +212,7 @@ docs/09-oasis-driver-re.md  qué le manda Windows al panel, leído del driver de
 docs/10-recursos.md         índice de fuentes: driver de HP, FCC, chips, parque instalado
 docs/11-panorama-hmd-linux.md  ¿es sólo NVIDIA? otros cascos, DK2, y dónde publicar
 docs/12-protocolo-g2.md     >>> REFERENCIA DEL PROTOCOLO <<< todo lo que sabemos del casco
+docs/13-bug-6bpc.md         >>> EL BUG <<< NVIDIA clava el G2 en 6 bits por color
 windows-kit/                paquete de captura para Windows (se empaqueta en windows-kit.7z)
 patches/nvidia/             los 3 parches de Project-VR para el 595-open
 patches/monado/             7 parches nuestros (companion, controllers, WMR_CAMERAS)
