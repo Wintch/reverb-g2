@@ -239,6 +239,7 @@ do_patch_nv() {
 		PATCH[0]="0001-nvkms-VESA-DisplayID-DSC-VSDB-spec-correctness-fixes.patch"
 		PATCH[1]="0002-nvkms-nvidia-drm-enable-Wayland-DRM-lease-of-VR-HMDs.patch"
 		PATCH[2]="0003-dp-force-maximum-link-config-for-the-HP-Reverb-G2-ED.patch"
+		PATCH[3]="0004-nvkms-do-not-clamp-to-6bpc-when-EDID-leaves-color-de.patch"
 		EOF
 	fi
 

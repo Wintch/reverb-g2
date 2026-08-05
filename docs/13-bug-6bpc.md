@@ -102,3 +102,55 @@ Vale la pena mirar si explica alguno de los otros dos bugs de HMD que NVIDIA tie
 - [ ] **Parche compilado y probado** ← acá estamos
 - [ ] Si funciona: reportar a NVIDIA en el hilo 337744 (bug 5923212) con el parche
 - [ ] Si funciona: proponerlo también a Monado y a la wiki de LVRA
+
+---
+
+## Nota de reproducibilidad (importante)
+
+La instalación de esta noche se hizo **editando el árbol fuente directamente**
+(`/usr/src/nvidia-595.71.05/src/nvidia-modeset/src/nvkms-dpy.c`), no por el mecanismo
+`PATCH[]` de DKMS. Se hizo así a propósito: los otros tres parches ya están aplicados en ese
+árbol, y un `PATCH[]` nuevo se aplicaría sobre la copia limpia y chocaría.
+
+Verificado que el cambio llegó al módulo:
+
+| chequeo | resultado |
+|---|---|
+| el parche en el árbol fuente | sí, `nvkms-dpy.c:3456-3457` |
+| `0001`/`0002`/`0003` tocan `nvkms-dpy.c` | **cero** coincidencias cada uno |
+| fuente editada | `00:57:47` |
+| módulo construido | `00:58:54` |
+
+**Pero la edición directa es frágil**: si `apt` actualiza el paquete de NVIDIA, `/usr/src` se
+reemplaza y el parche se pierde **en silencio**. Por eso `bootstrap-lab.sh` ya registra
+`PATCH[3]` para instalaciones desde cero.
+
+**Si alguna vez hay que reconciliar las dos vías** (árbol editado + `PATCH[3]` registrado), el
+`PATCH[3]` va a fallar por "ya aplicado". El orden correcto es:
+`sudo ./scripts/apply-bpc-patch.sh --revert` primero, y recién después dejar que DKMS lo
+aplique por `PATCH[3]`.
+
+## Si el parche no alcanza: otras vías para forzar el bpc
+
+En orden de lo que más chance tiene, y todas por debajo de X11/Wayland:
+
+1. **`nvidia_modeset.config_file`** — es el mecanismo propio de NVKMS para reemplazar el EDID
+   que ve el parser, o sea el mismo subsistema donde vive la decisión de bpc. El parámetro
+   **existe y está compilado** en el módulo (`/sys/module/nvidia_modeset/parameters/config_file`).
+   El hueco: la sintaxis del nombre de dpy no está documentada públicamente ni aparece en el
+   código abierto (se genera en la parte cerrada del RM). Habría que descubrirlo con
+   `nvidia_modeset.debug=1` y mirar dmesg como root.
+
+2. **EDID parcheado**, si se consigue una vía de override que NVIDIA respete. La receta es
+   corta: byte `0x14` de `0x80` a `0xA0` (bits 6-4 de `000` a `010` = 8 bpc) y corregir el
+   checksum del bloque base restándole `0x20` al byte `127`.
+
+3. **`/sys/kernel/debug/dri/*/DP-1/edid_override`** — barato de probar pero con una duda de
+   fondo: no está confirmado si la lógica cerrada de NVKMS lee el EDID por el helper genérico
+   de DRM (que vería el override) o si lo saca del canal AUX por su cuenta. Un negativo acá no
+   cierra nada. Además escribir el archivo **no dispara hotplug**: hay que desconectar y
+   reconectar.
+
+**Descartadas para nuestro setup:** `CustomEDID` de xorg.conf (sólo X11, y nosotros vamos por
+Wayland/DRM lease), `drm.edid_firmware=` (nvidia-drm no lo respeta), `nvidia-settings` (no
+existe el atributo), y la propiedad DRM `max bpc` (no está implementada en `nvidia-drm.ko`).
