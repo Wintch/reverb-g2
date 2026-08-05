@@ -34,11 +34,22 @@ if "%IFACE%"=="" (
 
 set OUT=windows-90hz
 echo.
+echo  ==========================================================
+echo   EL ORDEN IMPORTA. El casco tiene que estar DESCONECTADO
+echo   ahora, y se enchufa DESPUES de que arranque la captura.
+echo.
+echo   Medido en Linux: el casco manda su estado solo cuando algo
+echo   CAMBIA, y su log de firmware solo habla durante el arranque
+echo   del driver. Capturando en regimen no sale nada.
+echo  ==========================================================
+echo.
+pause
+echo.
 echo  === CAPTURANDO en %OUT%.pcapng ===
 echo.
-echo    PONETE EL CASCO AHORA y confirma que ves imagen a 90 Hz.
-echo    Mira 30 segundos, movete un poco.
-echo    Despues volve aca y apreta Ctrl+C para cortar.
+echo    1. ENCHUFA EL CASCO AHORA y deja que Windows lo levante entero.
+echo    2. Ponetelo y confirma que VES IMAGEN a 90 Hz. Mira 30 segundos.
+echo    3. Volve aca y apreta Ctrl+C para cortar.
 echo.
 %DUMPCAP% -i %IFACE% -w %OUT%.pcapng
 

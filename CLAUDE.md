@@ -193,6 +193,10 @@ docs/06-known-issues.md     lo descartado, con evidencia
 docs/07-captura-hid-windows.md  ARCHIVADO: el comando de modo no existe (ver cap. 09)
 docs/08-passthrough-y-limites.md  idea de passthrough + límites por marcas (no empezado)
 docs/09-oasis-driver-re.md  qué le manda Windows al panel, leído del driver de HP
+docs/10-recursos.md         índice de fuentes: driver de HP, FCC, chips, parque instalado
+docs/11-panorama-hmd-linux.md  ¿es sólo NVIDIA? otros cascos, DK2, y dónde publicar
+docs/12-protocolo-g2.md     >>> REFERENCIA DEL PROTOCOLO <<< todo lo que sabemos del casco
+windows-kit/                paquete de captura para Windows (se empaqueta en windows-kit.7z)
 patches/nvidia/             los 3 parches de Project-VR para el 595-open
 patches/monado/             7 parches nuestros (companion, controllers, WMR_CAMERAS)
 patches/hello_xr-player/    3 parches: el player 360/VR180 completo

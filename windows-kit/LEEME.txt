@@ -41,22 +41,39 @@ PREPARACION (una sola vez, requiere un reinicio)
 
 CAPTURA  (aprox. 15 minutos)
 -----------------------------
-1. Conectar el casco y dejar que Windows lo levante. Confirmar que anda a 90 Hz
-   (la app de HP / SteamVR con el driver Oasis).
+
+  *** EL ORDEN IMPORTA MUCHISIMO. LEELO ANTES DE EMPEZAR. ***
+
+  Lo que necesitamos es el ARRANQUE del casco, no el uso. Medido en Linux: el
+  casco manda su mensaje de estado SOLO CUANDO ALGO CAMBIA, y su log de firmware
+  SOLO habla mientras el driver hace la secuencia de inicializacion. Si empezas a
+  capturar con el casco ya andando en regimen, la captura sale VACIA aunque todo
+  parezca bien.
+
+  Por eso: primero la captura, DESPUES el casco.
+
+  Y no hace falta ningun juego. Un juego solo agrega ruido al bus.
+
+1. DESCONECTAR el casco (el USB). Que Windows lo pierda del todo.
 
 2. Abrir "cmd" COMO ADMINISTRADOR, ir a esta carpeta, y correr:
 
        capturar.bat
 
-   El .bat lista las interfaces USBPcap y te pide elegir cual. Es la del root hub
-   donde esta enchufado el casco: si no sabes cual, corre el .bat una vez por cada
-   una — captura 5 segundos y te dice si vio al casco.
+   Te lista las interfaces USBPcap y te pide elegir una. Es la del root hub donde
+   vas a enchufar el casco. Si no sabes cual, elegi una: al cortar te dice si vio
+   al casco o no, y si no lo vio probas con otra.
 
-3. Con la captura corriendo, PONETE EL CASCO y confirma que ves imagen a 90 Hz.
-   Mira 30 segundos. Movete un poco. Despues cortá con Ctrl+C.
+3. CON LA CAPTURA YA CORRIENDO, enchufar el casco y dejar que Windows lo levante
+   entero (el portal de WMR / SteamVR con el driver Oasis).
 
-4. Si podes, repetí lo mismo forzando 60 Hz en la configuracion de WMR/SteamVR y
-   guardalo aparte. Nos da el control del lado de Windows.
+4. Ponetelo y confirma que VES IMAGEN a 90 Hz. Mira unos 30 segundos.
+
+5. Volve a la ventana de cmd y cortá con Ctrl+C.
+
+6. Si podes, repetí TODO forzando 60 Hz en la configuracion, y renombra el
+   resultado a windows-60hz.pcapng / .tsv. Es el control del lado de Windows y
+   vale casi tanto como el de 90.
 
 
 LO QUE TENES QUE TRAER DE VUELTA
