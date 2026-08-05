@@ -96,7 +96,7 @@ vblank corto rompe el panel" de "cualquier modo inyectado rompe". Es la línea d
 ## El EDID ya está armado
 
 `experiments/vblank/g2-vblank-test.edid` — 384 bytes, partiendo de
-`nv-report-20260805-014230/hmd.edid`. Los tres modos entran en los slots de DTD que
+`experiments/vblank/hmd.edid`. Los tres modos entran en los slots de DTD que
 estaban libres, así que **queda un solo EDID con todo el factorial**: se corre la
 experiencia entera en una sesión, sin re-overridear entre test y test.
 
@@ -115,11 +115,11 @@ y los dos bloques de extensión sin tocar byte a byte.
 Para regenerarlo o variarlo:
 
 ```bash
-./scripts/edid-tool.py inject-mode nv-report-20260805-014230/hmd.edid \
+./scripts/edid-tool.py inject-mode experiments/vblank/hmd.edid \
     -o experiments/vblank/g2-vblank-test.edid CTRL:1 A:2 B:3
 
 # sin asignaciones lista los presets y qué hay en cada slot
-./scripts/edid-tool.py inject-mode nv-report-20260805-014230/hmd.edid
+./scripts/edid-tool.py inject-mode experiments/vblank/hmd.edid
 ```
 
 Cargarlo con **el mismo mecanismo de override de EDID que se usó para el test de 8 bpc**
@@ -162,7 +162,7 @@ El factorial dice *si* el vblank importa. No dice *dónde* está el límite en e
 refresh. Para eso se mantiene la forma del timing fija y se mueve sólo el refresh:
 
 ```bash
-./scripts/edid-tool.py inject-mode nv-report-20260805-014230/hmd.edid \
+./scripts/edid-tool.py inject-mode experiments/vblank/hmd.edid \
     -o experiments/vblank/sweep-70-75-80.edid  SHORT@70:1 SHORT@75:2 SHORT@80:3
 ```
 
@@ -254,7 +254,7 @@ nuevo para el foro o el PR:
 
 ## Verificado contra los bytes reales del EDID
 
-Todo esto se chequeó contra `nv-report-20260805-014230/hmd.edid`, y coincide con lo que
+Todo esto se chequeó contra `experiments/vblank/hmd.edid`, y coincide con lo que
 afirma el post del foro:
 
 ```
