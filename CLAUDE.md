@@ -27,8 +27,8 @@
 >
 > ### Publicación
 >
-> El repo se va a publicar en GitHub (`Wintch/reverb-g2-linux`). Hay dos bloqueos, ver
-> `docs/17-publicacion.md`. La clave SSH del lab ya está generada en `~/.ssh/id_ed25519`.
+> El repo se va a publicar en GitHub (`Wintch/reverb-g2`). Hay dos bloqueos, ver
+> `docs/17-publishing.md`. La clave SSH del lab ya está generada en `~/.ssh/id_ed25519`.
 > La identidad de git de este repo ya apunta a gmail.
 
 
@@ -294,12 +294,12 @@ docs/03-controllers.md      estado de los controllers (3DoF, límite del driver 
 docs/04-lab-90hz.md         >>> TU GUION <<<
 docs/05-resolve.md          DaVinci Resolve (otro objetivo del rig, no toca esto)
 docs/06-known-issues.md     lo descartado, con evidencia
-docs/07-captura-hid-windows.md  ARCHIVADO: el comando de modo no existe (ver cap. 09)
-docs/08-passthrough-y-limites.md  idea de passthrough + límites por marcas (no empezado)
+docs/07-windows-hid-capture.md  ARCHIVADO: el comando de modo no existe (ver cap. 09)
+docs/08-passthrough-limits.md  idea de passthrough + límites por marcas (no empezado)
 docs/09-oasis-driver-re.md  qué le manda Windows al panel, leído del driver Oasis
-docs/10-recursos.md         índice de fuentes: driver de HP, FCC, chips, parque instalado
-docs/11-panorama-hmd-linux.md  ¿es sólo NVIDIA? otros cascos, DK2, y dónde publicar
-docs/12-protocolo-g2.md     >>> REFERENCIA DEL PROTOCOLO <<< todo lo que sabemos del casco
+docs/10-resources.md         índice de fuentes: driver de HP, FCC, chips, parque instalado
+docs/11-linux-hmd-landscape.md  ¿es sólo NVIDIA? otros cascos, DK2, y dónde publicar
+docs/12-g2-protocol.md     >>> REFERENCIA DEL PROTOCOLO <<< todo lo que sabemos del casco
 docs/13-bug-6bpc.md         >>> EL BUG <<< NVIDIA clava el G2 en 6 bits por color
 docs/14-nvidia-report.md    >>> REPORTE PUBLICADO <<< + el cuerpo corregido para editarlo
 docs/15-feedback-triage.md  el feedback externo al reporte, ítem por ítem, con veredicto

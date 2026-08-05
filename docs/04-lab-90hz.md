@@ -79,7 +79,7 @@ usando el mecanismo `PATCH[]` de dkms.conf — así se re-aplican solos con cada
 ```bash
 cd /usr/src/nvidia-595.71.05
 sudo mkdir -p patches
-sudo cp ~/reverb-g2-linux/patches/nvidia/000*.patch patches/
+sudo cp ~/reverb-g2/patches/nvidia/000*.patch patches/
 
 # Registrar los parches en dkms.conf (agregar al final):
 sudo tee -a dkms.conf >/dev/null <<'EOF'

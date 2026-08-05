@@ -149,7 +149,7 @@ las cámaras (`IspFrameRate`/`SensorFrameRate`, igual que `OV7251SetFrameRate`),
 `Prop_DisplayFrequency_Float`.
 
 **Conclusión: la secuencia HID de Monado es correcta y suficiente. El panel adopta el refresh
-del video que le llega.** `docs/07-captura-hid-windows.md` queda archivado — no hace falta
+del video que le llega.** `docs/07-windows-hid-capture.md` queda archivado — no hace falta
 bootear Windows.
 
 Nota de proceso: esta hipótesis murió dos veces porque entre la primera y la segunda

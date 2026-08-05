@@ -1,7 +1,7 @@
 # 17 — Publicar el repo
 
 Objetivo: que cualquiera con un Reverb G2 pueda seguir desarrollando esto. Destino
-`github.com/Wintch/reverb-g2-linux`.
+`github.com/Wintch/reverb-g2`.
 
 **La limpieza del historial ya se hizo** (2026-08-05, desde el sistema principal con el SSD
 del lab montado). Lo que sigue documenta qué había, qué se hizo y cómo verificarlo antes de
@@ -25,7 +25,7 @@ borrarlas del árbol no alcanzaba. Git LFS tampoco servía: el tier gratis es 1 
 eran 1.29 GB.
 
 Se sacaron del historial. No hubo pérdida real: el valor está en el análisis
-(`docs/12-protocolo-g2.md`, `scripts/parse-usbpcap.py`), no en los dumps crudos. También
+(`docs/12-g2-protocol.md`, `scripts/parse-usbpcap.py`), no en los dumps crudos. También
 salió `nv-report-*/build/hmd-vk`, un binario compilado que nunca debió estar trackeado.
 
 `.git` pasó de **412 MB a 8.8 MB**.
@@ -84,18 +84,18 @@ correr la limpieza se redactó a sí mismo, quedando con `SERIAL="REDACTED"` y u
 buscaba la palabra `REDACTED`. Inservible, y peor: si se hubiera publicado antes de la
 limpieza, habría publicado exactamente lo que intentaba ocultar.
 
-Por eso ahora los patrones viven en `scripts/.patrones-privados`, que está en `.gitignore`.
+Por eso ahora los patrones viven en `scripts/.private-patterns`, que está en `.gitignore`.
 
 ---
 
 ## Antes de cada push
 
 ```bash
-./scripts/verificar-publicable.sh
+./scripts/check-publishable.py
 ```
 
 Chequea que haya una sola identidad en los commits, que ningún blob supere los 100 MB, y
-que ninguno de los patrones de `scripts/.patrones-privados` aparezca en el historial. No
+que ninguno de los patrones de `scripts/.private-patterns` aparezca en el historial. No
 modifica nada. Devuelve distinto de cero si algo falla.
 
 Ese archivo de patrones **no está en el repo** (a propósito). Si clonás esto en otra
@@ -104,7 +104,7 @@ máquina, creá el tuyo: un patrón por línea, y las líneas con `#` se ignoran
 ## Publicar
 
 ```bash
-git remote add origin git@github.com:Wintch/reverb-g2-linux.git
+git remote add origin git@github.com:Wintch/reverb-g2.git
 git push -u origin main
 ```
 

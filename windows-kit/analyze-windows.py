@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Analiza la captura de Windows y la diffea contra lo medido en Linux.
 
-Se corre DE VUELTA EN LINUX, sobre el .tsv que produce capturar.bat.
+Se corre DE VUELTA EN LINUX, sobre el .tsv que produce capture.bat.
 
 Busca los dos canales que descubrimos el 2026-08-04:
 
@@ -14,7 +14,7 @@ Busca los dos canales que descubrimos el 2026-08-04:
   0x03  LOG DE FIRMWARE del HoloLens Sensors 045e:0659, 509 bytes, ASCII.
         formato: magic "Dlo+" | 4B ts | 2B seq | 1B nivel | texto
 
-  ./analizar-windows.py windows-90hz.tsv [windows-60hz.tsv]
+  ./analyze-windows.py windows-90hz.tsv [windows-60hz.tsv]
 """
 import re, sys
 

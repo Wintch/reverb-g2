@@ -70,7 +70,7 @@ mandar, no lo que pasa por el bus. Quedan dos huecos reales:
    `Windows.Devices.Display.Core` — no por HID, pero es superficie no cubierta.
 
 Una captura de bus resuelve las dos de una y no depende de NVIDIA. El kit ya está armado
-(`windows-kit/capturar.bat` + `scripts/parse-usbpcap.py` + `scripts/analyze-hid.py`), el
+(`windows-kit/capture.bat` + `scripts/parse-usbpcap.py` + `scripts/analyze-hid.py`), el
 disco de Windows está en la máquina. Cuesta un boot. **Es el único de la lista que puede
 resolver el problema sin NVIDIA, así que va primero entre los abiertos** — no porque la
 hipótesis esté viva, sino porque convierte "leímos el driver y no había nada" en "miramos el

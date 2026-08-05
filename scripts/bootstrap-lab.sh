@@ -24,7 +24,7 @@
 
 set -u
 
-REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"   # reverb-g2-linux/
+REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"   # reverb-g2/
 NVIDIA_VER="595.71.05"
 
 # --- Who am I and how do I escalate --------------------------------------------------------

@@ -2,5 +2,5 @@ nv-debug-*/
 nv-report-*/
 windows-kit.7z
 nv-report-*/build/
-scripts/.patrones-privados
+scripts/.private-patterns
 *.pdf

@@ -58,7 +58,7 @@ CAPTURA  (aprox. 15 minutos)
 
 2. Abrir "cmd" COMO ADMINISTRADOR, ir a esta carpeta, y correr:
 
-       capturar.bat
+       capture.bat
 
    Te lista las interfaces USBPcap y te pide elegir una. Es la del root hub donde
    vas a enchufar el casco. Si no sabes cual, elegi una: al cortar te dice si vio
@@ -106,4 +106,4 @@ SI ALGO NO SALE
 - Windows no te deja elegir 60 Hz -> no importa, el de 90 es el que necesitamos.
 
 No hace falta que entiendas la salida. Traela y la analizamos en Linux con
-analizar-windows.py, que esta en esta misma carpeta.
+analyze-windows.py, que esta en esta misma carpeta.

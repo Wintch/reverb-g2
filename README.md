@@ -1,4 +1,4 @@
-# reverb-g2-linux
+# reverb-g2
 
 Running an [HP Reverb G2](https://www.hp.com/gb-en/tech-takes/gaming/review/hp-reverb-g2-review.html)
 on Linux — patches, tools, and a procedure manual covering everything from USB topology to
@@ -13,6 +13,11 @@ repo exists.
 Everything documented here was measured on a real rig. Where something does **not** work,
 the manual says why and what was tried, including the conclusions that turned out to be
 wrong. Several of them did.
+
+**Scope.** The repo is named for the headset, not for an operating system, but effectively
+all of the engineering here targets Linux — that is where the headset is not supported and
+where the work was needed. Chapters 07, 09, 10 and 12 are Windows-side: they exist because
+reading what Windows does to the panel is how several Linux questions got answered.
 
 ## The one rule that matters
 
@@ -98,17 +103,17 @@ experiments/   the headset's own EDID plus prepared variants for the 90 Hz work
 | [04](docs/04-lab-90hz.md) | The 90 Hz lab: separate install, patched driver, test protocol |
 | [05](docs/05-resolve.md) | DaVinci Resolve (a separate goal for the same rig) |
 | [06](docs/06-known-issues.md) | What does not work and why, with evidence |
-| [07](docs/07-captura-hid-windows.md) | Capturing the Windows HID traffic (archived — see 09) |
-| [08](docs/08-passthrough-y-limites.md) | Passthrough and its limits |
-| [09](docs/09-oasis-driver-re.md) | Reverse-engineering HP's Oasis driver |
-| [10](docs/10-recursos.md) | External resources |
-| [11](docs/11-panorama-hmd-linux.md) | The state of HMDs on Linux |
-| [12](docs/12-protocolo-g2.md) | The G2's own protocol, from USB captures |
+| [07](docs/07-windows-hid-capture.md) | Capturing the Windows HID traffic (archived — see 09) |
+| [08](docs/08-passthrough-limits.md) | Passthrough and its limits |
+| [09](docs/09-oasis-driver-re.md) | Reverse-engineering the Oasis driver (what Windows sends the panel) |
+| [10](docs/10-resources.md) | External resources |
+| [11](docs/11-linux-hmd-landscape.md) | The state of HMDs on Linux |
+| [12](docs/12-g2-protocol.md) | The G2's own protocol, from USB captures |
 | [13](docs/13-bug-6bpc.md) | The 6 bpc clamp: root cause and patch |
 | [14](docs/14-nvidia-report.md) | The report filed with NVIDIA |
 | [15](docs/15-feedback-triage.md) | Triage of the feedback on that report |
 | [16](docs/16-lab-vblank.md) | The open experiment: refresh rate, or timing shape? |
-| [17](docs/17-publicacion.md) | Preparing this repo for publication |
+| [17](docs/17-publishing.md) | Preparing this repo for publication |
 
 ## Reference hardware
 

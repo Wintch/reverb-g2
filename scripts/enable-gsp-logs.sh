@@ -36,5 +36,5 @@ echo
 update-initramfs -u -k "$(uname -r)" 2>&1 | tail -5 || true
 echo
 echo "LISTO. HAY QUE REINICIAR (el parametro es del modulo 'nvidia' core, se lee al cargar)."
-echo "Despues del reboot: sudo /home/iam/Documents/reverb-g2-linux/scripts/collect-nv.sh"
+echo "Despues del reboot: sudo /home/iam/Documents/reverb-g2/scripts/collect-nv.sh"
 echo "y buscar en los dmesg-*.txt cualquier cosa nueva (RPC, GSP, DPU, link training, etc)."

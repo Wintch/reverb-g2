@@ -19,7 +19,7 @@ sudo apt install -y git cmake ninja-build meson pkg-config glslang-tools \
 
 ```bash
 git clone --recursive https://gitlab.freedesktop.org/monado/monado.git
-cd monado && git am ../reverb-g2-linux/patches/monado/*.patch
+cd monado && git am ../reverb-g2/patches/monado/*.patch
 cmake -B build -GNinja && ninja -C build
 
 git clone --recursive https://gitlab.freedesktop.org/mateosss/basalt.git

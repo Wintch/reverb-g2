@@ -126,7 +126,7 @@ Copiar a algún lado accesible desde Linux (pendrive, partición compartida, la 
 ## De vuelta en Linux
 
 ```bash
-cd ~/Documents/reverb-g2-linux
+cd ~/Documents/reverb-g2
 
 # El diff que importa: A=60Hz, B=90Hz. Lo que salga en "EN B PERO NO EN A" es la respuesta.
 ./scripts/analyze-hid.py diff windows-60hz.tsv windows-90hz.tsv

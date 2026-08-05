@@ -136,7 +136,7 @@ del timing de video que le llega.
 ## Qué se concluye, y qué NO
 
 **Se concluye:** no falta ningún comando propietario. La secuencia HID de Monado es correcta
-y suficiente. El panel adopta el refresh del video que recibe. `docs/07-captura-hid-windows.md`
+y suficiente. El panel adopta el refresh del video que recibe. `docs/07-windows-hid-capture.md`
 queda archivado: ya no hace falta bootear Windows para capturar nada.
 
 Es la **segunda** vez que esta hipótesis muere. La primera fue por argumento (Project-VR

@@ -203,7 +203,7 @@ ahora que el bpc cambió, para ver si aparece algo nuevo — sobre todo cualquie
 color space o formato que antes no estuviera.
 
 ```bash
-sudo /home/iam/Documents/reverb-g2-linux/scripts/collect-nv.sh
+sudo /home/iam/Documents/reverb-g2/scripts/collect-nv.sh
 ```
 
 Tarda unos minutos (la mayor parte es `nvidia-bug-report.sh`). No hace falta que nadie mire el
