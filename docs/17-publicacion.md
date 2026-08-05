@@ -3,86 +3,127 @@
 Objetivo: que cualquiera con un Reverb G2 pueda seguir desarrollando esto. Destino
 `github.com/Wintch/reverb-g2-linux`.
 
-Auditoría hecha 2026-08-05 desde el sistema principal, con el SSD del lab montado.
+**La limpieza del historial ya se hizo** (2026-08-05, desde el sistema principal con el SSD
+del lab montado). Lo que sigue documenta qué había, qué se hizo y cómo verificarlo antes de
+cada push.
 
 ---
 
-## Bloqueo 1: los pcapng no entran en GitHub
+## Qué bloqueaba la publicación
 
-Las dos capturas de USB **están en el historial de git**, no sólo en el árbol de trabajo:
+### 1. Blobs por encima del límite de GitHub
+
+Las dos capturas de USB estaban **en el historial de git**, no sólo en el árbol de trabajo:
 
 ```
 858.1 MB  docs/dump90hz.pcapng
 428.9 MB  docs/dump60hz.pcapng
 ```
 
-**GitHub rechaza cualquier blob de más de 100 MB.** El `git push` falla de entrada, y
-borrarlos ahora no alcanza: quedan en la historia. Git LFS tampoco resuelve — el tier
-gratis es 1 GB y esto son 1.29 GB.
+GitHub rechaza cualquier blob de más de 100 MB, así que el push fallaba de entrada, y
+borrarlas del árbol no alcanzaba. Git LFS tampoco servía: el tier gratis es 1 GB y esto
+eran 1.29 GB.
 
-Hay que sacarlos del historial. No es pérdida real: el valor está en el análisis
-(`docs/12-protocolo-g2.md`, `scripts/parse-usbpcap.py`), no en los dumps crudos. Si algún
-día hacen falta, se hostean aparte y se linkean.
+Se sacaron del historial. No hubo pérdida real: el valor está en el análisis
+(`docs/12-protocolo-g2.md`, `scripts/parse-usbpcap.py`), no en los dumps crudos. También
+salió `nv-report-*/build/hmd-vk`, un binario compilado que nunca debió estar trackeado.
 
-`.git` pesa **410 MB** hoy; después de la limpieza debería quedar en pocos MB.
+`.git` pasó de **412 MB a 8.8 MB**.
 
-## Bloqueo 2: identidad y datos del equipo
+### 2. Identidad e identificadores de hardware
 
-En archivos **trackeados**:
-
-| qué | archivos | decisión |
-|---|---|---|
-| `nikolai.viktorovich@gmail.com` | 2 + historial | **sacar** — es la dirección de trabajo, no va en nada público |
-| `iam@iashur.internal` | historial | unificar a gmail, es ruido |
-| serial `REDACTED` | 4 | **redactar** — es el serial de este casco |
-| `nv-report-*/build/hmd-vk` | 1 | binario compilado, no debe estar trackeado |
-
-Los cuatro PDFs de la FCC (6.8 MB) son documentos públicos y pueden quedarse, aunque
-linkearlos sería más liviano.
+- Tres identidades distintas en los commits, unificadas a una sola.
+- El serial USB del casco aparecía en 6 archivos, redactado.
+- El `nvidia-bug-report` adjunto al foro llevaba además la MAC de la placa de red (dos
+  veces, directa y al revés como PCI Device Serial) y el serial del motherboard. Se
+  regeneró redactado: mismas 42787 líneas, sólo esas cuatro modificadas.
 
 ---
 
-## El procedimiento
+## Cómo se hizo
+
+Con `git filter-repo`, en dos pasadas. **Hace falta las dos** — la primera sola no alcanza,
+y esa fue la trampa:
 
 ```bash
-pipx install git-filter-repo      # o apt install git-filter-repo
+# 1. blobs + identidad de los commits
+git filter-repo --force \
+    --path docs/dump90hz.pcapng --path docs/dump60hz.pcapng \
+    --path nv-report-20260804-223535/build/hmd-vk --invert-paths \
+    --mailmap /tmp/mailmap
 
-cd ~/Documents/reverb-g2-linux
-git status                        # tiene que estar limpio antes de empezar
-cp -a .git /tmp/git-backup        # red de seguridad
+# 2. el CONTENIDO de los archivos
+git filter-repo --force --replace-text /tmp/redacciones
+```
 
-# 1. sacar del historial los pcapng y el binario de build
-git filter-repo \
-    --path docs/dump90hz.pcapng \
-    --path docs/dump60hz.pcapng \
-    --path nv-report-20260804-223535/build/hmd-vk \
-    --invert-paths
+`--mailmap` reescribe **autor y committer**, que es metadata. No toca lo que hay adentro de
+los archivos. Acá había dos parches de `patches/hello_xr-player/` con la dirección vieja en
+su línea `From:`, y sobrevivieron enteros a la primera pasada. Hay que buscar en el
+contenido de todos los commits, no sólo en los autores:
 
-# 2. unificar identidad
-cat > /tmp/mailmap <<'EOF'
-brunduk <nikolai.viktorovich@gmail.com> <nikolai.viktorovich@gmail.com>
-brunduk <nikolai.viktorovich@gmail.com> <iam@iashur.internal>
-EOF
-git filter-repo --mailmap /tmp/mailmap
+```bash
+git grep -lI "<patrón>" $(git rev-list --all)
+```
 
-# 3. redactar el serial del contenido de los archivos
-echo 'REDACTED==>REDACTED' > /tmp/redact
-git filter-repo --replace-text /tmp/redact
+Los archivos `/tmp/mailmap` y `/tmp/redacciones` llevan literales que no deben publicarse,
+por eso van fuera del repo. Formatos:
 
-# 4. verificar que no quedó nada
-git log --format='%an <%ae>' | sort -u          # sólo gmail
-git grep -lI -e REDACTED -e REDACTED $(git rev-list --all) | head   # vacío
-du -sh .git                                      # pocos MB
-git rev-list --objects --all | git cat-file --batch-check='%(objectsize) %(rest)' \
-  | sort -rn | head -3                           # ningún blob > 100 MB
+```
+# mailmap
+Nombre Nuevo <nuevo@ejemplo.com> <viejo@ejemplo.com>
 
-# 5. publicar
+# redacciones (replace-text)
+LITERAL_VIEJO==>REEMPLAZO
+```
+
+### La trampa que sí nos mordió
+
+La primera versión de esto era un script `publicar.sh` que llevaba **adentro** el serial y
+la dirección que estaba redactando, porque los necesitaba como patrón de búsqueda. Al
+correr la limpieza se redactó a sí mismo, quedando con `SERIAL="REDACTED"` y un chequeo que
+buscaba la palabra `REDACTED`. Inservible, y peor: si se hubiera publicado antes de la
+limpieza, habría publicado exactamente lo que intentaba ocultar.
+
+Por eso ahora los patrones viven en `scripts/.patrones-privados`, que está en `.gitignore`.
+
+---
+
+## Antes de cada push
+
+```bash
+./scripts/verificar-publicable.sh
+```
+
+Chequea que haya una sola identidad en los commits, que ningún blob supere los 100 MB, y
+que ninguno de los patrones de `scripts/.patrones-privados` aparezca en el historial. No
+modifica nada. Devuelve distinto de cero si algo falla.
+
+Ese archivo de patrones **no está en el repo** (a propósito). Si clonás esto en otra
+máquina, creá el tuyo: un patrón por línea, y las líneas con `#` se ignoran.
+
+## Publicar
+
+```bash
 git remote add origin git@github.com:Wintch/reverb-g2-linux.git
 git push -u origin main
 ```
 
-`git filter-repo` borra el remote a propósito después de reescribir, por eso el `remote
-add` va al final.
+`git filter-repo` borra el remote a propósito después de reescribir, por eso el
+`remote add` va después de la limpieza y no antes.
+
+El repo se creó **privado**. Conviene pushear privado, revisar en la web que quedó como se
+espera, y recién ahí pasarlo a público desde Settings. Un force-push posterior no saca de
+forma confiable lo que ya se indexó.
+
+---
+
+## Lo que la redacción no arregla
+
+El `nvidia-bug-report` original **sigue en el servidor de NVIDIA** en su URL actual, aunque
+se reemplace el adjunto del hilo: Discourse no purga los uploads huérfanos al instante. Y
+quien lo haya bajado tiene el original. Al momento de redactarlo el post tenía 7 vistas y 0
+respuestas, así que la exposición real es baja — pero la redacción sirve para adelante, que
+es cuando el hilo va a tener tráfico si NVIDIA contesta.
 
 ---
 
@@ -90,49 +131,36 @@ add` va al final.
 
 Se evaluó separar player / herramientas / drivers en tres repos y **se descartó**. Lo que
 hay en `patches/` no son forks: son series de parches contra upstream. Un parche sin el doc
-que explica por qué existe no sirve, y el doc sin el parche tampoco. La estructura actual
-es la correcta:
+que explica por qué existe no sirve, y el doc sin el parche tampoco.
 
 ```
 docs/          17 capítulos, del USB al bug de NVIDIA
-patches/nvidia/            3 de Project-VR + el nuestro (0004)
+patches/nvidia/            3 de Project-VR + el nuestro (0004, ver PR #1275)
 patches/monado/            7 nuestros
 patches/hello_xr-player/   3, el player 360/VR180
 scripts/       34 herramientas
-experiments/   los EDID del experimento del vblank
+experiments/   los EDID del experimento del vblank (docs/16)
 ```
 
-Lo único que sale del repo es el fix de NVIDIA, y ya salió: PR #1275.
+Lo único que sale del repo es el fix de NVIDIA, y ya salió:
+https://github.com/NVIDIA/open-gpu-kernel-modules/pull/1275
 
 Los árboles de código no se versionan: `bootstrap-lab.sh` los clona de upstream en los SHA
 exactos contra los que se generaron los parches. Por eso el bundle pesa kilobytes y se ve
 exactamente qué es nuestro.
 
-## Lo que falta antes de publicar
+## Lo que falta antes de hacerlo público
 
 - **Un README de entrada.** El actual asume contexto. Un tercero necesita saber en diez
   líneas: qué funciona hoy, qué no, y cuál es el primer comando.
-- Decidir si los cuatro PDFs de la FCC se quedan o se linkean.
+- Decidir si los cuatro PDFs de la FCC (6.8 MB) se quedan o se linkean.
 
 ---
 
 ## Acceso git desde el lab
 
-Ya está resuelto. Se generó una clave **propia del lab** (no se copió la del sistema
-principal, así se puede revocar una máquina sin tocar la otra):
-
-```
-~/.ssh/id_ed25519          clave del lab, sin passphrase
-~/.ssh/config              entrada Host github.com
-```
-
-La pública hay que agregarla una vez en https://github.com/settings/ssh/new
-(tipo **Authentication Key**):
-
-```
-ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAII4MD3DYOMHUzRz2jLi/6KuNf+Bf+S1MiK3Y64b+BcTR reverb-g2-lab
-```
+Resuelto. Hay una clave **propia del lab** (no se copió la del sistema principal, así se
+puede revocar una máquina sin tocar la otra), en `~/.ssh/id_ed25519`, con su entrada
+`Host github.com` en `~/.ssh/config`. La pública ya está cargada en la cuenta.
 
 Verificar con `ssh -T git@github.com` — tiene que responder `Hi Wintch!`.
-
-La identidad de git de este repo ya quedó apuntando a gmail (`git config user.email`).

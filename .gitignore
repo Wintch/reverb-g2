@@ -2,4 +2,4 @@ nv-debug-*/
 nv-report-*/
 windows-kit.7z
 nv-report-*/build/
-experiments/**/*.edid binary
+scripts/.patrones-privados
