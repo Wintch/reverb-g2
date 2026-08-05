@@ -33,7 +33,7 @@ importa si se encienden después de arrancar monado-service — ver abajo).
 - Timestamps de input siempre 0 (rompe `lastChangeTime` de OpenXR).
 - Typos: labels x/y cruzados en el GUI de debug, loop `inputs[0]` en vez de `inputs[i]`.
 
-## Qué arreglamos (patches/monado/0003–0006)
+## Qué arreglamos (patches/monado/0001-0008; renumerados 2026-08-05 al partirlos en 4 MRs para upstream, ver docs/18)
 
 | Patch | Qué hace |
 |---|---|

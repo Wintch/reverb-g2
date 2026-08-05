@@ -1,0 +1,118 @@
+From 8488e257332213cbc00e5bbfad7d68e9bcff04e3 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Wed, 5 Aug 2026 12:54:39 -0300
+Subject: [PATCH 08/10] d/wmr: Add optional thumbstick deadzone
+ (WMR_STICK_DEADZONE)
+
+WMR controller configs carry no stick centre calibration, and per-unit
+centre offset shows up as constant drift in apps (measured on a Reverb
+G2 pair: a resting stick reporting a few percent of deflection). Add an
+opt-in radial deadzone with rescale, shared by the hp and og parsers,
+following the opt-in precedent of LH_STICK_DEADZONE (!2770).
+
+Default is 0 (off): no behaviour change for any device unless the user
+sets WMR_STICK_DEADZONE. The rescale keeps full deflection reaching
+magnitude 1, clamped per component because a full diagonal has
+magnitude > 1 before rescaling.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
+---
+ src/xrt/drivers/wmr/wmr_controller_base.c | 25 +++++++++++++++++++++++
+ src/xrt/drivers/wmr/wmr_controller_base.h |  9 ++++++++
+ src/xrt/drivers/wmr/wmr_controller_hp.c   |  2 ++
+ src/xrt/drivers/wmr/wmr_controller_og.c   |  2 ++
+ 4 files changed, 38 insertions(+)
+
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
+index 7489358f4..417690e42 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.c
++++ b/src/xrt/drivers/wmr/wmr_controller_base.c
+@@ -33,6 +33,9 @@
+ #include <ctype.h>
+ #include <stdio.h>
+ #include <stdlib.h>
++
++//! Radial thumbstick deadzone, applied by the per-model packet parsers. Off by default.
++DEBUG_GET_ONCE_FLOAT_OPTION(wmr_stick_deadzone, "WMR_STICK_DEADZONE", 0.0f)
+ #include <string.h>
+ #include <assert.h>
+ #include <errno.h>
+@@ -575,6 +578,28 @@ wmr_controller_base_deinit(struct wmr_controller_base *wcb)
+ 	m_imu_3dof_close(&wcb->fusion);
+ }
+ 
++void
++wmr_controller_base_apply_stick_deadzone(struct xrt_vec2 *stick)
++{
++	const float deadzone = debug_get_float_option_wmr_stick_deadzone();
++	if (deadzone <= 0.0f || deadzone >= 1.0f) {
++		return;
++	}
++
++	const float mag = sqrtf(stick->x * stick->x + stick->y * stick->y);
++	if (mag < deadzone) {
++		stick->x = 0.0f;
++		stick->y = 0.0f;
++		return;
++	}
++
++	/* Rescale so the active range still spans 0..1. A full diagonal has mag > 1,
++	 * where the rescale can push a component past 1 - clamp per component. */
++	const float rescale = (mag - deadzone) / (1.0f - deadzone) / mag;
++	stick->x = fminf(fmaxf(stick->x * rescale, -1.0f), 1.0f);
++	stick->y = fminf(fmaxf(stick->y * rescale, -1.0f), 1.0f);
++}
++
+ /*
+  *
+  * 'Exported' functions.
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.h b/src/xrt/drivers/wmr/wmr_controller_base.h
+index 96fb49f8c..17f5220de 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.h
++++ b/src/xrt/drivers/wmr/wmr_controller_base.h
+@@ -136,6 +136,15 @@ wmr_controller_base_init(struct wmr_controller_base *wcb,
+ void
+ wmr_controller_base_deinit(struct wmr_controller_base *wcb);
+ 
++/*!
++ * Apply the optional radial thumbstick deadzone (WMR_STICK_DEADZONE, default 0 =
++ * off) to a raw-scaled stick vector, rescaling so full deflection still reaches
++ * magnitude 1. WMR controller configs carry no stick centre calibration, so
++ * per-unit centre offset otherwise shows up as constant drift in apps.
++ */
++void
++wmr_controller_base_apply_stick_deadzone(struct xrt_vec2 *stick);
++
+ static inline void
+ wmr_controller_connection_receive_bytes(struct wmr_controller_connection *wcc,
+                                         uint64_t time_ns,
+diff --git a/src/xrt/drivers/wmr/wmr_controller_hp.c b/src/xrt/drivers/wmr/wmr_controller_hp.c
+index 6d672b1e3..798002bfb 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_hp.c
++++ b/src/xrt/drivers/wmr/wmr_controller_hp.c
+@@ -227,6 +227,8 @@ wmr_controller_hp_packet_parse(struct wmr_controller_hp *ctrl, const unsigned ch
+ 		last_input->thumbstick.values.y = 1.0f;
+ 	}
+ 
++	wmr_controller_base_apply_stick_deadzone(&last_input->thumbstick.values);
++
+ 	// Read trigger value (0x00 - 0xFF)
+ 	last_input->trigger = (float)read8(&p) / 0xFF;
+ 
+diff --git a/src/xrt/drivers/wmr/wmr_controller_og.c b/src/xrt/drivers/wmr/wmr_controller_og.c
+index 47d4ed29b..dcaf45d5e 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_og.c
++++ b/src/xrt/drivers/wmr/wmr_controller_og.c
+@@ -283,6 +283,8 @@ wmr_controller_og_packet_parse(struct wmr_controller_og *ctrl, const unsigned ch
+ 		last_input->thumbstick.values.y = 1.0f;
+ 	}
+ 
++	wmr_controller_base_apply_stick_deadzone(&last_input->thumbstick.values);
++
+ 	// Read trigger value (0x00 - 0xFF)
+ 	last_input->trigger = (float)read8(&p) / 0xFF;
+ 
+-- 
+2.47.3
+

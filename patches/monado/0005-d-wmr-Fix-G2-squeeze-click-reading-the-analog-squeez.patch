@@ -1,0 +1,35 @@
+From b3c9acbda6a00175c86b21cd9abe37b12e51c536 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Wed, 5 Aug 2026 12:53:22 -0300
+Subject: [PATCH 05/10] d/wmr: Fix G2 squeeze click reading the analog squeeze
+ value
+
+The squeeze_click button bit is parsed from the packet (buttons & 0x08)
+but was never wired up: SQUEEZE_CLICK's boolean was assigned the analog
+squeeze float instead, so any non-zero grip pressure read as a click.
+!1859 added SQUEEZE_VALUE but left the click on the analog value.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
+---
+ src/xrt/drivers/wmr/wmr_controller_hp.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_controller_hp.c b/src/xrt/drivers/wmr/wmr_controller_hp.c
+index 6150bba7c..aae16b37e 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_hp.c
++++ b/src/xrt/drivers/wmr/wmr_controller_hp.c
+@@ -328,7 +328,9 @@ wmr_controller_hp_update_inputs(struct xrt_device *xdev)
+ 	xrt_inputs[WMR_CONTROLLER_INDEX_HOME_CLICK].value.boolean = cur_inputs->home;
+ 	xrt_inputs[WMR_CONTROLLER_INDEX_X_A_CLICK].value.boolean = cur_inputs->x_a;
+ 	xrt_inputs[WMR_CONTROLLER_INDEX_Y_B_CLICK].value.boolean = cur_inputs->y_b;
+-	xrt_inputs[WMR_CONTROLLER_INDEX_SQUEEZE_CLICK].value.boolean = cur_inputs->squeeze;
++	// squeeze_click is the parsed button bit; assigning the analog squeeze float here made
++	// any non-zero grip pressure read as a click.
++	xrt_inputs[WMR_CONTROLLER_INDEX_SQUEEZE_CLICK].value.boolean = cur_inputs->squeeze_click;
+ 	xrt_inputs[WMR_CONTROLLER_INDEX_SQUEEZE_VALUE].value.vec1.x = cur_inputs->squeeze;
+ 	xrt_inputs[WMR_CONTROLLER_INDEX_TRIGGER_VALUE].value.vec1.x = cur_inputs->trigger;
+ 	xrt_inputs[WMR_CONTROLLER_INDEX_THUMBSTICK_CLICK].value.boolean = cur_inputs->thumbstick.click;
+-- 
+2.47.3
+

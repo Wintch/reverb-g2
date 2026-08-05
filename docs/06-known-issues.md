@@ -215,7 +215,7 @@ pixel clock (428 MHz) que el modo 60Hz que anda (709 MHz). No es esto.
 ## Controllers: solo 3DoF
 
 Límite de código del driver WMR upstream (posición hardcodeada). Roadmap constellation en
-cap. 03. La confiabilidad de conexión ya la arreglamos (patches/monado/0004-0006).
+cap. 03. La confiabilidad de conexión ya la arreglamos (patches/monado/0001-0004).
 
 ## Cuelgue total 2026-08-04 (resuelto por diseño)
 

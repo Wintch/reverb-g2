@@ -1,0 +1,135 @@
+From c5f73ea874a38bb1f3c05b712a718fc4b2c48ed9 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Wed, 5 Aug 2026 12:57:03 -0300
+Subject: [PATCH 02/10] d/wmr: Retry controller firmware reads and validate
+ replies
+
+On the tunnelled (headset-radio) transport, firmware commands share the
+HID stream with the HMD IMU and both controllers' input packets, so a
+single command frequently loses its reply to foreign traffic. One lost
+reply failed the whole controller for the session.
+
+- Wrap fw commands in a 3-attempt retry with linear backoff (no sleep
+  after the final attempt).
+- With retries in play a late reply to an earlier request could arrive
+  after the resend, and fw replies only echo the command id - so
+  validate each reply against its request (block id, and that
+  blk_remain + len accounts for exactly the requested remainder),
+  discarding stale replies instead of letting them corrupt the block.
+- Drop the unconditional 10ms per-chunk sleep to 1ms: it put a multi-kB
+  config read at seconds per controller, which is exactly the window
+  the transient errors landed in (read_sync already waits for the
+  reply). Tested on the tunnelled transport (Reverb G2); the same
+  pacing applies to BT-connected controllers, where the read_sync
+  blocking behaviour is the same.
+- Free the block buffer on the mid-read failure path (was leaked).
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
+---
+ src/xrt/drivers/wmr/wmr_controller_base.c | 65 +++++++++++++++++++++--
+ 1 file changed, 62 insertions(+), 3 deletions(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
+index a2ce7dc88..7489358f4 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.c
++++ b/src/xrt/drivers/wmr/wmr_controller_base.c
+@@ -162,6 +162,35 @@ wmr_controller_send_fw_cmd(struct wmr_controller_base *wcb,
+ 	return -ETIMEDOUT;
+ }
+ 
++/* Firmware commands ride the same HID stream as the HMD IMU and both controllers' input
++ * packets on the tunnelled (headset-radio) transport, so a single command can easily lose
++ * its reply to foreign traffic. One lost reply used to fail the whole controller for the
++ * session; the reads are offset-addressed (the request carries the remaining byte count),
++ * so resending is idempotent and a short retry loop absorbs the transient losses. */
++static int
++wmr_controller_send_fw_cmd_retry(struct wmr_controller_base *wcb,
++                                 const struct wmr_controller_fw_cmd *fw_cmd,
++                                 unsigned char response_code,
++                                 struct wmr_controller_fw_cmd_response *response,
++                                 int attempts)
++{
++	/* Linear backoff between attempts; no sleep after the final one. */
++	const int64_t backoff_step_ns = U_TIME_1MS_IN_NS * 20;
++
++	int ret = -1;
++	for (int i = 0; i < attempts; i++) {
++		ret = wmr_controller_send_fw_cmd(wcb, fw_cmd, response_code, response);
++		if (ret >= 0) {
++			return ret;
++		}
++		WMR_DEBUG(wcb, "Controller fw cmd failed (%d), attempt %d of %d", ret, i + 1, attempts);
++		if (i + 1 < attempts) {
++			os_nanosleep(backoff_step_ns * (i + 1));
++		}
++	}
++	return ret;
++}
++
+ XRT_MAYBE_UNUSED static int
+ wmr_read_fw_block(struct wmr_controller_base *d, uint8_t blk_id, uint8_t **out_data, size_t *out_size)
+ {
+@@ -177,10 +206,15 @@ wmr_read_fw_block(struct wmr_controller_base *d, uint8_t blk_id, uint8_t **out_d
+ 	memset(&fw_cmd, 0, sizeof(fw_cmd));
+ 
+ 	fw_cmd = WMR_CONTROLLER_FW_CMD_INIT(0x06, 0x02, blk_id, 0xffffffff);
+-	if (wmr_controller_send_fw_cmd(d, &fw_cmd, 0x02, &fw_cmd_response) < 0) {
++	if (wmr_controller_send_fw_cmd_retry(d, &fw_cmd, 0x02, &fw_cmd_response, 3) < 0) {
+ 		WMR_WARN(d, "Failed to read fw - cmd 0x02 failed to read header for block %d", blk_id);
+ 		return -1;
+ 	}
++	if (fw_cmd_response.response.block_id_echo != blk_id) {
++		WMR_WARN(d, "Failed to read fw - stale reply for block %u while reading block %u",
++		         fw_cmd_response.response.block_id_echo, blk_id);
++		return -1;
++	}
+ 
+ 	data_size = fw_cmd_response.response.blk_remain + fw_cmd_response.response.len;
+ 	WMR_DEBUG(d, "FW header %d bytes, %u bytes in block", fw_cmd_response.response.len, data_size);
+@@ -203,15 +237,40 @@ wmr_read_fw_block(struct wmr_controller_base *d, uint8_t blk_id, uint8_t **out_d
+ 	data_pos += to_copy;
+ 	remain -= to_copy;
+ 
++	int stale_replies = 0;
+ 	while (remain > 0) {
+ 		fw_cmd = WMR_CONTROLLER_FW_CMD_INIT(0x06, 0x02, blk_id, remain);
+ 
+-		os_nanosleep(U_TIME_1MS_IN_NS * 10); // Sleep 10ms
+-		if (wmr_controller_send_fw_cmd(d, &fw_cmd, 0x02, &fw_cmd_response) < 0) {
++		/* Brief pacing between chunk requests. This used to be 10ms, which put a
++		 * multi-kB config read at seconds per controller - a needlessly wide window
++		 * for a transient transport error to land in (the read_sync timeout already
++		 * waits for the reply). */
++		os_nanosleep(U_TIME_1MS_IN_NS);
++		if (wmr_controller_send_fw_cmd_retry(d, &fw_cmd, 0x02, &fw_cmd_response, 3) < 0) {
+ 			WMR_WARN(d, "Failed to read fw - cmd 0x02 failed @ offset %zu", data_pos - data);
++			free(data);
+ 			return -1;
+ 		}
+ 
++		/* With retries in play, a late reply to an earlier request can arrive after
++		 * the resend - and fw replies only echo the command id, so it would match.
++		 * Validate against this request: we asked for `remain` bytes, so the reply
++		 * must account for exactly that many. Discard anything stale instead of
++		 * letting it corrupt the block. */
++		if (fw_cmd_response.response.block_id_echo != blk_id ||
++		    fw_cmd_response.response.blk_remain + fw_cmd_response.response.len != remain) {
++			WMR_DEBUG(d, "Discarding stale fw reply (block %u, %u+%u bytes, wanted %u)",
++			          fw_cmd_response.response.block_id_echo, fw_cmd_response.response.blk_remain,
++			          fw_cmd_response.response.len, remain);
++			if (++stale_replies > 3) {
++				WMR_WARN(d, "Failed to read fw - too many stale replies @ offset %zu", data_pos - data);
++				free(data);
++				return -1;
++			}
++			continue;
++		}
++		stale_replies = 0;
++
+ 		uint8_t to_copy = fw_cmd_response.response.len;
+ 		if (data_pos + to_copy > data_end)
+ 			to_copy = data_end - data_pos;
+-- 
+2.47.3
+

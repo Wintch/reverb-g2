@@ -1,0 +1,75 @@
+From 1174f4499df8fbaba5475325d32ed32d1f7bd7a9 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Wed, 5 Aug 2026 12:57:48 -0300
+Subject: [PATCH 03/10] d/wmr: Bound the controller status wait, re-request
+ while waiting
+
+The controller status request was sent exactly once, and the wait for
+the reply was an unbounded os_cond_wait - a lost status request or
+reply (flaky companion USB) hung wmr_hmd_create forever, resolving the
+@todo that was already there.
+
+Bound the wait at 10 seconds (sized for two worst-case controller
+creations including fw-read retries) and re-request the status every
+second while waiting, so a single lost packet costs one second rather
+than the session. The wait exits when BOTH controller statuses have
+been processed, matching the condition under which the reader thread
+signals the cond; polling replaces the cond wait because os_threading
+has no timed cond wait yet - adding os_cond_timedwait would allow
+keeping the cond and can be done as a follow-up.
+
+Controllers are only surfaced to the runtime while wmr_hmd_create runs
+(there is no hotplug path, see #617), so the window in which
+re-requesting can help is exactly this one.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
+---
+ src/xrt/drivers/wmr/wmr_hmd.c | 30 +++++++++++++++++++++++++-----
+ 1 file changed, 25 insertions(+), 5 deletions(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_hmd.c b/src/xrt/drivers/wmr/wmr_hmd.c
+index b617e13fa..b9188a8d6 100644
+--- a/src/xrt/drivers/wmr/wmr_hmd.c
++++ b/src/xrt/drivers/wmr/wmr_hmd.c
+@@ -2037,12 +2037,32 @@ wmr_hmd_create(enum wmr_headset_type hmd_type,
+ 
+ 		os_mutex_lock(&wh->controller_status_lock);
+ 		if (wmr_hmd_request_controller_status(wh)) {
+-			/* @todo: Add a timed version of os_cond_wait and a timeout? */
+-			/* This will be signalled from the reader thread */
+-			while (!wh->have_left_controller_status && !wh->have_right_controller_status) {
+-				os_cond_wait(&wh->controller_status_cond, &wh->controller_status_lock);
++			/* The reader thread sets one flag per processed status report (which
++			 * includes creating that controller when it is online) and signals the
++			 * cond once both are set. Wait for BOTH - exiting on the first would
++			 * routinely lose the second controller.
++			 *
++			 * Bounded: a lost status reply used to hang startup forever here
++			 * (resolving the @todo that was in this spot). Polling instead of a
++			 * cond wait because os_threading has no timed cond wait yet; while
++			 * waiting, re-request the status every second so one lost
++			 * request/reply doesn't cost the whole window. The deadline covers
++			 * two worst-case controller creations incl. fw-read retries. */
++			const int64_t deadline_ns = os_monotonic_get_ns() + (int64_t)10 * U_TIME_1S_IN_NS;
++			int64_t next_request_ns = os_monotonic_get_ns() + U_TIME_1S_IN_NS;
++			while (!(wh->have_left_controller_status && wh->have_right_controller_status) &&
++			       os_monotonic_get_ns() < deadline_ns) {
++				os_mutex_unlock(&wh->controller_status_lock);
++				os_nanosleep(U_TIME_1MS_IN_NS * 20);
++				os_mutex_lock(&wh->controller_status_lock);
++
++				int64_t now_ns = os_monotonic_get_ns();
++				if (now_ns >= next_request_ns) {
++					wmr_hmd_request_controller_status(wh);
++					next_request_ns = now_ns + U_TIME_1S_IN_NS;
++				}
+ 			}
+-			have_controller_status = true;
++			have_controller_status = wh->have_left_controller_status && wh->have_right_controller_status;
+ 		}
+ 		os_mutex_unlock(&wh->controller_status_lock);
+ 
+-- 
+2.47.3
+

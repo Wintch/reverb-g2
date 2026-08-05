@@ -152,7 +152,7 @@ do_sources() {
 
 	echo "### Monado"
 	clone_at https://gitlab.freedesktop.org/monado/monado.git monado \
-		826fb91ffdfbb2808d0821e07fff18025e9ec3fa
+		735e29e4e7552b254528dbb20e0e96ec8f32368c
 	git -C monado am "$REPO_DIR/patches/monado/"*.patch || {
 		echo "    The Monado patches did not apply cleanly. 'git -C monado am --abort' and look." >&2
 		return 1

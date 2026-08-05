@@ -1,0 +1,56 @@
+From d5cbdf36b96490d035990ad9c58a5bfae57cb096 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Tue, 4 Aug 2026 12:10:39 -0300
+Subject: [PATCH 10/10] t/steamvr_drv: Add $ORIGIN runtime path so bundled deps
+ resolve in pressure-vessel
+
+SteamVR's vrserver runs inside Valve's Steam Linux Runtime container,
+which has neither the host's locally-built libraries nor its
+LD_LIBRARY_PATH, so driver_monado.so fails to load whenever one of its
+direct dependencies (libhidapi-libusb, libuvc, ...) is missing from the
+runtime (issues #240, #423, #519). Adding $ORIGIN to the runtime path
+lets a deployment bundle those dependencies next to the .so inside
+steamvr-monado/bin/linux64/, which works from inside the sandbox without
+depending on host paths or container configuration.
+
+Since the plugin is installed via install(DIRECTORY) of the build
+output, the build-tree binary ships verbatim and BUILD_RPATH is what
+takes effect in installed copies; INSTALL_RPATH is set alongside it for
+consistency should the install method ever change. Linux-only: $ORIGIN
+is meaningless to dyld and Windows.
+
+Note DT_RUNPATH is non-transitive: it covers driver_monado.so's direct
+NEEDED entries, and a bundled library's own dependencies still resolve
+against the runtime. That covers the reported failures, which are all
+first-level.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
+---
+ src/xrt/targets/steamvr_drv/CMakeLists.txt | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/src/xrt/targets/steamvr_drv/CMakeLists.txt b/src/xrt/targets/steamvr_drv/CMakeLists.txt
+index 52d6f5c77..6f5de0268 100644
+--- a/src/xrt/targets/steamvr_drv/CMakeLists.txt
++++ b/src/xrt/targets/steamvr_drv/CMakeLists.txt
+@@ -65,6 +65,16 @@ set_target_properties(driver_monado PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${PLUGI
+ # don't add lib prefix to driver_monado.so
+ set_target_properties(driver_monado PROPERTIES PREFIX "")
+ 
++# Add $ORIGIN to the runtime path so a deployment can bundle the driver's direct
++# dependencies (e.g. libhidapi-libusb) next to the .so, for use inside SteamVR's
++# Steam Linux Runtime (pressure-vessel) container, which lacks host-local libraries.
++# Note: the install(DIRECTORY) below ships the build-tree binary verbatim, so
++# BUILD_RPATH is what ends up in installed copies too; INSTALL_RPATH is set for
++# consistency should this ever switch to install(TARGETS).
++if(UNIX AND NOT APPLE)
++	set_target_properties(driver_monado PROPERTIES BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN")
++endif()
++
+ install(
+ 	DIRECTORY "${PROJECT_BINARY_DIR}/steamvr-monado"
+ 	DESTINATION "${CMAKE_INSTALL_PREFIX}/share"
+-- 
+2.47.3
+

@@ -1,44 +1,55 @@
-From e39e411dc2e0cd2de725fe38744dc248df5bfdfc Mon Sep 17 00:00:00 2001
+From daecfd2d533e5e86eb20c05928209a9e6aa5bd65 Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
-Date: Tue, 4 Aug 2026 12:10:39 -0300
-Subject: [PATCH 1/7] d/wmr: Survive transient companion device drops during
+Date: Wed, 5 Aug 2026 12:56:31 -0300
+Subject: [PATCH 01/10] d/wmr: Survive transient companion device drops during
  startup
 
-The HP Reverb G2's companion HID device (03f0:0580) routinely drops off
-the USB bus and re-enumerates while the headset display powers up (the
-same fault is observable under Windows, where its audio function appears
-and disappears - it is a physical-layer weakness of the G2 cable/board).
+The HP Reverb G2's companion HID device (03f0:0580) can drop off the USB
+bus and re-enumerate while the headset display powers up: the headset's
+internal USB 2.0 hub (04b4:6506) resets under panel load, taking the
+companion and the audio function down with it. Root cause is still under
+investigation (the same unit runs for hours under Windows 11 without a
+single drop, so it is not simply failing hardware) - but whatever the
+cause, a transient companion hiccup should not kill the session.
 
-Two consequences inside the driver:
+Two consequences inside the driver today:
 
 1. control_read_packets() treated any os_hid_read error as fatal and
    returned false, which breaks the whole wmr_run_thread read loop -
-   killing the HMD IMU feed and all tunnelled controller packet delivery
-   over an unrelated, transient companion hiccup. Log at debug level and
-   keep the thread alive instead.
+   killing the hololens sensors feed (IMU and tunnelled controller
+   packets, a separate and typically still-healthy device) over an
+   unrelated companion hiccup. Log at debug level and keep the thread
+   alive instead. No extra pacing is needed: the loop is already paced
+   by the blocking hololens read.
 
-2. The screen-enable command sent during wmr_hmd_activate_reverb() can be
-   silently lost if the companion device drops right around activation
-   (HID_SEND only logs on failure). Re-send it after the settle sleep;
-   the command is idempotent.
+2. The screen-enable command sent during wmr_hmd_activate_reverb() can
+   be silently lost if the companion device drops right around
+   activation (HID_SEND only logs on failure). Re-send it after the
+   settle sleep; the command is idempotent. This also runs on the G1,
+   which shares the activation function; the resend is a no-op when the
+   first command landed.
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
 ---
- src/xrt/drivers/wmr/wmr_hmd.c | 12 ++++++++++--
- 1 file changed, 10 insertions(+), 2 deletions(-)
+ src/xrt/drivers/wmr/wmr_hmd.c | 15 +++++++++++++--
+ 1 file changed, 13 insertions(+), 2 deletions(-)
 
 diff --git a/src/xrt/drivers/wmr/wmr_hmd.c b/src/xrt/drivers/wmr/wmr_hmd.c
-index 0e7da4619..2f10ff344 100644
+index 0e7da4619..b617e13fa 100644
 --- a/src/xrt/drivers/wmr/wmr_hmd.c
 +++ b/src/xrt/drivers/wmr/wmr_hmd.c
-@@ -586,9 +586,12 @@ control_read_packets(struct wmr_hmd *wh)
+@@ -586,9 +586,15 @@ control_read_packets(struct wmr_hmd *wh)
  	os_mutex_unlock(&wh->hid_lock);
  
  	if (size < 0) {
 -		WMR_ERROR(wh, "Error reading from companion (HMD control) device. Call to os_hid_read returned %i",
 +		// The companion device can transiently drop off and re-enumerate while the
-+		// headset display is powering up. Don't kill the whole read thread (which
-+		// also drives tracking camera/IMU reads) over a read error here.
++		// headset display is powering up. Don't kill the whole read thread over a
++		// read error here: the same thread also reads the hololens sensors device
++		// (IMU and tunnelled controller packets), which is typically still healthy.
++		// No extra pacing: a failing read is one cheap syscall, and each loop
++		// iteration is already paced by the blocking hololens read.
 +		WMR_DEBUG(wh, "Error reading from companion (HMD control) device. Call to os_hid_read returned %i",
  		          size);
 -		return false;
@@ -46,7 +57,7 @@ index 0e7da4619..2f10ff344 100644
  	}
  	if (size == 0) {
  		WMR_TRACE(wh, "No more data to read");
-@@ -779,6 +782,11 @@ wmr_hmd_activate_reverb(struct wmr_hmd *wh)
+@@ -779,6 +785,11 @@ wmr_hmd_activate_reverb(struct wmr_hmd *wh)
  	uint64_t seconds = debug_get_num_option_sleep_seconds();
  	os_nanosleep(U_TIME_1S_IN_NS * seconds);
  

@@ -1,15 +1,22 @@
-From 2a9a37e523b5e2c5e7c67adc4e1e23d523576e50 Mon Sep 17 00:00:00 2001
+From 30191cb4125fbcf3031205ebce3b59b8fcef7d46 Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
-Date: Tue, 4 Aug 2026 12:17:31 -0300
-Subject: [PATCH 6/7] d/wmr: Tolerate transient read errors in the BT
+Date: Wed, 5 Aug 2026 12:57:48 -0300
+Subject: [PATCH 04/10] d/wmr: Tolerate transient read errors in the BT
  controller thread
 
 A single os_hid_read error permanently broke the direct-Bluetooth read
 thread while the xdev stayed registered, leaving a mute controller.
 Only give up after 10 consecutive errors, pacing retries at 100ms.
-Same class of fix as the HMD companion-device read tolerance.
+
+Unlike the companion tolerance in wmr_hmd.c (where the thread also
+serves the healthy hololens sensors device and must stay alive), this
+thread serves only its controller, so giving up after a bounded run of
+errors is appropriate: a truly disconnected hidraw device fails every
+read and the thread exits about a second later than it used to, while
+a transient error burst no longer silences the controller for good.
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
 ---
  src/xrt/drivers/wmr/wmr_bt_controller.c | 16 ++++++++++++++--
  src/xrt/drivers/wmr/wmr_bt_controller.h |  3 +++

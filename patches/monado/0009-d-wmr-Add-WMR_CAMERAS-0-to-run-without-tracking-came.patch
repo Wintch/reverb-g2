@@ -1,0 +1,129 @@
+From 7116ceecb133a530cd671c7747ab27be85443862 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Tue, 4 Aug 2026 14:09:47 -0300
+Subject: [PATCH 09/10] d/wmr: Add WMR_CAMERAS=0 to run without tracking-camera
+ streaming
+
+Camera streaming is currently all-or-nothing: wmr_source starts
+unconditionally, and a failed stream start destroys the whole HMD. A
+headset whose cameras are in a bad state cannot run at all, even for
+uses that never consume a camera frame - see #460 (G2 cameras fail to
+start), #200 (LIBUSB_ERROR_BUSY), #501. And when SLAM and hand tracking
+are disabled or unbuilt, the cameras still stream continuously (about
+2560x480 on a four-camera G2, half that on two-camera headsets) with no
+consumer.
+
+Add WMR_CAMERAS (default on, matching the driver's existing WMR_* debug
+options). With WMR_CAMERAS=0:
+
+- setup_trackers forces SLAM and hand tracking off (their status vars
+  report "Disabled by the user (WMR_CAMERAS=0)"), so the driver takes
+  the existing orientation-only 3DoF path and never reports a pose from
+  a tracker that receives no data;
+- the camera stream is never started, so a camera failure cannot abort
+  the session.
+
+The camera USB interface is still claimed by wmr_source_create; only
+streaming is skipped. Skipping the source entirely is left for a
+follow-up since teardown paths assume it exists.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
+---
+ src/xrt/drivers/wmr/wmr_hmd.c | 40 ++++++++++++++++++++++++++---------
+ 1 file changed, 30 insertions(+), 10 deletions(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_hmd.c b/src/xrt/drivers/wmr/wmr_hmd.c
+index b9188a8d6..1ad2f5ba9 100644
+--- a/src/xrt/drivers/wmr/wmr_hmd.c
++++ b/src/xrt/drivers/wmr/wmr_hmd.c
+@@ -71,6 +71,11 @@
+ //! Specifies whether the user wants to use a SLAM tracker.
+ DEBUG_GET_ONCE_BOOL_OPTION(wmr_slam, "WMR_SLAM", true)
+ 
++//! Whether to start tracking-camera streaming. With cameras off, SLAM and hand tracking
++//! are disabled and the headset runs orientation-only from the IMU. Lets a headset whose
++//! cameras fail to start (or whose user needs neither) run at all instead of aborting.
++DEBUG_GET_ONCE_BOOL_OPTION(wmr_cameras, "WMR_CAMERAS", true)
++
+ //! Specifies whether the user wants to use a SLAM tracker.
+ DEBUG_GET_ONCE_NUM_OPTION(sleep_seconds, "WMR_DISPLAY_INIT_SLEEP_SECONDS", 4)
+ 
+@@ -1685,6 +1690,9 @@ wmr_hmd_setup_trackers(struct wmr_hmd *wh, struct xrt_slam_sinks *out_sinks, str
+ 	// We always have at least 3dof HMD tracking
+ 	bool dof3_enabled = true;
+ 
++	// Without camera streaming there is no data for SLAM or hand tracking.
++	bool cams_enabled = debug_get_bool_option_wmr_cameras();
++
+ 	// Decide whether to initialize the SLAM tracker
+ 	bool slam_wanted = debug_get_bool_option_wmr_slam();
+ #ifdef XRT_FEATURE_SLAM
+@@ -1692,7 +1700,7 @@ wmr_hmd_setup_trackers(struct wmr_hmd *wh, struct xrt_slam_sinks *out_sinks, str
+ #else
+ 	bool slam_supported = false;
+ #endif
+-	bool slam_enabled = slam_supported && slam_wanted;
++	bool slam_enabled = slam_supported && slam_wanted && cams_enabled;
+ 
+ 	// Decide whether to initialize the hand tracker
+ 	bool hand_wanted = debug_get_bool_option_wmr_handtracking();
+@@ -1701,7 +1709,7 @@ wmr_hmd_setup_trackers(struct wmr_hmd *wh, struct xrt_slam_sinks *out_sinks, str
+ #else
+ 	bool hand_supported = false;
+ #endif
+-	bool hand_enabled = hand_supported && hand_wanted;
++	bool hand_enabled = hand_supported && hand_wanted && cams_enabled;
+ 
+ 	wh->base.supported.orientation_tracking = dof3_enabled || slam_enabled;
+ 	wh->base.supported.position_tracking = slam_enabled;
+@@ -1715,11 +1723,13 @@ wmr_hmd_setup_trackers(struct wmr_hmd *wh, struct xrt_slam_sinks *out_sinks, str
+ 
+ 	const char *slam_status = wh->tracking.slam_enabled ? "Enabled"
+ 	                          : !slam_wanted            ? "Disabled by the user (envvar set to false)"
++	                          : !cams_enabled           ? "Disabled by the user (WMR_CAMERAS=0)"
+ 	                          : !slam_supported         ? "Unavailable (not built)"
+ 	                                                    : NULL;
+ 
+ 	const char *hand_status = wh->tracking.hand_enabled ? "Enabled"
+ 	                          : !hand_wanted            ? "Disabled by the user (envvar set to false)"
++	                          : !cams_enabled           ? "Disabled by the user (WMR_CAMERAS=0)"
+ 	                          : !hand_supported         ? "Unavailable (not built)"
+ 	                                                    : NULL;
+ 
+@@ -2011,14 +2021,24 @@ wmr_hmd_create(enum wmr_headset_type hmd_type,
+ 		return;
+ 	}
+ 
+-	// Stream data source into sinks (if populated)
+-	bool stream_started = xrt_fs_slam_stream_start(wh->tracking.source, &sinks);
+-	if (!stream_started) {
+-		//! @todo Could reach this due to !XRT_HAVE_LIBUSB but the HMD should keep working
+-		WMR_WARN(wh, "Failed to start WMR source");
+-		wmr_hmd_destroy(&wh->base);
+-		wh = NULL;
+-		return;
++	// Stream data source into sinks (if populated).
++	//
++	// With WMR_CAMERAS=0 the stream is not started at all: setup_trackers has already
++	// forced SLAM and hand tracking off, so nothing consumes the frames, and skipping the
++	// start also means a camera in a bad state cannot abort an orientation-only session
++	// (a failed stream start below destroys the whole HMD). The camera USB interface is
++	// still claimed by wmr_source_create above; only streaming is skipped.
++	if (!debug_get_bool_option_wmr_cameras()) {
++		WMR_INFO(wh, "Camera streaming disabled (WMR_CAMERAS=0), running orientation-only");
++	} else {
++		bool stream_started = xrt_fs_slam_stream_start(wh->tracking.source, &sinks);
++		if (!stream_started) {
++			//! @todo Could reach this due to !XRT_HAVE_LIBUSB but the HMD should keep working
++			WMR_WARN(wh, "Failed to start WMR source");
++			wmr_hmd_destroy(&wh->base);
++			wh = NULL;
++			return;
++		}
+ 	}
+ 
+ 	// Hand over hololens sensor device to reading thread.
+-- 
+2.47.3
+

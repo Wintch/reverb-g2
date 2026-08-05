@@ -1,0 +1,39 @@
+From e67ca0de1181a92450a126a1f517eb379a3374b9 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Wed, 5 Aug 2026 12:53:34 -0300
+Subject: [PATCH 06/10] d/wmr: Fix G2 controller haptic output name
+
+The G2 controller advertised XRT_OUTPUT_NAME_WMR_HAPTIC while both its
+binding profiles and bindings.json reference
+XRT_OUTPUT_NAME_G2_CONTROLLER_HAPTIC, and oxr_xdev_find_output() matches
+by name - so a haptic action bound on the G2 profile could never
+resolve to the device.
+
+Actually driving the motor still needs the wire command, which is not
+implemented (or documented in-tree) yet; this makes the action resolve
+so that path can be built on.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
+---
+ src/xrt/drivers/wmr/wmr_controller_hp.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_controller_hp.c b/src/xrt/drivers/wmr/wmr_controller_hp.c
+index aae16b37e..ef17708d6 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_hp.c
++++ b/src/xrt/drivers/wmr/wmr_controller_hp.c
+@@ -402,7 +402,9 @@ wmr_controller_hp_create(struct wmr_controller_connection *conn,
+ 
+ 	ctrl->last_inputs.imu.timestamp_ticks = 0;
+ 
+-	wcb->base.outputs[0].name = XRT_OUTPUT_NAME_WMR_HAPTIC;
++	// Must match what the binding profiles and bindings.json reference
++	// (XRT_OUTPUT_NAME_G2_CONTROLLER_HAPTIC) or the haptic action can never resolve.
++	wcb->base.outputs[0].name = XRT_OUTPUT_NAME_G2_CONTROLLER_HAPTIC;
+ 
+ 	wcb->base.binding_profiles = binding_profiles;
+ 	wcb->base.binding_profile_count = ARRAY_SIZE(binding_profiles);
+-- 
+2.47.3
+
