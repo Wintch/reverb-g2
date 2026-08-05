@@ -2,7 +2,8 @@
 
 Preparado 2026-08-05 desde el sistema principal, con el SSD del lab montado. **El EDID de
 prueba ya está generado y verificado**: `experiments/vblank/`. Falta correrlo con el casco
-puesto.
+puesto — y falta además resolver **cómo cargarlo**: la sección "El EDID ya está armado" más
+abajo lo deja como paso 0, sin vía confirmada todavía.
 
 ---
 
@@ -122,8 +123,24 @@ Para regenerarlo o variarlo:
 ./scripts/edid-tool.py inject-mode experiments/vblank/hmd.edid
 ```
 
-Cargarlo con **el mismo mecanismo de override de EDID que se usó para el test de 8 bpc**
-(`docs/13`). Ese ya está probado en este lab.
+**PENDIENTE, y es el paso 0 real de este experimento — no hay una vía de carga confirmada
+todavía.** El bug de 6 bpc se cerró con un parche al *driver* (parche 0004), no con un
+override de EDID: nunca hizo falta lograr que NVIDIA leyera un EDID falso. `docs/13`
+lista tres candidatos, ninguno probado:
+
+1. `/sys/kernel/debug/dri/*/DP-1/edid_override` (debugfs) — el más barato de probar primero.
+   Duda abierta: no se sabe si NVKMS lee el EDID por el helper genérico de DRM (lo vería) o
+   por su canal AUX propio (no lo vería). Escribir el archivo **no dispara hotplug**: hay que
+   desconectar/reconectar el conector después.
+2. `nvidia_modeset.config_file` — mecanismo propio de NVKMS, parámetro compilado y presente,
+   pero la sintaxis del nombre de dpy no está documentada. Se descubre con
+   `nvidia_modeset.debug=1` y leyendo dmesg como root durante un modeset real.
+3. Parchear el EDID que reporta el propio casco (bytes reales sobre el cable), si hay algún
+   punto de inyección entre el puente Analogix y el host — sin explorar.
+
+Probar en ese orden. Si ninguno funciona, el experimento no es concluyente por esta vía y
+hay que replantear cómo inyectar el modo (la fila "CTRL falla" de la tabla de más abajo
+cubre justo ese caso, aunque ahí la causa real sería la vía de carga, no la hipótesis).
 
 ---
 
