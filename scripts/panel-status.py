@@ -79,8 +79,10 @@ def main():
                 continue
             n += 1
             rid = b[0]
+            # El mensaje tiene 33 bytes. Imprimirlo ENTERO: los bytes de la segunda mitad
+            # tambien cambian entre modos y truncar a 16 tiraba la mitad del dato.
             print(f"  [{time.time()-t0:6.2f}s] 0x{rid:02x} {NAMES.get(rid,'?'):<14} "
-                  f"len={len(b):<3} {b[:16].hex(' ')}")
+                  f"len={len(b):<3} {b.hex(' ')}")
     print(f"\n  total: {n} mensajes del companion")
     if n == 0:
         print("  (ninguno -- el companion solo habla cuando cambia algo: hay que "

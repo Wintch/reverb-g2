@@ -706,6 +706,70 @@ como senal.
 Bonus: esto es la primera instrumentacion del lado del SINK que tiene el proyecto, y permite
 leer en que refresh cree estar el casco **sin que nadie se lo ponga**.
 
+### DECODIFICADO el DEVICE_STATUS del casco, y el A/B que cambia todo (2026-08-04, 23:45)
+
+#### Lo confirmado: el casco mide y reporta el timing exacto
+
+Matriz de 7 ensayos alternando modos en los dos sentidos (`scripts/decode-status.sh`), con
+los 33 bytes completos del mensaje `0x05`:
+
+| offset | significado | evidencia |
+|---|---|---|
+| byte 5 | **refresh en decimal** | `0x3c`=60, `0x5a`=90 en dos resoluciones distintas |
+| bytes 19-20 | **htotal**, little-endian | `44 11`=4420, `a4 0b`=2980 |
+| bytes 21-22 | **vtotal**, little-endian | `72 0a`=2674, `3e 06`=1598, `e4 08`=2276 |
+| byte 2 | pantalla habilitada (0→1 con el screen-enable) | visto aislando la activacion HID |
+
+Los tres valores coinciden **exactamente** con los modos de nuestro EDID, en los tres casos:
+
+```
+60Hz  4320x2160  ->  refresh 60  htotal 4420  vtotal 2674
+90Hz  2880x1440  ->  refresh 90  htotal 2980  vtotal 1598
+90Hz  4320x2160  ->  refresh 90  htotal 4420  vtotal 2276
+```
+
+**Conclusion firme: la senal que sale de la GPU llega al casco con el timing correcto, tambien
+a 90Hz.** El casco la mide y la reporta bien. Con la activacion HID pero SIN video, esos
+campos vienen en cero — o sea que el casco los rellena midiendo, no repitiendo lo que le
+dijeron.
+
+#### Lo que NO funciono: el detector automatico
+
+Se creyo haber encontrado un veredicto automatico: el `byte 1 = 1` aparecio en 3 de 3
+mensajes del modo que anda y en 0 de 8 de los que fallan, y coincide con el comentario de
+Monado para el G1 (*"once the HMD screen backlight visibly powers on"*).
+
+**No resistio la validacion.** Probado dos veces contra el modo de 60 conocido-bueno: una dio
+"FALLA" y la otra no emitio ningun mensaje. El `byte 1 = 1` aparece **sólo a veces**, incluso
+cuando el panel efectivamente prende. Sirve como pista (nunca aparecio a 90Hz), pero **no como
+instrumento**. La verificacion sigue siendo FISICA.
+
+`scripts/hmd-test.sh` queda en el repo con esa advertencia escrita.
+
+#### El A/B que faltaba: con AMD el G2 SI llega a 90Hz
+
+Del barrido de protocolo: en el issue #332 de Monado, el usuario `dimitriscr` hizo el A/B que
+nosotros no podiamos hacer — **mismo G2, mismo cable, cambio una RTX 3060 por una RX 7800 XT,
+y el 90Hz funciona con AMD.**
+
+Eso **corrige** la conclusion que este documento traia unas horas antes ("el fallo esta del
+lado del casco"). Que el casco mida y reporte 90 no significaba que la senal fuera utilizable;
+significaba que medía la frecuencia. **Es NVIDIA.**
+
+Refuerzos del mismo barrido:
+- El bug 5923212 esta confirmado por staff de NVIDIA y **reproducido por 8 usuarios**, de
+  Ampere a Blackwell, drivers 535 a 610, **propietario y open-kernel por igual**. Explica por
+  que los parches al 595-open no movieron nada.
+- **thaytan**, autor del driver WMR de Monado, declara que despues del comando de *enable
+  display* nada del USB influye en el modo: la negociacion es toda DP a nivel de driver de
+  GPU. Confirmacion independiente de lo que sacamos desensamblando el driver de HP.
+- El **ANX7530 no tiene DSC** en su salida MIPI, y se configura por I2C desde el STM32 del
+  casco. Si hubiera que reprogramar algo para 90Hz seria un write del firmware al arranque.
+- El **HTC Vive Pro usa el mismo ANX7530** (teardown). **Project North Star** usa ANX7530 con
+  firmware abierto: es la referencia si algun dia hay que hablarle al chip.
+- Otro usuario (`Kukeltje`) reporto ver `DMA CMT ERR` en el canal HID `0x03 DEBUG` durante el
+  intento de 90Hz. **Pendiente**: cazarlo en nuestro rig (`scripts/hunt-debug.py`).
+
 ### Pendientes que necesitan sudo (no bloquean el test de 90Hz)
 
 1. **Prioridad RT para Monado.** El log tira `Could not raise priority for thread
