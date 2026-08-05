@@ -321,6 +321,38 @@ piensa el GSP mientras negocia el modo de 90Hz.**
       bug del bpc (real, confirmado, con parche de dos líneas) y con todo lo demás como
       contexto de diagnóstico ya hecho, para que alguien con acceso al firmware GSP cerrado
       siga desde ahí. Hilo: 337744 (bug 5923212).
+- [ ] **No intentado: sniffear el canal AUX de DisplayPort** con un logic analyzer (tipo
+      Saleae) en los pines AUX+/AUX-, para ver el DPCD real durante el link training — es la
+      única capa que ningún método usado hasta ahora puede mostrar. El link principal (varios
+      Gbps) no es sniffeable sin un analizador de protocolo DP dedicado (miles de dólares); el
+      AUX corre a ~1MHz y es alcanzable con hardware genérico. Depende de tener el instrumento
+      a mano — no vale la pena construir nada para esto sin eso resuelto primero.
+
+### 2026-08-05 (noche): el canal USB queda cerrado también para la TRANSICIÓN, no sólo el estado
+
+Con `windows-kit/` (ver `windows-kit/README.txt`) se capturó por primera vez el momento
+exacto de un cambio de refresh EN VIVO en Windows (60→90 y 90→60, sin reconectar el casco),
+algo que la comparación anterior de este documento no cubría (esa comparaba dos estados ya
+asentados). Resultado: **en el momento de la transición no aparece ningún comando ni reporte
+HID especial** — sólo el `DEVICE_STATUS` (0x05) de siempre, con el byte 5 (refresh) y
+htotal/vtotal actualizados, y los heartbeats periódicos de 4 bytes (Report ID 0x01) que ya
+estaban ahí antes y siguen igual después, sin relación con el modo. Con esto, el canal HID/USB
+queda agotado también para la transición, no sólo para el estado estable — cierra del todo esa
+vía de investigación.
+
+De paso se resolvió el byte 6 del `DEVICE_STATUS`, que había quedado como la única diferencia
+entre una captura de Linux parchado y una de Windows (ver `windows-kit/analyze-windows.py`):
+se mantuvo en `0x0e` durante TODA una sesión de Windows de 90 segundos con dos cambios de
+refresh en el medio, y en `0x00` en las capturas de Linux del mismo día. Como no cambia con el
+refresh, es un valor de sesión/conexión (probablemente un contador de resets del propio
+companion desde que arrancó), no algo específico del SO ni del modo — no hace falta seguir
+persiguiéndolo.
+
+También se confirmó por captura de pantalla que el Reverb G2 **no aparece como display
+seleccionable** ni en "Configuración > Pantalla avanzada" de Windows ni en "Cambiar resolución"
+del panel de NVIDIA — las dos sólo listan los monitores de escritorio. La vía de leer DSC desde
+ahí queda cerrada por falta de acceso a la pantalla, no por un resultado negativo de esa
+pantalla.
 
 ---
 

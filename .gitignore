@@ -1,7 +1,8 @@
 nv-debug-*/
 nv-report-*/
-windows-kit.7z
+windows-kit2/
 nv-report-*/build/
 scripts/.private-patterns
 *.[Pp][Dd][Ff]
 __pycache__/
+*.7z

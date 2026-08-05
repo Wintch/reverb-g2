@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """Analiza la captura de Windows y la diffea contra lo medido en Linux.
 
-Se corre DE VUELTA EN LINUX, sobre el .tsv que produce capture.bat.
+Se corre DE VUELTA EN LINUX, sobre el .tsv que produce run-diagnostics.ps1.
 
 Busca los dos canales que descubrimos el 2026-08-04:
 
   0x05  DEVICE_STATUS  del companion 03f0:0580, 33 bytes.
         byte 5      refresh en decimal      (confirmado: 0x3c=60, 0x5a=90)
+        byte 18     bpc-related             (06 sin parchear, 08 con el parche del bpc)
         bytes 19-20 htotal little-endian    (confirmado contra el EDID)
         bytes 21-22 vtotal little-endian    (confirmado contra el EDID)
-        bytes 9,10,12,14,15,24-31           DESCONOCIDOS  <-- el objetivo
+        byte 6                              unico byte que no matchea contra Windows
+                                             incluso en 60Hz (que anda en los dos lados) --
+                                             probablemente un contador de sesion/reconexion,
+                                             no algo especifico del SO. Ver docs/13, docs/16.
 
   0x03  LOG DE FIRMWARE del HoloLens Sensors 045e:0659, 509 bytes, ASCII.
         formato: magic "Dlo+" | 4B ts | 2B seq | 1B nivel | texto
@@ -18,21 +22,37 @@ Busca los dos canales que descubrimos el 2026-08-04:
 """
 import re, sys
 
+# Capturados en Linux el 2026-08-05 CON el parche del bpc puesto (scripts/capture-hid.sh,
+# usbmon crudo -- ver hid-mode{0,2}.txt). La version anterior de este diccionario era de
+# ANTES del parche (2026-08-04) y contaminaba cualquier comparacion contra Windows: el
+# byte 18 por si solo ya bastaba para que la diferencia fuera "parche si/no", no "SO
+# distinto". Con estos valores, el 60Hz que anda en los dos lados da IDENTICO byte a byte
+# salvo el byte 6 (ver nota arriba) -- confirma lo que docs/13 ya habia encontrado.
 REF_LINUX = {
-    "60Hz ANDA  (Linux)": "05 00 01 01 00 3c 00 00 00 05 2c 1e 02 00 77 00 00 00 06 44 11 72 0a 01 00 80 00 80 ff ff ff ff 02",
-    "90Hz FALLA (Linux, 2880x1440)": "05 00 01 01 00 5a 00 00 00 0c 1a 14 02 00 77 00 00 00 06 a4 0b 3e 06 01 00 80 00 80 ff ff ff ff 02",
-    "90Hz FALLA (Linux, 4320x2160)": "05 00 01 01 00 5a 00 00 00 09 38 14 04 00 77 77 00 00 06 44 11 e4 08 01 00 80 00 80 00 80 00 80 02",
+    "60Hz ANDA  (Linux, parchado)": "05 01 01 01 01 3c 00 00 00 05 2c 14 04 00 77 77 00 00 08 44 11 72 0a 01 00 80 00 80 00 80 00 80",
+    "90Hz FALLA (Linux, 2880x1440, parchado)": "05 01 01 01 01 5a 00 00 00 0c 1a 1e 02 00 77 00 00 00 08 a4 0b 3e 06 01 00 80 00 80 ff ff ff ff",
+    # Este ya se comparo contra Windows en docs/13 (T004, 2026-08-05) y dio BYTE-IDENTICO
+    # -- no hace falta recapturarlo. Se deja aca de referencia, no para volver a perseguirlo.
+    "90Hz FALLA (Linux, 4320x2160, parchado -- ya confirmado igual a Windows en docs/13)":
+        "05 01 01 01 01 5a 00 00 00 09 38 1e 04 00 77 77 00 00 08 44 11 e4 08 01 00 80 00 80 00 80 00 80 02",
 }
 
 
 def parse_tsv(path):
-    """Devuelve (status, fwlog): listas de bytes de cada canal."""
+    """Devuelve (status, fwlog): listas de bytes de cada canal.
+
+    El payload HID puede caer en dos columnas distintas segun si Wireshark lo
+    disecciona como HID o lo deja crudo: usb.capdata (bulk/isocrono) o
+    usbhid.data (interrupt reconocido como reporte HID) -- el DEVICE_STATUS que
+    buscamos es justamente interrupt, asi que vive en usbhid.data, NO en
+    usb.capdata. Revisamos las dos ultimas columnas por las dudas.
+    """
     status, fwlog = [], []
     for line in open(path, errors="replace"):
         cols = line.rstrip("\n").split("\t")
-        if not cols:
-            continue
-        data = cols[-1].strip()
+        # usb.capdata y usbhid.data son mutuamente excluyentes por frame -- a lo sumo
+        # una de las dos columnas viene poblada. Tomamos la primera que tenga algo.
+        data = next((c.strip() for c in cols[-2:] if c.strip()), "")
         if not data:
             continue
         try:

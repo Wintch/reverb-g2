@@ -1,27 +1,36 @@
 ================================================================================
-  KIT DE CAPTURA EN WINDOWS  —  HP Reverb G2 a 90 Hz  (v2, 2026-08-05)
-  Proyecto: soporte del G2 en Linux.
+  KIT DE CAPTURA EN WINDOWS  —  HP Reverb G2 / soporte del G2 en Linux  (v3)
 ================================================================================
 
-QUE ESTAMOS BUSCANDO, EN UNA LINEA
-----------------------------------
-En Linux el casco a 90 Hz muestra el logo de HP y no engancha. En Windows anda.
-Ya sabemos que NO es un comando HID de modo (desensamblamos el driver de HP: no
-existe), NO es ancho de banda, NO es la duracion del vblank, y NO es el refresh
-en si (medimos exactamente esto en Linux con un factorial completo). El unico
-patron que sobrevive: el UNICO pixel clock que alguna vez mostro imagen es
-~709.15 MHz. Lo que buscamos ahora es leer, CON EL CASCO ANDANDO A 90 Hz EN
-WINDOWS, cuatro cosas — cada una barata, cada una puede ser la que cierre esto:
+ESTADO ACTUAL: el canal USB/HID ya esta agotado, no es lo que falta
+---------------------------------------------------------------------
+En Linux el casco a 90 Hz muestra el logo de HP y no engancha (parpadeo blanco
+con los parches puestos); en Windows anda perfecto, incluso cambiando de 60 a
+90 Hz en vivo sin reconectar. Ya se descarto, con captura real de los dos
+lados:
 
-  1. HID del propio casco     (ya lo haciamos v1 — sigue siendo la base)
-  2. El timing REAL que usa el driver a 90 Hz (pixel clock, htotal/vtotal,
-     lane count, link rate)  <-- NUEVO, es la pregunta que mas importa ahora
-  3. Si el driver activa DSC (compresion) sin que lo esperemos
-  4. [opcional, mas trabajo] una traza ETW del lado del kernel de video
+  - Comando HID de modo especial: no existe (se desensamblo el driver Oasis).
+  - Ancho de banda / duracion del vblank / el refresh en si: descartado con
+    un factorial completo en Linux (docs/16-lab-vblank.md).
+  - El estado que reporta el casco por USB (`DEVICE_STATUS`, 33 bytes): es
+    BYTE-IDENTICO entre Linux parchado y Windows, tanto en regimen estable
+    como en el momento exacto de una transicion 60<->90 en vivo. No hay
+    ningun comando USB extra durante el cambio de modo (docs/13-bug-6bpc.md).
+  - DSC vede el panel de NVIDIA o desde Configuracion de Windows: el Reverb
+    G2 no aparece como display seleccionable en ninguna de las dos pantallas
+    (esta en modo directo/HMD, no como monitor de escritorio) -- esa via esta
+    cerrada por falta de acceso, no por un resultado negativo.
 
-Los primeros tres se hacen en UNA sola sesion con el casco a 90 Hz, en
-cualquier orden salvo el paso 1 (que necesita capturar ANTES de enchufar el
-casco). El cuarto es una pasada aparte, opcional.
+Lo que queda -- DSC en silencio, GSP firmware cerrado, algo del propio link
+training de DisplayPort -- ya no es visible desde ningun angulo que Windows
+pueda mostrar por herramientas de usuario. El siguiente paso real es el
+reporte a NVIDIA (bug 5923212, docs/19), no otra captura de este kit.
+
+Este kit queda como herramienta general para el proximo capitulo (por
+ejemplo, un baseline en Windows para comparar contra una GPU AMD cuando
+llegue, o si NVIDIA pide algo puntual) -- no como una lista de tareas
+pendientes para el 90Hz. Si volves a esta carpeta preguntandote "por donde
+sigo", la respuesta corta es: por `docs/19` y por AMD, no por aca.
 
 
 PREPARACION (una sola vez, requiere reiniciar por Wireshark/USBPcap)
@@ -29,138 +38,85 @@ PREPARACION (una sola vez, requiere reiniciar por Wireshark/USBPcap)
 1. Wireshark, CON el componente USBPcap tildado en el instalador (no viene
    tildado por defecto):
        https://www.wireshark.org/download.html
-   REINICIAR despues de instalar — USBPcap instala un filtro y no anda hasta
+   REINICIAR despues de instalar -- USBPcap instala un filtro y no anda hasta
    el reboot.
 
-2. HWiNFO64 (no necesita reboot, portable o instalado, como prefieras):
-       https://www.hwinfo.com/download/
-   Buscamos, en el panel de Sensors, cualquier campo de la GPU/Display que
-   diga "Pixel Clock", "Link Rate" o "Lane Count" para el conector del casco.
-   No todas las versiones/GPUs lo muestran — si no aparece nada, no es un
-   fracaso, es un dato (anotalo y seguimos con CRU).
+2. Opcional pero recomendado, herramientas portables (no requieren instalar
+   nada, cada una en su propia carpeta al lado de este README):
 
-3. CRU (Custom Resolution Utility), portable, SIN instalar — bajar el .zip,
-   descomprimir, correr CRU.exe directo:
-       https://www.monitortests.com/forum/Thread-Custom-Resolution-Utility-CRU
-   (es el sitio oficial del autor, ToastyX — ojo con dominios parecidos tipo
-   customresolutionutility.dev/.net, no son la fuente oficial)
+       cru-1.5.3\CRU.exe        https://www.monitortests.com/forum/Thread-Custom-Resolution-Utility-CRU
+                                 (sitio oficial de ToastyX -- ojo con dominios
+                                 parecidos tipo customresolutionutility.*)
+       usbdeview-x64\USBDeview.exe   https://www.nirsoft.net/utils/usb_devices_view.html
+       hwinfo64\HWiNFO64.exe    https://www.hwinfo.com/download/  (version "Portable")
+       gpuz\GPU-Z.exe           https://www.techpowerup.com/gpuz/  (ya es portable)
 
-Nada de esto pisa el driver de NVIDIA ni el del casco — los tres son de solo
+   `run-diagnostics.ps1` busca cada una en su carpeta automaticamente y las
+   abre solo si las encuentra -- si falta alguna, la saltea sin romper nada.
+
+Nada de esto pisa el driver de NVIDIA ni el del casco -- son de solo
 lectura/edicion de EDID en el registro, no tocan DPCD en caliente.
 
 
-CAPTURA — PASE 1: HID + timing real + DSC (aprox. 20 minutos)
------------------------------------------------------------------
+CAPTURA -- un solo comando por corrida
+---------------------------------------------------------------------
+Una vez por sesion de PowerShell, como administrador, parado en esta carpeta:
 
-  *** EL ORDEN IMPORTA MUCHISIMO PARA EL PASO USB. LEELO ANTES DE EMPEZAR. ***
+    powershell -ExecutionPolicy Bypass -File run-diagnostics.ps1 -Label 90hz
 
-  Lo que necesitamos del canal USB es el ARRANQUE del casco, no el uso.
-  Medido en Linux: el casco manda su mensaje de estado SOLO CUANDO ALGO
-  CAMBIA, y su log de firmware SOLO habla mientras el driver hace la
-  secuencia de inicializacion. Si empezas a capturar con el casco ya andando
-  en regimen, esa parte de la captura sale VACIA aunque todo parezca bien.
+(o `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` una vez y
+despues `.\run-diagnostics.ps1 -Label 90hz` normal -- PowerShell bloquea
+scripts sin firmar por default, esto lo habilita solo para esa ventana.)
 
-  Por eso: primero la captura USB, DESPUES el casco. Y no hace falta ningun
-  juego — un juego solo agrega ruido al bus.
+El script hace todo en una sola pasada:
 
-1. DESCONECTAR el casco (el USB). Que Windows lo pierda del todo.
+  1. Busca las herramientas solo (rutas locales + PATH + registro de Windows).
+  2. Junta lo que tiene linea de comandos sin tocar nada: USBDeview, nvidia-smi,
+     WMI (adaptador de video y monitores), DxDiag.
+  3. Captura USB de TODAS las interfaces USBPcap a la vez -- no hay que
+     adivinar cual enumera el casco. Te va guiando en la consola: pide un
+     Enter para arrancar la captura (con el runtime de WMR/SteamVR TODAVIA
+     CERRADO -- sin eso el panel no tiene "modo", esta apagado), y otro Enter
+     para cortar despues de confirmar imagen.
+  4. Para lo que no tiene CLI (CRU, HWiNFO64, GPU-Z, el panel de NVIDIA) abre
+     cada herramienta sola y dice en pantalla que mirar y como nombrar el
+     screenshot.
+  5. Deja todo en una carpeta `run_<Label>_<timestamp>\` -- esa carpeta
+     completa es lo que hay que llevarse.
 
-2. Abrir "cmd" COMO ADMINISTRADOR, ir a esta carpeta, y correr:
+El companion del casco (03f0:0580) manda su `DEVICE_STATUS` HID solo cuando
+algo CAMBIA, no en regimen -- por eso conviene una captura CORTA (10-15s
+alcanza) puesta justo alrededor del momento en que arranca el runtime o se
+cambia el refresh rate, no dejarla corriendo minutos.
 
-       capture.bat
-
-   Te lista las interfaces USBPcap y te pide elegir una. Es la del root hub
-   donde vas a enchufar el casco. Si no sabes cual, elegi una: al cortar te
-   dice si vio al casco o no, y si no lo vio probas con otra.
-
-3. CON LA CAPTURA YA CORRIENDO, enchufar el casco y dejar que Windows lo
-   levante entero (el portal de WMR / SteamVR con el driver Oasis).
-
-4. Ponetelo y confirma que VES IMAGEN a 90 Hz. Mira unos 30 segundos.
-
-5. CON EL CASCO TODAVIA ANDANDO A 90 Hz (no lo desconectes todavia), ahora
-   sacamos los datos de timing y DSC:
-
-   a) Abrir CRU.exe. Debería aparecer el Reverb G2 en la lista de displays.
-      Seleccionalo, y andá a "Detailed resolutions" (o el equivalente en tu
-      version) — ahi esta el timing detallado que CRU lee como ACTIVO para
-      ese display: pixel clock, total horizontal/vertical, front/back porch,
-      sync width. SACALE UNA CAPTURA DE PANTALLA a esa ventana completa.
-      Cerra CRU SIN GUARDAR NADA (no queremos escribir un override, solo
-      leer el que ya esta activo).
-
-   b) Abrir HWiNFO64 -> Sensors. Buscá la seccion de la GPU o del display del
-      casco. Si aparece algo de "Pixel Clock", "Link Rate" (deberia decir
-      HBR2/HBR2.5/HBR3) o "Lane Count", SACALE UNA CAPTURA DE PANTALLA.
-
-   c) Panel de control de NVIDIA -> Ayuda -> Informacion del sistema.
-      SACALE UNA CAPTURA DE PANTALLA — ahi figura si el display usa DSC
-      (Display Stream Compression). Calculamos que a 90 Hz no deberia hacer
-      falta, pero nunca lo verificamos en Windows. Es un agujero de nuestro
-      propio razonamiento y esta captura lo tapa.
-
-6. Volve a la ventana de cmd de capture.bat y cortá con Ctrl+C.
-
-7. Si podes, repetí TODO (los 3 sub-pasos de arriba tambien) forzando 60 Hz
-   en la configuracion, y renombra los resultados agregando "-60hz". Es el
-   control del lado de Windows y vale casi tanto como el de 90.
+Repetir con distintos `-Label` (por ejemplo `60hz`, `90hz`, `idle`) las veces
+que haga falta -- cada corrida arma su propia carpeta con timestamp, nunca se
+pisan entre si.
 
 
-LO QUE TENES QUE TRAER DE VUELTA DEL PASE 1
-----------------------------------------------
-   windows-90hz.pcapng  y  windows-90hz.tsv     (los genera capture.bat)
-   windows-90hz-cru.png                          (paso 5a)
-   windows-90hz-hwinfo.png                       (paso 5b)
-   windows-90hz-nvidia-info.png                  (paso 5c)
-   y los mismos 5 archivos con "-60hz" si repetiste el control
+ANALISIS -- ya del lado Linux
+---------------------------------------------------------------------
+    python3 analyze-windows.py run_90hz_*/90hz_USBPcap*.tsv run_60hz_*/60hz_USBPcap*.tsv
 
-Copialos todos juntos a un pendrive o a una particion que se vea desde Linux.
-
-
-CAPTURA — PASE 2 (OPCIONAL, mas trabajo): traza ETW del kernel de video
-----------------------------------------------------------------------
-El propio driver Oasis trae un perfil de Windows Performance Recorder listo
-para usar, en su carpeta de instalacion:
-
-    <carpeta de instalacion de Oasis>\tracing\Capture-ETL.bat
-
-(en Steam suele ser algo como
- C:\Program Files (x86)\Steam\steamapps\common\Oasis Driver for Windows Mixed Reality\tracing\)
-
-Es una pasada APARTE de la del Pase 1 — no la corras al mismo tiempo que
-capture.bat, se pisan. El procedimiento:
-
-1. Casco desconectado.
-2. Abrir "cmd" COMO ADMINISTRADOR en esa carpeta de tracing y correr
-   Capture-ETL.bat. Va a decirte cuando esta listo para capturar.
-3. Enchufar el casco, ponertelo, confirmar imagen a 90 Hz, esperar ~30s.
-4. Volver a la consola y cortar como te indique el .bat (usualmente Ctrl+C
-   o una tecla).
-5. Te va a dejar un .etl en esa misma carpeta (o donde diga el .bat).
-
-Este perfil es de Bucchianeri (autor de Oasis) — puede que no traiga
-proveedores del lado del kernel de video de NVIDIA, en cuyo caso el .etl
-sale liviano y sin nada de display. Igual vale la pena: aunque Oasis no
-toque timing de video, el mismo archivo puede traer eventos correlacionables
-por tiempo con lo que haga el resto del sistema.
-
-TRAETE: el archivo .etl que te deje.
+Busca el `DEVICE_STATUS` (0x05, 33 bytes) del companion y lo compara contra
+`REF_LINUX` (capturas de referencia en Linux, ya con el parche del bpc
+puesto). Tambien busca el log de firmware del HoloLens Sensors (0x03, ASCII).
 
 
 SI ALGO NO SALE
-----------------
-- El .tsv sale vacio  -> el device address esta mal, o elegiste la interfaz
-  USBPcap equivocada. Probá otra.
-- No aparece USBPcap en Wireshark -> no reiniciaste, o no tildaste el
-  componente en el instalador.
-- CRU no muestra al Reverb G2 en la lista -> confirmá que el casco sigue
-  activo (imagen a 90Hz) en ese momento; CRU lista los displays conectados
-  en el momento en que lo abrís.
-- HWiNFO64 no muestra nada de Pixel Clock/Link Rate -> no es un fracaso, es
-  un dato — anotalo así y seguí con el resto. No todas las versiones lo
-  exponen para todos los GPUs.
-- Windows no te deja elegir 60 Hz -> no importa, el de 90 es el que
-  necesitamos; saltate el paso 7 / el Pase 2 a 60Hz.
+---------------------------------------------------------------------
+- No aparece ninguna interfaz USBPcap -> no reiniciaste despues de instalar
+  Wireshark, o no tildaste el componente USBPcap en el instalador.
+- El panel de NVIDIA no abre solo -> las versiones nuevas lo empaquetan
+  distinto; abrilo a mano (click derecho en el escritorio -> NVIDIA Control
+  Panel). El Reverb G2 de todas formas no va a aparecer ahi como display
+  seleccionable -- es un resultado ya confirmado, no un error tuyo.
+- HWiNFO64 no muestra nada de Pixel Clock/Link Rate de DisplayPort -> no es
+  un fracaso, es un dato ya confirmado: esta version/GPU no lo expone.
+- CRU no muestra al Reverb G2 en la lista -> confirma que el casco sigue
+  activo (imagen prendida) en ese momento; CRU lista los displays conectados
+  al momento de abrirlo.
 
-No hace falta que entiendas la salida de nada de esto. Traela entera y la
-analizamos en Linux con analyze-windows.py (para el HID) y a ojo el resto.
+No hace falta entender la salida de nada de esto en el momento. Traela
+entera y se analiza en Linux con `analyze-windows.py` (para el HID) y a ojo
+el resto.

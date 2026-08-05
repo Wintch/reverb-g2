@@ -1,29 +1,41 @@
 # Contexto para el agente del lab de 90Hz
 
-> ## ESTADO AL 2026-08-05 — leer esto antes que el resto
+> ## ESTADO AL 2026-08-05 (noche) — leer esto antes que el resto
 >
-> El lab ya corrió y el bug del bpc está **cerrado y publicado**:
+> El bug del bpc está **cerrado y publicado**:
 >
 > - **PR en NVIDIA:** https://github.com/NVIDIA/open-gpu-kernel-modules/pull/1275
 > - **Hilo del foro:** post 379240, revisión 6, corregido y con los tres adjuntos
 > - Con el parche, el status HID de 33 bytes del casco queda idéntico byte a byte al de Windows
 >
-> **Sigue abierto:** los dos modos de 90 Hz no muestran imagen (el panel enciende y parpadea
-> en blanco); el de 60 Hz anda.
+> **El factorial de `docs/16-lab-vblank.md` ya se corrió completo** (7 puntos, EDIDs
+> inyectados por override de nvkms): descartó vblank (en líneas y en tiempo), refresh en sí,
+> y ancho de banda. El único patrón que sobrevivió fue "el único pixel clock que alguna vez
+> mostró imagen es el del modo 60Hz que ya andaba" — no hay una segunda variable escondida
+> en el EDID. **No hay que volver a esa vía**: el usuario decidió pivotear a reportar en vez
+> de seguir generando EDIDs a ciegas, y esa decisión sigue en pie.
 >
-> ### Lo próximo, ya preparado y verificado: `docs/16-lab-vblank.md`
+> **El canal USB/HID del casco también está agotado**, no sólo en régimen estable (ya lo
+> decía este documento el 2026-08-05 temprano) sino en la TRANSICIÓN en vivo: se capturó un
+> cambio de refresh 60↔90 sin reconectar el casco (`windows-kit/`, ver
+> `docs/13-bug-6bpc.md` sección "2026-08-05 (noche)") y no aparece ningún comando ni reporte
+> HID especial en el momento del cambio — sólo el `DEVICE_STATUS` de siempre actualizando
+> refresh/htotal/vtotal. Tampoco sirve el panel de NVIDIA ni la Configuración de Windows para
+> ver DSC: el Reverb G2 no aparece ahí como display seleccionable (está en modo directo/HMD).
 >
-> En los tres modos nativos del EDID, "90 Hz" y "vblank corto" están **perfectamente
-> confundidos**: el único modo que anda es también el único con vblank largo. `docs/16` arma
-> el factorial 2x2 que falta para separarlos, más un barrido de refresh.
+> **Conclusión: no queda nada más para investigar con herramientas de usuario, en ningún
+> SO.** Lo que sigue, en orden de peso:
 >
-> - `experiments/vblank/g2-vblank-test.edid` — el factorial completo en un solo EDID
-> - `experiments/vblank/sweep-70-75-80.edid` — la primera ronda del barrido
-> - `scripts/edid-tool.py inject-mode` — genera cualquier variante
+> 1. El reporte a NVIDIA (bug 5923212, cuerpo listo en `docs/19-nvidia-bug-5923212-followup.md`)
+>    — el usuario lo sube él mismo.
+> 2. Un GPU AMD puede llegar al lab para repetir el test de 90Hz en `amdgpu` — es el
+>    experimento que más puede mover la aguja (ver `docs/11`), no es una sorpresa si aparece.
+> 3. Sniffear el canal AUX de DisplayPort con un logic analyzer — anotado, no intentado,
+>    depende de tener el hardware (ver el checklist al final de `docs/13`).
 >
-> **Correr el PREFLIGHT de `docs/16` primero.** Ya pasó una vez de empezar a medir en el
-> sistema principal, que tiene el 550 propietario sin parchear: ahí el clamp a 6 bpc está
-> activo y el resultado sale confundido con el bug que justamente sacamos del medio.
+> `windows-kit/` quedó consolidado como herramienta general (`run-diagnostics.ps1`, un solo
+> comando) — no como una lista de tareas pendientes del 90Hz. Si algo dice "falta correr una
+> captura más de Windows", desconfiá: ya se llegó al fondo de ese canal.
 >
 > ### Publicación
 >
