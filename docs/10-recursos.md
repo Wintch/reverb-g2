@@ -81,9 +81,16 @@ USB. Útil sólo para comparar.
 
 ## Hardware del casco (medido / leído del firmware)
 
-- **Puente de display: Lattice CrossLink `LIF-MD6000-6CSFBGA81`** (string del firmware). Es
-  quien recibe DP y maneja los dos paneles. **El sospechoso número uno hoy.** Vale buscar su
-  datasheet: límites de clock del PLL, requisitos de DSC, cómo latchea el timing.
+- **Puente de display: Analogix `ANX7530`** (DP -> MIPI DSI, especificado para VR hasta
+  120 Hz), más un `ANX7688`. Confirmado por el string de versiones del firmware:
+  `STM:..;DFU:..;ANX7688:..;ANX7530:..`. Hay además un **STM32** y una ruta **DFU**
+  (`bridge_fw_check_update`, `bridge_fw_switch_bank`, `QCI_FEATURE_ERASE_FLASH`,
+  `QCI_FEATURE_DFU_NEW`, `SMARTBRIDGE_UNINITIALISED`): el firmware del puente es
+  actualizable, en bancos.
+- **El Lattice CrossLink `LIF-MD6000-6CSFBGA81` NO es el puente de video**, es el agregador
+  de cámaras. Se lo señaló como sospechoso principal y era un error: su datasheet no menciona
+  DisplayPort, y en el teardown del WMR de Acer el mismo chip cumple ese rol mientras el
+  puente real es un ANX7530.
 - Paneles: dos, con control de backlight por PWM (`panel_backlight_duty`,
   `[%s] left duty %d, right duty %d, frame timing %d, panel ID %d`).
 - Cámaras: 4x **OV7251** 640x480 mono 8 bits (framebuffer 2560x480). El firmware avisa
@@ -99,9 +106,30 @@ USB. Útil sólo para comparar.
 - USB: 5 dispositivos (cap. 00). El companion es `03f0:0580` (Quanta QHMD A85V).
   **Medido hoy: el screen-off por HID puede hacerlo RE-ENUMERAR** y cambiar de nodo hidraw.
 
+## Datos del usuario (2026-08-04), sin verificar todavía
+
+- **El USB3 tenía que colgar de un puerto conectado al CPU, no al chipset.** Costó hacerlo
+  andar incluso estando soportado. Encaja con el cap. 00 y explica por qué el diagnóstico del
+  puerto fue tan trabajoso.
+- **HAGS** (Hardware Accelerated GPU Scheduling) **activado hacía que en Windows fuera a pocos
+  frames.** Es un dato técnico, no una anécdota: HAGS cambia quién programa el trabajo de la
+  GPU y toca la ruta de presentación. Que un cambio de scheduler degrade al G2 sugiere que
+  este casco es sensible al timing de entrega de frames más que un display común. Pista viva.
+- En Windows 11 el soporte WMR duró hasta hace poco y recién ahora lo cortaron; de ahí salen
+  los drivers "hack" de Steam (el Oasis de HP es justamente ese).
+- El usuario ofrece hacer capturas en Windows si hacen falta. Hoy no hacen falta (cap. 07
+  archivado), pero si se necesita ver cómo negocia el link, hay que preparárselo bien.
+
+## Objetivo declarado del proyecto
+
+Sacar un **driver universal + kit de cosas básicas** para que el G2 siga siendo útil en Linux
+y la gente pueda desarrollar encima. El casco es barato hoy, tiene buena calidad óptica, y
+Microsoft y HP lo abandonaron: hay miles funcionando y nadie lo recicló bien.
+
 ## Lo que falta conseguir
 
-1. **Datasheet del Lattice LIF-MD6000** (CrossLink). Límites de pixel clock y de MIPI.
+1. **Datasheet del Analogix ANX7530.** Límites de pixel clock, requisitos de MIPI, y sobre
+   todo si el refresh de salida depende del firmware o se adapta al input.
 2. **Driver WMR original de la Microsoft Store** — la otra implementación del panel.
 3. `unlock_wmr.exe`, `MROEMFwHost.dll`, `client_utility.exe`, `DriverTracing.wprp`.
 4. Un **dump del firmware** del casco, si `MROEMFwHost` deja leerlo

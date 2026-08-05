@@ -1,0 +1,2 @@
+{"id": "T001", "abierta": "2026-08-04 22:08:09", "modo": "vulkan native[2] 4320x2160@60", "driver": "control: modo conocido bueno", "veredicto": "todo flasheando (ve los colores alternando) -- INSTRUMENTO VALIDADO", "cerrada": "2026-08-04 22:09:25"}
+{"id": "T002", "abierta": "2026-08-04 22:09:47", "modo": "vulkan native[0] 2880x1440@89.999", "driver": "el modo de 90 que NO puede necesitar DSC (10.29 Gbps)", "veredicto": "hp prendido, pantalla apagada", "cerrada": "2026-08-04 22:11:16"}

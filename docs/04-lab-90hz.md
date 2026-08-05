@@ -611,6 +611,63 @@ logo por si solo no distingue "el modo de 90 es malo" de "no hay senal en absolu
 Ninguno investigado todavia. `config_file` y `output_rounding_fix` son los que mas huelen a
 relevantes para timings.
 
+### INSTRUMENTO PROPIO ANDANDO: 60 sí, 90 no, medido sin Monado (2026-08-04, 23:30)
+
+`scripts/hmd-vk.c` maneja el panel por el mismo camino que Monado — Vulkan display, no KMS —
+tomando el conector por DRM lease y pasandole ese fd a `vkGetDrmDisplayEXT` /
+`vkAcquireDrmDisplayEXT`. **Funciona.** Es el primer instrumento del proyecto independiente de
+Monado, del compositor y de OpenXR.
+
+Protocolo nuevo, por un problema real: las corridas tenian duracion fija y una prueba podia
+"vencer" mientras el usuario todavia miraba, y despues no se sabia a que corrida correspondia
+cada respuesta. Ahora las corridas se sostienen **indefinidamente** hasta que se las mata, y
+cada prueba queda anotada con ID y el veredicto textual del usuario en `docs/pruebas.jsonl`
+(`scripts/testlog.py`).
+
+| prueba | modo | ancho de banda | fps presentados | **lo que ve el usuario** |
+|---|---|---|---|---|
+| T001 | `4320x2160@60.000` | 17.02 Gbps | 59.99 | **"todo flasheando"** — colores alternando |
+| T002 | `2880x1440@89.999` | **10.29 Gbps** | 89.98 | **"hp prendido, pantalla apagada"** |
+
+Las dos corridas comparten binario, path de Vulkan, secuencia de activacion HID y patron de
+colores. **Lo unico distinto es el refresh** — y el modo que falla pide menos de la mitad de
+ancho de banda que el que funciona.
+
+Con esto, medido con instrumento propio y verificacion fisica, quedan descartados de forma
+independiente: ancho de banda, DSC, Monado, el compositor, y toda la pila de OpenXR.
+
+#### El barrido de refresh esta bloqueado por el driver, en las DOS capas
+
+No se puede pedir un refresh que no este en el EDID:
+
+```
+KMS   : drmModeSetCrtc con modeline sintetica      -> EINVAL
+Vulkan: vkCreateDisplayModeKHR 2880x1440 @ 61/62/65/70/75/80/85 Hz
+                                                   -> VK_ERROR_INITIALIZATION_FAILED (-3)
+```
+
+Y **Vulkan reporta exactamente los mismos 3 modos que el EDID** (89.999 / 90.001 / 60.000 Hz),
+ni uno mas. Asi que para barrer hay que **inyectar un EDID modificado**; la via mas probable es
+la opcion `CustomEDID` del driver NVIDIA en X11 (el override de EDID de DRM core no sirve:
+nvidia no usa los helpers `drm_edid_*`).
+
+#### Correccion: el puente de display es un ANX7530, no el CrossLink
+
+En el commit anterior se senalo al Lattice CrossLink `LIF-MD6000` como sospechoso principal.
+**Estaba mal.** El datasheet de Lattice no menciona DisplayPort, y sus casos de uso en VR son
+bridging MIPI DSI 1:2 y agregacion de camaras. El string de version del firmware lo aclara:
+
+```
+STM:%02X.%02X.%02X;DFU:%02X.%02X.%02X;ANX7688:%02X.%02X.%02X;ANX7530:%02X.%02X.%02X;
+```
+
+El puente DP->MIPI DSI real es un **Analogix ANX7530** (especificado para VR hasta 120 Hz),
+mas un ANX7688. El CrossLink es el agregador de camaras. Hay ademas un **STM32** y una ruta
+**DFU**: `bridge_fw_check_update`, `bridge_fw_switch_bank`, `QCI_FEATURE_ERASE_FLASH`,
+`QCI_FEATURE_DFU_NEW`, `SMARTBRIDGE_UNINITIALISED`. O sea que el firmware del puente es
+actualizable — pero esas rutas son de *actualizacion*, no de init por sesion, asi que no
+sostienen la idea de que al puente haya que inicializarlo desde el host en cada arranque.
+
 ### Pendientes que necesitan sudo (no bloquean el test de 90Hz)
 
 1. **Prioridad RT para Monado.** El log tira `Could not raise priority for thread

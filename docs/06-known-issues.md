@@ -156,6 +156,39 @@ Nota de proceso: esta hipótesis murió dos veces porque entre la primera y la s
 `CLAUDE.md` quedó desactualizado dándola por viva, y se la volvió a citar como "la única que
 explica los resultados". Al cerrar una línea, actualizar `CLAUDE.md` **en el mismo commit**.
 
+### CUIDADO: Project-VR NO es un caso positivo verificado (2026-08-04, 23:00)
+
+Todo el plan del lab se apoyaba en que [Project-VR](https://github.com/AshishKumar4/Project-VR)
+tenia el G2 andando a `4320x2160@90` en Linux. **Ese claim no resiste.**
+
+- 0 estrellas, 0 forks, 0 issues, 0 PRs. Cero menciones externas en toda la web.
+- **Cero imagenes o video en sus 177 archivos.** Un solo commit de volcado inicial (2026-07-03).
+- Validado en Ada (RTX 4080), nunca en Ampere.
+- Y lo decisivo: su evidencia de "90Hz funcionando" es **una sesion Vulkan/OpenXR exitosa y
+  sus logs** — exactamente la clase de evidencia que este proyecto ya demostro nueve veces
+  que es **compatible con el panel muerto**. La API reporta 90.0 fps felices con el logo de HP.
+
+Seria el cuarto falso positivo de la misma familia que el cable, la fuente y el audio: una
+conclusion dada por buena sin que un humano haya mirado.
+
+**No invertir mas tiempo en sus parches tal como estan.** La unica forma de rehabilitarlo es
+pedirle al autor una foto o un video del panel encendido a 90Hz.
+
+Corolario incomodo: **no hay UN SOLO caso humano confirmado de G2 a 90Hz en Linux, con ninguna
+GPU** — tampoco AMD. Veniamos preguntandonos por que a nosotros no nos andaba lo que a otros
+si; puede que no le haya andado a nadie.
+
+### El bug de NVIDIA es transversal y esta abierto (2026-08-04)
+
+Del hilo del foro (bug interno **5923212**): NVIDIA **admitio y reprodujo** el bug el
+2026-03-20, y sigue sin resolucion al 2026-07-19. Falla igual en **Turing, Ampere y
+Blackwell** (2070 SUPER, 3090, A5000, 5070 Ti) y de la serie 590.x a la 610.x.
+
+Esto explica por que los 3 parches de Project-VR no cambiaron nada: si el bug vive en el
+firmware GSP o en el blob cerrado de userspace, ningun parche a los *open kernel modules*
+puede alcanzarlo. Y cambia el objetivo: de "encontrar el parche correcto" a "confirmar en que
+capa vive y aportar evidencia al bug".
+
 ### DESCARTADO: DSC como causa (2026-08-04, 21:30) — la cuarta teoría de bandwidth que cae
 
 Muerto lo del HID, el sospechoso era DSC: el parche 0001 de Project-VR dice arreglar el
