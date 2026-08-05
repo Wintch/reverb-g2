@@ -1,4 +1,4 @@
-From c5f73ea874a38bb1f3c05b712a718fc4b2c48ed9 Mon Sep 17 00:00:00 2001
+From c8c0132b7780f51341771450193ea4fa27c91cea Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Wed, 5 Aug 2026 12:57:03 -0300
 Subject: [PATCH 02/10] d/wmr: Retry controller firmware reads and validate
@@ -24,7 +24,6 @@ reply failed the whole controller for the session.
   blocking behaviour is the same.
 - Free the block buffer on the mid-read failure path (was leaked).
 
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
 ---
  src/xrt/drivers/wmr/wmr_controller_base.c | 65 +++++++++++++++++++++--

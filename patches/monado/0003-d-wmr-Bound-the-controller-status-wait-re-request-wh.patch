@@ -1,4 +1,4 @@
-From 1174f4499df8fbaba5475325d32ed32d1f7bd7a9 Mon Sep 17 00:00:00 2001
+From ac89e863d6723248b9c6c237f74a13314f94beed Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Wed, 5 Aug 2026 12:57:48 -0300
 Subject: [PATCH 03/10] d/wmr: Bound the controller status wait, re-request
@@ -22,7 +22,6 @@ Controllers are only surfaced to the runtime while wmr_hmd_create runs
 (there is no hotplug path, see #617), so the window in which
 re-requesting can help is exactly this one.
 
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
 ---
  src/xrt/drivers/wmr/wmr_hmd.c | 30 +++++++++++++++++++++++++-----

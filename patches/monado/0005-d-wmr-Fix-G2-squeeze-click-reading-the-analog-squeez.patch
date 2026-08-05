@@ -1,4 +1,4 @@
-From b3c9acbda6a00175c86b21cd9abe37b12e51c536 Mon Sep 17 00:00:00 2001
+From 8e4d47caf818fc9316ee794b1f872779568a25c9 Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Wed, 5 Aug 2026 12:53:22 -0300
 Subject: [PATCH 05/10] d/wmr: Fix G2 squeeze click reading the analog squeeze
@@ -9,7 +9,6 @@ but was never wired up: SQUEEZE_CLICK's boolean was assigned the analog
 squeeze float instead, so any non-zero grip pressure read as a click.
 !1859 added SQUEEZE_VALUE but left the click on the analog value.
 
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
 ---
  src/xrt/drivers/wmr/wmr_controller_hp.c | 4 +++-

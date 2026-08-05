@@ -1,4 +1,4 @@
-From e67ca0de1181a92450a126a1f517eb379a3374b9 Mon Sep 17 00:00:00 2001
+From ec569d27b87ed34c86cf6adfeb62acdedb36b795 Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Wed, 5 Aug 2026 12:53:34 -0300
 Subject: [PATCH 06/10] d/wmr: Fix G2 controller haptic output name
@@ -13,7 +13,6 @@ Actually driving the motor still needs the wire command, which is not
 implemented (or documented in-tree) yet; this makes the action resolve
 so that path can be built on.
 
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
 ---
  src/xrt/drivers/wmr/wmr_controller_hp.c | 4 +++-

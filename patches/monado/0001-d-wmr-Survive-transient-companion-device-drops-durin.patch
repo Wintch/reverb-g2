@@ -1,4 +1,4 @@
-From daecfd2d533e5e86eb20c05928209a9e6aa5bd65 Mon Sep 17 00:00:00 2001
+From b325213c34e8d159a98b3d76a41ee5d400522dfc Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Wed, 5 Aug 2026 12:56:31 -0300
 Subject: [PATCH 01/10] d/wmr: Survive transient companion device drops during
@@ -29,7 +29,6 @@ Two consequences inside the driver today:
    which shares the activation function; the resend is a no-op when the
    first command landed.
 
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
 ---
  src/xrt/drivers/wmr/wmr_hmd.c | 15 +++++++++++++--

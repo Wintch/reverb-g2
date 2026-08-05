@@ -1,4 +1,4 @@
-From 8488e257332213cbc00e5bbfad7d68e9bcff04e3 Mon Sep 17 00:00:00 2001
+From 9695141a4e7563f8e2c414d10f430f7bbcb16b02 Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Wed, 5 Aug 2026 12:54:39 -0300
 Subject: [PATCH 08/10] d/wmr: Add optional thumbstick deadzone
@@ -15,7 +15,6 @@ sets WMR_STICK_DEADZONE. The rescale keeps full deflection reaching
 magnitude 1, clamped per component because a full diagonal has
 magnitude > 1 before rescaling.
 
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
 ---
  src/xrt/drivers/wmr/wmr_controller_base.c | 25 +++++++++++++++++++++++

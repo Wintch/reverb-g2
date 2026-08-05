@@ -1,4 +1,4 @@
-From cc251f0be4da18903a42a772f2fa8fd4ef18f948 Mon Sep 17 00:00:00 2001
+From 5735def14fd8cd1c726fd1f55d2242647607747f Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Wed, 5 Aug 2026 12:53:50 -0300
 Subject: [PATCH 07/10] d/wmr: Set input timestamps, fix input-active loop and
@@ -13,7 +13,6 @@ Subject: [PATCH 07/10] d/wmr: Set input timestamps, fix input-active loop and
   still wrong.
 - The thumbstick x/y labels in the debug GUI were swapped.
 
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
 ---
  src/xrt/drivers/wmr/wmr_controller_hp.c | 11 ++++++++---

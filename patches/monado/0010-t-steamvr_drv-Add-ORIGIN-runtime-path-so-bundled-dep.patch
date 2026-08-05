@@ -1,4 +1,4 @@
-From d5cbdf36b96490d035990ad9c58a5bfae57cb096 Mon Sep 17 00:00:00 2001
+From aa28126620a5f7d8eed0b15a71abca608f01a63d Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Tue, 4 Aug 2026 12:10:39 -0300
 Subject: [PATCH 10/10] t/steamvr_drv: Add $ORIGIN runtime path so bundled deps
@@ -24,7 +24,6 @@ NEEDED entries, and a bundled library's own dependencies still resolve
 against the runtime. That covers the reported failures, which are all
 first-level.
 
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
 ---
  src/xrt/targets/steamvr_drv/CMakeLists.txt | 10 ++++++++++

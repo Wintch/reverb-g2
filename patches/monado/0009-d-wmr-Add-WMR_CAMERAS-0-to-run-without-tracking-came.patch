@@ -1,4 +1,4 @@
-From 7116ceecb133a530cd671c7747ab27be85443862 Mon Sep 17 00:00:00 2001
+From a8c5e742ddfe1ec31d766e992d9ed9a3f09e4296 Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Tue, 4 Aug 2026 14:09:47 -0300
 Subject: [PATCH 09/10] d/wmr: Add WMR_CAMERAS=0 to run without tracking-camera
@@ -27,7 +27,6 @@ The camera USB interface is still claimed by wmr_source_create; only
 streaming is skipped. Skipping the source entirely is left for a
 follow-up since teardown paths assume it exists.
 
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
 ---
  src/xrt/drivers/wmr/wmr_hmd.c | 40 ++++++++++++++++++++++++++---------
