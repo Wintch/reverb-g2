@@ -1,0 +1,74 @@
+=== fecha ===
+2026-08-04T22:35:35-03:00
+
+=== kernel ===
+Linux iashur 6.12.100+deb13-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.12.100-1 (2026-07-30) x86_64 GNU/Linux
+
+=== driver ===
+NVRM version: NVIDIA UNIX Open Kernel Module for x86_64  595.71.05  Release Build  (root@iashur)  Tue Aug  4 06:25:42 PM -03 2026
+GCC version:  gcc version 14.2.0 (Debian 14.2.0-19) 
+
+=== sesion ===
+XDG_SESSION_TYPE(usuario)=
+compositor: 25297 /usr/bin/gnome-shell
+
+=== GPU ===
+
+==============NVSMI LOG==============
+
+Timestamp                                              : Tue Aug  4 22:35:35 2026
+Driver Version                                         : 595.71.05
+CUDA Version                                           : 13.2
+
+Attached GPUs                                          : 1
+GPU 00000000:05:00.0
+    Product Name                                       : NVIDIA GeForce RTX 3060 Ti
+    Product Brand                                      : GeForce
+    Product Architecture                               : Ampere
+    Display Mode                                       : Requested functionality has been deprecated
+    Display Attached                                   : Yes
+    Display Active                                     : Enabled
+    Persistence Mode                                   : Enabled
+    Addressing Mode                                    : None
+    MIG Mode
+        Current                                        : N/A
+        Pending                                        : N/A
+    Accounting Mode                                    : Disabled
+    Accounting Mode Buffer Size                        : 4000
+    Driver Model
+        Current                                        : N/A
+        Pending                                        : N/A
+    Serial Number                                      : N/A
+    GPU UUID                                           : GPU-a0e8d3d1-f095-0691-1ceb-8ccf595dfd5c
+    GPU PDI                                            : 0xfc85356832aeb8c5
+    Minor Number                                       : 0
+    VBIOS Version                                      : 94.04.38.40.BD
+    MultiGPU Board                                     : No
+    Board ID                                           : 0x500
+    Board Part Number                                  : N/A
+    GPU Part Number                                    : 2486-200-A1
+    FRU Part Number                                    : N/A
+    Platform Info
+        Chassis Serial Number                          : N/A
+        Slot Number                                    : N/A
+        Tray Index                                     : N/A
+        Host ID                                        : N/A
+
+=== conector del casco ===
+--- status
+connected
+--- enabled
+disabled
+--- dpms
+Off
+--- modes
+4320x2160
+2880x1440
+4320x2160
+
+=== USB del casco ===
+Bus 003 Device 086: ID 04b4:6506 Cypress Semiconductor Corp. CY4603
+Bus 003 Device 087: ID 0bda:4c15 Realtek Semiconductor Corp. USB Audio
+Bus 003 Device 088: ID 03f0:0580 HP, Inc QHMD A85V
+Bus 004 Device 002: ID 04b4:6504 Cypress Semiconductor Corp. HP Windows Mixed Reality
+Bus 004 Device 003: ID 045e:0659 Microsoft Corp. HoloLens Sensors

@@ -1,0 +1,31 @@
+conector: DP-1 (id 130)
+lease OK (fd 5)
+  GPU 'NVIDIA GeForce RTX 3060 Ti': vkGetDrmDisplayEXT -> 0
+display adquirido por Vulkan
+
+modos que reporta Vulkan (3):
+  [0] 2880x1440 @ 89.999 Hz  (refreshRate=89999 mHz)
+  [1] 4320x2160 @ 90.001 Hz  (refreshRate=90001 mHz)
+  [2] 4320x2160 @ 60.000 Hz  (refreshRate=60000 mHz)
+
+modo NATIVO [2] de Vulkan
+plano 0 (stack 0)
+swapchain: 2 imagenes, formato 51, 4320x2160
+
+>>> presentando. durante 25 s.
+>>> deberias ver colores planos ALTERNANDO (naranja / azul / verde).
+>>> logo de HP, negro, o nada = no engancho.
+
+>>> activando panel: /home/iam/Documents/reverb-g2-linux/scripts/panel.py activate
+  get 0x09: 09 22 38 43 43 30 34 34 5a 32 43 4d 00 00 00 00
+  get 0x08: 08 20 45 45 34 34 38 32 43 45 41 46 45 37 35 38
+  get 0x06: 06 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  /dev/hidraw7: activacion completa + screen on
+  [   3.0s] 48.50 fps presentados  (modo pedido 60.000 Hz)
+  /dev/hidraw7: screen on
+  [4.1s] screen-enable reenviado
+  [   6.0s] 57.96 fps presentados  (modo pedido 60.000 Hz)
+  [   9.0s] 60.00 fps presentados  (modo pedido 60.000 Hz)
+  [  12.0s] 60.00 fps presentados  (modo pedido 60.000 Hz)
+  [  15.0s] 60.01 fps presentados  (modo pedido 60.000 Hz)
+  [  18.0s] 60.00 fps presentados  (modo pedido 60.000 Hz)
