@@ -238,6 +238,32 @@ a lo mismo, prints de host compilados afuera en un build de release.
 **Requiere reiniciar**: el parámetro es del módulo `nvidia` (core), que carga antes que
 `nvidia-modeset` — no se puede activar en caliente como hicimos con el `debug` de modeset.
 
+## El firmware de logging del GSP no existe en ningún lado accesible (2026-08-05, 01:50)
+
+Reiniciado con `NVreg_EnableGpuFirmwareLogs=1` puesto y corrido `collect-nv.sh` de nuevo.
+**El parámetro se activó correctamente**, pero el driver reporta:
+
+```
+nvidia 0000:05:00.0: firmware: failed to load nvidia/595.71.05/gsp_log_ga10x.bin (-2)
+NVRM: RmFetchGspRmImages: Failed to load gsp_log_*.bin, no GSP-RM logs will be printed (non-fatal)
+```
+
+**Falta un archivo de firmware específico para logging**, distinto del que ya usa el driver en
+producción (`gsp_ga10x.bin`). Se buscó en todos los lugares razonables:
+
+- El paquete Debian `firmware-nvidia-gsp` (todas las versiones disponibles en el repo, de
+  550.163.01 a 610.57.04): sólo trae `gsp_ga10x.bin` y `gsp_tu10x.bin`, nunca la variante
+  `_log_`.
+- **El instalador oficial de NVIDIA** (`NVIDIA-Linux-x86_64-595.71.05.run`, 403 MB, bajado
+  completo y extraído con `--extract-only`): su `firmware/gsp_ga10x.bin` es **byte a byte
+  idéntico** (mismo MD5) al que ya teníamos instalado. **NVIDIA no distribuye públicamente el
+  firmware con logging para esta GPU de consumo.**
+
+Con esto se agotó el último recurso de software disponible. La lógica que decide cómo
+enganchar el panel a 90Hz corre en un microcontrolador dentro de la GPU, con un firmware
+cerrado del que no existe versión pública que hable. **No hay forma de ver, desde Linux, qué
+piensa el GSP mientras negocia el modo de 90Hz.**
+
 ## Estado
 
 - [x] Cadena causal del bpc verificada en el código y contra tres mediciones independientes
@@ -247,12 +273,17 @@ a lo mismo, prints de host compilados afuera en un build de release.
       2x de diferencia en pixel clock)
 - [x] Verificado: el estado del casco es ahora byte-idéntico al de Windows — se agotó lo que
       este canal puede decirnos
-- [ ] **Buscar la diferencia restante en los logs de NVIDIA (DSC, color space, timing fino)**
-      ← acá estamos
-- [ ] Si se encuentra y se arregla: reportar a NVIDIA en el hilo 337744 (bug 5923212) con
-      los dos parches
-- [ ] Si no se encuentra nada en los logs: comparar el timing exacto (porches, sync) del
-      DisplayID Type VII del EDID contra lo que NVIDIA programa de verdad
+- [x] Descartado: DSC, color space, YCbCr — cero menciones en los logs con `nvidia_modeset
+      debug=1`
+- [x] Descartado: el modeline completo (porches, sync, polaridad) — consistente entre los
+      tres modos, nada anómalo
+- [x] Intentado y agotado: logs del firmware GSP (`NVreg_EnableGpuFirmwareLogs=1`) — falta el
+      binario `gsp_log_ga10x.bin`, que **NVIDIA no distribuye públicamente** ni siquiera en su
+      instalador oficial completo (verificado por MD5 contra el `.run` de 403 MB)
+- [ ] **Se agotó lo accesible desde Linux. El siguiente paso es reportar a NVIDIA** — con el
+      bug del bpc (real, confirmado, con parche de dos líneas) y con todo lo demás como
+      contexto de diagnóstico ya hecho, para que alguien con acceso al firmware GSP cerrado
+      siga desde ahí. Hilo: 337744 (bug 5923212).
 
 ---
 

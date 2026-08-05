@@ -32,7 +32,21 @@ sudo ./scripts/bootstrap-lab.sh patch-nv    # y REINICIAR
 **No te saltees el baseline sin parches.** Es lo que separa "el driver 595 por sí solo
 cambió algo" de "los parches lo arreglaron", y es la única forma de saber qué reportar.
 
-### Dónde quedó todo (2026-08-05, 05:15) — el parche del bpc anda a medias
+### Dónde quedó todo (2026-08-05, 05:15) — el parche del bpc anda a medias, y se agotó el software
+
+**Actualización (01:50): se agotó también el firmware.** `NVreg_EnableGpuFirmwareLogs=1`
+activado y probado — el driver dice explícitamente que le falta `gsp_log_ga10x.bin` para
+loguear el firmware GSP. Se bajó el instalador oficial completo de NVIDIA (403 MB) para
+buscarlo: **NVIDIA no lo distribuye ni ahí** — el `gsp_ga10x.bin` del instalador es byte a
+byte idéntico (mismo MD5) al que ya teníamos. La lógica que decide el enganche a 90Hz corre
+en un firmware cerrado del que no existe versión pública que hable. Detalle completo en
+`docs/13-bug-6bpc.md`.
+
+Con DSC, color space y el modeline ya descartados también (ver más abajo), **se agotó lo que
+se puede investigar desde Linux sin ayuda de NVIDIA.** El siguiente paso es reportar, no
+seguir cavando solos.
+
+#### Lo anterior (2026-08-05, 05:15) — el parche del bpc anda a medias
 
 **El bug del bpc era real y el parche funciona exactamente como predijo el código: el byte 18
 del casco pasó de 06 a 08.** Pero eso NO resolvió el 90Hz. Verificación física:
