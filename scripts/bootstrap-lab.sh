@@ -1,50 +1,50 @@
 #!/bin/bash
-# bootstrap-lab.sh - deja un Debian 13 recién instalado listo para el lab de 90Hz.
+# bootstrap-lab.sh - take a freshly installed Debian 13 to a working 90 Hz lab.
 #
-#   ./bootstrap-lab.sh            todo (deps + repos + parches + build)
-#   ./bootstrap-lab.sh deps       solo los paquetes apt
-#   ./bootstrap-lab.sh nvidia     solo el driver 595 (pide reboot al final)
-#   ./bootstrap-lab.sh sources    solo clonar y parchear los repos
-#   ./bootstrap-lab.sh build      solo compilar monado/basalt/hello_xr
-#   ./bootstrap-lab.sh patch-nv   aplicar los parches Project-VR al DKMS de NVIDIA
+#   ./bootstrap-lab.sh            everything (deps + repos + patches + build)
+#   ./bootstrap-lab.sh deps       apt packages only
+#   ./bootstrap-lab.sh nvidia     the 595 driver only (asks for a reboot at the end)
+#   ./bootstrap-lab.sh sources    clone and patch the upstream repos only
+#   ./bootstrap-lab.sh build      compile monado/basalt/hello_xr only
+#   ./bootstrap-lab.sh patch-nv   apply the Project-VR patches to NVIDIA's DKMS tree
 #
-# El orden real es: deps -> nvidia -> REBOOT -> sources -> build -> patch-nv -> REBOOT.
-# Corriendo sin argumentos hace deps+sources+build y te dice cuándo reiniciar.
+# The real order is: deps -> nvidia -> REBOOT -> sources -> build -> patch-nv -> REBOOT.
+# Running with no argument does deps+sources+build and tells you when to reboot.
 #
-# Se puede correr como usuario normal (escala con sudo) o directamente como root, por
-# ejemplo desde 'sudo -i', para no tipear la password en cada paso. Como root necesita
-# saber de quién es el $HOME donde viven los repos: lo deduce de $SUDO_USER, y si no, del
-# dueño de este repo. Se puede forzar con TARGET_USER=... El paso a usuario NO es una
-# formalidad: compilar Monado como root deja un árbol root-owned que después no podés ni
-# recompilar ni borrar sin sudo.
+# Runs either as a normal user (escalating with sudo) or directly as root, e.g. from
+# 'sudo -i', so you do not retype the password at every step. As root it needs to know
+# whose $HOME holds the repos: it infers that from $SUDO_USER, and failing that from the
+# owner of this repo. Override with TARGET_USER=... Dropping to the user is NOT a
+# formality: building Monado as root leaves a root-owned tree you can then neither
+# rebuild nor delete without sudo.
 #
-# Pensado para correr DENTRO del sistema del lab, no en el sistema principal. Se niega a
-# arrancar si detecta que está en el principal: instalar el 595-open ahí rompería el 550
-# que hoy funciona (los stacks son excluyentes) y perderíamos el único entorno que anda.
+# Meant to run INSIDE the lab system, not on your working system. Installing 595-open
+# replaces whatever NVIDIA driver is already there — the stacks are mutually exclusive —
+# so it refuses to start on a machine with a different driver already loaded.
 
 set -u
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"   # reverb-g2-linux/
 NVIDIA_VER="595.71.05"
 
-# --- Quién soy y cómo escalo ---------------------------------------------------------------
+# --- Who am I and how do I escalate --------------------------------------------------------
 if [ "$(id -u)" = "0" ]; then
 	IS_ROOT=1
 	SUDO=""
 	TARGET_USER="${TARGET_USER:-${SUDO_USER:-}}"
 	[ -n "$TARGET_USER" ] || TARGET_USER="$(stat -c %U "$REPO_DIR" 2>/dev/null || true)"
 	if [ -z "$TARGET_USER" ] || [ "$TARGET_USER" = "root" ]; then
-		echo "Corriendo como root no puedo deducir el usuario del lab (ni \$SUDO_USER ni el" >&2
-		echo "dueño de $REPO_DIR sirven). Repetilo así:" >&2
-		echo "    TARGET_USER=tuusuario $0 ${1:-}" >&2
+		echo "Running as root I cannot work out the lab user (neither \$SUDO_USER nor the" >&2
+		echo "owner of $REPO_DIR helps). Run it like this instead:" >&2
+		echo "    TARGET_USER=youruser $0 ${1:-}" >&2
 		exit 1
 	fi
 	TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
-	[ -n "$TARGET_HOME" ] || { echo "El usuario '$TARGET_USER' no existe." >&2; exit 1; }
-	# runuser vive en /usr/sbin, que no está en el PATH de un usuario normal.
+	[ -n "$TARGET_HOME" ] || { echo "No such user: '$TARGET_USER'." >&2; exit 1; }
+	# runuser lives in /usr/sbin, which is not on a normal user's PATH.
 	RUNUSER="$(command -v runuser || true)"
 	[ -n "$RUNUSER" ] || RUNUSER=/usr/sbin/runuser
-	[ -x "$RUNUSER" ] || { echo "Falta 'runuser' (util-linux)." >&2; exit 1; }
+	[ -x "$RUNUSER" ] || { echo "Missing 'runuser' (util-linux)." >&2; exit 1; }
 else
 	IS_ROOT=0
 	SUDO="sudo"
@@ -53,38 +53,44 @@ else
 fi
 BASE="${BASE:-$TARGET_HOME/vr}"
 
-# Los pasos que no necesitan privilegios (clonar, parchear, compilar) se corren SIEMPRE como
-# el usuario del lab, aunque hayamos entrado como root. Reinvoca este mismo script: adentro
-# ya no somos root, así que cae por la rama normal.
+# The steps that need no privileges (clone, patch, build) ALWAYS run as the lab user, even
+# when we came in as root. It re-invokes this same script: inside, we are no longer root, so
+# it takes the normal branch.
 as_user_step() {
 	if [ "$IS_ROOT" = "1" ]; then
-		echo "    (paso '$1' como $TARGET_USER, para no dejar el árbol root-owned)"
+		echo "    (step '$1' as $TARGET_USER, so the tree does not end up root-owned)"
 		"$RUNUSER" -u "$TARGET_USER" -- env HOME="$TARGET_HOME" BASE="$BASE" "$0" "$1"
 	else
 		"do_$1"
 	fi
 }
 
-# --- Guardas ------------------------------------------------------------------------------
-if [ -d /home/brunduk/Documents/linux_vr_base/monado ] && [ ! -f /etc/vr-lab-machine ]; then
-	cat >&2 <<-EOF
-	ALTO. Esto parece el sistema PRINCIPAL, no el lab.
+# --- Guards --------------------------------------------------------------------------------
+# Installing 595-open uninstalls whatever NVIDIA driver is currently loaded. If a different
+# version is running, this is probably your working system rather than the lab.
+if [ ! -f /etc/vr-lab-machine ] && command -v nvidia-smi >/dev/null 2>&1; then
+	CURRENT_NV="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1)"
+	if [ -n "$CURRENT_NV" ] && [ "$CURRENT_NV" != "$NVIDIA_VER" ]; then
+		cat >&2 <<-EOF
+		STOP. This machine is already running NVIDIA $CURRENT_NV.
 
-	Instalar el driver 595-open acá reemplaza el 550 que hoy funciona y te quedás sin
-	entorno andando. El lab es una instalación aparte, en el otro disco.
+		Installing $NVIDIA_VER-open replaces it, and the stacks are mutually exclusive: if
+		this is the system you actually work on, you will lose a working environment. The
+		lab is meant to be a separate install, ideally on a separate disk.
 
-	Si de verdad estás en el lab y la detección se equivocó:
-	    sudo touch /etc/vr-lab-machine
-	EOF
-	exit 1
+		If this really is the lab:
+		    sudo touch /etc/vr-lab-machine
+		EOF
+		exit 1
+	fi
 fi
-command -v apt >/dev/null || { echo "Esto es para Debian/Ubuntu." >&2; exit 1; }
+command -v apt >/dev/null || { echo "This is for Debian/Ubuntu." >&2; exit 1; }
 
 STEP="${1:-all}"
 
-# --- Paso: dependencias --------------------------------------------------------------------
+# --- Step: dependencies --------------------------------------------------------------------
 do_deps() {
-	echo "### Paquetes base"
+	echo "### Base packages"
 	$SUDO apt update
 	$SUDO apt install -y \
 		build-essential dkms linux-headers-amd64 git curl ca-certificates \
@@ -97,25 +103,25 @@ do_deps() {
 		libavcodec-dev libavformat-dev libavutil-dev libswscale-dev ffmpeg \
 		libopencv-dev libboost-all-dev libtbb-dev libfmt-dev \
 		x11-xserver-utils pciutils usbutils time
-	# libdrm-dev NO es opcional aunque nada falle sin él: la lógica de Monado es
+	# libdrm-dev is NOT optional even though nothing fails without it. Monado's logic is
 	#   XRT_HAVE_WAYLAND DEPENDS WAYLAND_FOUND WAYLAND_SCANNER_FOUND WAYLAND_PROTOCOLS_FOUND LIBDRM_FOUND
-	# así que sin libdrm-dev se cae Wayland ENTERO — y con él XRT_HAVE_WAYLAND_DIRECT, que es
-	# el backend de DRM lease. cmake no avisa: sólo deja las opciones en OFF y compila igual.
-	# El síntoma aparece mucho después, en runtime:
+	# so without libdrm-dev the WHOLE of Wayland drops out — and with it XRT_HAVE_WAYLAND_DIRECT,
+	# which is the DRM lease backend. cmake says nothing: it just leaves the options OFF and
+	# builds anyway. The symptom shows up much later, at runtime:
 	#   "Could not find target factory with identifier 'direct_wayland'"
-	# Costó una sesión entera (2026-08-04). Ver docs/04, sección de Wayland.
+	# This cost a whole session (2026-08-04). See docs/04, the Wayland section.
 
-	echo "### Reglas udev del casco"
+	echo "### udev rules for the headset"
 	$SUDO cp "$REPO_DIR/scripts/70-wmr-reverb.rules" "$REPO_DIR/scripts/71-usb-no-autosuspend.rules" /etc/udev/rules.d/
 	$SUDO udevadm control --reload-rules
 	$SUDO usermod -aG plugdev,adm,systemd-journal "$TARGET_USER"
-	echo "    (el cambio de grupos de $TARGET_USER necesita cerrar y abrir sesión)"
+	echo "    (the group change for $TARGET_USER needs a log out and back in)"
 }
 
-# --- Paso: driver NVIDIA -------------------------------------------------------------------
+# --- Step: NVIDIA driver -------------------------------------------------------------------
 do_nvidia() {
-	echo "### Driver NVIDIA $NVIDIA_VER (repo oficial de NVIDIA para debian13)"
-	echo "    NO usar el nvidia-driver de Debian: los stacks son excluyentes."
+	echo "### NVIDIA driver $NVIDIA_VER (NVIDIA's own debian13 repo)"
+	echo "    Do NOT use Debian's nvidia-driver: the stacks are mutually exclusive."
 	curl -fsSL -o /tmp/cuda-keyring.deb \
 		https://developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64/cuda-keyring_1.1-1_all.deb
 	$SUDO dpkg -i /tmp/cuda-keyring.deb
@@ -123,17 +129,17 @@ do_nvidia() {
 	$SUDO apt install -y "nvidia-driver-pinning-$NVIDIA_VER"
 	$SUDO apt install -y nvidia-open
 	echo
-	echo ">>> REINICIAR AHORA, y después: $0 sources"
+	echo ">>> REBOOT NOW, then: $0 sources"
 }
 
-# --- Paso: código fuente -------------------------------------------------------------------
-# Se clona de upstream y se aplican nuestros parches, en vez de traer los árboles enteros:
-# el bundle queda en kilobytes y se ve exactamente qué cambiamos nosotros. Los SHA son las
-# bases exactas contra las que los parches fueron generados y probados.
+# --- Step: source trees --------------------------------------------------------------------
+# We clone upstream and apply our patches rather than vendoring whole trees: the bundle stays
+# in the kilobytes and it is obvious exactly what we changed. The SHAs are the exact bases the
+# patches were generated and tested against.
 clone_at() {   # url dir sha
 	local url="$1" dir="$2" sha="$3"
 	if [ -d "$dir/.git" ]; then
-		echo "    $dir ya existe, no lo toco"
+		echo "    $dir already exists, leaving it alone"
 		return 0
 	fi
 	git clone "$url" "$dir"
@@ -148,37 +154,37 @@ do_sources() {
 	clone_at https://gitlab.freedesktop.org/monado/monado.git monado \
 		826fb91ffdfbb2808d0821e07fff18025e9ec3fa
 	git -C monado am "$REPO_DIR/patches/monado/"*.patch || {
-		echo "    Los parches de Monado no aplicaron limpio. 'git -C monado am --abort' y revisar." >&2
+		echo "    The Monado patches did not apply cleanly. 'git -C monado am --abort' and look." >&2
 		return 1
 	}
-	echo "    NOTA: falta además el parche 90Hz de Project-VR (nominal_frame_interval 1e9/90)."
-	echo "          Sin él el intervalo nominal queda en 60Hz. Ver docs/04-lab-90hz.md paso 5."
+	echo "    NOTE: the Project-VR 90 Hz patch (nominal_frame_interval 1e9/90) is still missing."
+	echo "          Without it the nominal interval stays at 60 Hz. See docs/04-lab-90hz.md step 5."
 
-	echo "### Basalt (SLAM, sin parches nuestros)"
+	echo "### Basalt (SLAM, no patches of ours)"
 	clone_at https://gitlab.freedesktop.org/mateosss/basalt.git basalt \
 		df6e970c8da7636eb401a09e3317fbeaaf829b9a
 	git -C basalt submodule update --init --recursive
 
-	echo "### OpenXR-SDK-Source (el player 360/VR180)"
+	echo "### OpenXR-SDK-Source (the 360/VR180 player)"
 	clone_at https://github.com/KhronosGroup/OpenXR-SDK-Source.git OpenXR-SDK-Source \
 		c610211f38f4e1e4ac811ced6135e144eedc7cf2
 	git -C OpenXR-SDK-Source am "$REPO_DIR/patches/hello_xr-player/"*.patch || {
-		echo "    Los parches del player no aplicaron limpio." >&2
+		echo "    The player patches did not apply cleanly." >&2
 		return 1
 	}
 }
 
-# --- Paso: compilar ------------------------------------------------------------------------
+# --- Step: build ---------------------------------------------------------------------------
 do_build() {
-	cd "$BASE" || { echo "No existe $BASE, corré '$0 sources' primero" >&2; exit 1; }
+	cd "$BASE" || { echo "$BASE does not exist, run '$0 sources' first" >&2; exit 1; }
 
-	# Sin esto un cmake que falla se lo come el pipe (típicamente '| tail') y el script
-	# termina en 0 con medio árbol sin compilar. Pasó: hello_xr no configuró por falta de
-	# libxxf86vm-dev y el bootstrap dio "todo bien". Cada paso aborta explícito.
+	# Without this a failing cmake gets swallowed by the pipe (typically '| tail') and the
+	# script exits 0 with half the tree unbuilt. It happened: hello_xr failed to configure
+	# for want of libxxf86vm-dev and bootstrap reported success. Each step aborts explicitly.
 	local step
-	step() {   # step <descripción> <comando...>
+	step() {   # step <description> <command...>
 		local what="$1"; shift
-		"$@" || { echo "FALLO: $what" >&2; return 1; }
+		"$@" || { echo "FAILED: $what" >&2; return 1; }
 	}
 
 	echo "### Basalt"
@@ -191,50 +197,50 @@ do_build() {
 		-DXRT_HAVE_BASALT=ON -DXRT_FEATURE_SERVICE=ON || return 1
 	step "ninja monado" ninja -C monado/build || return 1
 
-	echo "### hello_xr (player 360/VR180)"
+	echo "### hello_xr (360/VR180 player)"
 	step "cmake hello_xr" cmake -S OpenXR-SDK-Source -B OpenXR-SDK-Source/build -GNinja \
 		-DBUILD_TESTS=ON -DBUILD_API_LAYERS=OFF -DBUILD_CONFORMANCE_TESTS=OFF || return 1
 	step "ninja hello_xr" ninja -C OpenXR-SDK-Source/build hello_xr || return 1
 
-	echo "### Scripts de arranque"
+	echo "### Launcher scripts"
 	cp "$REPO_DIR/scripts/jack-in.sh" "$REPO_DIR/scripts/play360.sh" "$REPO_DIR/scripts/get360.sh" "$BASE/"
 	chmod +x "$BASE"/*.sh
 	echo
-	echo "    jack-in.sh detecta solo dónde están los árboles (VR_BASE) y saca una foto del"
-	echo "    layout de monitores antes de tocar los CRTC, así que ya no hay salidas de video"
-	echo "    hardcodeadas. Si el casco no cuelga de DP-0, pasarle HMD_OUTPUT=DP-x."
+	echo "    jack-in.sh finds the trees on its own (VR_BASE) and snapshots the monitor"
+	echo "    layout before touching any CRTC, so there are no hardcoded video outputs"
+	echo "    left. If your headset is not on DP-0, pass HMD_OUTPUT=DP-x."
 }
 
-# --- Paso: parches de NVIDIA vía DKMS -------------------------------------------------------
+# --- Step: NVIDIA patches via DKMS ---------------------------------------------------------
 do_patch_nv() {
 	local SRC="/usr/src/nvidia-$NVIDIA_VER"
-	[ -d "$SRC" ] || { echo "No existe $SRC. ¿Instalaste el driver? ($0 nvidia)" >&2; exit 1; }
+	[ -d "$SRC" ] || { echo "$SRC does not exist. Did you install the driver? ($0 nvidia)" >&2; exit 1; }
 
-	echo "### Parches Project-VR sobre el árbol DKMS de NVIDIA"
+	echo "### Project-VR patches on NVIDIA's DKMS tree"
 	$SUDO mkdir -p "$SRC/patches"
 	$SUDO cp "$REPO_DIR/patches/nvidia/"000*.patch "$SRC/patches/"
 
-	echo "### Verificando en seco antes de tocar nada"
+	echo "### Dry run before touching anything"
 	local fail=0
 	for p in "$SRC/patches/"000*.patch; do
 		if $SUDO patch -d "$SRC" -p1 --dry-run --force < "$p" >/dev/null 2>&1; then
 			echo "    OK   $(basename "$p")"
 		else
-			echo "    FALLA $(basename "$p")" >&2
+			echo "    FAIL $(basename "$p")" >&2
 			fail=1
 		fi
 	done
 	[ "$fail" = "0" ] || {
-		echo "Algún parche no aplica sobre este árbol. Ver docs/04-lab-90hz.md: en 610.x hay" >&2
-		echo "que dropear los hunks de flatnessDetThresh del 0001." >&2
+		echo "Some patch does not apply to this tree. See docs/04-lab-90hz.md: on 610.x you" >&2
+		echo "have to drop the flatnessDetThresh hunks from 0001." >&2
 		exit 1
 	}
 
 	if grep -q '^PATCH\[0\]' "$SRC/dkms.conf" 2>/dev/null; then
-		echo "    dkms.conf ya tiene los PATCH[], no lo duplico"
+		echo "    dkms.conf already has the PATCH[] lines, not duplicating them"
 	else
-		# El mecanismo PATCH[] de dkms aplica sobre una COPIA en cada build, así que el
-		# árbol fuente queda limpio y un upgrade de kernel re-aplica todo solo.
+		# dkms's PATCH[] mechanism applies to a COPY on every build, so the source tree
+		# stays clean and a kernel upgrade re-applies everything by itself.
 		$SUDO tee -a "$SRC/dkms.conf" >/dev/null <<-EOF
 		PATCH[0]="0001-nvkms-VESA-DisplayID-DSC-VSDB-spec-correctness-fixes.patch"
 		PATCH[1]="0002-nvkms-nvidia-drm-enable-Wayland-DRM-lease-of-VR-HMDs.patch"
@@ -246,10 +252,10 @@ do_patch_nv() {
 	$SUDO dkms remove "nvidia/$NVIDIA_VER" --all || true
 	$SUDO dkms install "nvidia/$NVIDIA_VER"
 	echo
-	echo ">>> REINICIAR. Después probar 90Hz:"
-	echo "    XRT_COMPOSITOR_DESIRED_MODE=0 ./jack-in.sh 3dof   # 2880x1440@90 nativo"
-	echo "    (si falla, MODE=1 = 4320x2160@90)"
-	echo ">>> Y MIRAR EL PANEL FÍSICAMENTE. La API reporta 90fps aunque esté negro."
+	echo ">>> REBOOT. Then try 90 Hz:"
+	echo "    XRT_COMPOSITOR_DESIRED_MODE=0 ./jack-in.sh 3dof   # native 2880x1440@90"
+	echo "    (if that fails, MODE=1 = 4320x2160@90)"
+	echo ">>> AND LOOK AT THE PANEL. The API reports 90 fps even when it is black."
 }
 
 case "$STEP" in
@@ -263,7 +269,7 @@ case "$STEP" in
 		as_user_step sources || exit 1
 		as_user_step build   || exit 1
 		echo
-		echo "=== Falta el driver: '$0 nvidia', reiniciar, y después '$0 patch-nv' ==="
+		echo "=== Driver still missing: '$0 nvidia', reboot, then '$0 patch-nv' ==="
 		;;
 	*) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

@@ -6,8 +6,8 @@
 
 set -u
 
-# Dónde viven los árboles. El sistema principal los tiene en ~/Documents/linux_vr_base; el lab
-# (bootstrap-lab.sh) en ~/vr. Se autodetecta, y VR_BASE=... lo fuerza.
+# Where the source trees live. bootstrap-lab.sh puts them in ~/vr; the older hand-built setup
+# on the development machine used ~/Documents/linux_vr_base. Autodetected, VR_BASE=... overrides.
 if [ -n "${VR_BASE:-}" ]; then
 	:
 elif [ -d "$HOME/Documents/linux_vr_base/monado/build" ]; then
@@ -22,8 +22,8 @@ SERVICE="$MONADO_BUILD/src/xrt/targets/service/monado-service"
 LOG="$VR_BASE/jack-in.log"
 SOCKET="/run/user/$(id -u)/monado_comp_ipc"
 
-# La salida de video por la que cuelga el casco. DP-0 en ambas máquinas hasta ahora, pero
-# no hay nada que lo garantice: HMD_OUTPUT=DP-1 ./jack-in.sh si xrandr dice otra cosa.
+# The video output the headset hangs off. DP-0 on both of our machines so far, but nothing
+# guarantees that: HMD_OUTPUT=DP-1 ./jack-in.sh if xrandr says otherwise.
 HMD_OUTPUT="${HMD_OUTPUT:-DP-0}"
 
 # Mode 2 = 4320x2160@60 (supersampled render target for the 2880x1440 panel). 60Hz is forced
@@ -39,9 +39,9 @@ HMD_OUTPUT="${HMD_OUTPUT:-DP-0}"
 #
 # WMR_DISPLAY_INIT_SLEEP_SECONDS=2 (default 4) is load-bearing, see wake_panel() below.
 #
-# El modo se puede pisar desde afuera - es exactamente lo que pide el test de 90Hz del
-# cap. 04 (`XRT_COMPOSITOR_DESIRED_MODE=0 ./jack-in.sh 3dof`). Antes esta lista lo fijaba
-# en 2 sin importar el entorno, así que el test de 90Hz corría en silencio a 60Hz.
+# The mode can be overridden from outside - which is exactly what the 90Hz test in ch. 04 asks
+# for (`XRT_COMPOSITOR_DESIRED_MODE=0 ./jack-in.sh 3dof`). This list used to pin it to 2
+# regardless of the environment, so the 90Hz test was silently running at 60Hz.
 DESIRED_MODE="${XRT_COMPOSITOR_DESIRED_MODE:-2}"
 COMMON_ENV=(
 	VIT_SYSTEM_LIBRARY_PATH="$BASALT_LIB"
@@ -54,14 +54,14 @@ COMMON_ENV=(
 dp0_status() { xrandr --query 2>/dev/null | awk -v o="$HMD_OUTPUT" '$1==o{print $2}'; }
 service_pids() { pgrep -f "targets/service/monado-service"; }
 
-# Apagar el display del casco fuerza una reconfiguración de CRTCs, y ahí el driver NVIDIA
-# pierde en silencio la rotación del monitor portrait (xrandr sigue REPORTANDO "right"
-# mientras el panel muestra landscape). Hay que re-asertar el layout entero, y no sólo tras
-# el `--off`: también después de que Monado toma el display.
+# Switching the headset's display off forces a CRTC reconfiguration, and there the NVIDIA
+# driver silently loses the rotation of a portrait monitor (xrandr keeps REPORTING "right"
+# while the panel shows landscape). The whole layout has to be re-asserted, and not only after
+# the `--off`: also after Monado takes the display.
 #
-# Antes esto estaba hardcodeado con las salidas del sistema principal, lo cual en cualquier
-# otra máquina reordena o apaga monitores que no tienen nada que ver. Ahora se saca una foto
-# del layout REAL antes de tocar nada y se restaura esa foto.
+# This used to be hardcoded with the outputs of one particular machine, which on anybody
+# else's rig would rearrange or switch off monitors that have nothing to do with VR. Now we
+# snapshot the REAL layout before touching anything and restore that snapshot.
 MONITOR_LAYOUT=()
 
 snapshot_monitors() {
@@ -87,11 +87,11 @@ snapshot_monitors() {
 					break
 				}
 			}
-			if (pos == "") cur = ""   # conectado pero sin CRTC: no lo tocamos
+			if (pos == "") cur = ""   # connected but no CRTC: leave it alone
 			next
 		}
-		# El modo activo es el de la línea con "*". La geometría de arriba ya viene rotada
-		# (1080x1920), así que el modo hay que sacarlo de acá o --mode falla.
+		# The active mode is the line carrying "*". The geometry on the header line is
+		# already rotated (1080x1920), so the mode has to come from here or --mode fails.
 		/\*/ { if (cur != "" && mode == "") mode = $1 }
 		END { flush() }
 	')
@@ -109,8 +109,8 @@ reassert_monitors() {
 		[ "$rot" != "normal" ] && rotated+=("$name:$rot")
 	done
 
-	# Ciclar la rotación a none es lo que realmente obliga al driver a reprogramar el CRTC:
-	# re-pedir la rotación que xrandr ya cree tener es un no-op.
+	# Cycling the rotation back through normal is what actually forces the driver to
+	# reprogram the CRTC: re-requesting the rotation xrandr already thinks it has is a no-op.
 	for entry in "${rotated[@]}"; do
 		xrandr --output "${entry%%:*}" --rotate normal 2>/dev/null
 	done
@@ -118,8 +118,8 @@ reassert_monitors() {
 
 	xrandr "${args[@]}" 2>/dev/null
 
-	# En KDE, Plasma tiene su propia idea del layout y puede volver a pisar lo de xrandr;
-	# kscreen-doctor habla con el mismo daemon, así que la rotación queda pegada.
+	# On KDE, Plasma has its own idea of the layout and can overwrite what xrandr just did;
+	# kscreen-doctor talks to the same daemon, so the rotation sticks.
 	if [ ${#rotated[@]} -gt 0 ] && command -v kscreen-doctor >/dev/null 2>&1; then
 		for entry in "${rotated[@]}"; do
 			kscreen-doctor "output.${entry%%:*}.rotation.${entry##*:}" >/dev/null 2>&1
@@ -224,10 +224,10 @@ if [ "$(dp0_status)" != "connected" ]; then
 	}
 fi
 
-# La foto se saca ACÁ: el layout todavía está intacto, y el casco (que ya despertó) queda
-# fuera de ella por el filtro de HMD_OUTPUT.
+# The snapshot is taken HERE: the layout is still intact, and the headset (already awake) is
+# kept out of it by the HMD_OUTPUT filter.
 snapshot_monitors
-echo "Desktop layout: ${MONITOR_LAYOUT[*]:-<ninguno detectado>}"
+echo "Desktop layout: ${MONITOR_LAYOUT[*]:-<none detected>}"
 
 echo "Freeing the headset's display from the desktop ($HMD_OUTPUT)..."
 xrandr --output "$HMD_OUTPUT" --off
