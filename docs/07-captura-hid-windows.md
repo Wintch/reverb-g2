@@ -1,5 +1,17 @@
 # 07 — Capturar la secuencia HID de 90Hz en Windows
 
+> ## ⚠ ARCHIVADO (2026-08-04, 21:00) — NO hace falta hacer esto
+>
+> Este capítulo existía para averiguar qué comando HID le pide el modo de 90Hz al casco.
+> **Ese comando no existe.** Se desensambló el driver Oasis de HP —el que corre el G2 a 90Hz
+> en Windows hablándole al casco directo— y su único comando de panel es *Display Enable*
+> (Usage Page `0x03`, Usage `0x21`), que es exactamente el `{0x04,0x01}` que Monado ya manda.
+>
+> Evidencia y método en **`docs/09-oasis-driver-re.md`**. Descarte en el cap. 06.
+>
+> Se conserva el procedimiento porque la técnica (usbmon + tshark + `analyze-hid.py`) sigue
+> sirviendo para otras preguntas — por ejemplo los resets del hub USB2 bajo carga.
+
 **Este documento se sigue solo, sin agente.** En Windows no hay Claude al lado: la idea es
 que salgas de acá con dos archivos y vuelvas a Linux a analizarlos.
 

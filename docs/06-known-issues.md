@@ -125,10 +125,52 @@ el logo de HP — idéntico al baseline sin parches. Verificación física, seis
 completa en el cap. 04. El control a 60Hz corrido después dio imagen perfecta, así que el
 setup estaba sano.
 
-**La atribución "es NVIDIA, no es Monado" queda en duda.** El driver WMR de Monado manda la
-misma secuencia HID de activación para 60 y para 90Hz (`wmr_hmd.c:767`), y el "parche 90Hz"
-sólo setea `nominal_frame_interval_ns` para el pacing (`wmr_hmd.c:1992`) — no toca el panel.
-Ver la hipótesis viva en el cap. 04.
+### DESCARTADO: "falta un comando HID que le pida el modo al casco" (2026-08-04, 21:00)
+
+Se creía, y se escribió como hipótesis viva en el cap. 04 y en `CLAUDE.md`: el driver WMR de
+Monado manda la misma secuencia HID de activación para 60 y para 90Hz (`wmr_hmd.c:767`), y el
+"parche 90Hz" sólo setea `nominal_frame_interval_ns` para el pacing (`wmr_hmd.c:1992`) — no
+toca el panel. De ahí salió todo el `docs/07` (capturar el HID de Windows).
+
+**Es falso, y hay dos evidencias independientes:**
+
+1. **Por argumento (19:30):** Project-VR llega a `4320x2160@90` con parches al driver de
+   video y sin ningún comando propietario.
+2. **Por lectura del binario (21:00):** se montaron read-only las NTFS del disco de Windows y
+   se desensambló el **Oasis Driver de HP** — el driver standalone que corre el G2 a 90Hz y
+   que habla con el casco directo, sin pasar por el runtime WMR del SO. Su **único** comando
+   de panel es *Display Enable* (HID Usage Page `0x03` VR Controls, Usage `0x21`), que es
+   exactamente el `{0x04, 0x01}` que Monado ya manda. No existe comando de refresh rate.
+   Procedimiento y falsos positivos en **`docs/09-oasis-driver-re.md`**.
+
+Los dos falsos positivos que hay que no volver a perseguir: `HmdDriver_SetFrameRate` es de
+las cámaras (`IspFrameRate`/`SensorFrameRate`, igual que `OV7251SetFrameRate`), y
+`Detected change of refresh rate` es contabilidad interna de SteamVR sobre
+`Prop_DisplayFrequency_Float`.
+
+**Conclusión: la secuencia HID de Monado es correcta y suficiente. El panel adopta el refresh
+del video que le llega.** `docs/07-captura-hid-windows.md` queda archivado — no hace falta
+bootear Windows.
+
+Nota de proceso: esta hipótesis murió dos veces porque entre la primera y la segunda
+`CLAUDE.md` quedó desactualizado dándola por viva, y se la volvió a citar como "la única que
+explica los resultados". Al cerrar una línea, actualizar `CLAUDE.md` **en el mismo commit**.
+
+### DESCARTADO: DSC como causa (2026-08-04, 21:30) — la cuarta teoría de bandwidth que cae
+
+Muerto lo del HID, el sospechoso era DSC: el parche 0001 de Project-VR dice arreglar el
+*"90 Hz handshake"* de DSC 1.1. Pero los números del EDID del casco no lo sostienen:
+
+| modo | pixel clock | 24 bpp | ¿anda? |
+|---|---|---|---|
+| 2880x1440@90 | 428.6 MHz | **10.29 Gbps** | NO |
+| 4320x2160@60 | 709.1 MHz | 17.02 Gbps | SÍ |
+| 4320x2160@90 | 905.4 MHz | 21.73 Gbps | NO |
+
+Enlace: 4 lanes HBR3 = **25.92 Gbps** útiles. El modo `2880x1440@90` pide menos de la mitad
+que el `4320x2160@60` que funciona: **no puede necesitar compresión**, y falla igual. DSC
+explicaría a lo sumo el modo de 4320@90 a 30 bpp, no el otro. Tabla completa y el test que
+falta correr, en el cap. 04.
 
 ### Descartado: contención de displays / dominios de reloj de la GPU
 

@@ -46,11 +46,28 @@ imagen perfecta. Tabla y logs en `docs/04-lab-90hz.md`, "GNOME/mutter ejecutado"
 
 Cambiamos X11 Direct-Mode por Wayland DRM lease — dos mecanismos que casi no comparten código
 del lado del driver — y el síntoma no se movió. Sumado a que el 595-open parcheado falló igual
-que el sin parchear, la hipótesis del HID (abajo) quedó como la única que explica los ocho
-resultados. **El siguiente paso, y el único que la convierte en hecho, es la captura HID de
-Windows: `docs/07-captura-hid-windows.md`.** No necesita agente.
+que el sin parchear, del lado de la vía de display ya no queda casi nada.
 
 Para chequear el lease sin levantar Monado: `scripts/check-lease.sh`.
+
+**Y se cerraron las dos hipótesis que quedaban, las dos por evidencia:**
+
+- **NO falta un comando HID de modo.** Se desensambló el driver Oasis de HP (el que corre el
+  G2 a 90Hz en Windows hablándole al casco directo). Su único comando de panel es *Display
+  Enable* — HID Usage Page `0x03`, Usage `0x21` — que es exactamente el `{0x04,0x01}` que
+  Monado ya manda. **No existe comando de refresh rate.** Método, falsos positivos y strings
+  del firmware en `docs/09-oasis-driver-re.md`. `docs/07` queda archivado: no hace falta
+  bootear Windows.
+- **NO es DSC.** Del EDID del casco: `2880x1440@90` pide **10.29 Gbps**, menos de la mitad que
+  el `4320x2160@60` que anda perfecto (17.02), contra 25.92 Gbps de enlace. Ese modo no puede
+  necesitar compresión y falla igual. Cuarta teoría de ancho de banda que cae medida.
+
+**Lo único que comparten los dos modos que fallan es el 90 Hz.** No es bandwidth, no es
+compresión, no es un comando faltante, no es la vía de display, no es contención de heads,
+no es la fuente ni el cable.
+
+**El test más barato que discrimina y que NO está corrido:** `2880x1440@90` (modo 0) por
+Wayland DRM lease — `./scripts/jack-in-wayland.sh 0`. Sólo se probó en X11.
 
 #### Lo anterior (2026-08-04, 19:10): los parches del 595-open NO arreglan el 90Hz
 
@@ -66,13 +83,13 @@ dominios de reloj de la GPU (él ya había tenido que apagar paneles de 60Hz par
 sistema — y sigue apagado. No es eso. Para repetirlo sin quedarse sin pantalla está
 `scripts/solo-hmd-test.sh`, que restaura el escritorio desde un `trap EXIT`.
 
-**La línea viva ahora es otra, y contradice lo que el proyecto venía asumiendo.** El driver
-WMR de Monado manda la misma secuencia HID de activación para 60 y para 90Hz
-(`wmr_hmd.c:767`), y el "parche 90Hz de Monado" sólo setea `nominal_frame_interval_ns` para
-el pacing (`wmr_hmd.c:1992`) — no toca el panel. O sea: **puede que al casco nunca se le pida
-cambiar a 90Hz, y que la causa raíz no esté en NVIDIA.** Es una hipótesis consistente con los
-seis resultados, no un hecho: falta la captura HID de Windows para confirmarla o matarla.
-Procedimiento completo y autocontenido en `docs/07-captura-hid-windows.md`.
+~~**La línea viva ahora es otra**: puede que al casco nunca se le pida cambiar a 90Hz
+(`wmr_hmd.c:767` manda lo mismo a 60 y a 90). Falta la captura HID de Windows.~~
+
+> **DESCARTADO el mismo día, dos veces** (ver arriba y `docs/09-oasis-driver-re.md`). Se deja
+> tachado en vez de borrado porque este párrafo, al quedar sin actualizar unas horas, hizo que
+> se resucitara la hipótesis y se la citara como "la única que explica los resultados".
+> **Al cerrar una línea, actualizar esta sección en el mismo commit.**
 
 Pendientes que necesitan sudo (prioridad RT para Monado, zram, audio, deps de basalt) siguen
 sin hacer; ninguno bloqueaba el test.
@@ -173,8 +190,9 @@ docs/03-controllers.md      estado de los controllers (3DoF, límite del driver 
 docs/04-lab-90hz.md         >>> TU GUION <<<
 docs/05-resolve.md          DaVinci Resolve (otro objetivo del rig, no toca esto)
 docs/06-known-issues.md     lo descartado, con evidencia
-docs/07-captura-hid-windows.md  capturar el HID de 90Hz en Windows (se sigue SIN agente)
+docs/07-captura-hid-windows.md  ARCHIVADO: el comando de modo no existe (ver cap. 09)
 docs/08-passthrough-y-limites.md  idea de passthrough + límites por marcas (no empezado)
+docs/09-oasis-driver-re.md  qué le manda Windows al panel, leído del driver de HP
 patches/nvidia/             los 3 parches de Project-VR para el 595-open
 patches/monado/             7 parches nuestros (companion, controllers, WMR_CAMERAS)
 patches/hello_xr-player/    3 parches: el player 360/VR180 completo
@@ -184,6 +202,7 @@ scripts/play360.sh          reproduce 360/VR180/plano en el casco
 scripts/get360.sh           baja video VR de YouTube (necesita el cliente android_vr)
 scripts/solo-hmd-test.sh    test con el casco como ÚNICO display (restaura con trap EXIT)
 scripts/check-lease.sh      ¿el compositor Wayland ofrece el conector del casco? (sin Monado)
+scripts/xref.py             xrefs de strings en binarios PE, sólo con binutils
 scripts/jack-in-wayland.sh  levanta el pipeline VR por DRM lease (Wayland; necesita GNOME)
 scripts/drmprops.c          lee non-desktop/modos del conector directo del kernel
 scripts/capture-hid.sh      captura el HID del companion por modo (usbmon, necesita root)

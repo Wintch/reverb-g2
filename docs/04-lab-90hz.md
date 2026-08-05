@@ -483,15 +483,15 @@ fallo no se movió: mismo síntoma exacto, mismo logo de HP. Sumado a que el 595
 falló igual que el sin parchear, ya casi no queda superficie del lado de NVIDIA donde la
 causa pueda estar escondida.
 
-**Lo que esto refuerza.** La hipótesis del bloque "a nadie le está diciendo al casco que vaya
-a 90Hz" (`wmr_hmd.c:767`, misma secuencia HID para 60 y para 90) es ahora la única que explica
-los ocho resultados. Sigue siendo hipótesis: Project-VR reporta el G2 a `4320x2160@90`, pero
-con SteamVR y su fork de WMR dentro de `vrserver`, no con el driver WMR de Monado — puede que
-manden un HID que nosotros no.
+**Lo que NO se sigue de esto.** Al escribir esta sección se dijo que la hipótesis del comando
+HID quedaba "como la única que explica los ocho resultados", y se propuso la captura HID de
+Windows como siguiente paso. **Era un error**: el bloque anterior (`GIRO`, 19:30) ya la había
+descartado, y `CLAUDE.md` había quedado desactualizado dándola por viva. Peor: unas horas
+después se leyó el driver de HP y se confirmó que **el comando de modo no existe**
+(`docs/09-oasis-driver-re.md`). Se deja el error escrito porque es exactamente el tipo de
+recaída que este proyecto ya pagó tres veces.
 
-**Siguiente paso, y es el único que convierte esto en hecho:** la captura HID de Windows de
-`docs/07-captura-hid-windows.md`, diffeada con `scripts/analyze-hid.py` contra nuestras
-`~/vr/hid-mode{0,1,2}.txt`. No necesita agente.
+**El siguiente paso real está en la sección de abajo**, y no necesita bootear Windows.
 
 #### Trampa que costó un ciclo de debug: el player sale con EOF en stdin
 
@@ -505,6 +505,51 @@ no lo es. La forma correcta es la documentada: `sleep N | hello_xr ...`.
 Ojo que esto choca con `XRT_NO_STDIN=1`, que sí hace falta para **monado-service** (sin él
 muere con `epoll_ctl(stdin) failed`). Son dos procesos distintos: al servicio se le saca
 stdin, al player hay que dárselo vivo.
+
+### La teoría de DSC no sobrevive a la aritmética (2026-08-04, 21:30)
+
+Muerta la hipótesis del HID por segunda vez (ver `docs/09-oasis-driver-re.md`), el sospechoso
+que quedaba era DSC: si el panel sólo obedece al timing de video, el 90 Hz falla porque el
+timing que le llega no es decodificable, y el parche 0001 de Project-VR dice tratar
+justamente el *"90 Hz handshake"* de DSC 1.1.
+
+Antes de perseguirlo, se sacaron los números reales del EDID del casco, leído del kernel
+(`/sys/class/drm/card0-DP-1/edid`, 3 bloques: base + CEA + DisplayID 2.0):
+
+| modo | pixel clock | totales | 24 bpp | 30 bpp | ¿anda? |
+|---|---|---|---|---|---|
+| 2880x1440@90 | 428.6 MHz | 2980x1598 | **10.29 Gbps** | 12.86 Gbps | **NO** |
+| 4320x2160@60 | 709.1 MHz | 4420x2674 | 17.02 Gbps | 21.27 Gbps | **SÍ** |
+| 4320x2160@90 | 905.4 MHz | 4420x2276 | 21.73 Gbps | 27.16 Gbps | **NO** |
+
+Capacidad del enlace, 4 lanes HBR3 (8.1 Gbps/lane, 8b/10b → 80% útil): **25.92 Gbps**.
+
+**El modo `2880x1440@90` pide 10.29 Gbps — menos de la MITAD que el `4320x2160@60` que
+funciona perfecto.** No hay forma de que ese modo necesite compresión: entra tres veces en el
+enlace. Y falla igual que el otro.
+
+Sólo `4320x2160@90` a 30 bpp se pasa del enlace y necesitaría DSC de verdad. O sea que **DSC
+podría explicar como mucho uno de los dos modos que fallan, y no explica el otro.**
+
+Lo único que comparten los dos modos que fallan es el **90 Hz**. Es el mismo patrón que ya
+apareció tres veces en este proyecto: toda teoría de ancho de banda se cae al medirla. Van
+cuatro.
+
+Ojo con el matiz de la nota vieja de `CLAUDE.md` ("el modo de 60 que anda tiene pixel clock
+más alto que el de 90 que falla"): es cierto, pero comparaba `4320x2160@60` (709 MHz) contra
+`2880x1440@90` (428 MHz). Contra `4320x2160@90` (905 MHz) no vale. La afirmación correcta es
+la de la tabla.
+
+**El test más barato que discrimina, y no está corrido:** `2880x1440@90` (modo 0) por la vía
+de **Wayland DRM lease**. Sólo se probó en X11 direct-mode. Si por lease también falla, DSC
+queda descartado como causa de ese modo y el sospechoso pasa a ser el refresh rate en sí —
+algo del handshake o del bring-up del panel a 90 Hz, no del ancho de banda ni de la
+compresión.
+
+```bash
+./scripts/jack-in-wayland.sh 0     # 2880x1440@90
+# y verificacion FISICA, como siempre
+```
 
 ### Pendientes que necesitan sudo (no bloquean el test de 90Hz)
 
