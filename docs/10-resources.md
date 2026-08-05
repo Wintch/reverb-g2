@@ -203,3 +203,19 @@ exonerado, y el part number exacto del driver de backlight ya no cambia ninguna 
 
 Si alguna vez hiciera falta, el camino no es la FCC —su resolución es la que es— sino un
 teardown de la comunidad con fotos macro, o abrir el casco. Ninguno vale el riesgo hoy.
+
+### El Omnicept: mismo casco por dentro, un sensor de más
+
+El **HP Omnicept** (SKU `VR3000-0XX`, expediente FCC `HFS-A85R`) es un G2 con eye-tracking
+de Tobii agregado. Mismo puente, mismos paneles, mismo protocolo WMR — Monado ya reconoce su
+PID USB (`0x0680`) y lo mapea al mismo `WMR_HEADSET_REVERB_G2` que usamos (verificado en
+`origin/main`, `wmr_prober.c`). **Lo que aprendamos acá sobre 90 Hz debería aplicarle
+directo**, sin trabajo extra: es el mismo camino de display.
+
+El eye-tracking en sí es otra historia — no hay driver Tobii en ningún lado de Monado, ni
+ningún prior art abierto del que partir (a diferencia de WMR, que salió de años de reverse
+engineering sobre OpenHMD). No lo estamos persiguiendo: no tenemos el hardware.
+
+**Si tenés un Omnicept, o te sobra uno para donar a esta investigación**, avisá — correr
+`docs/16-lab-vblank.md` en uno confirmaría si el hallazgo del 90 Hz es del casco en general
+o algo específico de nuestra unidad.

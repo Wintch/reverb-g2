@@ -126,5 +126,10 @@ If you have a G2 and Linux, the most useful thing you can do is run
 [`docs/16-lab-vblank.md`](docs/16-lab-vblank.md) and report what the panel actually does.
 The EDIDs are prepared; the experiment needs eyes.
 
+If you have (or can donate) an **HP Omnicept** — same headset, plus Tobii eye-tracking —
+that matters too: Monado already treats it as a Reverb G2 at the USB level, so a 90 Hz
+result there would show whether this is a G2 problem in general or specific to our unit.
+See [`docs/10-resources.md`](docs/10-resources.md#el-omnicept-mismo-casco-por-dentro-un-sensor-de-más).
+
 Everything in this repo is written in English. Measurements beat opinions: if you assert
 something, say how you measured it.
