@@ -233,6 +233,7 @@ docs/10-recursos.md         índice de fuentes: driver de HP, FCC, chips, parque
 docs/11-panorama-hmd-linux.md  ¿es sólo NVIDIA? otros cascos, DK2, y dónde publicar
 docs/12-protocolo-g2.md     >>> REFERENCIA DEL PROTOCOLO <<< todo lo que sabemos del casco
 docs/13-bug-6bpc.md         >>> EL BUG <<< NVIDIA clava el G2 en 6 bits por color
+docs/14-nvidia-report.md    >>> REPORTE LISTO <<< para publicar en el foro de NVIDIA
 windows-kit/                paquete de captura para Windows (se empaqueta en windows-kit.7z)
 patches/nvidia/             los 3 parches de Project-VR para el 595-open
 patches/monado/             7 parches nuestros (companion, controllers, WMR_CAMERAS)
