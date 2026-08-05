@@ -102,7 +102,7 @@ report ID del `HIDP_VALUE_CAPS`. El efecto sobre el casco es idéntico. Ver cap.
 
 ## 4. Lo que NO existe: comando de refresh rate
 
-**[NUESTRO]** Se desensambló el driver **Oasis de HP** completo — los cuatro binarios — que es
+**[NUESTRO]** Se desensambló el driver **Oasis** completo — los cuatro binarios — que es
 el que corre el G2 a 90 Hz en Windows hablándole al casco directo, sin pasar por el runtime
 WMR del SO. **Su único comando de panel es Display Enable.** No hay comando de modo, refresh ni
 resolución (cap. 09).

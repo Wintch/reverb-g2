@@ -51,7 +51,7 @@ kernel module, más el de bpc, sobre GA104 → 90 Hz sigue fallando.
 
 El reviewer dice: "tu byte 18 idéntico es de un report de status (IN) — no dice nada sobre
 los reports OUT/feature que Windows manda". **Eso es correcto** sobre el byte 18. Pero la
-hipótesis no se cerró con el byte 18: se cerró desensamblando el driver Oasis de HP
+hipótesis no se cerró con el byte 18: se cerró desensamblando el driver Oasis
 (`docs/09`), y ese desensamblado es *exactamente* un inventario de reports OUT/feature:
 
 - `driver_oasis.dll` tiene **un solo** call site de `HidD_SetFeature` en todo el binario:

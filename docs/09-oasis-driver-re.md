@@ -1,6 +1,6 @@
-# 09 — Qué le manda Windows al panel del G2 (leído del driver de HP)
+# 09 — Qué le manda Windows al panel del G2 (leído del driver Oasis)
 
-**Resultado en una línea: el driver de HP que corre el G2 a 90 Hz en Windows NO le manda al
+**Resultado en una línea: el driver Oasis, que corre el G2 a 90 Hz en Windows NO le manda al
 casco ningún comando de modo. El único comando de panel que existe es "encender pantalla",
 y Monado ya lo manda.**
 
@@ -20,9 +20,9 @@ Hay **dos** drivers de WMR instalados por Steam, y la diferencia importa:
 | | qué es | sirve para esto |
 |---|---|---|
 | `MixedRealityVRDriver` (Microsoft) | puente de SteamVR al runtime WMR del SO | **no** — delega, no toca el USB |
-| `Oasis Driver for Windows Mixed Reality` (HP) | driver standalone, habla con el casco **directo** | **sí** |
+| `Oasis Driver for Windows Mixed Reality` (mbucchia) | driver standalone, habla con el casco **directo** | **sí** |
 
-El de HP es el bueno. Su manifiesto se ata al Hololens Sensors por VID:PID, o sea al mismo
+El de mbucchia es el bueno. Su manifiesto se ata al Hololens Sensors por VID:PID, o sea al mismo
 device que usa Monado:
 
 ```json
@@ -166,7 +166,7 @@ qué del enlace de video a 90 Hz no le gusta al casco — ver el análisis de an
 - **`client_utility.exe`** es un helper de la API de Steam (`STEAMSCREENSHOTS_INTERFACE_VERSION003`)
   y nada mas.
 
-Con eso los cuatro binarios del driver de HP quedan abiertos y sin nada mas que sacar.
+Con eso los cuatro binarios del driver Oasis quedan abiertos y sin nada mas que sacar.
 
 ## Suelto, sin mirar
 

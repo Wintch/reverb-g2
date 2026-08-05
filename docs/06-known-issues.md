@@ -137,7 +137,7 @@ toca el panel. De ahí salió todo el `docs/07` (capturar el HID de Windows).
 1. **Por argumento (19:30):** Project-VR llega a `4320x2160@90` con parches al driver de
    video y sin ningún comando propietario.
 2. **Por lectura del binario (21:00):** se montaron read-only las NTFS del disco de Windows y
-   se desensambló el **Oasis Driver de HP** — el driver standalone que corre el G2 a 90Hz y
+   se desensambló el **Oasis Driver** — el driver standalone que corre el G2 a 90Hz y
    que habla con el casco directo, sin pasar por el runtime WMR del SO. Su **único** comando
    de panel es *Display Enable* (HID Usage Page `0x03` VR Controls, Usage `0x21`), que es
    exactamente el `{0x04, 0x01}` que Monado ya manda. No existe comando de refresh rate.

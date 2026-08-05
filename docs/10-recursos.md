@@ -11,11 +11,19 @@ Las NTFS del rig se montan read-only sin bootear Windows:
 sudo mount -t ntfs-3g -o ro,noatime /dev/nvme0n1p4 /mnt/win4
 ```
 
-### Oasis Driver de HP — `/mnt/win4/SteamLibrary/steamapps/common/Oasis Driver for Windows Mixed Reality/`
+### Oasis Driver — `/mnt/win4/SteamLibrary/steamapps/common/Oasis Driver for Windows Mixed Reality/`
 
-**El recurso más importante que tenemos.** Es el driver standalone de HP: le habla al casco
-directo por HID/USB, sin pasar por el runtime WMR de Windows. Es *el* driver que corre el G2
-a 90 Hz.
+**El recurso más importante que tenemos.** Driver standalone de **Matthieu Bucchianeri**
+(`mbucchia`), publicado gratis en Steam el 2025-08-29 tras la remoción de WMR: le habla al
+casco directo por HID/USB, sin pasar por el runtime WMR de Windows. Es *el* driver que corre
+el G2 a 90 Hz.
+
+- [Página de Steam](https://store.steampowered.com/app/3824490/Oasis_Driver_for_Windows_Mixed_Reality/)
+- [Repo y wiki](https://github.com/mbucchia/Oasis-Driver-for-Windows-Mixed-Reality)
+
+**Sólo soporta NVIDIA.** Es la asimetría inversa a la nuestra: en Windows el camino que anda
+es el de NVIDIA; en Linux el único reporte creíble de 90 Hz es con AMD (issue #332 de Monado).
+Por qué, no lo sabemos.
 
 | archivo | qué es | estado |
 |---|---|---|
@@ -43,11 +51,11 @@ USB. Útil sólo para comparar.
 ## Contexto de Windows 11 (dicho por el usuario)
 
 - **Windows 11 ya no trae soporte WMR.** Microsoft lo removió; hace falta el **driver
-  intermedio** — que es justamente el Oasis de HP de arriba. Con eso el casco "anduvo re
+  intermedio** — que es justamente el Oasis de arriba. Con eso el casco "anduvo re
   bien" a 90 Hz.
 - **El driver original de WMR debería seguir estando en la Microsoft Store.** Vale bajarlo:
   es la otra mitad de la historia (el que Microsoft discontinuó) y puede tener la lógica de
-  panel que el de HP no tiene.
+  panel que Oasis no tiene.
 - **`fpsVR`** (app de Steam, está instalada en `/mnt/win4/.../fpsVR/`) mide performance de
   cada cosa dentro de SteamVR: frametimes, GPU/CPU, reproyección. **Es complejo hacerla andar
   bien**, pero una vez andando es el instrumento de medición que a Linux le falta.
@@ -63,6 +71,12 @@ USB. Útil sólo para comparar.
 | `scripts/check-lease.sh` | ¿el compositor ofrece el conector para arrendar? |
 | `scripts/xref.py` | xrefs de strings en binarios PE, sólo con binutils |
 | `scripts/capture-hid.sh` + `analyze-hid.py` | captura y diff de HID por usbmon |
+
+## El producto
+
+- [HP Reverb G2 — página de HP](https://www.hp.com/gb-en/tech-takes/gaming/review/hp-reverb-g2-review.html)
+  — especificaciones y presentación oficiales. Discontinuado; útil como referencia de lo que
+  el fabricante declara (2160x2160 por ojo, 90 Hz, ópticas Valve, audio Valve).
 
 ## Upstream y comunidad
 
@@ -116,7 +130,10 @@ USB. Útil sólo para comparar.
   GPU y toca la ruta de presentación. Que un cambio de scheduler degrade al G2 sugiere que
   este casco es sensible al timing de entrega de frames más que un display común. Pista viva.
 - En Windows 11 el soporte WMR duró hasta hace poco y recién ahora lo cortaron; de ahí salen
-  los drivers "hack" de Steam (el Oasis de HP es justamente ese).
+  los drivers "hack" de Steam (el Oasis es justamente ese). **Verificado (2026-08-05)**:
+  Microsoft anunció la deprecación en diciembre de 2023 y removió WMR en **Windows 11 24H2**,
+  con lo cual el G2 dejó de funcionar incluso vía SteamVR. Quien siga en Windows necesita
+  quedarse en 23H2 o instalar Oasis.
 - El usuario ofrece hacer capturas en Windows si hacen falta. Hoy no hacen falta (cap. 07
   archivado), pero si se necesita ver cómo negocia el link, hay que preparárselo bien.
 

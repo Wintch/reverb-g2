@@ -156,7 +156,7 @@ Para chequear el lease sin levantar Monado: `scripts/check-lease.sh`.
 
 **Y se cerraron las dos hipótesis que quedaban, las dos por evidencia:**
 
-- **NO falta un comando HID de modo.** Se desensambló el driver Oasis de HP (el que corre el
+- **NO falta un comando HID de modo.** Se desensambló el driver Oasis (el que corre el
   G2 a 90Hz en Windows hablándole al casco directo). Su único comando de panel es *Display
   Enable* — HID Usage Page `0x03`, Usage `0x21` — que es exactamente el `{0x04,0x01}` que
   Monado ya manda. **No existe comando de refresh rate.** Método, falsos positivos y strings
@@ -296,7 +296,7 @@ docs/05-resolve.md          DaVinci Resolve (otro objetivo del rig, no toca esto
 docs/06-known-issues.md     lo descartado, con evidencia
 docs/07-captura-hid-windows.md  ARCHIVADO: el comando de modo no existe (ver cap. 09)
 docs/08-passthrough-y-limites.md  idea de passthrough + límites por marcas (no empezado)
-docs/09-oasis-driver-re.md  qué le manda Windows al panel, leído del driver de HP
+docs/09-oasis-driver-re.md  qué le manda Windows al panel, leído del driver Oasis
 docs/10-recursos.md         índice de fuentes: driver de HP, FCC, chips, parque instalado
 docs/11-panorama-hmd-linux.md  ¿es sólo NVIDIA? otros cascos, DK2, y dónde publicar
 docs/12-protocolo-g2.md     >>> REFERENCIA DEL PROTOCOLO <<< todo lo que sabemos del casco

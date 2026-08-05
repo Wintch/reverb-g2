@@ -1,7 +1,14 @@
 # reverb-g2-linux
 
-Running an HP Reverb G2 on Linux — patches, tools, and a procedure manual covering
-everything from USB topology to the NVIDIA display driver.
+Running an [HP Reverb G2](https://www.hp.com/gb-en/tech-takes/gaming/review/hp-reverb-g2-review.html)
+on Linux — patches, tools, and a procedure manual covering everything from USB topology to
+the NVIDIA display driver.
+
+The headset is discontinued and Microsoft removed Windows Mixed Reality in Windows 11 24H2,
+so on Windows a G2 now needs either 23H2 or [mbucchia's Oasis
+driver](https://github.com/mbucchia/Oasis-Driver-for-Windows-Mixed-Reality). Good optics
+going cheap on the used market, with no vendor behind them — which is the whole reason this
+repo exists.
 
 Everything documented here was measured on a real rig. Where something does **not** work,
 the manual says why and what was tried, including the conclusions that turned out to be

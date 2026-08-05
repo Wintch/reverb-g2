@@ -3,7 +3,7 @@
 > ## ⚠ ARCHIVADO (2026-08-04, 21:00) — NO hace falta hacer esto
 >
 > Este capítulo existía para averiguar qué comando HID le pide el modo de 90Hz al casco.
-> **Ese comando no existe.** Se desensambló el driver Oasis de HP —el que corre el G2 a 90Hz
+> **Ese comando no existe.** Se desensambló el driver Oasis —el que corre el G2 a 90Hz
 > en Windows hablándole al casco directo— y su único comando de panel es *Display Enable*
 > (Usage Page `0x03`, Usage `0x21`), que es exactamente el `{0x04,0x01}` que Monado ya manda.
 >
