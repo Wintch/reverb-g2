@@ -95,13 +95,98 @@ otra cosa. En este casco el síntoma es que el panel no enciende a 90 Hz.
 Vale la pena mirar si explica alguno de los otros dos bugs de HMD que NVIDIA tiene abiertos
 (Bigscreen Beyond con corrupción DSC, bug 4834531; Index/Vive con judder, bug 5372097).
 
+## El parche funciona a medias: destraba el panel, pero no restaura el color (2026-08-05)
+
+Reiniciado con el parche compilado. Cuatro pruebas, verificación física en cada una.
+
+### La confirmación esperada: el byte 18 pasó de 06 a 08
+
+```
+antes:  05 00 01 01 00 5a 00 00 00 09 38 14 04 00 77 77 00 00 06 44 11 e4 08 ...
+ahora:  05 01 01 01 01 5a 00 00 00 09 38 1e 04 00 77 77 00 00 08 44 11 e4 08 ...
+                                                              ^^
+```
+
+El parche hace exactamente lo que predijo la lectura del código.
+
+### Lo que NO se esperaba
+
+| prueba | modo | resultado físico |
+|---|---|---|
+| T004 | `4320x2160@90` | **parpadeo blanco**, sin color, más marcado que el strobe de 60Hz conocido |
+| T005 | `4320x2160@60` (control) | colores visibles, parpadeo igual de marcado que T004 |
+| T006 | `2880x1440@90` (90Hz de MENOR ancho de banda: 428 MHz) | **también todo blanco parpadeando** |
+
+**T006 es el descarte importante.** Los dos modos de 90Hz fallan igual — uno con 428 MHz de
+pixel clock y el otro con 905 MHz, una diferencia de más de 2x — así que **no es un límite de
+ancho de banda MIPI**. Es algo del refresh de 90Hz en sí, independiente de la resolución.
+
+### El hallazgo que más importa: el estado del casco ahora es BYTE-IDÉNTICO a Windows
+
+Capturado durante T004 (panel encendido manualmente con `panel.py on` mientras `hmd-vk`
+presentaba a 90Hz en `4320x2160`):
+
+```
+Windows (ANDA):            05 01 01 01 01 5a 00 00 00 09 38 1e 04 00 77 77 00 00 08 44 11 e4 08 01 00 80 00 80 00 80 00 80 02
+Linux post-parche (BLANCO): 05 01 01 01 01 5a 00 00 00 09 38 1e 04 00 77 77 00 00 08 44 11 e4 08 01 00 80 00 80 00 80 00 80 02
+```
+
+**Son exactamente iguales, los 33 bytes.** Incluso el byte 11 —que habíamos anotado como la
+otra diferencia pendiente contra Windows (`0x14` vs `0x1e`)— se corrigió solo: pasó de 20 a 30
+en los dos modos de 90Hz apenas se arregló el bpc. No era una variable independiente; dependía
+del bpc, no del refresh como se pensó en un principio.
+
+**Conclusión: agotamos lo que el canal `DEVICE_STATUS` puede decirnos.** El casco le reporta al
+host lo mismo que le reporta a Windows — mismo refresh, mismo timing, mismo bpc, mismo flag de
+backlight — y el resultado visual es distinto. La diferencia que queda **no es visible desde
+este ángulo**. Tiene que estar en algo del propio stream de video que este canal no captura:
+
+- **DSC activándose en silencio.** Ahora que el bpc subió a 8, la cuenta de ancho de banda es
+  más ajustada (10.08 Gbps por panel contra 12 Gbps del ANX7530), y NVIDIA podría estar
+  invocando DSC para el modo pesado — pero eso no explica por qué el modo liviano (10.29 Gbps
+  totales de enlace, con margen de sobra) también falla igual.
+- **Un detalle de timing que `htotal`/`vtotal` no capturan**: front porch, back porch, o
+  polaridad de sync. Los totales pueden coincidir y el reparto interno ser distinto.
+- **El formato de color en el enlace** (RGB444 vs YCbCr444/422): `nvDpyGetOutputColorFormatInfo()`
+  también decide el color space, no sólo el bpc, y ese código no se leyó todavía.
+
+### Balance honesto
+
+No es la solución completa, pero es progreso real y medible: el parche cruzó el obstáculo que
+dejaba el panel **completamente muerto** (logo estático, cero actividad) y lo llevó a un estado
+nuevo (parpadeo con contenido, aunque sin color). El bpc era un bug real — confirmado por el
+código, por el log de NVIDIA, y por el propio casco — pero no es *el* bug completo.
+
+## Próximo paso: leer los logs de NVIDIA con los tres modos, ya con el parche puesto
+
+`scripts/collect-nv.sh` ya existe y hace exactamente esto: activa `nvidia_modeset debug=1`,
+corre los tres modos (60 control primero, después los dos de 90) capturando `dmesg` en cada
+uno, y junta el contexto completo. Ya se corrió una vez antes del parche; hay que repetirlo
+ahora que el bpc cambió, para ver si aparece algo nuevo — sobre todo cualquier mención a DSC,
+color space o formato que antes no estuviera.
+
+```bash
+sudo /home/iam/Documents/reverb-g2-linux/scripts/collect-nv.sh
+```
+
+Tarda unos minutos (la mayor parte es `nvidia-bug-report.sh`). No hace falta que nadie mire el
+casco para esto — es captura de logs del lado del driver.
+
 ## Estado
 
-- [x] Cadena causal verificada en el código y contra tres mediciones independientes
-- [x] Parche escrito
-- [ ] **Parche compilado y probado** ← acá estamos
-- [ ] Si funciona: reportar a NVIDIA en el hilo 337744 (bug 5923212) con el parche
-- [ ] Si funciona: proponerlo también a Monado y a la wiki de LVRA
+- [x] Cadena causal del bpc verificada en el código y contra tres mediciones independientes
+- [x] Parche escrito, compilado e instalado
+- [x] Verificado: el byte 18 pasa de 06 a 08 — el parche funciona como predijo el código
+- [x] Verificado: el fallo NO es de ancho de banda (los dos modos de 90Hz fallan igual, con
+      2x de diferencia en pixel clock)
+- [x] Verificado: el estado del casco es ahora byte-idéntico al de Windows — se agotó lo que
+      este canal puede decirnos
+- [ ] **Buscar la diferencia restante en los logs de NVIDIA (DSC, color space, timing fino)**
+      ← acá estamos
+- [ ] Si se encuentra y se arregla: reportar a NVIDIA en el hilo 337744 (bug 5923212) con
+      los dos parches
+- [ ] Si no se encuentra nada en los logs: comparar el timing exacto (porches, sync) del
+      DisplayID Type VII del EDID contra lo que NVIDIA programa de verdad
 
 ---
 

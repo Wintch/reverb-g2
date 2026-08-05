@@ -32,21 +32,27 @@ sudo ./scripts/bootstrap-lab.sh patch-nv    # y REINICIAR
 **No te saltees el baseline sin parches.** Es lo que separa "el driver 595 por sí solo
 cambió algo" de "los parches lo arreglaron", y es la única forma de saber qué reportar.
 
-### Dónde quedó todo (2026-08-05, 04:00) — ENCONTRAMOS EL BUG
+### Dónde quedó todo (2026-08-05, 05:15) — el parche del bpc anda a medias
 
-**El EDID del G2 no declara su profundidad de color, y NVIDIA interpreta ese "no declarado"
-como 6 bits por componente.** Maneja el enlace a 18 bpp en todos los modos; Windows, con la
-misma GPU, usa 8. A 60 Hz el panel tolera los 6 bits; a 90 Hz no enciende.
+**El bug del bpc era real y el parche funciona exactamente como predijo el código: el byte 18
+del casco pasó de 06 a 08.** Pero eso NO resolvió el 90Hz. Verificación física:
 
-Está en una línea de `nvkms-dpy.c` (`bpc < 8`, y el `0` de "undefined" cae ahí). Cadena causal
-completa, el parche y cómo verificarlo: **`docs/13-bug-6bpc.md`**.
+- `4320x2160@90` y `2880x1440@90` (dos anchos de banda que difieren 2x): los DOS ahora
+  muestran **parpadeo blanco, sin color** — antes era logo estático sin actividad. Progreso
+  real, pero no la solución.
+- `4320x2160@60` (control, con el mismo parche): sigue con colores normales.
+- Como los dos modos de 90Hz fallan igual pese a tener anchos de banda muy distintos, **no es
+  un límite de ancho de banda MIPI**.
 
-Tres mediciones independientes coinciden: el log de `nvidia-modeset` dice `18 bpp`, el propio
-casco reporta `06` en el byte 18 de su `DEVICE_STATUS` contra `08` en Windows, y el código
-fuente explica por qué.
+**El hallazgo más importante: el estado que reporta el casco ahora es BYTE-IDÉNTICO al de
+Windows** (los 33 bytes del `DEVICE_STATUS`, incluido el byte 11 que quedaba pendiente — se
+corrigió solo con el bpc). O sea que se agotó lo que este canal de medición puede decirnos: el
+casco le dice al host lo mismo que le dice a Windows, y el resultado visual es distinto. La
+diferencia que falta no es visible desde este ángulo — hay que buscarla en los logs de NVIDIA
+(¿DSC en silencio? ¿color space RGB vs YCbCr? ¿timing fino que htotal/vtotal no capturan?).
 
-Estado: parche escrito (`patches/nvidia/0004-*.patch`), falta compilarlo y probarlo con
-`sudo ./scripts/apply-bpc-patch.sh` + reboot.
+Todo el detalle y el próximo paso concreto (recorrer `collect-nv.sh` con el parche puesto):
+**`docs/13-bug-6bpc.md`**.
 
 #### Lo anterior (2026-08-04, 20:45)
 
