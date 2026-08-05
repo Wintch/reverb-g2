@@ -668,6 +668,44 @@ mas un ANX7688. El CrossLink es el agregador de camaras. Hay ademas un **STM32**
 actualizable — pero esas rutas son de *actualizacion*, no de init por sesion, asi que no
 sostienen la idea de que al puente haya que inicializarlo desde el host en cada arranque.
 
+### EL CASCO NOS DICE QUE ESTA A 90 (2026-08-04, 23:00) — instrumentacion del sink
+
+Del comentario de Monado en `control_read_packets()` (`wmr_hmd.c`) salio la pista: el
+companion manda un mensaje `DEVICE_STATUS` (0x05) cuando cambia el estado de pantalla.
+Capturado con `scripts/panel-status.py` mientras `hmd-vk` pide cada modo:
+
+| modo pedido | mensaje del companion | byte 5 |
+|---|---|---|
+| `4320x2160@60` (anda) | `05 00 01 01 00 3c 00 00 00 05 2c 1e 02 ...` | **0x3c = 60** |
+| `2880x1440@90` (falla) | `05 00 01 01 00 5a 00 00 00 0c 1a 14 02 ...` | **0x5a = 90** |
+| `4320x2160@90` (falla) | `05 00 01 01 00 5a 00 00 00 09 38 14 04 ...` | **0x5a = 90** |
+
+**El byte 5 es el refresh rate en decimal.** Sigue al refresh y no a la resolucion: los dos
+modos de 90, con resoluciones distintas, reportan `0x5a`. El byte 11 acompana: `0x1e` (30) a
+60 Hz y `0x14` (20) en los dos de 90.
+
+**Consecuencia, y reordena el diagnostico entero:** el casco RECIBE la senal de 90 Hz, la
+mide, y la reporta como 90 — con el panel mostrando el logo de HP. No la rechaza ni cae a 60.
+Y como **no existe ningun comando HID que le diga el modo** (cap. 09), ese numero sólo puede
+salir de medir el timing entrante.
+
+O sea: el DisplayPort llega bien, con el timing correcto, y el puente lo engancha lo
+suficiente como para contar los 90 Hz. **El fallo esta despues de eso**, en como el ANX7530 o
+los paneles arrancan a 90.
+
+Eso descarta la familia entera de "el link no entrena" / "el timing es invalido", que era
+justo donde ibamos a apuntar el reporte a NVIDIA. Y explica por que el log del driver dice
+exito sin un solo error: **el attach realmente tiene exito.**
+
+Ojo con un matiz: el comentario de Monado describe para el Reverb **G1** un segundo mensaje
+`05 01 01 01 01 ...` que llega cuando el backlight *visiblemente* prende. En nuestro G2 los
+bytes 1 y 4 son `00` en TODOS los casos, **incluido el de 60Hz que funciona** — asi que esos
+bytes no son el flag de "backlight encendido" en el G2, o ese mensaje no se emite. No usarlos
+como senal.
+
+Bonus: esto es la primera instrumentacion del lado del SINK que tiene el proyecto, y permite
+leer en que refresh cree estar el casco **sin que nadie se lo ponga**.
+
 ### Pendientes que necesitan sudo (no bloquean el test de 90Hz)
 
 1. **Prioridad RT para Monado.** El log tira `Could not raise priority for thread
