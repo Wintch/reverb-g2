@@ -134,3 +134,27 @@ Microsoft y HP lo abandonaron: hay miles funcionando y nadie lo recicló bien.
 3. `unlock_wmr.exe`, `MROEMFwHost.dll`, `client_utility.exe`, `DriverTracing.wprp`.
 4. Un **dump del firmware** del casco, si `MROEMFwHost` deja leerlo
    (`OemFwDevice_ReadDeviceInfo`).
+
+## Expedientes FCC: qué hay y qué no (verificado 2026-08-05)
+
+Grantee **Quanta Computer Inc**, código **HFS**. Los índices de los dos expedientes están
+guardados en `docs/FCC ID HFS-A85*.pdf` y se procesan con `scripts/pdf2md.py`.
+
+| documento | A85Q (G2) | A85R (Omnicept) | estado |
+|---|---|---|---|
+| **Internal photos** | 512 KB | 1 MB | **disponible** — las fotos de PCB |
+| Sketch for Reference | 150 KB | 181 KB | disponible |
+| External Photos | 578 KB | 682 KB | disponible |
+| Test Setup Photos | 443 KB | 600 KB | disponible |
+| Test Report | 2.1 MB | 3 MB (x2) | disponible |
+| User Manual | 4.9 MB | 3.3 MB | disponible |
+| **Block Diagram** | 140 KB | 69 KB | **CONFIDENCIAL, sólo metadata** |
+| **Schematics** | 789 KB | 1.1 MB | **CONFIDENCIAL, sólo metadata** |
+
+**Los esquemáticos y el diagrama de bloques del G2 existen y están presentados ante la FCC,
+pero Quanta pidió confidencialidad de largo plazo — no son públicos.** Era el premio mayor y
+no está al alcance. Las fotos internas sí, y de ahí salen los part numbers.
+
+Datos administrativos útiles: fecha de concesión 2020-06-05 (A85Q) y 2020-09-30 (A85R),
+laboratorio SGS Taiwan, TCB Telefication B.V., modelo declarado `A85Q`/`A85R`, banda
+2402-2480 MHz (Bluetooth de los controllers), potencia 0.015 W.
