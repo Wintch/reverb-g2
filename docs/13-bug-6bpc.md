@@ -172,6 +172,51 @@ sudo /home/iam/Documents/reverb-g2-linux/scripts/collect-nv.sh
 Tarda unos minutos (la mayor parte es `nvidia-bug-report.sh`). No hace falta que nadie mire el
 casco para esto — es captura de logs del lado del driver.
 
+## Se agotaron los diagnósticos accesibles sin más root (2026-08-05, 01:30)
+
+`collect-nv.sh` corrido de nuevo, ya con el parche puesto, capturando los tres modos.
+Confirmado otra vez: **24 bpp** en los tres (antes 18), coincidiendo con el byte 18 del casco.
+
+Tres búsquedas, las tres en blanco:
+
+1. **DSC / color space / YCbCr / compresión**: cero menciones en los tres logs de
+   `nvidia-modeset`. Ese callejón está cerrado — no hay evidencia de que NVIDIA esté
+   invocando DSC en silencio ni cambiando el color space entre modos.
+2. **El log no da más información a este nivel de verbosidad.** Mismo patrón exacto
+   (`Attach Begin` → `VIDEO` → `Attach End` → `Delayed HDCP` → `detach`) repetido para cada
+   modo, sin una línea de más.
+3. **El modeline completo que arma el driver** (no sólo htotal/vtotal, sino front/back porch
+   y polaridad de sync, leído directo de `drmModeGetConnector`):
+
+   ```
+   4320x2160@90:  H front=50 sync=4 back=46   V front=16 sync=2 back=98    flags=0x5
+   2880x1440@90:  H front=50 sync=4 back=46   V front=18 sync=2 back=138   flags=0x5
+   4320x2160@60:  H front=50 sync=4 back=46   V front=14 sync=2 back=498   flags=0x5
+   ```
+
+   Mismo H blanking en los dos modos de 4320 (60 y 90). Misma polaridad de sync (`flags=0x5`
+   = positiva H y V) en los tres. El V blanking escala razonablemente con el vtotal. **Nada
+   anómalo a este nivel.**
+
+### Dónde queda esto
+
+Se agotó lo que se puede inspeccionar sin acciones más disruptivas. Lo que queda:
+
+- **`NVreg_ResmanDebugLevel`** en el módulo core — mucho más verboso que `nvidia_modeset
+  debug`, pero **obliga a descargar y recargar el módulo**, lo que tira la sesión gráfica.
+  No es algo para hacer de paso; hay que planearlo (cerrar sesión, o hacerlo desde una
+  consola de texto).
+- **Reportar a NVIDIA con todo lo que ya tenemos.** Aunque el bug del bpc no resolvió el
+  90Hz por sí solo, es un bug real, verificado en el código fuente, con un parche de dos
+  líneas, y con evidencia de que el casco queda en un estado nuevo (parpadeo con contenido en
+  vez de logo estático) — información que sus ingenieros, con acceso a las partes cerradas
+  del driver (firmware GSP, RM), pueden usar para seguir de donde nosotros no podemos.
+
+Este es un punto de corte razonable para la sesión: cuatro horas de pruebas físicas, un bug
+real encontrado y confirmado, y dos callejones más cerrados con evidencia. Lo que sigue
+requiere o mucho más tiempo de GPU debugging invasivo, o la colaboración de alguien con
+acceso al código cerrado.
+
 ## Estado
 
 - [x] Cadena causal del bpc verificada en el código y contra tres mediciones independientes
