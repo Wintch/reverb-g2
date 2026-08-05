@@ -551,6 +551,66 @@ compresión.
 # y verificacion FISICA, como siempre
 ```
 
+### El instrumento propio NO sirve en NVIDIA: KMS no maneja este display (2026-08-04, 22:30)
+
+Se intento construir un instrumento independiente (`scripts/hmd-modeset.c`) que hiciera
+modeset sobre el conector del casco por DRM lease, sin Monado ni Vulkan, para barrer refresh
+rates. **No funciona, y el por que es un hallazgo en si.**
+
+El control obligatorio fue pedir el modo NATIVO `4320x2160@60` — el que Monado maneja con
+imagen perfecta. Resultado, con verificacion fisica:
+
+| paso | resultado |
+|---|---|
+| lease de mutter | otorgado, con CRTC y 2 planos |
+| `AddFB2` XRGB8888 sobre dumb buffer | aceptado |
+| `drmModeSetCrtc` legacy | **aceptado** |
+| `drmModeAtomicCommit` con ALLOW_MODESET | **aceptado** |
+| `drmModeGetCrtc` de vuelta | `mode_valid=1  4320x2160  fb=144` |
+| page flip (legacy Y atomic) | **EINVAL**, 0.00 flips/s |
+| **lo que se ve en el casco** | **logo de HP — sin senal** |
+
+O sea: **todos los ioctl de KMS dicen que si, y no sale nada por el cable.**
+
+La causa: `strings` sobre `monado-service` muestra que usa
+`VK_EXT_acquire_drm_display`, `VK_KHR_display` y `VK_EXT_direct_mode_display`. **Monado no
+programa el display por KMS: lo programa por Vulkan.** En el driver NVIDIA el DRM/KMS es una
+capa parcial para displays en direct-mode/arrendados — acepta los commits y reporta
+`mode_valid=1`, pero quien programa el hardware es `nvidia-modeset` por el path de Vulkan.
+Esto tambien explica por que Project-VR arrastra SteamVR entero en vez de hacer modeset a
+mano.
+
+**Consecuencia practica:** cualquier experimento con modos custom tiene que ir por
+`vkCreateDisplayModeKHR` (VK_KHR_display permite pedir `visibleRegion` + `refreshRate`
+arbitrarios), no por KMS. El barrido de refresh sigue siendo el experimento correcto, pero el
+vehiculo es Vulkan.
+
+#### Y el logo de HP significa menos de lo que creiamos
+
+Se reprodujo el logo de HP **a 60 Hz**, con un modo que sabemos bueno. O sea que el logo es
+simplemente el estado "panel alimentado, sin lock de senal" — **no es una firma del fallo de
+90 Hz**. Todas las lecturas anteriores siguen siendo validas (el panel no engancha), pero el
+logo por si solo no distingue "el modo de 90 es malo" de "no hay senal en absoluto".
+
+#### Otros dos datos medidos de paso
+
+- **El screen-enable `{0x04,0x01}` solo NO alcanza para alimentar el panel.** Sin la
+  secuencia completa de `wmr_hmd_activate_reverb()` (el loop `{0x50,0x01}` x4 y los gets
+  0x09/0x08/0x06) el casco queda totalmente apagado, ni siquiera aparece el logo. Replicado
+  en `scripts/panel.py activate`, que ademas devuelve datos reales del casco (el get 0x09
+  trae lo que parece el numero de serie, `REDACTED`).
+- **El screen-off puede hacer RE-ENUMERAR al companion** y cambiarle el nodo hidraw
+  (visto `hidraw8` -> `hidraw7`). Es evidencia directa sobre el problema abierto de los
+  resets del hub USB2: no son aleatorios bajo carga, los dispara el comando de apagado.
+
+#### Parametros de nvidia-modeset que aparecieron buscando esto
+
+`/sys/module/nvidia_modeset/parameters/` expone, entre otros: `config_file`,
+`output_rounding_fix`, `opportunistic_display_sync`, `debug`, `debug_force_color_space`,
+`conceal_vrr_caps`, `disable_vrr_memclk_switch`, `hdmi_deepcolor`, `enable_overlay_layers`.
+Ninguno investigado todavia. `config_file` y `output_rounding_fix` son los que mas huelen a
+relevantes para timings.
+
 ### Pendientes que necesitan sudo (no bloquean el test de 90Hz)
 
 1. **Prioridad RT para Monado.** El log tira `Could not raise priority for thread
