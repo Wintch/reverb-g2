@@ -58,11 +58,21 @@ Full write-up in [`docs/13-bug-6bpc.md`](docs/13-bug-6bpc.md), and in the
 
 **It did not fix 90 Hz.** That remains open. As far as we can tell there is not a single
 confirmed human sighting of a Reverb G2 running 90 Hz on Linux, on any GPU — the claims we
-could find all rest on API-level evidence, which this project has shown nine times is
-compatible with a dead panel. The current lead is in
-[`docs/16-lab-vblank.md`](docs/16-lab-vblank.md): across the three modes this headset
-advertises, "90 Hz" and "short vertical blanking" are perfectly confounded, and the
-experiment that separates them is prepared and unrun.
+could find all rest on API-level evidence, which this project has shown repeatedly is
+compatible with a dead panel.
+
+[`docs/16-lab-vblank.md`](docs/16-lab-vblank.md) ran the factorial that separates refresh
+rate, vertical blanking, and pixel clock as independent variables (7 points, physical
+verification each time) — none of them, alone or combined, explain the failure. The only
+pixel clock that has ever produced an image is the one from the mode that already worked.
+[`docs/13-bug-6bpc.md`](docs/13-bug-6bpc.md) then closed the USB/HID side of the
+investigation from the Windows angle too: the headset's own status report is byte-identical
+between Linux and Windows, including at the exact moment of a live 60↔90 Hz switch on
+Windows (no special command fires). Filed as
+[NVIDIA bug 5923212](docs/19-nvidia-bug-5923212-followup.md) — everything reachable with
+user-space tools on either OS has been checked; what's left needs either NVIDIA's own
+visibility into the closed GSP firmware, or a DisplayPort AUX-channel capture, which needs
+hardware this project doesn't have yet.
 
 ## Getting started
 
@@ -112,8 +122,10 @@ experiments/   the headset's own EDID plus prepared variants for the 90 Hz work
 | [13](docs/13-bug-6bpc.md) | The 6 bpc clamp: root cause and patch |
 | [14](docs/14-nvidia-report.md) | The report filed with NVIDIA |
 | [15](docs/15-feedback-triage.md) | Triage of the feedback on that report |
-| [16](docs/16-lab-vblank.md) | The open experiment: refresh rate, or timing shape? |
+| [16](docs/16-lab-vblank.md) | The vblank factorial: refresh rate vs. timing shape, run to completion |
 | [17](docs/17-publishing.md) | Preparing this repo for publication |
+| [18](docs/18-monado-upstreaming.md) | Upstreaming the Monado WMR patches |
+| [19](docs/19-nvidia-bug-5923212-followup.md) | Follow-up for the NVIDIA 60Hz-only bug thread |
 
 ## Reference hardware
 
@@ -122,9 +134,18 @@ Ryzen 5 5600X · NVIDIA 595.71.05 open kernel modules
 
 ## Contributing
 
-If you have a G2 and Linux, the most useful thing you can do is run
-[`docs/16-lab-vblank.md`](docs/16-lab-vblank.md) and report what the panel actually does.
-The EDIDs are prepared; the experiment needs eyes.
+The two things that would actually move this forward:
+
+- **A non-NVIDIA GPU.** There is no confirmed report, positive or negative, of a Reverb G2
+  reaching 90 Hz on Linux on `amdgpu` or Intel. If you have one, run the 90 Hz test
+  ([`docs/04-lab-90hz.md`](docs/04-lab-90hz.md)) and report what the panel actually does —
+  physically, not what the API says. A clean 90 Hz there would point the whole
+  investigation at NVIDIA specifically; a matching failure would point at Monado's WMR
+  activation sequence or the panel/bridge itself.
+- **A DisplayPort AUX-channel capture** (a logic analyzer on the AUX+/AUX- pins, decoding
+  DPCD read/writes during a 60→90 Hz switch) is the one layer nothing in this repo has been
+  able to look at yet — see the open item at the end of
+  [`docs/13-bug-6bpc.md`](docs/13-bug-6bpc.md).
 
 If you have (or can donate) an **HP Omnicept** — same headset, plus Tobii eye-tracking —
 that matters too: Monado already treats it as a Reverb G2 at the USB level, so a 90 Hz

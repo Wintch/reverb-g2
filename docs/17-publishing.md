@@ -149,11 +149,19 @@ Los árboles de código no se versionan: `bootstrap-lab.sh` los clona de upstrea
 exactos contra los que se generaron los parches. Por eso el bundle pesa kilobytes y se ve
 exactamente qué es nuestro.
 
-## Lo que falta antes de hacerlo público
+## Lo que faltaba antes de hacerlo público
 
-- **Un README de entrada.** El actual asume contexto. Un tercero necesita saber en diez
-  líneas: qué funciona hoy, qué no, y cuál es el primer comando.
-- Decidir si los cuatro PDFs de la FCC (6.8 MB) se quedan o se linkean.
+- [x] **Un README de entrada** (`README.md`, en inglés). Actualizado 2026-08-05 (noche)
+      para reflejar que el factorial de `docs/16` ya se corrió (no queda como tarea
+      pendiente para un tercero) y que el canal USB/HID también se cerró del lado Windows.
+- [x] **Los PDFs de la FCC** (6.8 MB, `docs/*.pdf`) se linkean, no se versionan —
+      `.gitignore` los excluye a todos (`*.[Pp][Dd][Ff]`), coherente con el mismo criterio
+      ya aplicado al datasheet del ANX7530.
+
+Antes de pasar el repo de privado a público, además de correr `check-publishable.py`:
+revisar en la web de GitHub que el README rinda bien, y que ningún archivo de
+`windows-kit2/` (binarios de terceros, capturas propias) haya quedado trackeado por error
+— esa carpeta es intencionalmente local, ver `.gitignore`.
 
 ---
 
