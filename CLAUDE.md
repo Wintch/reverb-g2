@@ -1,5 +1,24 @@
 # Contexto para el agente del lab de 90Hz
 
+> ## ESTADO AL 2026-08-06 — bug nuevo, distinto del 90Hz: el casco puede romper el escritorio
+>
+> Con el casco conectado, **KDE Plasma (X11) puede volverse inestable hasta quedar sin
+> panel/iconos**, o con el lock screen mostrando solo el reloj sin campo de contraseña.
+> Causa confirmada al menos una vez: KDE guardó `DP-0` (el casco) como monitor de escritorio
+> habilitado a 90Hz — el mismo modo con link DP inestable que `docs/13` ya documenta — y eso
+> se lleva puesto el compositor entero (`QRhiGles2: Context is lost` en `plasmashell`/`kwin`).
+> Fix: `kscreen-doctor output.DP-0.disable`. **Pero el crash recurrió después con DP-0 ya
+> deshabilitado** (en el lock screen), así que puede haber un segundo problema no relacionado
+> al casco. **Actualización de la misma noche: `kscreen-doctor disable` en realidad NO apaga
+> DP-0 en caliente** (ni RandR crudo ni el MetaMode nativo de NVIDIA lo logran mientras el
+> casco sigue conectado — fallan los tres métodos, ver el doc) — probablemente por eso
+> "recurrió" con DP-0 supuestamente apagado. El workaround que sí funcionó fue mover las
+> ventanas atrapadas en DP-0 con un script de KWin (D-Bus), no tocar la pantalla. Detalle
+> completo, snippets que funcionan, y la lista de "qué retomar" en
+> `docs/20-desktop-plasma-crash.md`. **Antes de debuggear cualquier rareza del escritorio con
+> el casco conectado, correr `kscreen-doctor -o` y chequear si DP-0 está `enabled`** — y si
+> hay ventanas que no aparecen, sospechar que cayeron ahí antes de gastar tiempo en otra cosa.
+
 > ## ESTADO AL 2026-08-05 (noche) — leer esto antes que el resto
 >
 > El bug del bpc está **cerrado y publicado**:
@@ -26,7 +45,8 @@
 > **Conclusión: no queda nada más para investigar con herramientas de usuario, en ningún
 > SO.** Lo que sigue, en orden de peso:
 >
-> 1. El reporte a NVIDIA (bug 5923212, cuerpo listo en `docs/19-nvidia-bug-5923212-followup.md`)
+> 1. El reporte a NVIDIA (bug 5923212, cuerpo listo en `docs/19-nvidia-bug-5923212-followup.md
+docs/20-desktop-plasma-crash.md >>> EL CASCO CONECTADO ROMPE EL ESCRITORIO KDE <<<`)
 >    — el usuario lo sube él mismo.
 > 2. Un GPU AMD puede llegar al lab para repetir el test de 90Hz en `amdgpu` — es el
 >    experimento que más puede mover la aguja (ver `docs/11`), no es una sorpresa si aparece.

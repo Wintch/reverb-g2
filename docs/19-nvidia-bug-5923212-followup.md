@@ -24,6 +24,50 @@ te corresponde a vos decidir cuándo y cómo.
 
 ---
 
+## Update (2026-08-06): el contenido de abajo se posteó, pero en el hilo equivocado
+
+El borrador de más abajo se terminó posteando como respuesta en el **hilo del bpc (379240)**,
+no acá (337744) — confirmado con fetch directo a los dos hilos: 379240 tiene el post de hoy
+00:53am con este mismo contenido; 337744 sigue sin nada nuevo desde `MiaPerec` el 2026-07-19.
+Puede haber sido a propósito (es tu hilo, tenés más contexto ahí) o cruce de pestañas — no lo
+sé, no lo asumo.
+
+Decisión: postear **también** acá, adaptado como cross-post corto que dirige a `abchauhan`
+al resultado completo, en vez de duplicar la tabla entera. Draft abajo, mismo trato que el de
+arriba: **no lo posteo yo**, es texto listo para copiar/pegar o editar.
+
+**Posteado 2026-08-06, 10:00am**, como post #14 del hilo 337744:
+<https://forums.developer.nvidia.com/t/reverb-g2-unable-to-drive-more-than-60hz-mode-on-nvidia/337744/14>.
+Entró como post normal al final del hilo, **no** como reply threadeado al post #10 de
+`abchauhan` (sin indicador "in reply to"). Si no responde en un tiempo razonable, considerar
+editar el post para agregarle `@abchauhan` al arranque — en Discourse eso sí dispara
+notificación directa. Sin respuesta de NVIDIA todavía en ninguno de los dos hilos (chequeado
+el mismo día, a los pocos minutos de postear — es esperable que no haya nada aún).
+
+### Draft para 337744 (cross-post, corto)
+
+**Reply to `abchauhan`'s bug 5923212:**
+
+Following up here — I ran a full factorial that isolates refresh rate, vertical blanking, and
+pixel clock as independent variables on real hardware (physical verification every time,
+headset worn, not just API success), plus identified the bridge chip's own datasheet ceiling.
+Posted the full results (table, methodology, bridge chip data, an open question about the
+ANX7530's PLL) as a follow-up in a related thread I'd started for a different EDID issue on
+the same headset, to avoid fragmenting the data across two threads further:
+
+<https://forums.developer.nvidia.com/t/hp-reverb-g2-clamped-to-6-bpc-because-its-edid-leaves-color-depth-undefined-root-cause-found-two-line-patch-but-90-hz-still-fails-to-light/379240/2>
+
+Short version: none of resolution, refresh rate, vblank duration, or total DisplayPort
+bandwidth alone explain the failure — the only pixel clock that has ever produced an image,
+across every combination tried, is exactly ~709.15 MHz (the bridge chip's own native
+4320x2160@60 timing). That, plus the bridge chip's datasheet ("DisplayPort Receiver Input
+Bandwidth supports up to 4K x 2K x 60Hz" as an explicit spec line), points at a
+hardware/firmware ceiling rather than a pure EDID/mode-timing problem.
+
+Any update on bug 5923212 from your side? It's been quiet since March.
+
+---
+
 ## Borrador del post
 
 **Summary:** Ran a full 2×2×N factorial isolating refresh rate, vertical blanking, and

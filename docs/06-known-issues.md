@@ -223,6 +223,14 @@ Disco raíz USB compartiendo xHCI con el casco + autosuspend. Cap. 00 tiene el a
 los procedimientos. Los .mp4 truncados de esa mañana (marsa*, sin moov atom) no son
 recuperables — re-descargar.
 
+## El casco conectado puede romper el escritorio KDE entero (2026-08-06)
+
+No es el bug del 90Hz (`docs/13`) — es distinto y más grave: con el casco conectado, KDE
+Plasma X11 puede quedar sin panel/iconos, o con el lock screen sin campo de contraseña,
+porque `plasmashell`/`kwin` pierden el contexto gráfico en loop. Causa confirmada al menos
+una vez: KDE tenía `DP-0` (el casco) guardado como monitor de escritorio a 90Hz. Detalle,
+fix y lo que queda sin explicar en **`docs/20-desktop-plasma-crash.md`**.
+
 ## Hardware roto conocido
 
 - 16GB RAM (upgrade a 32 planeado); zram configurado al 100% con zstd.

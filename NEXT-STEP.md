@@ -1,5 +1,61 @@
 # Next step
 
+## LEER PRIMERO — estado al 2026-08-06, madrugada
+
+Escrito desde el sistema everyday con el SSD del lab montado read-write en `/mnt/lab`, antes
+de que el usuario reinicie a la instalación del lab para probar físicamente. **Esto es lo que
+hay que hacer al volver — el resto del archivo, más abajo, es historial del 90Hz, no leer
+primero.**
+
+Repo ya público (`github.com/Wintch/reverb-g2`), update de anoche posteado en el hilo de
+NVIDIA (379240), y las 4 MRs de Monado abiertas contra upstream (`monado/monado` #2967,
+#2968, #2969, #2971) — nada de eso necesita al lab, ya está resuelto.
+
+**Lo que sí necesita al lab, en orden:**
+
+1. **Controllers** (los 4 patches de input/conexión ya están en `patches/monado/0001-0008`,
+   aplicados vía `bootstrap-lab.sh sources`; también ya están subidos a upstream como MR, ver
+   arriba, pero eso no cambia nada localmente):
+   ```bash
+   ./jack-in.sh 3dof     # prender los controllers antes o después, ya no importa
+   grep -E "left:|right:" ~/Documents/reverb-g2/jack-in.log
+   # debe decir: left: HP Reverb G2 Left Controller / right: HP Reverb G2 Right Controller
+   ```
+   Diagnóstico en vivo (sticks, batería, IMU por controller): `XRT_DEBUG_GUI=1` antes de
+   arrancar el servicio, mirar los paneles de cada controller. Sticks quietos deben leer
+   exactamente (0,0) — si drifean, algo no cargó bien el patch de deadzone. Test de estrés:
+   10 ciclos de arranque con los controllers prendidos, deben conectar 10/10 (ver `docs/03`).
+
+2. **Player / VR180:**
+   ```bash
+   ./play360.sh ~/Documents/reverb-g2/photo360/vr180_berlin_8k60.mp4   # 8K60 estéreo, el bueno
+   ./play360.sh ~/Documents/reverb-g2/playlist_test/                   # feature de playlist, nunca probado interactivo
+   ```
+   Con el casco puesto: confirmar imagen estéreo real (no aplanada), sin starves a 8K60, y que
+   las teclas de transporte (espacio pausa, `[`/`]` velocidad, `n` siguiente, `q` salir)
+   respondan. Si el terminal queda mudo después: `stty sane`.
+
+3. **NO instrumentar el reset del hub USB2 todavía** — investigado por código (sin hardware)
+   2026-08-06: el autosuspend ya está descartado (regla `71-usb-no-autosuspend.rules` cubre
+   `04b4` desde el bootstrap), y la hipótesis de keepalive mal manejado tampoco se sostiene
+   leyendo `wmr_hmd.c` (poll no bloqueante, sin writes periódicos). Si en 1-2 hace falta
+   retomarlo: agregar logging con timestamps a `control_read_packets`/
+   `hololens_sensors_read_packets` y correr bajo carga hasta que resetee — es la única forma
+   de ver qué pasa justo antes, ese dato no existe todavía. Detalle en `docs/06-known-issues.md`.
+
+4. **Constellation tracking (6DoF de controllers) — en pausa a propósito.** Hay un merge de
+   prueba ya hecho (rama descartable, ya borrada) contra `gitlab.freedesktop.org/thaytan/monado`
+   rama `dev-constellation-controller-tracking`: 8 conflictos, todos mecánicos (CMake +
+   reconciliar la lista de hand-tracking devices), ninguno toca los archivos de nuestros 4
+   patches. **No retomar todavía** — esperando que los reviewers de Monado respondan algo en
+   las 4 MRs antes de terminar ese merge, para no reescribir código que puede cambiar por
+   feedback. Ver `docs/03-controllers.md`, sección "Tracking posicional (6DoF)".
+
+Nada de esto es urgente — el usuario pidió pacing explícito ("lo acomodamos con tiempo"). El
+único motivo del reboot ahora es que tiene el casco físicamente en frente y ganas de probar.
+
+---
+
 State as of 2026-08-05, late. Written from the everyday system with the lab SSD mounted
 read-write at `/mnt/lab`, right before rebooting into the lab OS to resume physically.
 
