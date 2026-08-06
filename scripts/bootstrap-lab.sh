@@ -118,10 +118,28 @@ do_deps() {
 	# This cost a whole session (2026-08-04). See docs/04, the Wayland section.
 
 	echo "### udev rules for the headset"
-	$SUDO cp "$REPO_DIR/scripts/70-wmr-reverb.rules" "$REPO_DIR/scripts/71-usb-no-autosuspend.rules" /etc/udev/rules.d/
+	$SUDO cp "$REPO_DIR/scripts/70-wmr-reverb.rules" "$REPO_DIR/scripts/71-usb-no-autosuspend.rules" \
+		"$REPO_DIR/scripts/72-reverb-audio-no-input-watch.rules" /etc/udev/rules.d/
 	$SUDO udevadm control --reload-rules
 	$SUDO usermod -aG plugdev,adm,systemd-journal "$TARGET_USER"
 	echo "    (the group change for $TARGET_USER needs a log out and back in)"
+
+	echo "### WirePlumber rule: silence the headset audio reconnect popup"
+	# Must land owned by TARGET_USER, not root - do_deps() can run as root directly
+	# (sudo ./bootstrap-lab.sh deps), same reasoning as as_user_step() above for the source
+	# tree.
+	wp_install() {
+		mkdir -p "$TARGET_HOME/.config/wireplumber/wireplumber.conf.d"
+		cp "$REPO_DIR/scripts/wireplumber/51-disable-reverb-headset-audio.conf" \
+			"$TARGET_HOME/.config/wireplumber/wireplumber.conf.d/"
+	}
+	if [ "$IS_ROOT" = "1" ]; then
+		"$RUNUSER" -u "$TARGET_USER" -- env HOME="$TARGET_HOME" bash -c "$(declare -f wp_install); wp_install"
+	else
+		wp_install
+	fi
+	echo "    (needs 'systemctl --user restart wireplumber' to take effect - not run here,"
+	echo "    since this script may run as a different user/session than the target one)"
 }
 
 # --- Step: NVIDIA driver -------------------------------------------------------------------

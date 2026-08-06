@@ -19,6 +19,18 @@ al estado de esta unidad particular (el mismo golpe físico que dejó la fuga de
 `NEXT-STEP.md` de `linuxlab-kit` bien podría explicar también esto). No se investigó la causa
 de fondo del ciclo USB en sí, sólo se apagó el síntoma molesto.
 
+**Segunda vuelta (2026-08-06, más tarde): el popup seguía apareciendo pese a la regla de
+arriba.** Causa: la regla de WirePlumber sólo tapa el nodo de audio de PipeWire — el
+dispositivo `0bda:4c15` también expone una interfaz HID separada ("Generic USB Audio
+Consumer Control", botones multimedia) que **`systemd-logind` vuelve a "watchear" en cada
+ciclo de reconexión** (`Watching system buttons on /dev/input/eventN`), y eso es lo que
+seguía disparando ruido. Esta vez el ciclo se midió mucho más rápido que los ~30s
+históricos — cada 5-10s. Fix: `scripts/72-reverb-audio-no-input-watch.rules`, instalar en
+`/etc/udev/rules.d/` + `udevadm control --reload-rules`. Le saca el tag `ID_INPUT_KEY` que
+el builtin `input_id` de udev le pone a esa interfaz, así logind deja de tratarla como
+dispositivo de botones. **Instalado pero sin verificar en vivo todavía** — el casco se
+apagó justo después de instalar la regla; confirmar en el próximo ciclo de reconexión real.
+
 ## Audio del casco: RESUELTO — era el puerto USB (2026-08-04)
 
 > Esta sección decía que el audio era una falla física incurable del cable. **Era falso.**
