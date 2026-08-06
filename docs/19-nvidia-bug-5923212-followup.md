@@ -1,5 +1,104 @@
 # 19 — Seguimiento para el hilo del bug 5923212 (60Hz-only en NVIDIA)
 
+## Update (2026-08-06): el parche SI funciona — 90Hz prende con imagen real. No lo posteé yo todavía.
+
+Sesión separada, en la máquina del lab, con un agente. Reinstalación completa del driver
+595-open desde cero (`nvidia-open` vía el repo oficial de NVIDIA, no lo que había antes) +
+los 4 parches aplicados vía el mecanismo `PATCH[]` de `dkms.conf` (en vez de la edición
+directa del árbol que usaba `apply-bpc-patch.sh`). Probado por un camino de presentación
+distinto al del factorial de vblank de más abajo: DRM-lease de un compositor Wayland (Monado,
+`hmd-vk`), no NVKMS Direct-Mode de X11 con override de EDID por `nvidia_modeset.config_file`.
+
+**Resultado: 90Hz prende con imagen real, confirmado físicamente, primera vez en toda esta
+investigación que algo pasa del logo de HP a 90Hz.** Probado en el modo supersampleado
+(`4320x2160@90`, el que usa Project-VR) y, más importante, en el **modo nativo
+`2880x1440@90`** — el DTD del bloque base del EDID sin modificar, el mismo timing que ya se
+había confirmado por CRU que usa Windows (ver más abajo en este mismo archivo).
+
+**Lo que sigue sin explicar, y por qué no llamo esto "cerrado" todavía:** el panel sigue
+pareciendo parpadear como si estuviera a ~60Hz, a pesar de que el HID del casco, el timing
+del compositor (11.111ms, exacto) y la API confirman los tres que corre genuinamente a 90Hz.
+Persiste igual con un patrón sintético y con video real, y persiste en el modo nativo
+también — así que no es un artefacto de renderizado ni un problema de "modo equivocado".
+Sin cámara de alta velocidad (120fps+) no hay forma de medir el strobe físico del backlight
+desde acá.
+
+**No puedo afirmar con certeza qué de los dos cambios importó** (la reinstalación completa,
+o el camino de presentación distinto) — quizás ninguno, y el entorno de prueba anterior
+simplemente estaba roto de una forma que no se detectó en su momento. Si alguien con
+visibilidad del lado de NVIDIA sabe si el Direct-Mode de NVKMS y el DRM-lease de un
+compositor Wayland deberían comportarse distinto a nivel DPCD/AUX para el mismo modo nominal,
+eso ayudaría a explicar la diferencia en cualquier sentido.
+
+**Drafts listos para postear, dos hilos (no los posteo yo — mismo trato que siempre, son
+del usuario para revisar/editar/postear cuando quiera):**
+
+### Draft para 379240 (el hilo del bpc — el más relevante, reply al post original)
+
+```
+Update: the patch works — 90 Hz now lights up the panel with a real image.
+
+Following up on my original report above (6bpc clamp root-caused, two-line patch, but 90 Hz
+still failing to light at the time).
+
+What changed: I rebuilt the driver from a clean nvidia-open 595.71.05 install and applied
+the patch via DKMS's own PATCH[] mechanism instead of a manual source edit, then tested
+through a different presentation path than before — a Wayland compositor's DRM-lease direct
+mode (via Monado, an open-source OpenXR runtime) rather than X11 NVKMS Direct-Mode with a
+raw EDID override via nvidia_modeset.config_file.
+
+Result: 90 Hz produces a real image, verified physically with the headset on (flat
+alternating test colors, and separately with real decoded video content) — the first time in
+this whole investigation that anything got past the boot logo at 90 Hz. Tested at both the
+supersampled 4320x2160@90 mode and, more importantly, the native 2880x1440@90 mode (the
+EDID's own base-block DTD, unmodified — the exact mode I separately confirmed via CRU that
+Windows itself drives this panel with).
+
+One thing still open, and it's the reason I'm not closing this out yet: the panel still
+visually appears to flicker/strobe at what looks like ~60 Hz to the eye, despite genuinely
+running at 90 Hz confirmed at every layer I can check — the headset's own HID status report,
+the compositor's frame pacing (11.111 ms period, matches 90 Hz exactly), and the presentation
+API. This persists identically with a synthetic test pattern and with real video content, and
+persists at the native mode too, so it isn't a rendering/compositor artifact and it isn't a
+"wrong mode" issue. I don't have a way to measure the physical backlight strobe rate directly
+from here (would need a 120fps+ camera) so I can't rule in or out yet whether this is a
+separate firmware-level backlight-timing behavior, unrelated to the DisplayPort link itself.
+
+I honestly can't say with certainty which of the two changes above (rebuild path, or the
+different presentation mechanism) actually mattered — possibly neither, and something about
+the earlier test environment was simply broken in a way I didn't catch. If anyone reading
+this has NVIDIA-side visibility into whether NVKMS's Direct-Mode path and a Wayland
+compositor's DRM-lease path should behave any differently at the DPCD/AUX level for the same
+nominal video mode, that would help explain the gap either way.
+
+Happy to share the exact steps/config if useful to anyone else hitting this.
+```
+
+### Draft para 337744 (el hilo original del bug 5923212 — reply corto, dirige al otro hilo)
+
+```
+Update on my factorial results above: they're superseded — 90 Hz does light up now.
+
+Since posting the factorial (concluding nothing but ~709 MHz ever showed an image, pointing
+at a bridge-chip ceiling), I found and fixed an unrelated bug in the same EDID: NVKMS clamps
+color depth to 6 bpc when the EDID leaves it undeclared (this headset's does), which was
+still active during that whole factorial run without my realizing it mattered. Full
+root-cause, patch, and today's confirmation that native 90 Hz now produces a real image are
+in a separate thread I'd opened for that specific issue:
+
+https://forums.developer.nvidia.com/t/hp-reverb-g2-clamped-to-6-bpc-because-its-edid-leaves-color-depth-undefined-root-cause-found-two-line-patch-but-90-hz-still-fails-to-light/379240
+
+Short version: the bridge-chip-ceiling conclusion from the factorial doesn't hold up — once
+the bpc bug is patched, native 90 Hz (the exact same EDID timing, unmodified) lights up fine.
+There's still an open question about a visible flicker at 90 Hz even with a real image now,
+detailed in the other thread, so I'm not calling this fully closed — but the "90 Hz is
+architecturally impossible on this link" conclusion I posted earlier was wrong, and I wanted
+to correct the public record here rather than leave it standing.
+```
+
+---
+
+
 Hilo: https://forums.developer.nvidia.com/t/reverb-g2-unable-to-drive-more-than-60hz-mode-on-nvidia/337744
 
 Estado al 2026-08-05: NVIDIA (`abchauhan`) confirmó reproducción y abrió el bug interno
