@@ -1,5 +1,17 @@
 # Contexto para el agente del lab de 90Hz
 
+> ## RESUELTO (2026-08-06, tarde) — el 90Hz anda limpio, no hace falta AMD ni nada más
+>
+> El parche del bpc (`patches/nvidia/0004`) era la solución completa. Nadie había vuelto a
+> probar los modos nativos del EDID sin override después de tenerlo instalado — al probarlo
+> limpio, `2880x1440@90` y `4320x2160@90` prenden perfectos. Esto **supersede el punto 2 de
+> la lista "en orden de peso" más abajo** (conseguir un GPU AMD para el lab) — ya no hace
+> falta, no lo persigas si aparece este documento en una sesión nueva. Detalle completo en
+> `docs/19-nvidia-bug-5923212-followup.md` y el resumen entero del proyecto en
+> `docs/21-project-retrospective.md`. `docs/11-linux-hmd-landscape.md` y las secciones de
+> `docs/06-known-issues.md` sobre el 90Hz quedaron con una nota de corrección arriba, pero
+> conservan el análisis viejo tal cual — no lo tomes como estado actual sin leer la nota.
+
 > ## ESTADO AL 2026-08-06 — bug nuevo, distinto del 90Hz: el casco puede romper el escritorio
 >
 > Con el casco conectado, **KDE Plasma (X11) puede volverse inestable hasta quedar sin

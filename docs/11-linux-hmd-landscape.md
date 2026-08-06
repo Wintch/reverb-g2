@@ -1,5 +1,14 @@
 # 11 — Panorama: ¿es sólo NVIDIA? ¿es sólo el G2?
 
+**RESUELTO (2026-08-06, tarde): este documento entero quedó superado.** La pregunta que
+motiva todo el análisis de abajo — "¿hace falta un AMD/Intel para saber si esto es de
+NVIDIA?" — ya no aplica: el bug era el clamp de bpc de NVKMS (`patches/nvidia/0004`), se
+confirmó y arregló en esta misma GPU Ampere, sin tocar otro hardware. La conclusión de "el
+test con AMD es el experimento más valioso disponible" (más abajo) **no se llevó a cabo y no
+hizo falta**. Se deja el barrido tal cual, como historial de la investigación — ver
+`docs/19-nvidia-bug-5923212-followup.md` y `docs/21-project-retrospective.md` para el
+estado real.
+
 Barrido del 2026-08-04. La pregunta era si el fallo de 90Hz es específico de NVIDIA, del
 Reverb G2, o de algo más grande. La respuesta cambia a quién le escribimos.
 

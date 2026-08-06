@@ -134,18 +134,23 @@ Ryzen 5 5600X · NVIDIA 595.71.05 open kernel modules
 
 ## Contributing
 
-The two things that would actually move this forward:
+**The 90 Hz mystery is closed** (2026-08-06) — it was the NVKMS 6bpc clamp
+([`patches/nvidia/0004`](patches/nvidia/0004-nvkms-do-not-clamp-to-6bpc-when-EDID-leaves-color-de.patch)),
+confirmed with a clean image on real hardware at both native 90 Hz modes. A non-NVIDIA GPU
+is no longer needed to make progress here — that bullet lived in this section for two days
+while the root cause was still open; see
+[`docs/19-nvidia-bug-5923212-followup.md`](docs/19-nvidia-bug-5923212-followup.md) and
+[`docs/21-project-retrospective.md`](docs/21-project-retrospective.md) for the full story.
 
-- **A non-NVIDIA GPU.** There is no confirmed report, positive or negative, of a Reverb G2
-  reaching 90 Hz on Linux on `amdgpu` or Intel. If you have one, run the 90 Hz test
-  ([`docs/04-lab-90hz.md`](docs/04-lab-90hz.md)) and report what the panel actually does —
-  physically, not what the API says. A clean 90 Hz there would point the whole
-  investigation at NVIDIA specifically; a matching failure would point at Monado's WMR
-  activation sequence or the panel/bridge itself.
+What would actually move this forward now:
+
 - **A DisplayPort AUX-channel capture** (a logic analyzer on the AUX+/AUX- pins, decoding
   DPCD read/writes during a 60→90 Hz switch) is the one layer nothing in this repo has been
-  able to look at yet — see the open item at the end of
+  able to look at yet — mainly useful now to confirm the backlight-duty hypothesis behind
+  the (also resolved) flicker, not the core bug anymore. See the open item at the end of
   [`docs/13-bug-6bpc.md`](docs/13-bug-6bpc.md).
+- **Testing the SteamVR path via [xrizer](https://github.com/The-personified-devil/xrizer)**
+  instead of chasing the `vrmonitor`/Qt bug in Valve's own sandboxed runtime — not yet tried.
 
 If you have (or can donate) an **HP Omnicept** — same headset, plus Tobii eye-tracking —
 that matters too: Monado already treats it as a Reverb G2 at the USB level, so a 90 Hz

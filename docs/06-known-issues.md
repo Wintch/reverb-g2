@@ -142,8 +142,19 @@ valioso después del 90Hz.
 
 El driver Monado para SteamVR carga OK (con el RPATH del patch 0002 + bundle de libs),
 pero `vrmonitor` de Valve crashea por `libQt5Multimedia.so.5` faltante **dentro del
-runtime container de Valve**. Camino recomendado: **OpenComposite** (OpenVR→OpenXR directo
-contra Monado, saltea SteamVR entero) — no probado aún.
+runtime container de Valve**. Camino recomendado: ~~OpenComposite~~ — sin mantenimiento
+desde 2024. El reemplazo activo es **xrizer** (OpenVR reimplementado sobre OpenXR, corre
+contra Monado sin levantar SteamVR) — no probado aún.
+
+## RESUELTO (2026-08-06, tarde) — todo lo que sigue en esta sección quedó superado
+
+**El 90Hz anda limpio en esta misma GPU (Ampere, sin AMD ni ningún otro hardware nuevo).**
+El parche del bpc (`patches/nvidia/0004`) era la solución completa — lo que faltaba no era
+otra causa, era volver a probar el modo nativo del EDID sin override después de tener el
+parche puesto, cosa que nadie había hecho hasta ese día. Detalle completo:
+`docs/19-nvidia-bug-5923212-followup.md`. El análisis de abajo (incluido el "corolario" de
+que ningún caso humano confirmado existe con ninguna GPU) se conserva tal cual para el
+historial de la investigación — no lo tomes como estado vigente.
 
 ## 90Hz — los parches del 595-open NO lo arreglan (2026-08-04, 18:55)
 
