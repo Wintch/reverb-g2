@@ -1,0 +1,85 @@
+From 705f09fbdd9ccf7e81f4779a0bc77a3ab5f3d2d0 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Thu, 6 Aug 2026 13:51:13 -0300
+Subject: [PATCH] d/wmr: Add native WMR motion_controller binding profile for
+ the G2 driver
+
+wmr_controller_hp.c only registered binding_profiles remaps for
+XRT_DEVICE_TOUCH_CONTROLLER and XRT_DEVICE_SIMPLE_CONTROLLER. Apps
+requesting the native /interaction_profiles/microsoft/motion_controller
+profile (name XRT_DEVICE_WMR_CONTROLLER) got nothing: oxr_input.c's
+get_binding() only resolves a binding when the device name matches the
+profile directly or a remap table exists for it, and neither was true
+here (this driver's device name is XRT_DEVICE_HP_REVERB_G2_CONTROLLER,
+inputs named XRT_INPUT_G2_CONTROLLER_*). Every binding suggested under
+that profile was silently dropped - grip pose, squeeze, quit, and any
+new action added to it, not just one input.
+
+Masked because most apps also suggest khr/simple_controller bindings,
+which did have a remap (simple_inputs) covering pose/select/menu, so
+basic tracking still worked. Found via a hello_xr change that only
+suggests bindings for microsoft/motion_controller (a WMR thumbstick
+action) and never fired.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ src/xrt/drivers/wmr/wmr_controller_hp.c | 36 ++++++++++++++++++++++++-
+ 1 file changed, 35 insertions(+), 1 deletion(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_controller_hp.c b/src/xrt/drivers/wmr/wmr_controller_hp.c
+index 460a593d5..8a354f761 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_hp.c
++++ b/src/xrt/drivers/wmr/wmr_controller_hp.c
+@@ -103,7 +103,34 @@ static struct xrt_binding_output_pair simple_outputs[1] = {
+     {XRT_OUTPUT_NAME_SIMPLE_VIBRATION, XRT_OUTPUT_NAME_G2_CONTROLLER_HAPTIC},
+ };
+ 
+-static struct xrt_binding_profile binding_profiles[2] = {
++/*
++ * Remap for the native /interaction_profiles/microsoft/motion_controller profile
++ * (xrt_device name XRT_DEVICE_WMR_CONTROLLER, per bindings.json's "monado_device"). This
++ * driver self-identifies as XRT_DEVICE_HP_REVERB_G2_CONTROLLER (see set_controller_props()
++ * below) and its inputs are named XRT_INPUT_G2_CONTROLLER_*, not XRT_INPUT_WMR_* - without
++ * this table, oxr_input.c's get_binding() finds neither a name match nor a binding_profiles
++ * fallback for that profile (profile->xname != xdev->name && xbp == NULL) and silently drops
++ * every action bound to it. Discovered 2026-08-06: a WMR thumbstick binding for video seek
++ * never fired, and this is why - not just the new action, ALL microsoft/motion_controller
++ * bindings (grip pose, squeeze, quit) were unreachable on real G2 hardware, masked because
++ * the app happened to still get pose/grip/select through the khr/simple_controller fallback
++ * (simple_inputs below) since hello_xr suggests bindings for that profile too.
++ */
++static struct xrt_binding_input_pair wmr_inputs[7] = {
++    {XRT_INPUT_WMR_MENU_CLICK, XRT_INPUT_G2_CONTROLLER_MENU_CLICK},
++    {XRT_INPUT_WMR_SQUEEZE_CLICK, XRT_INPUT_G2_CONTROLLER_SQUEEZE_CLICK},
++    {XRT_INPUT_WMR_TRIGGER_VALUE, XRT_INPUT_G2_CONTROLLER_TRIGGER_VALUE},
++    {XRT_INPUT_WMR_THUMBSTICK_CLICK, XRT_INPUT_G2_CONTROLLER_THUMBSTICK_CLICK},
++    {XRT_INPUT_WMR_THUMBSTICK, XRT_INPUT_G2_CONTROLLER_THUMBSTICK},
++    {XRT_INPUT_WMR_GRIP_POSE, XRT_INPUT_G2_CONTROLLER_GRIP_POSE},
++    {XRT_INPUT_WMR_AIM_POSE, XRT_INPUT_G2_CONTROLLER_AIM_POSE},
++};
++
++static struct xrt_binding_output_pair wmr_outputs[1] = {
++    {XRT_OUTPUT_NAME_WMR_HAPTIC, XRT_OUTPUT_NAME_G2_CONTROLLER_HAPTIC},
++};
++
++static struct xrt_binding_profile binding_profiles[3] = {
+     {
+         .name = XRT_DEVICE_TOUCH_CONTROLLER,
+         .inputs = touch_inputs,
+@@ -118,6 +145,13 @@ static struct xrt_binding_profile binding_profiles[2] = {
+         .outputs = simple_outputs,
+         .output_count = ARRAY_SIZE(simple_outputs),
+     },
++    {
++        .name = XRT_DEVICE_WMR_CONTROLLER,
++        .inputs = wmr_inputs,
++        .input_count = ARRAY_SIZE(wmr_inputs),
++        .outputs = wmr_outputs,
++        .output_count = ARRAY_SIZE(wmr_outputs),
++    },
+ };
+ 
+ /* OG WMR Controller inputs struct */
+-- 
+2.47.3
+

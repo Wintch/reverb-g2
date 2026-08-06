@@ -41,6 +41,31 @@ importa si se encienden después de arrancar monado-service — ver abajo).
 | 0004 | Retry 3x con backoff en lecturas de firmware + pacing 10ms→1ms + fix de leak |
 | 0005 | Re-request de status cada 5s mientras falte un controller + espera de arranque acotada (3s) |
 | 0006 | Thread BT directo tolera errores transitorios (se rinde tras 10 seguidos) |
+| 0007 | `wmr_controller_hp.c`: falta el remap nativo a `microsoft/motion_controller` (ver abajo) |
+
+### 0007 — el perfil nativo `microsoft/motion_controller` nunca bindeaba nada (2026-08-06)
+
+Encontrado al verificar el seek por thumbstick del player (`docs/02-player-360.md`): el
+stick no hacía nada. `wmr_controller_hp.c` (el driver específico de HP, no el genérico
+WMR) se identifica como `XRT_DEVICE_HP_REVERB_G2_CONTROLLER` y nombra sus inputs
+`XRT_INPUT_G2_CONTROLLER_*` — pero sólo trae tablas de remap (`binding_profiles[]`) para
+los perfiles `XRT_DEVICE_TOUCH_CONTROLLER` y `XRT_DEVICE_SIMPLE_CONTROLLER`. Le falta la
+del perfil nativo `XRT_DEVICE_WMR_CONTROLLER` (el que corresponde a
+`/interaction_profiles/microsoft/motion_controller`, lo que hello_xr y la mayoría de apps
+piden para hardware WMR).
+
+`oxr_input.c:get_binding()` sólo resuelve un binding si el nombre del dispositivo matchea
+el del perfil directo, **o** si hay una tabla de remap para ese perfil — sin ninguna de las
+dos cosas, descarta el binding en silencio (`profile->xname != xdev->name && xbp == NULL`).
+Consecuencia: en hardware G2 real, **ningún binding bajo `microsoft/motion_controller`
+resolvía nunca** — no sólo el thumbstick nuevo, también grip/squeeze/quit de ese perfil.
+Se notaba poco porque hello_xr también sugiere bindings para `khr/simple_controller`, que
+sí tiene remap (`simple_inputs[]`) y cubre pose/select/menu — suficiente para que el
+tracking pareciera andar bien.
+
+Fix: agregada `wmr_inputs[]`/`wmr_outputs[]` + entrada en `binding_profiles[]` para
+`XRT_DEVICE_WMR_CONTROLLER`, mismo patrón que las tablas touch/simple ya existentes.
+Parche pendiente de exportar a `patches/monado/`.
 
 Efecto neto esperado: los controllers conectan siempre (aunque un fw-read falle, se
 reintenta; aunque estén apagados al arrancar, aparecen al encenderlos), los sticks quedan
