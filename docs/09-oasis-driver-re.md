@@ -36,7 +36,7 @@ driver_oasis.dll        el driver SteamVR (importa HID.DLL directo)
 HololensSensors.dll     sensores + panel, en userspace (importa HID.DLL directo)
 MRUSBHost.dll           capa USB/HID cruda
 MROEMFwHost.dll         firmware OEM
-unlock/unlock_wmr.exe   sin examinar
+unlock/unlock_wmr.exe   examinado 2026-08-06, ver abajo
 ```
 
 La ruta de build quedó embebida: `D:\a\WMR-Standalone-Oasis-Driver\...\driver_oasis\HmdDriver.cpp`
@@ -174,3 +174,36 @@ Con eso los cuatro binarios del driver Oasis quedan abiertos y sin nada mas que 
   hookear APIs. No se investigó qué hookea.
 - Las particiones se montaron read-only en `/mnt/win{3,4,5}`. Desmontar con
   `sudo umount /mnt/win3 /mnt/win4 /mnt/win5`.
+
+## `unlock_wmr.exe`: no manda ningún comando de vinculación (2026-08-06)
+
+Se retomó este binario buscando específicamente el protocolo de vinculación de
+controllers, a raíz de que un botón oculto en el compartimento de pilas puede desvincular
+un controller del casco (ver `docs/03-controllers.md`, sección "Vinculación / pairing" —
+ahí está la conclusión completa, esto es el detalle técnico de dónde salió).
+
+Repo original: `github.com/mbucchia/Oasis-Driver-for-Windows-Mixed-Reality` — resultó ser
+sólo un issue tracker con wiki, sin código fuente publicado. La wiki sí tiene una página
+`Pairing-Motion-Controllers` con el procedimiento (físico, botón del controller).
+
+Imports de `unlock_wmr.exe`: `SETUPAPI.dll` (`SetupDiGetClassDevsW`,
+`SetupDiEnumDeviceInterfaces`, ...), `CFGMGR32.dll` (`CM_Get_Device_Interface_ListW`,
+`CM_Get_Device_Interface_PropertyW`) y `HID.DLL` — nada de Bluetooth (`bthprops`,
+`Windows.Devices.Bluetooth`, WinRT device-pairing APIs no aparecen en ningún lado). Mismo
+método que para Display Enable (`xref.py` sobre un `objdump -d` completo):
+
+- Único call site de `HidP_SetUsageValue`/`HidD_SetFeature` en todo el binario: mismos
+  argumentos que ya se documentaron arriba para Display Enable — `UsagePage=0x3`,
+  `Usage=0x21`. **No hay un segundo comando HID distinto para vinculación.**
+- La función que contiene los strings `"Start pairing new %s motion controller"` /
+  `"Unpairing previous %s motion controller"` / `"Timeout pairing %s motion controller"`
+  es un loop de polling con sleeps (`Sleep(100)` x60 ≈ 6s de timeout) que llama a un
+  MessageBox-like (comparando el resultado contra 6/2 = IDYES/IDCANCEL) y strings como
+  `"Found controller device (paired through Headset): %s"` — es la UI esperando a que
+  `SetupDiGetClassDevsW` vea aparecer la interfaz HID del controller, no algo que dispara
+  la vinculación en el casco.
+
+Conclusión: la vinculación es un handshake de radio interno al casco, disparado
+físicamente (botón del controller), sin comando de host que reproducir. Confirma y cierra
+lo que ya sugería `docs/03-controllers.md` de entrada ("no hay que aparear nada en
+Linux") — ahora con evidencia binaria, no sólo por lectura del driver Monado.

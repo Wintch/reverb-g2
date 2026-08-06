@@ -68,6 +68,15 @@ volumen jugable sin SLAM denso.
 La alternativa "sin marcas" —reconstruir el ambiente y detectar planos— necesita SLAM denso y
 es otro proyecto entero. **Tu instinto de usar marcas es el atajo correcto.**
 
+## Idea parqueada (2026-08-06): un frontend/shell propio dentro del casco
+
+Pedido del usuario, referencia Johnny Mnemonic: un "sistema operativo" o shell 3D dentro del
+visor — navegar un directorio y abrir videos desde ahí, en vez de lanzar `play360.sh` a mano
+desde una terminal. **Sin investigar todavía** qué existe ya para Linux/Wayland/OpenXR de lo
+que agarrarse (compositores VR embebidos, shells Wayland para XR, cosas tipo lo que ya
+encontramos hoy investigando players — `xr-video-player`, etc. — pero para un file browser en
+vez de un solo video). Retomar como su propia sesión de research antes de diseñar nada.
+
 ## La dependencia que hay que mirar de frente
 
 **v1 y v2 necesitan 6DoF, y el 6DoF hoy no funciona.** Basalt diverge (cap. 03 y 06) y todo

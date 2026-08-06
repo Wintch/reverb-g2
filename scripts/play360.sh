@@ -25,6 +25,7 @@
 #   espacio  pausa / seguir
 #   [  ]     mas lento / mas rapido (0.125x .. 4x)
 #   1        velocidad normal
+#   h  l     seek -10s / +10s (o el stick de cualquier controller WMR, puesto el casco)
 #   n        siguiente video de la playlist
 #   q        salir
 #
@@ -108,7 +109,7 @@ RUNTIME_ENV=(
 )
 if [ -t 0 ]; then
 	echo "Reproduciendo $(basename "$FILE") - maximo ${SECONDS_TO_RUN}s."
-	echo "Teclas: [espacio] pausa | [ ] velocidad | 1 normal | n siguiente | q salir"
+	echo "Teclas: [espacio] pausa | [ ] velocidad | 1 normal | h/l -10s/+10s | n siguiente | q salir"
 	timeout --foreground "$SECONDS_TO_RUN" env \
 		"${RUNTIME_ENV[@]}" "${ENV_EXTRA[@]}" \
 		stdbuf -oL -eL "$HELLO_XR" --graphics Vulkan2

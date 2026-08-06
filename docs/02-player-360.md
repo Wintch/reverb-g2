@@ -36,9 +36,32 @@ o `~/vr`, y `VR_BASE=` lo fuerza). Hasta el 2026-08-04 lo tenía hardcodeado al 
 en el lab moría con "falta compilar hello_xr" sin más explicación.
 
 Corrido desde una **terminal real** (no piped ni backgrounded), hay teclas de transporte:
-`espacio` pausa, `[`/`]` velocidad (0.125x–4x), `1` normal, `n` siguiente, `q` salir.
-Si un corte sucio deja la terminal muda: `stty sane`. En un pipe no hay teclas y el run
-termina en el EOF de stdin, como siempre.
+`espacio` pausa, `[`/`]` velocidad (0.125x–4x), `1` normal, `h`/`l` seek -10s/+10s,
+`n` siguiente, `q` salir. Si un corte sucio deja la terminal muda: `stty sane`. En un pipe
+no hay teclas y el run termina en el EOF de stdin, como siempre.
+
+### Seek + barra de progreso (2026-08-06)
+
+Agregado porque con el casco puesto no hay forma de llegar al teclado. Dos vías, mismo
+resultado (`PlayerControl::QueueSeek`, `patches/hello_xr-player/0004-*.patch`):
+
+- **Teclado** (para probar desde el escritorio, sin casco): `h` = -10s, `l` = +10s.
+- **Controller WMR**: empujar el stick izquierdo o derecho hacia un lado (>0.7 de
+  deflexión) hace el mismo salto. Con histéresis (tiene que volver a <0.3 antes de poder
+  disparar de nuevo) para que mantenerlo empujado no dispare un salto por frame.
+
+El seek es absoluto sobre `av_seek_frame`, corre en el thread de decode (nunca desde el
+thread de render/input directamente — `AVFormatContext` no es seguro para eso), y clampea a
+`[0, duración]`. La barra de progreso es una tira angosta en la parte de abajo de la
+pantalla, dibujada directo en espacio de pantalla dentro del mismo shader del skybox (sin
+pase ni pipeline nuevo — reusa los slots `mode.y`/`mode.z` del push-constant existente, que
+no se usaban). Aparece solo ~3s después del último toque a pausa/velocidad/seek, después se
+esconde sola.
+
+**Probado por el agente:** seek por teclado (avanzar, retroceder, clamp en 0 sin crashear,
+sin romper pausa/velocidad existentes) — vía un pty falso armado con Python, ya que
+`play360.sh` sin terminal real no manda teclas. **Falta probar con el casco puesto:** el
+stick del controller y que la barra se vea/se esconda bien — necesita verificación física.
 
 ## Proyecciones y estéreo (v3)
 

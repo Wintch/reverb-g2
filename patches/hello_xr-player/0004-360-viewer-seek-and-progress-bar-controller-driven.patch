@@ -1,0 +1,431 @@
+From f3d38b4dd3507aa45359f228b7dcc1b5108adcce Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Thu, 6 Aug 2026 13:39:39 -0300
+Subject: [PATCH] 360 viewer: seek and progress bar, controller-driven
+
+Adds Video360::Seek()/Duration()/PlaybackPosition(), h/l keyboard jumps
+of +-10s, and WMR thumbstick binding (left/right stick x-axis, latched
+so a held stick doesn't repeat-fire). A thin progress bar renders in
+frag.glsl using the two otherwise-unused ivec4 mode push-constant
+slots, since the struct is already at Vulkan's guaranteed 128-byte
+push-constant minimum. Bar fades ~3s after the last interaction.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ src/tests/hello_xr/graphicsplugin_vulkan.cpp | 17 ++++++
+ src/tests/hello_xr/openxr_program.cpp        | 39 +++++++++++++-
+ src/tests/hello_xr/playercontrol.cpp         | 44 +++++++++++++++-
+ src/tests/hello_xr/playercontrol.h           | 14 +++++
+ src/tests/hello_xr/video360.cpp              | 54 ++++++++++++++++++++
+ src/tests/hello_xr/video360.h                | 13 +++++
+ src/tests/hello_xr/vulkan_shaders/frag.glsl  | 12 +++++
+ 7 files changed, 191 insertions(+), 2 deletions(-)
+
+diff --git a/src/tests/hello_xr/graphicsplugin_vulkan.cpp b/src/tests/hello_xr/graphicsplugin_vulkan.cpp
+index 8bf3227..59fe016 100644
+--- a/src/tests/hello_xr/graphicsplugin_vulkan.cpp
++++ b/src/tests/hello_xr/graphicsplugin_vulkan.cpp
+@@ -1666,6 +1666,8 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+             // device idle plus reallocation - but it only happens between videos, and the next
+             // file may have a different resolution, so there is nothing to reuse.
+             m_video->SetRate(PlayerControl::Rate());
++            const int seekJump = PlayerControl::TakeSeekRequest();
++            if (seekJump != 0) m_video->Seek((double)seekJump);
+             const bool skip = PlayerControl::TakeNextTrackRequest() && m_playlist.size() > 1;
+             if (skip || (m_playlist.size() > 1 && m_video->Finished())) AdvanceTrack();
+             if (m_videoMode) UpdateVideoTexture();
+@@ -1787,6 +1789,21 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+         pushConstants.mode[0] = (m_panoLayout.projection == PanoProjection::HalfEquirect180)   ? 1
+                                 : (m_panoLayout.projection == PanoProjection::Flat)           ? 2
+                                                                                               : 0;
++        // Progress bar (see frag.glsl): mode.y is fill fraction *1000, mode.z is visibility
++        // alpha *255. Only shown for a few seconds after the last transport-control touch, so
++        // it doesn't sit on screen the whole time someone is just watching.
++        pushConstants.mode[1] = 0;
++        pushConstants.mode[2] = 0;
++        if (m_videoMode && m_video) {
++            const double duration = m_video->Duration();
++            if (duration > 0.0) {
++                double frac = m_video->PlaybackPosition() / duration;
++                if (frac < 0.0) frac = 0.0;
++                if (frac > 1.0) frac = 1.0;
++                pushConstants.mode[1] = (int32_t)(frac * 1000.0);
++            }
++            pushConstants.mode[2] = (PlayerControl::SecondsSinceLastInteraction() < 3.0) ? 255 : 0;
++        }
+         vkCmdPushConstants(m_cmdBuffer.buf, m_pipelineLayout.layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                            sizeof(pushConstants), &pushConstants);
+ 
+diff --git a/src/tests/hello_xr/openxr_program.cpp b/src/tests/hello_xr/openxr_program.cpp
+index 554a166..1886fa0 100644
+--- a/src/tests/hello_xr/openxr_program.cpp
++++ b/src/tests/hello_xr/openxr_program.cpp
+@@ -10,6 +10,7 @@
+ #include "graphicsplugin.h"
+ #include "swapchain_image_data.h"
+ #include "openxr_program.h"
++#include "playercontrol.h"
+ #include <common/xr_linear.h>
+ #include <array>
+ #include <cmath>
+@@ -377,6 +378,11 @@ struct OpenXrProgram : IOpenXrProgram {
+         XrAction poseAction{XR_NULL_HANDLE};
+         XrAction vibrateAction{XR_NULL_HANDLE};
+         XrAction quitAction{XR_NULL_HANDLE};
++        // Thumbstick X axis, WMR motion controller only (see the binding block below) - used
++        // to seek the 360/VR180 video player. Not bound on other profiles: we only have a WMR
++        // controller to test with, and guessing paths for profiles we cannot verify is how
++        // silently-wrong bindings happen.
++        XrAction seekAction{XR_NULL_HANDLE};
+         std::array<XrPath, Side::COUNT> handSubactionPath;
+         std::array<XrSpace, Side::COUNT> handSpace;
+         std::array<float, Side::COUNT> handScale = {{1.0f, 1.0f}};
+@@ -433,6 +439,14 @@ struct OpenXrProgram : IOpenXrProgram {
+             actionInfo.countSubactionPaths = 0;
+             actionInfo.subactionPaths = nullptr;
+             CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.quitAction));
++
++            // Thumbstick X for video seek (WMR only, see InputState::seekAction).
++            actionInfo.actionType = XR_ACTION_TYPE_FLOAT_INPUT;
++            strcpy_s(actionInfo.actionName, "seek_video");
++            strcpy_s(actionInfo.localizedActionName, "Seek Video");
++            actionInfo.countSubactionPaths = uint32_t(m_input.handSubactionPath.size());
++            actionInfo.subactionPaths = m_input.handSubactionPath.data();
++            CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.seekAction));
+         }
+ 
+         std::array<XrPath, Side::COUNT> selectPath;
+@@ -444,6 +458,7 @@ struct OpenXrProgram : IOpenXrProgram {
+         std::array<XrPath, Side::COUNT> menuClickPath;
+         std::array<XrPath, Side::COUNT> bClickPath;
+         std::array<XrPath, Side::COUNT> triggerValuePath;
++        std::array<XrPath, Side::COUNT> thumbstickXPath;
+         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/select/click", &selectPath[Side::LEFT]));
+         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/select/click", &selectPath[Side::RIGHT]));
+         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/squeeze/value", &squeezeValuePath[Side::LEFT]));
+@@ -462,6 +477,8 @@ struct OpenXrProgram : IOpenXrProgram {
+         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/b/click", &bClickPath[Side::RIGHT]));
+         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/trigger/value", &triggerValuePath[Side::LEFT]));
+         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/trigger/value", &triggerValuePath[Side::RIGHT]));
++        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/thumbstick/x", &thumbstickXPath[Side::LEFT]));
++        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/thumbstick/x", &thumbstickXPath[Side::RIGHT]));
+         // Suggest bindings for KHR Simple.
+         {
+             XrPath khrSimpleInteractionProfilePath;
+@@ -552,7 +569,9 @@ struct OpenXrProgram : IOpenXrProgram {
+                                                             {m_input.quitAction, menuClickPath[Side::LEFT]},
+                                                             {m_input.quitAction, menuClickPath[Side::RIGHT]},
+                                                             {m_input.vibrateAction, hapticPath[Side::LEFT]},
+-                                                            {m_input.vibrateAction, hapticPath[Side::RIGHT]}}};
++                                                            {m_input.vibrateAction, hapticPath[Side::RIGHT]},
++                                                            {m_input.seekAction, thumbstickXPath[Side::LEFT]},
++                                                            {m_input.seekAction, thumbstickXPath[Side::RIGHT]}}};
+             XrInteractionProfileSuggestedBinding suggestedBindings{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
+             suggestedBindings.interactionProfile = microsoftMixedRealityInteractionProfilePath;
+             suggestedBindings.suggestedBindings = bindings.data();
+@@ -935,6 +954,24 @@ struct OpenXrProgram : IOpenXrProgram {
+             XrActionStatePose poseState{XR_TYPE_ACTION_STATE_POSE};
+             CHECK_XRCMD(xrGetActionStatePose(m_session, &getInfo, &poseState));
+             m_input.handActive[hand] = poseState.isActive;
++
++            // Video seek: thumbstick push left/right jumps -10s/+10s. Hysteresis latch, not a
++            // raw per-frame trigger - a stick held past the threshold would otherwise queue a
++            // jump on every single frame it stays pushed. Push past 0.7 to fire once, must come
++            // back under 0.3 before it can fire again.
++            static std::array<bool, Side::COUNT> seekLatched{{false, false}};
++            getInfo.action = m_input.seekAction;
++            XrActionStateFloat seekValue{XR_TYPE_ACTION_STATE_FLOAT};
++            CHECK_XRCMD(xrGetActionStateFloat(m_session, &getInfo, &seekValue));
++            if (seekValue.isActive == XR_TRUE) {
++                const float v = seekValue.currentState;
++                if (!seekLatched[hand] && std::fabs(v) > 0.7f) {
++                    PlayerControl::QueueSeek(v > 0.0f ? 10 : -10);
++                    seekLatched[hand] = true;
++                } else if (seekLatched[hand] && std::fabs(v) < 0.3f) {
++                    seekLatched[hand] = false;
++                }
++            }
+         }
+ 
+         // There were no subaction paths specified for the quit action, because we don't care which hand did it.
+diff --git a/src/tests/hello_xr/playercontrol.cpp b/src/tests/hello_xr/playercontrol.cpp
+index 5de17e1..74f1ae6 100644
+--- a/src/tests/hello_xr/playercontrol.cpp
++++ b/src/tests/hello_xr/playercontrol.cpp
+@@ -3,6 +3,7 @@
+ #include "logger.h"
+ #include "playercontrol.h"
+ 
++#include <chrono>
+ #include <cstdio>
+ 
+ #if defined(XR_OS_LINUX) || defined(XR_OS_APPLE)
+@@ -22,6 +23,18 @@ std::atomic<int> g_rateIndex{kNormalRateIndex};
+ std::atomic<bool> g_paused{false};
+ std::atomic<bool> g_nextTrack{false};
+ std::atomic<bool> g_quit{false};
++std::atomic<int> g_seekJumpSeconds{0};
++
++// Milliseconds since steady_clock's epoch. 0 means "never" (SecondsSinceLastInteraction()
++// then returns a large number, which is what "never touched" should look like to the
++// progress-bar auto-hide timer).
++std::atomic<int64_t> g_lastInteractionMs{0};
++
++void TouchInteraction() {
++    g_lastInteractionMs = std::chrono::duration_cast<std::chrono::milliseconds>(
++                               std::chrono::steady_clock::now().time_since_epoch())
++                               .count();
++}
+ 
+ #if defined(XR_OS_LINUX) || defined(XR_OS_APPLE)
+ termios g_savedTermios{};
+@@ -44,6 +57,7 @@ bool IsPaused() { return g_paused; }
+ 
+ void TogglePause() {
+     g_paused = !g_paused;
++    TouchInteraction();
+     ReportRate();
+ }
+ 
+@@ -51,6 +65,7 @@ void Slower() {
+     int i = g_rateIndex.load();
+     if (i > 0) g_rateIndex = i - 1;
+     g_paused = false;
++    TouchInteraction();
+     ReportRate();
+ }
+ 
+@@ -58,17 +73,36 @@ void Faster() {
+     int i = g_rateIndex.load();
+     if (i < kRateCount - 1) g_rateIndex = i + 1;
+     g_paused = false;
++    TouchInteraction();
+     ReportRate();
+ }
+ 
+ void NormalSpeed() {
+     g_rateIndex = kNormalRateIndex;
+     g_paused = false;
++    TouchInteraction();
+     ReportRate();
+ }
+ 
+ bool TakeNextTrackRequest() { return g_nextTrack.exchange(false); }
+ 
++int TakeSeekRequest() { return g_seekJumpSeconds.exchange(0); }
++
++void QueueSeek(int seconds) {
++    g_seekJumpSeconds += seconds;
++    TouchInteraction();
++    Log::Write(Log::Level::Info, Fmt("player: seek %+ds", seconds));
++}
++
++double SecondsSinceLastInteraction() {
++    const int64_t last = g_lastInteractionMs.load();
++    if (last == 0) return 1e9;  // never touched - "a long time ago" for the auto-hide timer
++    const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
++                             std::chrono::steady_clock::now().time_since_epoch())
++                             .count();
++    return (double)(now - last) / 1000.0;
++}
++
+ bool QuitRequested() { return g_quit; }
+ 
+ bool HandleKey(int c) {
+@@ -90,6 +124,14 @@ bool HandleKey(int c) {
+         case '1':
+             NormalSpeed();
+             return true;
++        case 'h':
++        case 'H':
++            QueueSeek(-10);
++            return true;
++        case 'l':
++        case 'L':
++            QueueSeek(10);
++            return true;
+         case 'n':
+         case 'N':
+             g_nextTrack = true;
+@@ -133,7 +175,7 @@ void EndRawInput() {
+ }
+ 
+ const char* HelpLine() {
+-    return "  Teclas: [espacio] pausa   [ ] velocidad   1 normal   n siguiente   q salir";
++    return "  Teclas: [espacio] pausa   [ ] velocidad   1 normal   h/l -10s/+10s   n siguiente   q salir";
+ }
+ 
+ }  // namespace PlayerControl
+diff --git a/src/tests/hello_xr/playercontrol.h b/src/tests/hello_xr/playercontrol.h
+index 2ecc2a5..dcca485 100644
+--- a/src/tests/hello_xr/playercontrol.h
++++ b/src/tests/hello_xr/playercontrol.h
+@@ -7,6 +7,7 @@
+ //   space   pause / resume
+ //   [  ]    slower / faster (1x, 0.5x, 0.25x, 2x ...)
+ //   1       back to normal speed
++//   h  l    seek -10s / +10s
+ //   n       next file in the playlist
+ //   q ESC   quit
+ 
+@@ -27,6 +28,19 @@ bool IsPaused();
+ // Set by 'n', cleared by whoever acts on it. Ignored when there is only one file.
+ bool TakeNextTrackRequest();
+ 
++// Seconds to jump the playback position by (negative = back), accumulated from 'h'/'l' and
++// controller thumbstick pushes since the last call. Cleared on read. 0 most of the time.
++int TakeSeekRequest();
++
++// Queues a seek jump in seconds (positive = forward). Called by HandleKey and by the
++// controller thumbstick poll in openxr_program.cpp.
++void QueueSeek(int seconds);
++
++// How long ago (seconds) the user last touched a transport control (pause/seek/speed) -
++// drives the progress bar's auto-hide timer. A large number once nothing has happened for a
++// while.
++double SecondsSinceLastInteraction();
++
+ // True once a quit key has been pressed.
+ bool QuitRequested();
+ 
+diff --git a/src/tests/hello_xr/video360.cpp b/src/tests/hello_xr/video360.cpp
+index 10f78b4..182ad70 100644
+--- a/src/tests/hello_xr/video360.cpp
++++ b/src/tests/hello_xr/video360.cpp
+@@ -25,6 +25,9 @@ int Video360::Height() const { return 0; }
+ size_t Video360::YBytes() const { return 0; }
+ size_t Video360::UVBytes() const { return 0; }
+ double Video360::FrameRate() const { return 0.0; }
++double Video360::Duration() const { return 0.0; }
++double Video360::PlaybackPosition() const { return 0.0; }
++void Video360::Seek(double) {}
+ std::string Video360::CodecName() const { return "none"; }
+ PanoLayout Video360::DetectedLayout() const { return PanoLayout{}; }
+ bool Video360::FullRange() const { return false; }
+@@ -117,6 +120,12 @@ struct Video360::Impl {
+     int height{0};
+     double timeBase{0.0};
+     double frameDuration{1.0 / 30.0};  // fallback when a frame carries no usable pts
++    double durationSeconds{0.0};       // 0 if the container did not say
++
++    // Seek request from Seek(), consumed at the top of DecodeLoop()'s while loop. Guarded by
++    // mutex, same as the other cross-thread state below.
++    bool seekPending{false};
++    int64_t seekTargetPts{0};  // stream timeBase units
+     std::string codecName{"unknown"};
+     PanoLayout layout;  // whatever the container declared; Unknown fields mean "it did not say"
+ 
+@@ -347,6 +356,28 @@ struct Video360::Impl {
+         double lastPts = 0.0;
+ 
+         while (!quit) {
++            {
++                std::unique_lock<std::mutex> lock(mutex);
++                if (seekPending) {
++                    const int64_t targetPts = seekTargetPts;
++                    seekPending = false;
++                    lock.unlock();
++
++                    avcodec_flush_buffers(dec);
++                    if (av_seek_frame(fmt, streamIndex, targetPts, AVSEEK_FLAG_BACKWARD) < 0) {
++                        Log::Write(Log::Level::Warning, "video360: seek failed");
++                    } else {
++                        std::lock_guard<std::mutex> lock2(mutex);
++                        for (const auto& qf : queue) freeSlots.push_back(qf.slot);
++                        queue.clear();
++                        clockStarted = false;  // re-anchor playbackTime to the first post-seek frame
++                        loopOffset = 0.0;      // this is an absolute jump, not a loop-around
++                        spaceAvailable.notify_all();
++                    }
++                    continue;
++                }
++            }
++
+             int ret = av_read_frame(fmt, packet);
+ 
+             if (ret == AVERROR_EOF) {
+@@ -531,6 +562,13 @@ bool Video360::Open(const std::string& path) {
+     if (stream->avg_frame_rate.num > 0 && stream->avg_frame_rate.den > 0) {
+         impl.frameDuration = av_q2d(AVRational{stream->avg_frame_rate.den, stream->avg_frame_rate.num});
+     }
++    // Prefer the container-level duration (AV_TIME_BASE units, i.e. microseconds) over the
++    // stream's own - some files only set one or the other.
++    if (impl.fmt->duration != AV_NOPTS_VALUE) {
++        impl.durationSeconds = (double)impl.fmt->duration / AV_TIME_BASE;
++    } else if (stream->duration != AV_NOPTS_VALUE) {
++        impl.durationSeconds = stream->duration * impl.timeBase;
++    }
+     if (impl.width <= 0 || impl.height <= 0 || (impl.width % 2) != 0 || (impl.height % 2) != 0) {
+         Log::Write(Log::Level::Error, Fmt("video360: %dx%d is not a usable even-sized frame", impl.width, impl.height));
+         return false;
+@@ -644,6 +682,22 @@ int Video360::Height() const { return m_impl->height; }
+ size_t Video360::YBytes() const { return m_impl->YBytes(); }
+ size_t Video360::UVBytes() const { return m_impl->UVBytes(); }
+ double Video360::FrameRate() const { return m_impl->frameDuration > 0.0 ? 1.0 / m_impl->frameDuration : 0.0; }
++double Video360::Duration() const { return m_impl->durationSeconds; }
++double Video360::PlaybackPosition() const {
++    Impl& impl = *m_impl;
++    std::lock_guard<std::mutex> lock(impl.mutex);
++    return impl.playbackTime;
++}
++void Video360::Seek(double deltaSeconds) {
++    Impl& impl = *m_impl;
++    if (!impl.started || impl.decodeDone) return;
++    std::lock_guard<std::mutex> lock(impl.mutex);
++    double target = impl.playbackTime + deltaSeconds;
++    if (target < 0.0) target = 0.0;
++    if (impl.durationSeconds > 0.0 && target > impl.durationSeconds) target = impl.durationSeconds;
++    impl.seekTargetPts = (int64_t)(target / impl.timeBase);
++    impl.seekPending = true;
++}
+ std::string Video360::CodecName() const { return m_impl->codecName; }
+ PanoLayout Video360::DetectedLayout() const { return m_impl->layout; }
+ bool Video360::FullRange() const { return m_impl->fullRange; }
+diff --git a/src/tests/hello_xr/video360.h b/src/tests/hello_xr/video360.h
+index 7e96531..fa41533 100644
+--- a/src/tests/hello_xr/video360.h
++++ b/src/tests/hello_xr/video360.h
+@@ -88,6 +88,19 @@ class Video360 {
+     // Frames per second the file declares. Useful to sanity-check what the pipeline sustains.
+     double FrameRate() const;
+ 
++    // Total length of the file in seconds, or 0 if the container did not say. For a progress
++    // indicator.
++    double Duration() const;
++
++    // Where the playback clock is right now, in seconds. Safe to call from any thread.
++    double PlaybackPosition() const;
++
++    // Jumps the playback position by deltaSeconds (negative to go back), clamped to
++    // [0, Duration()]. Safe to call from any thread; takes effect on the decode thread's next
++    // loop iteration, not synchronously. A no-op before Start() or after the file has finished
++    // (non-looping playlists).
++    void Seek(double deltaSeconds);
++
+     // Name of the video codec, for the "now playing" banner.
+     std::string CodecName() const;
+ 
+diff --git a/src/tests/hello_xr/vulkan_shaders/frag.glsl b/src/tests/hello_xr/vulkan_shaders/frag.glsl
+index ca12562..be05bd0 100644
+--- a/src/tests/hello_xr/vulkan_shaders/frag.glsl
++++ b/src/tests/hello_xr/vulkan_shaders/frag.glsl
+@@ -84,4 +84,16 @@ void main()
+     dy *= ubuf.uvScaleOffset.xy;
+ 
+     FragColor = vec4(textureGrad(equirectTex, uv, dx, dy).rgb * inside, 1.0);
++
++    // Progress bar: a thin strip near the bottom of the screen, drawn straight in screen
++    // space (not projected onto the pano), so it stays flat and legible no matter what
++    // projection mode is active or what direction you're looking. mode.y/mode.z aren't used
++    // by anything above - reusing them here instead of growing the push-constant struct past
++    // the 128 bytes Vulkan guarantees (it's already exactly at that limit).
++    float barAlpha = float(ubuf.mode.z) / 255.0;
++    if (barAlpha > 0.0 && t > 0.94 && t < 0.98) {
++        float progress = float(ubuf.mode.y) / 1000.0;
++        vec3 barColor = (s < progress) ? vec3(1.0, 1.0, 1.0) : vec3(0.35, 0.35, 0.35);
++        FragColor.rgb = mix(FragColor.rgb, barColor, barAlpha);
++    }
+ }
+-- 
+2.47.3
+
