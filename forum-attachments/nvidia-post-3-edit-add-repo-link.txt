@@ -1,0 +1,12 @@
+https://forums.developer.nvidia.com/t/hp-reverb-g2-clamped-to-6-bpc-because-its-edid-leaves-color-depth-undefined-root-cause-found-two-line-patch-but-90-hz-still-fails-to-light/379240/3
+
+HOW TO USE: this is an EDIT, not a new reply — add this paragraph to the end of the post
+already live at the URL above (the "patch works" update). Keep everything already there,
+just append this.
+
+--- APPEND BELOW THIS LINE ---
+
+For anyone who wants to dig into this directly: the full investigation (patches, test
+scripts, EDID tooling, and the dated log of every attempt including the ones that failed)
+is public at github.com/Wintch/reverb-g2. Open to PRs/issues if anyone has a lead on the
+backlight-timing question above, or wants to reproduce any of this on their own G2.

@@ -57,6 +57,19 @@ Copias sueltas de los dos drafts (para pegar sin tener que buscarlas en este arc
 **Falta postear en 337744** (el hilo original de 5923212, la respuesta corta que dirige acá)
 — sigue pendiente, draft abajo.
 
+**Repo público (2026-08-06):** confirmado con la API de GitHub (`private: false`) que
+`github.com/Wintch/reverb-g2` es genuinamente público — a partir de ahora referenciarlo en
+los posts, invitando a la comunidad (alguien puede tener un dato sobre el backlight que
+falta). Draft de edición para agregar el link al post ya publicado en
+`forum-attachments/nvidia-post-3-edit-add-repo-link.txt` (es una EDICIÓN al post #3
+existente, no un post nuevo). El draft de 337744 (todavía sin postear) ya incluye el link
+de entrada.
+
+**Cuidado con las fotos personales sin trackear** (`photo_51613...jpg`,
+`docs/Screenshot_20260806_064623.png`) que siguen sueltas en el working directory — el repo
+siendo público de verdad ahora hace que un `git add` descuidado las exponga. Revisar antes
+de cualquier `git add -A`/`git add .` en este repo.
+
 ### Draft para 379240 (el hilo del bpc — el más relevante, reply al post original) — YA POSTEADO
 
 ```

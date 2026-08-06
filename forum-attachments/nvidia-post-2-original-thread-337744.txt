@@ -1,0 +1,30 @@
+https://forums.developer.nvidia.com/t/reverb-g2-unable-to-drive-more-than-60hz-mode-on-nvidia/337744
+
+HOW TO POST: short reply at the end of this thread (the original bug 5923212 thread, where
+abchauhan is). Not a reply to any specific post — points readers to the bpc thread (379240)
+for the full detail instead of duplicating it here. Post this one second, after 379240.
+
+--- COPY BELOW THIS LINE ---
+
+Update on my factorial results above: they're superseded — 90 Hz does light up now, and I
+found exactly why the factorial never showed it.
+
+Short version: every test in that factorial (and the native-mode result I'd cited before it)
+either predates a separate bug I later found and fixed (NVKMS clamps color depth to 6 bpc
+when this EDID leaves it undeclared), or used a synthetic/injected timing rather than the
+panel's plain, unmodified native mode. Nobody had retested the literal native EDID timing
+with that patch actually in place until today - and it lights up fine. Full root-cause,
+patch, and today's confirmation are in a separate thread I'd opened for that specific issue:
+
+https://forums.developer.nvidia.com/t/hp-reverb-g2-clamped-to-6-bpc-because-its-edid-leaves-color-depth-undefined-root-cause-found-two-line-patch-but-90-hz-still-fails-to-light/379240
+
+The bridge-chip-ceiling conclusion from the factorial doesn't hold up - once the bpc bug is
+patched, native 90 Hz (the exact same EDID timing, unmodified, byte-identical to what Windows
+itself uses per a CRU capture) lights up fine. There's still an open question about a visible
+flicker at 90 Hz even with a real image now, detailed in the other thread, so I'm not calling
+this fully closed - but the "90 Hz is architecturally impossible on this link" conclusion I
+posted earlier was wrong, and I wanted to correct the public record here rather than leave it
+standing.
+
+Full investigation (patches, test scripts, EDID tooling, dated log of every attempt) is
+public at github.com/Wintch/reverb-g2, if anyone wants to dig in directly.

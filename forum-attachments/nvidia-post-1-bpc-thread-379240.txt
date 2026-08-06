@@ -1,0 +1,40 @@
+https://forums.developer.nvidia.com/t/hp-reverb-g2-clamped-to-6-bpc-because-its-edid-leaves-color-depth-undefined-root-cause-found-two-line-patch-but-90-hz-still-fails-to-light/379240
+
+HOW TO POST: reply to the original post (the one with this exact title/thread). This is
+the primary, most relevant update — post this one first.
+
+--- COPY BELOW THIS LINE ---
+
+Update: the patch works — 90 Hz now lights up the panel with a real image.
+
+Following up on my original report above (6bpc clamp root-caused, two-line patch, but 90 Hz
+still failing to light at the time).
+
+Root cause of that gap, now found: nobody had retested the panel's native EDID modes with no
+EDID override loaded at all, after the patch was in place. The "90 Hz native fails" data
+point in my own investigation predates the patch by about 24 hours (it's from before I'd
+found the 6bpc bug), and every subsequent test that ran with the patch active used synthetic,
+injected timings to isolate vertical blanking as a variable - never the plain, unmodified
+native mode. One of my own working notes even lists the native 2880x1440@90 mode as available
+and explicitly skips retesting it, citing the pre-patch result. That's on me, not a mystery -
+just an assumption that outlived the fix that invalidated it.
+
+Retested today with a plain EDID and no override at all: 90 Hz produces a real image,
+verified physically with the headset on (flat alternating test colors, and separately with
+real decoded video content) - the first time in this whole investigation that anything got
+past the boot logo at 90 Hz. Tested at both the supersampled 4320x2160@90 mode and, more
+importantly, the native 2880x1440@90 mode (the EDID's own base-block DTD, unmodified - the
+exact mode I separately confirmed via CRU that Windows itself drives this panel with).
+
+One thing still open, and it's the reason I'm not closing this out yet: the panel still
+visually appears to flicker/strobe at what looks like ~60 Hz to the eye, despite genuinely
+running at 90 Hz confirmed at every layer I can check - the headset's own HID status report,
+the compositor's frame pacing (11.111 ms period, matches 90 Hz exactly), and the presentation
+API. This persists identically with a synthetic test pattern, with real video content, and at
+the native Windows-matching mode too - so it isn't a rendering/compositor artifact and it
+isn't a "wrong mode" issue either. I don't have a way to measure the physical backlight
+strobe rate directly from here (would need a 120fps+ camera) so I can't rule in or out yet
+whether this is a separate firmware-level backlight-timing behavior, unrelated to the
+DisplayPort link itself.
+
+Happy to share the exact steps/config if useful to anyone else hitting this.
