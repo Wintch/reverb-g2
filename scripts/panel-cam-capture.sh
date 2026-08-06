@@ -21,7 +21,11 @@ DEVICE="${2:-/dev/video0}"
 FPS="${3:-10}"
 
 command -v ffmpeg >/dev/null 2>&1 || { echo "ffmpeg not found" >&2; exit 1; }
-[ -c "$DEVICE" ] || { echo "no such device: $DEVICE" >&2; exit 1; }
+[ -c "$DEVICE" ] || {
+	echo "!! no camera at $DEVICE -- it may have dropped off USB (seen happen on this rig)." >&2
+	echo "!! reconnect the webcam and rerun. ($DEVICE did not appear as a character device.)" >&2
+	exit 1
+}
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
 OUT="$REPO/experiments/webcam/$STAMP"
