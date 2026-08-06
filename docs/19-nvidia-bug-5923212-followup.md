@@ -48,10 +48,16 @@ de medir el strobe físico del backlight desde acá — ver la sección de "flic
 `linuxlab-kit/NEXT-STEP.md` para la hipótesis actual (duty-cycle del backlight, autoajustado
 por firmware según el timing detectado, sin comando de host).
 
-**Drafts listos para postear, dos hilos (no los posteo yo — mismo trato que siempre, son
-del usuario para revisar/editar/postear cuando quiera):**
+**Posteado en 379240** (2026-08-06, confirmado vía fetch directo — post #3 del hilo):
+<https://forums.developer.nvidia.com/t/hp-reverb-g2-clamped-to-6-bpc-because-its-edid-leaves-color-depth-undefined-root-cause-found-two-line-patch-but-90-hz-still-fails-to-light/379240/3>.
+Copias sueltas de los dos drafts (para pegar sin tener que buscarlas en este archivo) en
+`forum-attachments/nvidia-post-1-bpc-thread-379240.txt` y
+`forum-attachments/nvidia-post-2-original-thread-337744.txt`.
 
-### Draft para 379240 (el hilo del bpc — el más relevante, reply al post original)
+**Falta postear en 337744** (el hilo original de 5923212, la respuesta corta que dirige acá)
+— sigue pendiente, draft abajo.
+
+### Draft para 379240 (el hilo del bpc — el más relevante, reply al post original) — YA POSTEADO
 
 ```
 Update: the patch works — 90 Hz now lights up the panel with a real image.
