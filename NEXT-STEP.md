@@ -441,6 +441,31 @@ No se investigó todavía. Cuando se retome: revisar con `nvidia-smi -q -d PERFO
 máximo rendimiento (`nvidia-settings -a '[gpu:0]/GPUPowerMizerMode=1'` o el mecanismo
 equivalente en el 595-open) antes de correr el experimento del vblank o en paralelo con él.
 
+## Pendiente (2026-08-06): power management integral — sleep del sistema + proximity sensor del casco
+
+Surgió al costado, mientras corría un transcoding en background: la suspensión automática
+del sistema (sleep) cortó el proceso. Se retomó esa vez con un inhibidor de sleep puntual,
+pero queda como investigación más amplia sin resolver — darle al usuario control real sobre
+el ahorro de energía de esta máquina sin que corte trabajo de fondo por accidente, y evaluar
+si conviene o no tener sleep automático habilitado, y bajo qué condiciones.
+
+Dos frentes relacionados, ninguno investigado todavía:
+
+1. **Sleep del sistema (systemd) corta procesos de fondo.** Falta decidir política: ¿inhibir
+   sleep automáticamente cuando hay un proceso de transcoding/decode corriendo (vía
+   `systemd-inhibit` condicional en los scripts que lo lanzan), o dejarlo manual como se hizo
+   esta vez? Antes de decidir, confirmar qué target dispara el corte
+   (`systemctl status sleep.target`, `journalctl` alrededor del momento) en vez de asumir.
+2. **Detector de proximidad/cara del G2 nunca se hizo andar.** El WMR stack expone (en
+   Windows) un sensor de proximidad IR que dispara standby automático al sacarse el casco —
+   no confirmado todavía si Monado lo lee o lo ignora en este driver. Si se puede leer,
+   permitiría pausar el player y bajar consumo (GPU/panel) automáticamente al sacarse el
+   casco, sin depender de que el usuario se acuerde de un comando manual.
+
+Objetivo: que este tipo de comportamiento (ahorro de energía, standby automático) quede bajo
+control explícito del usuario en vez de andar "a medias" por default. Ninguno de los dos
+frentes se investigó todavía — queda anotado para retomar.
+
 ---
 
 ## Standing convention decided this session
