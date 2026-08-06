@@ -65,6 +65,24 @@ falta). Draft de edición para agregar el link al post ya publicado en
 existente, no un post nuevo). El draft de 337744 (todavía sin postear) ya incluye el link
 de entrada.
 
+**Dato nuevo grande (2026-08-06): en Windows, el parpadeo pasa exactamente al revés que en
+Linux.** El usuario confirma: en Windows, **60Hz parpadea y 90Hz NO** — lo opuesto exacto de
+lo que medimos hoy en Linux (donde 90Hz sí parpadea). Esto es evidencia mucho más fuerte que
+lo ya posteado: descarta de plano que sea un defecto físico del panel/casco (si lo fuera,
+parpadearía igual en ambos SO) y confirma que es un comportamiento real, ligado al modo,
+específico de cómo Linux negocia el link — no algo que se pueda explicar por hardware dañado.
+Vale la pena agregarlo al hilo, es más contundente que el "no sé por qué parpadea" actual.
+
+**Herramientas de software agotadas, confirmado (2026-08-06):** se probó
+`/sys/kernel/debug/dri/*/DP-1/dpcd` (el debugfs genérico de DRM para volcar registros DPCD) —
+**no existe ese archivo para este conector**, sólo `edid_override`, `force` (ya descartados
+en `docs/16`), `output_bpc` y `vrr_range`. Confirma lo que ya se sospechaba: NVIDIA no expone
+DPCD/AUX por los helpers genéricos de DRM para este conector. También se descartó la captura
+USB como vía — AUX/DPCD de DisplayPort no es un protocolo USB, corre por el propio cable DP,
+así que una captura USB (como la que ya se hizo) **nunca podía verlo**, sin importar cuánto
+se mirara. **Sin un analizador de protocolo DisplayPort real (hardware dedicado, no
+disponible acá), no queda ninguna herramienta de software para inspeccionar esto.**
+
 **Cuidado con las fotos personales sin trackear** (`photo_51613...jpg`,
 `docs/Screenshot_20260806_064623.png`) que siguen sueltas en el working directory — el repo
 siendo público de verdad ahora hace que un `git add` descuidado las exponga. Revisar antes
