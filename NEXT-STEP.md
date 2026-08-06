@@ -475,6 +475,55 @@ Objetivo: que este tipo de comportamiento (ahorro de energía, standby automáti
 control explícito del usuario en vez de andar "a medias" por default. Ninguno de los dos
 frentes se investigó todavía — queda anotado para retomar.
 
+## Pendiente (2026-08-06): repurposear `test-powermizer-90hz.sh` — eficiencia real (power limit vs. regulador automático)
+
+**Decisión: se mantiene el script, no se borra** — se repurposea. Su propósito original (¿el
+90Hz handshake falla por un downclock de PowerMizer en mal momento?) quedó obsoleto cuando se
+encontró la causa real del bloqueo de 90Hz (clamp a 6bpc, patch 0004). Pero el patrón que ya
+tiene (forzar `GPUPowerMizerMode` con `nvidia-settings`, medir, restaurar al salir) sirve como
+punto de partida para una pregunta distinta y más general.
+
+**El fenómeno que motiva esto:** el usuario reporta, medido más de una vez en Windows, que
+limitar el consumo de la placa en Watts (power limit) puede lograr los MISMOS fps que el
+regulador automático (boost/PowerMizer adaptativo) pero con menor consumo — el regulador
+automático no encuentra ese punto eficiente por sí solo. Causa desconocida, sin confirmar
+todavía — hipótesis de trabajo: el algoritmo de boost persigue el P-state más alto disponible
+bajo demanda, sin optimizar consumo una vez que el fps real ya está limitado por otra cosa
+(vsync/compositor), no por el throughput bruto de la GPU. Objetivo: reproducir y cuantificar
+esto en Linux, y decidir el mejor power limit para este equipo.
+
+**Confirmado en este equipo (2026-08-06), RTX 3060 Ti / driver 595.71.05-open, vía
+`nvidia-smi -q -d POWER`:** el power limit sí es controlable acá — rango 100W-250W,
+default/actual 240W (`nvidia-smi --query-gpu=power.draw,power.limit,power.min_limit,power.max_limit
+--format=csv`). A diferencia del script viejo, esto **no necesita X11**: `nvidia-smi -pl
+<watts>` funciona igual en Wayland — el requisito de X11 del script original era sólo porque
+usaba `nvidia-settings` para tocar `GPUPowerMizerMode`, no por el power limit en sí.
+
+**Dos piezas necesarias antes de medir en serio, según el usuario:**
+1. **fps/latencia** — ya resuelto, ya existen las herramientas (HID `DEVICE_STATUS`, frame
+   timing del compositor, `hmd-vk`).
+2. **Poder cargar el stack de forma controlada, para que el fps baje un poco del máximo** —
+   NO existe todavía. Sin esto, si el stack ya está limitado por vsync (techo = refresh del
+   panel), la GPU nunca llega a estar sujeta a su propio techo de throughput y no se puede
+   medir el trade-off potencia/rendimiento real. Falta decidir cómo generar esa carga
+   ajustable — candidatos sin explorar: subir la resolución de supersampling del compositor,
+   agregar un multiplicador de carga sintética al shader del player, o correr un segundo
+   proceso GPU-bound en paralelo (otro `hmd-vk`/`vkcube`) para robar ciclos de forma medible.
+
+**Método planeado una vez estén las dos piezas:**
+- Barrer `nvidia-smi -pl <watts>` en un rango (ej. 100 a 240W en pasos de 20W).
+- En cada punto, correr la carga controlada (#2) y registrar fps/frame-time real +
+  `nvidia-smi --query-gpu=power.draw` real (no el average del log, el instantáneo bajo carga
+  estable).
+- Encontrar el power limit más bajo que sostiene el mismo fps techo que el regulador
+  automático sin capping — el "punto eficiente" que el usuario ya identificó
+  cualitativamente en Windows.
+- Comparar contra el regulador automático al mismo fps target, para cuantificar la brecha.
+
+**No arrancado todavía** — el usuario lo dejó explícitamente para retomar después. No tocar
+`test-powermizer-90hz.sh` hasta ese momento (sigue como estaba, X11-only, referencia de
+patrón únicamente).
+
 ---
 
 ## Standing convention decided this session
