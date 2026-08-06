@@ -105,10 +105,12 @@ config de timing vieja, limpiado por el power-cycle; el firmware del casco manej
 del backlight según el timing detectado (strings del driver de Windows:
 `left duty %d, right duty %d, frame timing %d`, ver `docs/09`).
 
-**Acción de foro:** EDITAR los dos posts ya publicados (no responderse a sí mismo — nadie
-respondió aún). Los bloques "EDIT (same day...)" listos para pegar están al final de
-`forum-attachments/nvidia-post-1-bpc-thread-379240.txt` y
-`forum-attachments/nvidia-post-2-original-thread-337744.txt`.
+**Acción de foro: HECHA (2026-08-06, tarde).** Los dos posts publicados fueron EDITADOS
+por el usuario con los bloques "EDIT (same day...)" (sin auto-respuesta). Los textos
+exactos quedaron en `forum-attachments/nvidia-post-1-bpc-thread-379240.txt` y
+`forum-attachments/nvidia-post-2-original-thread-337744.txt`. Con esto el registro público
+queda correcto: 90Hz funcionando y limpio con el parche bpc; único issue de driver vigente
+en los hilos = el default de bpc ante EDID sin profundidad declarada.
 
 **Herramientas de software agotadas, confirmado (2026-08-06):** se probó
 `/sys/kernel/debug/dri/*/DP-1/dpcd` (el debugfs genérico de DRM para volcar registros DPCD) —
