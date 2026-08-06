@@ -6,3 +6,14 @@ scripts/.private-patterns
 *.[Pp][Dd][Ff]
 __pycache__/
 *.7z
+
+# Personal/ephemeral files that land loose in the working tree (phone photos dropped for a
+# quick look, ad-hoc screenshots, raw webcam capture frames) - never meant for a public repo.
+# The repo went public 2026-08-06; before that these were just untracked and harmless, now
+# an accidental `git add -A` would actually publish them. Pattern-based, not exact filenames,
+# so the next one of these (different timestamp/ID) is caught automatically.
+photo_*.jpg
+photo_*.jpeg
+docs/Screenshot_*.png
+Screenshot_*.png
+experiments/webcam/
