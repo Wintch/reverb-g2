@@ -451,11 +451,20 @@ si conviene o no tener sleep automático habilitado, y bajo qué condiciones.
 
 Dos frentes relacionados, ninguno investigado todavía:
 
-1. **Sleep del sistema (systemd) corta procesos de fondo.** Falta decidir política: ¿inhibir
-   sleep automáticamente cuando hay un proceso de transcoding/decode corriendo (vía
-   `systemd-inhibit` condicional en los scripts que lo lanzan), o dejarlo manual como se hizo
-   esta vez? Antes de decidir, confirmar qué target dispara el corte
-   (`systemctl status sleep.target`, `journalctl` alrededor del momento) en vez de asumir.
+1. **Sleep del sistema (systemd) corta procesos de fondo — causa raíz ya confirmada
+   (2026-08-06).** No es `logind` por su cuenta: `IdleAction` no está seteado en
+   `/etc/systemd/logind.conf` ni en drop-ins, y el default de systemd ahí es `ignore`. Es
+   **PowerDevil (KDE Plasma)** quien pide la suspensión por D-Bus tras su propio timer de
+   inactividad — corriendo con su default compilado, porque no existe `~/.config/powerdevilrc`
+   (nunca se tocó esa política en este equipo). Confirmado en journal: dos ciclos
+   suspend→resume el mismo día (`16:09:04` y `16:51:48`, "The system will suspend now!" →
+   `sleep.target` → `systemd-suspend.service`, ~16s despierto de nuevo cada vez). El
+   inhibidor puntual (`systemd-inhibit ... sleep:idle` en modo `block`, usado por
+   `stereo3d-pack` para el job de conversión) sí lo bloquea correctamente — visible en
+   `systemd-inhibit --list`. Falta decidir la solución permanente: cambiar el perfil
+   "Conectado a la corriente" en System Settings → Power Management (desactivar o extender
+   "Suspender sesión tras inactividad"), en vez de depender de envolver cada job largo en un
+   inhibidor manual.
 2. **Detector de proximidad/cara del G2 nunca se hizo andar.** El WMR stack expone (en
    Windows) un sensor de proximidad IR que dispara standby automático al sacarse el casco —
    no confirmado todavía si Monado lo lee o lo ignora en este driver. Si se puede leer,
