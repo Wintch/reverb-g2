@@ -73,6 +73,43 @@ parpadearía igual en ambos SO) y confirma que es un comportamiento real, ligado
 específico de cómo Linux negocia el link — no algo que se pueda explicar por hardware dañado.
 Vale la pena agregarlo al hilo, es más contundente que el "no sé por qué parpadea" actual.
 
+## RESUELTO: el parpadeo a 90Hz ya no se reproduce (2026-08-06, tarde — T026-T029)
+
+**Resultado, con blanco sólido estático (`HMD_VK_SOLID=1`, agregado hoy a `hmd-vk`) y
+veredicto físico del usuario mirando el panel:**
+
+| Modo | Veredicto |
+|---|---|
+| 2880x1440@90 nativo | **limpio** ("perfecta") |
+| 4320x2160@90 | **limpio** ("perfecto") — también inmediatamente después de una sesión a 60 (no depende del orden) |
+| 4320x2160@60 | **parpadea** ("parpadea") |
+
+Es decir: **Linux ahora se comporta EXACTAMENTE igual que Windows** (60 parpadea, 90
+limpio — el "dato nuevo grande" de arriba). La anomalía reportable desapareció; el parpadeo
+a 60Hz es comportamiento de fábrica del backlight a una frecuencia no nativa del panel, no
+un problema de Linux ni del driver.
+
+**Corrección metodológica que invalida evidencia propia:** de las tres confirmaciones
+previas del "parpadeo a 90Hz", dos (T020 y T023) usaron el test de colores de `hmd-vk`, que
+**alterna el color CADA FRAME** — a 90fps es un estrobo de ~30Hz por construcción. Esas dos
+observaciones eran el test parpadeando, no el panel. Solo T021 (video real vía Monado) era
+una observación válida — y esa hoy no se reproduce (video a 90 limpio, confirmado por el
+usuario con contenido real antes de esta tanda).
+
+**Qué cambió entre T021 (parpadeaba) y hoy (limpio):** del lado del driver, NADA — mismo
+595.71.05-open, mismo parche bpc, verificados en ambos estados. Lo que sí pasó en el medio:
+un reboot completo y varios ciclos de desenchufar/reconectar el USB del casco (el cable
+marginal documentado en `docs/06`). Hipótesis más plausible (etiquetada como hipótesis, no
+probada — sin acceso AUX no hay forma de probarla): estado del backlight enganchado a una
+config de timing vieja, limpiado por el power-cycle; el firmware del casco maneja el duty
+del backlight según el timing detectado (strings del driver de Windows:
+`left duty %d, right duty %d, frame timing %d`, ver `docs/09`).
+
+**Acción de foro:** EDITAR los dos posts ya publicados (no responderse a sí mismo — nadie
+respondió aún). Los bloques "EDIT (same day...)" listos para pegar están al final de
+`forum-attachments/nvidia-post-1-bpc-thread-379240.txt` y
+`forum-attachments/nvidia-post-2-original-thread-337744.txt`.
+
 **Herramientas de software agotadas, confirmado (2026-08-06):** se probó
 `/sys/kernel/debug/dri/*/DP-1/dpcd` (el debugfs genérico de DRM para volcar registros DPCD) —
 **no existe ese archivo para este conector**, sólo `edid_override`, `force` (ya descartados

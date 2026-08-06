@@ -14,6 +14,12 @@
 set -u
 
 MODE="${1:-1}"
+# "3dof" es sintaxis de jack-in.sh, no de este script — y atoi("3dof")=3 pedia un modo
+# inexistente en silencio (paso el 2026-08-06). Aca el argumento es SOLO el indice de modo.
+case "$MODE" in
+    0|1|2) ;;
+    *) echo "modo invalido: '$MODE' (0 = 2880x1440@90, 1 = 4320x2160@90, 2 = 4320x2160@60)" >&2; exit 1 ;;
+esac
 VR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 [ -d "$HOME/vr/monado" ] && VR="$HOME/vr"
 SERVICE="$VR/monado/build/src/xrt/targets/service/monado-service"

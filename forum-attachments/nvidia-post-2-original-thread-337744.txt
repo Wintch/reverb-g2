@@ -4,6 +4,9 @@ HOW TO POST: short reply at the end of this thread (the original bug 5923212 thr
 abchauhan is). Not a reply to any specific post — points readers to the bpc thread (379240)
 for the full detail instead of duplicating it here. Post this one second, after 379240.
 
+STATUS 2026-08-06 (tarde): YA POSTEADO. Ahora corresponde EDITAR ese mismo post (no
+responderse a sí mismo) agregando al final el bloque "EDIT (same day...)" de abajo.
+
 --- COPY BELOW THIS LINE ---
 
 Update on my factorial results above: they're superseded — 90 Hz does light up now, and I
@@ -28,3 +31,13 @@ standing.
 
 Full investigation (patches, test scripts, EDID tooling, dated log of every attempt) is
 public at github.com/Wintch/reverb-g2, if anyone wants to dig in directly.
+
+EDIT (same day): the visible-flicker caveat above is resolved. It turned out to be partly
+an artifact of my own test pattern (it alternated colors every frame — i.e. it strobed by
+construction), and the one remaining genuine observation cleared after a reboot plus
+re-seating the headset's USB, with zero driver-side changes in between. Retested with a
+static solid white at all three modes: both 90 Hz modes are clean; 60 Hz shows the same
+flicker this headset also shows on Windows at 60 Hz (the panel's own backlight behavior at
+a non-native rate, not a driver issue). Details in the 379240 thread linked above. So:
+with the bpc patch, native 90 Hz is fully working and visually clean — the original
+problem this thread is about is, as far as I can verify, completely solved on 595-open.

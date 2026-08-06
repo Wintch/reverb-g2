@@ -401,11 +401,18 @@ int main(int argc, char **argv)
 	int activated = 0;
 
 	// Tres colores bien distintos: si el panel engancha es imposible confundirlo con "nada".
+	// OJO: alternan CADA FRAME (a 90fps es un estrobo de 30Hz por diseño) — sirven para
+	// "engancha/no engancha", NUNCA para juzgar parpadeo del backlight. Para eso,
+	// HMD_VK_SOLID=1 pinta blanco fijo, cero variación de fuente: cualquier parpadeo que se
+	// vea ahí es del panel/backlight, no del test.
 	const VkClearColorValue COLORS[3] = {
 		{ { 1.0f, 0.40f, 0.0f, 1.0f } },
 		{ { 0.0f, 0.35f, 1.0f, 1.0f } },
 		{ { 0.0f, 0.85f, 0.25f, 1.0f } },
 	};
+	const VkClearColorValue WHITE = { { 1.0f, 1.0f, 1.0f, 1.0f } };
+	const int solid = getenv("HMD_VK_SOLID") != NULL;
+	if (solid) printf(">>> HMD_VK_SOLID: blanco fijo (test de parpadeo de backlight).\n");
 
 	for (;;) {
 		if (secs > 0 && now_s() - t0 >= secs) break;
@@ -435,7 +442,7 @@ int main(int argc, char **argv)
 		vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
 		                     VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &to_dst);
 		vkCmdClearColorImage(cmd, imgs[idx], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-		                     &COLORS[frames % 3], 1, &range);
+		                     solid ? &WHITE : &COLORS[frames % 3], 1, &range);
 		VkImageMemoryBarrier to_present = to_dst;
 		to_present.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 		to_present.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;

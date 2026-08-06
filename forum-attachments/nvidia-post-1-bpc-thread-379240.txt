@@ -3,6 +3,10 @@ https://forums.developer.nvidia.com/t/hp-reverb-g2-clamped-to-6-bpc-because-its-
 HOW TO POST: reply to the original post (the one with this exact title/thread). This is
 the primary, most relevant update — post this one first.
 
+STATUS 2026-08-06 (tarde): YA POSTEADO. Ahora corresponde EDITAR ese mismo post (no
+responderse a sí mismo) agregando al final el bloque "EDIT (same day...)" que está después
+del texto original abajo.
+
 --- COPY BELOW THIS LINE ---
 
 Update: the patch works — 90 Hz now lights up the panel with a real image.
@@ -38,3 +42,35 @@ whether this is a separate firmware-level backlight-timing behavior, unrelated t
 DisplayPort link itself.
 
 Happy to share the exact steps/config if useful to anyone else hitting this.
+
+EDIT (same day, a few hours later): the flicker question above is resolved — and the
+resolution invalidates part of my own evidence, so correcting it here rather than leaving
+it standing.
+
+Two of my three "flickers at 90 Hz" observations used my own synthetic test tool, which
+alternates its solid fill color every single frame — at 90 fps that is a built-in ~30 Hz
+strobe by construction. Those observations were the test flashing, not the panel. I added
+a static solid-white mode to the tool and re-ran all three modes, watching the panel
+directly:
+
+- 2880x1440@90 (native, the Windows-matching timing): clean, no flicker
+- 4320x2160@90 (supersampled): clean, no flicker — including when switched to immediately
+  after a 60 Hz session, so it isn't ordering-sensitive either
+- 4320x2160@60: visible flicker — which is exactly what this same headset does on Windows
+  at 60 Hz. That makes the 60 Hz flicker the panel's own backlight behavior at its
+  non-native rate, not a Linux or driver issue. Linux and Windows now behave identically
+  on this panel: 60 flickers, 90 is clean.
+
+That leaves one earlier observation (real decoded video at 90 Hz, which did appear to
+flicker) that I can no longer reproduce. Nothing driver-side changed in between — same
+595.71.05-open, same two-line bpc patch, verified active in both states. What did happen
+in between: a full reboot and physically re-seating the headset's USB connection several
+times (this unit's cable has documented marginal contact). The most plausible reading is
+a latched panel/backlight state cleared by the power cycling — the headset firmware
+manages backlight duty per detected frame timing (the Windows driver's binaries carry
+strings like "left duty %d, right duty %d, frame timing %d") — but I can't prove that
+without DP AUX access, so it stays labeled a hypothesis.
+
+Bottom line: with the bpc patch, 90 Hz on the G2 with 595-open is fully working and
+visually clean at both 90 Hz modes. No remaining flicker complaint against the driver —
+the bpc default remains the one real driver issue in this thread.
