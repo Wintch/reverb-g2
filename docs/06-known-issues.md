@@ -1,5 +1,24 @@
 # 06 — Problemas conocidos y por qué NO los perseguimos (con evidencia)
 
+## Popup molesto de "USB Audio" reconectando cada ~30s: silenciado, no arreglado (2026-08-06)
+
+El audio del casco (más abajo, sección siguiente) sigue ciclando disconnect/reconnect cada
+~30s aproximadamente — eso no cambió. Lo que se agregó es una regla de WirePlumber
+(`scripts/wireplumber/51-disable-reverb-headset-audio.conf`, instalar en
+`~/.config/wireplumber/wireplumber.conf.d/`, reiniciar con
+`systemctl --user restart wireplumber`) que marca ese dispositivo específico
+(`device.vendor.id`/`device.product.id` = `0bda`/`4c15`) como `device.disabled`, para que
+WirePlumber nunca le cree un nodo de audio — sin nodo, no hay evento de "dispositivo
+conectado/desconectado" y no aparece el popup de KDE. El ciclo USB a nivel kernel sigue
+pasando exactamente igual (visible en `journalctl -k`), sólo que ahora es invisible para el
+usuario. Verificado: `/proc/asound/cards` y `pw-dump` ya no listan el dispositivo tras un
+ciclo de reconexión con la regla activa.
+
+**Ojo:** esto no es necesariamente un defecto del modelo G2 en general — puede ser específico
+al estado de esta unidad particular (el mismo golpe físico que dejó la fuga de luz notada en
+`NEXT-STEP.md` de `linuxlab-kit` bien podría explicar también esto). No se investigó la causa
+de fondo del ciclo USB en sí, sólo se apagó el síntoma molesto.
+
 ## Audio del casco: RESUELTO — era el puerto USB (2026-08-04)
 
 > Esta sección decía que el audio era una falla física incurable del cable. **Era falso.**

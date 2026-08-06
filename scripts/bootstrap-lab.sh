@@ -102,7 +102,13 @@ do_deps() {
 		libdrm-dev \
 		libavcodec-dev libavformat-dev libavutil-dev libswscale-dev ffmpeg \
 		libopencv-dev libboost-all-dev libtbb-dev libfmt-dev \
+		libsdl2-dev python3-pil \
 		x11-xserver-utils pciutils usbutils time
+	# libsdl2-dev: Monado's debug GUI / compositor mirror (XRT_FEATURE_DEBUG_GUI, see
+	# do_build below) silently needs SDL2, not GLFW as its symbol names might suggest -
+	# cmake just leaves the feature off with no error if it's missing. Cost a rebuild cycle
+	# to find (2026-08-06).
+	# python3-pil: scripts/panel-cam-analyze.py (webcam-based panel state detection).
 	# libdrm-dev is NOT optional even though nothing fails without it. Monado's logic is
 	#   XRT_HAVE_WAYLAND DEPENDS WAYLAND_FOUND WAYLAND_SCANNER_FOUND WAYLAND_PROTOCOLS_FOUND LIBDRM_FOUND
 	# so without libdrm-dev the WHOLE of Wayland drops out — and with it XRT_HAVE_WAYLAND_DIRECT,
@@ -194,8 +200,11 @@ do_build() {
 
 	echo "### Monado"
 	step "cmake monado" cmake -S monado -B monado/build -GNinja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-		-DXRT_HAVE_BASALT=ON -DXRT_FEATURE_SERVICE=ON || return 1
+		-DXRT_HAVE_BASALT=ON -DXRT_FEATURE_SERVICE=ON -DXRT_FEATURE_DEBUG_GUI=ON || return 1
 	step "ninja monado" ninja -C monado/build || return 1
+	echo "    XRT_FEATURE_DEBUG_GUI=ON: run monado-service with XRT_DEBUG_GUI=1 for a live"
+	echo "    compositor mirror + timing panels (needs libsdl2-dev, see do_deps). Window"
+	echo "    layout persists on its own in ~/.config/monado/imgui.ini after the first run."
 
 	echo "### hello_xr (360/VR180 player)"
 	step "cmake hello_xr" cmake -S OpenXR-SDK-Source -B OpenXR-SDK-Source/build -GNinja \
