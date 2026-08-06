@@ -75,7 +75,7 @@ upstream `monado/monado`.
 | Patch | What | Status |
 |---|---|---|
 | `0001`–`0003` | VESA DisplayID/DSC/VSDB spec fixes, Wayland DRM-lease for VR HMDs, force max DP link config | From Project-VR (`AshishKumar4/Project-VR`), applied unmodified — prior art, not ours |
-| `0004` | Don't clamp DP sinks to 6bpc when the EDID leaves color depth undeclared | **Ours.** Root cause of the 90Hz failure on this hardware. Filed as [PR #1275](https://github.com/NVIDIA/open-gpu-kernel-modules/pull/1275) against `NVIDIA/open-gpu-kernel-modules`, accepted |
+| `0004` | Don't clamp DP sinks to 6bpc when the EDID leaves color depth undeclared | **Ours.** Root cause of the 90Hz failure on this hardware. Filed as [PR #1275](https://github.com/NVIDIA/open-gpu-kernel-modules/pull/1275) against `NVIDIA/open-gpu-kernel-modules` — **open, not yet reviewed or merged** as of 2026-08-06 (corrected; an earlier version of this doc wrongly said "accepted") |
 
 **Monado, 11 patches, 4 upstream MRs against `monado/monado`:**
 
