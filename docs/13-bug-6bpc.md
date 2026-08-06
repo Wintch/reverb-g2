@@ -72,6 +72,31 @@ DisplayPort y DSI hacen cosas distintas con la misma entrada.
 Se aplica y reconstruye con `sudo ./scripts/apply-bpc-patch.sh` (y `--revert` lo saca).
 **Requiere reiniciar.**
 
+## Terminología: "logo HP" no es señal, es solo "tiene corriente" (aclarado 2026-08-06)
+
+A lo largo de este documento y de `docs/16-lab-vblank.md`, la frase "logo HP, negro" aparece
+constantemente como resultado de fallo. **Aclaración importante, para que nadie la
+malinterprete en el futuro:** el "logo HP" es un badge LED luminoso en el frente del casco,
+físicamente separado de los paneles LCD internos — se prende solo con recibir corriente USB,
+sin que ningún software del host haga nada. **No es una señal diagnóstica de nada** más que
+"el casco tiene alimentación". Nunca hubo una imagen de arranque dibujada en el panel interno
+mismo.
+
+Lo único que importa, y lo único que varía entre intentos, es el estado del **panel interno**
+(el que se ve mirando por el lente):
+
+| Panel interno (mirando por el lente) | Qué significa |
+|---|---|
+| Negro | Backlight apagado. Esto es lo que "logo HP, negro" siempre quiso decir: badge externo prendido (trivial, ignorar) + panel apagado. |
+| Blanco fijo / parpadeo, sin color | Backlight prendido, sin imagen real — el hallazgo original de este documento (finding #2). |
+| Imagen real (colores, video) | Éxito. |
+
+**Dato práctico nuevo:** esta unidad tiene un daño físico (golpe) que deja un punto de fuga
+de luz visible mirando por el lente — es el único indicador a simple vista, sin cámara ni
+HID, de si el backlight está prendido o no, incluso cuando el resto del panel se ve negro a
+primera vista. Coordenadas de referencia (para cámara, no aplica a simple vista) en
+`linuxlab-kit/NEXT-STEP.md`, sección del experimento de webcam.
+
 ## Cómo se verifica que funcionó
 
 Dos señales, y conviene mirar las dos:
