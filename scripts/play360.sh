@@ -22,12 +22,15 @@
 # Transport keys (they need this script run from a real terminal, not piped or backgrounded -
 # the player reads them from stdin):
 #
-#   espacio  pausa / seguir
+#   espacio  pausa / seguir            (mando: gatillo)
 #   [  ]     mas lento / mas rapido (0.125x .. 4x)
 #   1        velocidad normal
-#   h  l     seek -10s / +10s (o el stick de cualquier controller WMR, puesto el casco)
+#   h  l     seek -10s / +10s          (mando: stick a los costados)
+#   enter    recentrar "adelante"      (mando: apretar fuerte el grip)
 #   n        siguiente video de la playlist
-#   q        salir
+#   q        salir                     (mando: mantener menu izquierdo ~1.5s, barra roja)
+#
+# HELLO_XR_THEME=night pinta de negro el espacio vacio fuera del video (default: gris claro).
 #
 # Requires the stack to be up: ./jack-in.sh 3dof
 
@@ -61,7 +64,7 @@ while getopts "t:sp:e:f:w:qh" opt; do
 		f) ENV_EXTRA+=("HELLO_XR_PANO_FOV=$OPTARG") ;;
 		w) ENV_EXTRA+=("HELLO_XR_SCREEN_FOV=$OPTARG") ;;
 		q) STATS=0 ;;
-		h|*) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+		h|*) sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 	esac
 done
 shift $((OPTIND - 1))
@@ -109,7 +112,8 @@ RUNTIME_ENV=(
 )
 if [ -t 0 ]; then
 	echo "Reproduciendo $(basename "$FILE") - maximo ${SECONDS_TO_RUN}s."
-	echo "Teclas: [espacio] pausa | [ ] velocidad | 1 normal | h/l -10s/+10s | n siguiente | q salir"
+	echo "Teclas: [espacio] pausa | [ ] velocidad | 1 normal | h/l -10s/+10s | enter recentra | n siguiente | q salir"
+	echo "Mando: gatillo pausa | stick seek | grip recentra | menu izq sostenido ~1.5s sale"
 	timeout --foreground "$SECONDS_TO_RUN" env \
 		"${RUNTIME_ENV[@]}" "${ENV_EXTRA[@]}" \
 		stdbuf -oL -eL "$HELLO_XR" --graphics Vulkan2

@@ -59,13 +59,30 @@ el del perfil directo, **o** si hay una tabla de remap para ese perfil — sin n
 dos cosas, descarta el binding en silencio (`profile->xname != xdev->name && xbp == NULL`).
 Consecuencia: en hardware G2 real, **ningún binding bajo `microsoft/motion_controller`
 resolvía nunca** — no sólo el thumbstick nuevo, también grip/squeeze/quit de ese perfil.
-Se notaba poco porque hello_xr también sugiere bindings para `khr/simple_controller`, que
-sí tiene remap (`simple_inputs[]`) y cubre pose/select/menu — suficiente para que el
-tracking pareciera andar bien.
 
-Fix: agregada `wmr_inputs[]`/`wmr_outputs[]` + entrada en `binding_profiles[]` para
-`XRT_DEVICE_WMR_CONTROLLER`, mismo patrón que las tablas touch/simple ya existentes.
-Parche pendiente de exportar a `patches/monado/`.
+**Segunda vuelta (mismo día, verificado contra
+`oxr_interaction_profile_array.c:134-172`):** el parche de arriba es correcto pero NO
+alcanzaba para hello_xr, porque la selección de perfil activo recorre
+`xdev->binding_profiles[]` **en orden** y se queda con el primer perfil que la app haya
+sugerido. La entrada [0] del driver es el remap a Oculus Touch (el G2 tiene X/Y/A/B, que
+el perfil WMR no puede expresar), así que hello_xr — que sugiere bindings para Touch —
+siempre recibe el perfil `oculus/touch_controller`, nunca el WMR. Eso era también lo que
+enmascaraba el bug: pose/grab/quit andaban vía Touch. El parche 0011 vale para apps que
+sólo sugieren el perfil WMR (el caso común en apps de la era WMR); para nuestro player el
+fix real fue espejar los bindings del player (seek/pausa/recentrar) en el bloque
+`oculus/touch_controller` de hello_xr. Ojo con dos detalles del perfil Touch: `menu` existe
+sólo en la mano izquierda (sugerirlo para la derecha hace fallar TODO el
+`xrSuggestInteractionProfileBindings`), y `squeeze` sólo tiene componente `value` (float) —
+una acción booleana atada ahí es legal, Monado le aplica umbral 0.7
+(`oxr_input_transform.c:323-326`).
+
+El player ahora además imprime al conectar los mandos el perfil activo por mano
+(`Active profile /user/hand/...`) y las fuentes de cada acción — ante cualquier input
+muerto, mirar eso primero.
+
+Fix Monado: agregada `wmr_inputs[]`/`wmr_outputs[]` + entrada en `binding_profiles[]` para
+`XRT_DEVICE_WMR_CONTROLLER`, mismo patrón que las tablas touch/simple ya existentes
+(exportado como `patches/monado/0011`).
 
 Efecto neto esperado: los controllers conectan siempre (aunque un fw-read falle, se
 reintenta; aunque estén apagados al arrancar, aparecen al encenderlos), los sticks quedan

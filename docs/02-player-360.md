@@ -37,8 +37,8 @@ en el lab moría con "falta compilar hello_xr" sin más explicación.
 
 Corrido desde una **terminal real** (no piped ni backgrounded), hay teclas de transporte:
 `espacio` pausa, `[`/`]` velocidad (0.125x–4x), `1` normal, `h`/`l` seek -10s/+10s,
-`n` siguiente, `q` salir. Si un corte sucio deja la terminal muda: `stty sane`. En un pipe
-no hay teclas y el run termina en el EOF de stdin, como siempre.
+`enter` recentra, `n` siguiente, `q` salir. Si un corte sucio deja la terminal muda:
+`stty sane`. En un pipe no hay teclas y el run termina en el EOF de stdin, como siempre.
 
 ### Seek + barra de progreso (2026-08-06)
 
@@ -60,8 +60,29 @@ esconde sola.
 
 **Probado por el agente:** seek por teclado (avanzar, retroceder, clamp en 0 sin crashear,
 sin romper pausa/velocidad existentes) — vía un pty falso armado con Python, ya que
-`play360.sh` sin terminal real no manda teclas. **Falta probar con el casco puesto:** el
-stick del controller y que la barra se vea/se esconda bien — necesita verificación física.
+`play360.sh` sin terminal real no manda teclas. **Verificado con el casco puesto
+(2026-08-06):** stick, gatillo y menú del mando izquierdo funcionando.
+
+### Controles completos de mando + temas (2026-08-06, `0005-*.patch`)
+
+Ojo, primero: los mandos del G2 usan el perfil **`oculus/touch_controller`**, no el WMR —
+ver `docs/03-controllers.md` ("Segunda vuelta") para el porqué; cualquier binding nuevo va
+en ESE bloque de `openxr_program.cpp` o queda muerto.
+
+- **Gatillo** (cualquier mano): pausa/reanudar, con histéresis 0.7/0.3 como el stick.
+- **Grip apretado fuerte** (cualquier mano; es analógico, umbral 0.7 del runtime) o
+  `enter`: **recentrar** — la dirección donde estás mirando pasa a ser "adelante". Solo
+  yaw; pitch/roll siguen al casco de verdad.
+- **Menú (tres rayas), solo mando izquierdo** — en el perfil Touch el menú derecho no
+  existe: **mantener ~1.5s para salir**, con una barra roja arriba que se va llenando;
+  soltar antes cancela. Un toque corto ya no sale (antes salía de una, demasiado fácil de
+  tocar sin querer).
+- **`HELLO_XR_THEME`**: `daylight` (default) pinta gris claro el espacio vacío fuera del
+  contenido; `night` lo deja negro como antes. Existe porque el negro total fuera del frame
+  se confundía con "se murió el tracking". El shader ahora hace `discard` fuera del
+  contenido en vez de pintar negro, así que el clear color de la app por fin se ve.
+- Al conectar mandos, el player imprime `Active profile /user/hand/...` y las fuentes de
+  cada acción — ante un botón muerto, mirar eso primero.
 
 ## Proyecciones y estéreo (v3)
 

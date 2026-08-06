@@ -1,0 +1,479 @@
+From 46e479632235bb2fc601c772c34cd4a590172003 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Thu, 6 Aug 2026 14:52:34 -0300
+Subject: [PATCH] 360 viewer: trigger pause, grip recenter, hold-to-quit,
+ themes - on the profile the G2 actually uses
+
+The G2 lands on oculus/touch_controller, not microsoft/motion_controller:
+Monado's profile selection walks the driver's binding_profiles[] remaps in
+order and takes the first profile the app suggested bindings for, and the
+G2 driver's first remap is Touch. Every player binding suggested only
+under the WMR profile was therefore dead. All player actions now live in
+the Touch block too: thumbstick seek, trigger pause/resume, squeeze-value
+recenter (boolean-on-float, runtime thresholds at 0.7), and menu
+(left-hand-only on Touch) as quit.
+
+Quit is now hold-to-confirm (~1.5s, red fill bar top of view) instead of
+an instant exit on a button that is easy to hit by accident. Recenter
+(also keyboard enter) makes the current gaze direction the new forward,
+yaw only. HELLO_XR_THEME=daylight|night picks the color of the empty
+space outside the content, which the skybox shader now discards instead
+of painting black - black-out-of-frame read as "tracking broke". On
+profile attach the log prints the active profile per hand and each
+action's bound sources, so a dead input is diagnosable from the terminal.
+
+Verified on hardware: left-controller stick/trigger/menu-hold all work.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ src/tests/hello_xr/graphicsplugin_vulkan.cpp |  25 ++++
+ src/tests/hello_xr/openxr_program.cpp        | 138 +++++++++++++++++--
+ src/tests/hello_xr/playercontrol.cpp         |  43 +++++-
+ src/tests/hello_xr/playercontrol.h           |  22 ++-
+ src/tests/hello_xr/vulkan_shaders/frag.glsl  |  30 +++-
+ 5 files changed, 243 insertions(+), 15 deletions(-)
+
+diff --git a/src/tests/hello_xr/graphicsplugin_vulkan.cpp b/src/tests/hello_xr/graphicsplugin_vulkan.cpp
+index 59fe016..80097a6 100644
+--- a/src/tests/hello_xr/graphicsplugin_vulkan.cpp
++++ b/src/tests/hello_xr/graphicsplugin_vulkan.cpp
+@@ -1738,6 +1738,27 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+             pose.orientation = {0.0f, 0.0f, 0.0f, 1.0f};
+         }
+ 
++        // Recenter: yaw-only, captured from whichever direction is "forward" right now (same
++        // azimuth convention as frag.glsl's `az = atan(dir.x, -dir.z)`) so that direction reads
++        // as dead ahead afterwards. Pitch/roll are left alone - those already track the real
++        // headset, recentering them would fight the HMD's own leveling. Captured once per frame
++        // (eye == 0) since recenterAction's request is consumed (exchanged to false) on read.
++        if (eye == 0 && PlayerControl::TakeRecenterRequest()) {
++            XrVector3f forward{0.0f, 0.0f, -1.0f};
++            XrVector3f worldForward;
++            XrQuaternionf_RotateVector3f(&worldForward, &pose.orientation, &forward);
++            PlayerControl::SetRecenterYaw(atan2((double)worldForward.x, -(double)worldForward.z));
++        }
++        const double recenterYaw = PlayerControl::RecenterYaw();
++        if (recenterYaw != 0.0) {
++            XrVector3f yAxis{0.0f, 1.0f, 0.0f};
++            XrQuaternionf yawOffset;
++            XrQuaternionf_CreateFromAxisAngle(&yawOffset, &yAxis, (float)-recenterYaw);
++            XrQuaternionf adjusted;
++            XrQuaternionf_Multiply(&adjusted, &pose.orientation, &yawOffset);
++            pose.orientation = adjusted;
++        }
++
+         // Tracking-stability instrumentation (HELLO_XR_POSE_STATS=1): reports the achieved frame
+         // rate and how far the reported orientation moves between frames. Held still, the
+         // inter-frame rotation is the tracker's jitter floor.
+@@ -1794,6 +1815,10 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+         // it doesn't sit on screen the whole time someone is just watching.
+         pushConstants.mode[1] = 0;
+         pushConstants.mode[2] = 0;
++        // Quit-confirm hold indicator (see frag.glsl): mode.w is the hold fraction *1000, set
++        // by openxr_program.cpp's PollActions while the WMR Menu button is held down. Not
++        // gated on m_videoMode - quitting applies in photo mode too.
++        pushConstants.mode[3] = PlayerControl::QuitHoldPermille();
+         if (m_videoMode && m_video) {
+             const double duration = m_video->Duration();
+             if (duration > 0.0) {
+diff --git a/src/tests/hello_xr/openxr_program.cpp b/src/tests/hello_xr/openxr_program.cpp
+index 1886fa0..74fe419 100644
+--- a/src/tests/hello_xr/openxr_program.cpp
++++ b/src/tests/hello_xr/openxr_program.cpp
+@@ -13,7 +13,11 @@
+ #include "playercontrol.h"
+ #include <common/xr_linear.h>
+ #include <array>
++#include <chrono>
+ #include <cmath>
++#include <cstdlib>
++#include <cstring>
++#include <optional>
+ #include <set>
+ 
+ namespace {
+@@ -292,19 +296,30 @@ struct OpenXrProgram : IOpenXrProgram {
+     }
+ 
+     std::array<float, 4> GetBackgroundClearColor() const override {
+-        static const std::array<float, 4> SlateGrey{{0.184313729f, 0.309803933f, 0.309803933f, 1.0f}};
++        // The 360/VR180/flat skybox shader now discards pixels outside the actual content
++        // (see frag.glsl) instead of painting them black, so this color is what shows in that
++        // empty space - previously it was set but never visible, since the shader used to
++        // cover every pixel regardless. HELLO_XR_THEME picks it: "night" (or the older "void")
++        // is the original black look, anything else (default "daylight") is a plain medium
++        // grey, added because pure black outside the frame reads as "did tracking break?"
++        // rather than "empty".
++        static const std::array<float, 4> Night{{0.0f, 0.0f, 0.0f, 1.0f}};
++        static const std::array<float, 4> Daylight{{0.5f, 0.5f, 0.5f, 1.0f}};
+         static const std::array<float, 4> TransparentBlack{{0.0f, 0.0f, 0.0f, 0.0f}};
+         static const std::array<float, 4> Black{{0.0f, 0.0f, 0.0f, 1.0f}};
+ 
+         switch (m_blendMode) {
+-            case XR_ENVIRONMENT_BLEND_MODE_OPAQUE:
+-                return SlateGrey;
++            case XR_ENVIRONMENT_BLEND_MODE_OPAQUE: {
++                const char* theme = getenv("HELLO_XR_THEME");
++                const bool night = theme != nullptr && (strcmp(theme, "night") == 0 || strcmp(theme, "void") == 0);
++                return night ? Night : Daylight;
++            }
+             case XR_ENVIRONMENT_BLEND_MODE_ADDITIVE:
+                 return Black;
+             case XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND:
+                 return TransparentBlack;
+             default:
+-                return SlateGrey;
++                return Daylight;
+         }
+     }
+ 
+@@ -383,6 +398,14 @@ struct OpenXrProgram : IOpenXrProgram {
+         // controller to test with, and guessing paths for profiles we cannot verify is how
+         // silently-wrong bindings happen.
+         XrAction seekAction{XR_NULL_HANDLE};
++        // Trigger value, WMR motion controller only - toggles video pause. Same rationale as
++        // seekAction: only bound on the one profile we have real hardware to verify against.
++        XrAction pauseAction{XR_NULL_HANDLE};
++        // Squeeze/grip click, WMR motion controller only - recenters forward. grabAction is
++        // also bound to this same physical button (from the original hello_xr sample, scales a
++        // hand-cube visual), but graphicsplugin_vulkan.cpp's RenderView never actually draws
++        // that cube - so the button was doing nothing in this player until now.
++        XrAction recenterAction{XR_NULL_HANDLE};
+         std::array<XrPath, Side::COUNT> handSubactionPath;
+         std::array<XrSpace, Side::COUNT> handSpace;
+         std::array<float, Side::COUNT> handScale = {{1.0f, 1.0f}};
+@@ -447,6 +470,25 @@ struct OpenXrProgram : IOpenXrProgram {
+             actionInfo.countSubactionPaths = uint32_t(m_input.handSubactionPath.size());
+             actionInfo.subactionPaths = m_input.handSubactionPath.data();
+             CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.seekAction));
++
++            // Trigger for video pause/resume (WMR only, see InputState::pauseAction) - a quick
++            // debug-friendly toggle so playback state can be flipped without reaching for the
++            // keyboard.
++            actionInfo.actionType = XR_ACTION_TYPE_FLOAT_INPUT;
++            strcpy_s(actionInfo.actionName, "pause_video");
++            strcpy_s(actionInfo.localizedActionName, "Pause Video");
++            actionInfo.countSubactionPaths = uint32_t(m_input.handSubactionPath.size());
++            actionInfo.subactionPaths = m_input.handSubactionPath.data();
++            CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.pauseAction));
++
++            // Squeeze/grip click for recenter (WMR only, see InputState::recenterAction). No
++            // subaction paths - like quitAction, we don't care which hand did it.
++            actionInfo.actionType = XR_ACTION_TYPE_BOOLEAN_INPUT;
++            strcpy_s(actionInfo.actionName, "recenter_video");
++            strcpy_s(actionInfo.localizedActionName, "Recenter Video");
++            actionInfo.countSubactionPaths = 0;
++            actionInfo.subactionPaths = nullptr;
++            CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.recenterAction));
+         }
+ 
+         std::array<XrPath, Side::COUNT> selectPath;
+@@ -504,13 +546,25 @@ struct OpenXrProgram : IOpenXrProgram {
+             XrPath oculusTouchInteractionProfilePath;
+             CHECK_XRCMD(
+                 xrStringToPath(m_instance, "/interaction_profiles/oculus/touch_controller", &oculusTouchInteractionProfilePath));
++            // The G2's controllers land on THIS profile, not microsoft/motion_controller:
++            // Monado's G2 driver remaps itself to oculus/touch (it has X/Y/A/B buttons the WMR
++            // profile can't express), so the player bindings must live here too. Notes: menu is
++            // left-hand-only on this profile (suggesting it for the right hand fails the whole
++            // call), and recenterAction is a boolean bound to the float squeeze/value - legal
++            // per spec, the runtime thresholds it (Monado: 0.7).
+             std::vector<XrActionSuggestedBinding> bindings{{{m_input.grabAction, squeezeValuePath[Side::LEFT]},
+                                                             {m_input.grabAction, squeezeValuePath[Side::RIGHT]},
+                                                             {m_input.poseAction, posePath[Side::LEFT]},
+                                                             {m_input.poseAction, posePath[Side::RIGHT]},
+                                                             {m_input.quitAction, menuClickPath[Side::LEFT]},
+                                                             {m_input.vibrateAction, hapticPath[Side::LEFT]},
+-                                                            {m_input.vibrateAction, hapticPath[Side::RIGHT]}}};
++                                                            {m_input.vibrateAction, hapticPath[Side::RIGHT]},
++                                                            {m_input.seekAction, thumbstickXPath[Side::LEFT]},
++                                                            {m_input.seekAction, thumbstickXPath[Side::RIGHT]},
++                                                            {m_input.pauseAction, triggerValuePath[Side::LEFT]},
++                                                            {m_input.pauseAction, triggerValuePath[Side::RIGHT]},
++                                                            {m_input.recenterAction, squeezeValuePath[Side::LEFT]},
++                                                            {m_input.recenterAction, squeezeValuePath[Side::RIGHT]}}};
+             XrInteractionProfileSuggestedBinding suggestedBindings{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
+             suggestedBindings.interactionProfile = oculusTouchInteractionProfilePath;
+             suggestedBindings.suggestedBindings = bindings.data();
+@@ -571,7 +625,11 @@ struct OpenXrProgram : IOpenXrProgram {
+                                                             {m_input.vibrateAction, hapticPath[Side::LEFT]},
+                                                             {m_input.vibrateAction, hapticPath[Side::RIGHT]},
+                                                             {m_input.seekAction, thumbstickXPath[Side::LEFT]},
+-                                                            {m_input.seekAction, thumbstickXPath[Side::RIGHT]}}};
++                                                            {m_input.seekAction, thumbstickXPath[Side::RIGHT]},
++                                                            {m_input.pauseAction, triggerValuePath[Side::LEFT]},
++                                                            {m_input.pauseAction, triggerValuePath[Side::RIGHT]},
++                                                            {m_input.recenterAction, squeezeClickPath[Side::LEFT]},
++                                                            {m_input.recenterAction, squeezeClickPath[Side::RIGHT]}}};
+             XrInteractionProfileSuggestedBinding suggestedBindings{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
+             suggestedBindings.interactionProfile = microsoftMixedRealityInteractionProfilePath;
+             suggestedBindings.suggestedBindings = bindings.data();
+@@ -816,10 +874,30 @@ struct OpenXrProgram : IOpenXrProgram {
+                     break;
+                 }
+                 case XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED:
++                    // Print the ACTIVE profile per hand, not just the bound sources below - the
++                    // runtime picks one profile per device and every binding suggested under a
++                    // different profile is dead, which is invisible without this line.
++                    for (const char* hand : {"/user/hand/left", "/user/hand/right"}) {
++                        XrPath handPath;
++                        CHECK_XRCMD(xrStringToPath(m_instance, hand, &handPath));
++                        XrInteractionProfileState profileState{XR_TYPE_INTERACTION_PROFILE_STATE};
++                        if (XR_SUCCEEDED(xrGetCurrentInteractionProfile(m_session, handPath, &profileState)) &&
++                            profileState.interactionProfile != XR_NULL_PATH) {
++                            uint32_t sz = 0;
++                            char buf[XR_MAX_PATH_LENGTH];
++                            xrPathToString(m_instance, profileState.interactionProfile, sizeof(buf), &sz, buf);
++                            Log::Write(Log::Level::Info, Fmt("Active profile %s: %s", hand, buf));
++                        } else {
++                            Log::Write(Log::Level::Info, Fmt("Active profile %s: (none)", hand));
++                        }
++                    }
+                     LogActionSourceName(m_input.grabAction, "Grab");
+                     LogActionSourceName(m_input.quitAction, "Quit");
+                     LogActionSourceName(m_input.poseAction, "Pose");
+                     LogActionSourceName(m_input.vibrateAction, "Vibrate");
++                    LogActionSourceName(m_input.seekAction, "Seek");
++                    LogActionSourceName(m_input.pauseAction, "Pause");
++                    LogActionSourceName(m_input.recenterAction, "Recenter");
+                     break;
+                 case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING:
+                 default: {
+@@ -972,14 +1050,58 @@ struct OpenXrProgram : IOpenXrProgram {
+                     seekLatched[hand] = false;
+                 }
+             }
++
++            // Video pause: trigger toggles play/pause. Same hysteresis-latch shape as seek -
++            // fire once past 0.7, must fall back under 0.3 before it can fire again.
++            static std::array<bool, Side::COUNT> pauseLatched{{false, false}};
++            getInfo.action = m_input.pauseAction;
++            XrActionStateFloat pauseValue{XR_TYPE_ACTION_STATE_FLOAT};
++            CHECK_XRCMD(xrGetActionStateFloat(m_session, &getInfo, &pauseValue));
++            if (pauseValue.isActive == XR_TRUE) {
++                if (!pauseLatched[hand] && pauseValue.currentState > 0.7f) {
++                    PlayerControl::TogglePause();
++                    pauseLatched[hand] = true;
++                } else if (pauseLatched[hand] && pauseValue.currentState < 0.3f) {
++                    pauseLatched[hand] = false;
++                }
++            }
+         }
+ 
+         // There were no subaction paths specified for the quit action, because we don't care which hand did it.
++        //
++        // Hold-to-confirm: a bare tap used to exit immediately, and the WMR Menu button (three
++        // lines) is easy to hit by accident going for something else - so this now requires
++        // holding it for kQuitHoldSeconds, with SetQuitHoldFraction() driving an on-screen fill
++        // indicator (see frag.glsl) so the hold has feedback instead of being a silent timer.
++        // Releasing early cancels; there is no cooldown, so the next press starts fresh.
+         XrActionStateGetInfo getInfo{XR_TYPE_ACTION_STATE_GET_INFO, nullptr, m_input.quitAction, XR_NULL_PATH};
+         XrActionStateBoolean quitValue{XR_TYPE_ACTION_STATE_BOOLEAN};
+         CHECK_XRCMD(xrGetActionStateBoolean(m_session, &getInfo, &quitValue));
+-        if ((quitValue.isActive == XR_TRUE) && (quitValue.changedSinceLastSync == XR_TRUE) && (quitValue.currentState == XR_TRUE)) {
+-            CHECK_XRCMD(xrRequestExitSession(m_session));
++        static std::optional<std::chrono::steady_clock::time_point> quitHoldStart;
++        constexpr double kQuitHoldSeconds = 1.5;
++        if ((quitValue.isActive == XR_TRUE) && (quitValue.currentState == XR_TRUE)) {
++            const auto now = std::chrono::steady_clock::now();
++            if (!quitHoldStart) quitHoldStart = now;
++            const double held = std::chrono::duration<double>(now - *quitHoldStart).count();
++            PlayerControl::SetQuitHoldFraction(held / kQuitHoldSeconds);
++            if (held >= kQuitHoldSeconds) {
++                CHECK_XRCMD(xrRequestExitSession(m_session));
++                quitHoldStart.reset();
++                PlayerControl::SetQuitHoldFraction(0.0);
++            }
++        } else {
++            quitHoldStart.reset();
++            PlayerControl::SetQuitHoldFraction(0.0);
++        }
++
++        // Recenter: no subaction paths, same "don't care which hand" shape as quit.
++        XrActionStateGetInfo recenterGetInfo{XR_TYPE_ACTION_STATE_GET_INFO, nullptr, m_input.recenterAction,
++                                             XR_NULL_PATH};
++        XrActionStateBoolean recenterValue{XR_TYPE_ACTION_STATE_BOOLEAN};
++        CHECK_XRCMD(xrGetActionStateBoolean(m_session, &recenterGetInfo, &recenterValue));
++        if ((recenterValue.isActive == XR_TRUE) && (recenterValue.changedSinceLastSync == XR_TRUE) &&
++            (recenterValue.currentState == XR_TRUE)) {
++            PlayerControl::RequestRecenter();
+         }
+     }
+ 
+diff --git a/src/tests/hello_xr/playercontrol.cpp b/src/tests/hello_xr/playercontrol.cpp
+index 74f1ae6..5009c7d 100644
+--- a/src/tests/hello_xr/playercontrol.cpp
++++ b/src/tests/hello_xr/playercontrol.cpp
+@@ -5,6 +5,7 @@
+ 
+ #include <chrono>
+ #include <cstdio>
++#include <cstring>
+ 
+ #if defined(XR_OS_LINUX) || defined(XR_OS_APPLE)
+ #include <termios.h>
+@@ -24,6 +25,11 @@ std::atomic<bool> g_paused{false};
+ std::atomic<bool> g_nextTrack{false};
+ std::atomic<bool> g_quit{false};
+ std::atomic<int> g_seekJumpSeconds{0};
++std::atomic<int> g_quitHoldPermille{0};
++std::atomic<bool> g_recenterRequested{false};
++// Stored as bit-pattern-in-an-int64 (via memcpy) rather than std::atomic<double>, which isn't
++// guaranteed lock-free on every platform this builds for; this is - matches g_lastInteractionMs.
++std::atomic<int64_t> g_recenterYawBits{0};
+ 
+ // Milliseconds since steady_clock's epoch. 0 means "never" (SecondsSinceLastInteraction()
+ // then returns a large number, which is what "never touched" should look like to the
+@@ -105,6 +111,35 @@ double SecondsSinceLastInteraction() {
+ 
+ bool QuitRequested() { return g_quit; }
+ 
++void SetQuitHoldFraction(double frac) {
++    if (frac < 0.0) frac = 0.0;
++    if (frac > 1.0) frac = 1.0;
++    g_quitHoldPermille = (int)(frac * 1000.0);
++}
++
++int QuitHoldPermille() { return g_quitHoldPermille.load(); }
++
++void RequestRecenter() {
++    g_recenterRequested = true;
++    TouchInteraction();
++    Log::Write(Log::Level::Info, "player: recenter");
++}
++
++bool TakeRecenterRequest() { return g_recenterRequested.exchange(false); }
++
++void SetRecenterYaw(double radians) {
++    int64_t bits;
++    std::memcpy(&bits, &radians, sizeof(bits));
++    g_recenterYawBits = bits;
++}
++
++double RecenterYaw() {
++    const int64_t bits = g_recenterYawBits.load();
++    double radians;
++    std::memcpy(&radians, &bits, sizeof(radians));
++    return radians;
++}
++
+ bool HandleKey(int c) {
+     switch (c) {
+         case ' ':
+@@ -132,6 +167,10 @@ bool HandleKey(int c) {
+         case 'L':
+             QueueSeek(10);
+             return true;
++        case '\r':
++        case '\n':
++            RequestRecenter();
++            return true;
+         case 'n':
+         case 'N':
+             g_nextTrack = true;
+@@ -175,7 +214,9 @@ void EndRawInput() {
+ }
+ 
+ const char* HelpLine() {
+-    return "  Teclas: [espacio] pausa   [ ] velocidad   1 normal   h/l -10s/+10s   n siguiente   q salir";
++    return "  Teclas: [espacio] pausa   [ ] velocidad   1 normal   h/l -10s/+10s   enter recentra   "
++           "n siguiente   q salir "
++           "(mando WMR: trigger pausa, stick seek, grip recentra, mantener Menu ~1.5s sale)";
+ }
+ 
+ }  // namespace PlayerControl
+diff --git a/src/tests/hello_xr/playercontrol.h b/src/tests/hello_xr/playercontrol.h
+index dcca485..16e0427 100644
+--- a/src/tests/hello_xr/playercontrol.h
++++ b/src/tests/hello_xr/playercontrol.h
+@@ -4,12 +4,13 @@
+ // consumer sits deep inside the render loop, so the state between them is a small set of
+ // atomics rather than a parameter threaded through the graphics plugin interface.
+ //
+-//   space   pause / resume
++//   space   pause / resume (also: WMR controller trigger)
+ //   [  ]    slower / faster (1x, 0.5x, 0.25x, 2x ...)
+ //   1       back to normal speed
+-//   h  l    seek -10s / +10s
++//   h  l    seek -10s / +10s (also: WMR controller thumbstick)
++//   enter   recenter forward (also: WMR controller squeeze/grip)
+ //   n       next file in the playlist
+-//   q ESC   quit
++//   q ESC   quit (also: hold the WMR Menu button ~1.5s)
+ 
+ #pragma once
+ 
+@@ -44,6 +45,21 @@ double SecondsSinceLastInteraction();
+ // True once a quit key has been pressed.
+ bool QuitRequested();
+ 
++// How far into the hold-to-confirm quit gesture the WMR Menu button is (0..1), written by
++// openxr_program.cpp's PollActions each frame and read by the renderer for the on-screen
++// hold indicator. 0 when Menu isn't held or the hold was released early.
++void SetQuitHoldFraction(double frac);
++int QuitHoldPermille();
++
++// Recenter: squeeze/grip (either hand) resets "forward" to wherever you're currently facing,
++// same idea as the recenter button most 360 video players have. Requested by the input-poll
++// side; the renderer (which is the only place that has the current head pose) does the actual
++// yaw capture and clears the request.
++void RequestRecenter();
++bool TakeRecenterRequest();
++void SetRecenterYaw(double radians);
++double RecenterYaw();
++
+ // Feeds one character from the terminal. Returns false if the key was not a control key,
+ // so the caller can decide what to do with it.
+ bool HandleKey(int c);
+diff --git a/src/tests/hello_xr/vulkan_shaders/frag.glsl b/src/tests/hello_xr/vulkan_shaders/frag.glsl
+index be05bd0..f98a30a 100644
+--- a/src/tests/hello_xr/vulkan_shaders/frag.glsl
++++ b/src/tests/hello_xr/vulkan_shaders/frag.glsl
+@@ -83,17 +83,41 @@ void main()
+     dx *= ubuf.uvScaleOffset.xy;
+     dy *= ubuf.uvScaleOffset.xy;
+ 
+-    FragColor = vec4(textureGrad(equirectTex, uv, dx, dy).rgb * inside, 1.0);
++    // Progress bar and quit-hold bar (see below) draw over their screen-space strip whether or
++    // not it's `inside` - a bar should never vanish just because it happens to fall outside the
++    // content area (letterboxing in flat mode, the void beyond a 180 frame's edge, etc).
++    float barAlpha = float(ubuf.mode.z) / 255.0;
++    bool inProgressBar = barAlpha > 0.0 && t > 0.94 && t < 0.98;
++    float quitHold = float(ubuf.mode.w) / 1000.0;
++    bool inQuitFill = quitHold > 0.0 && t > 0.02 && t < 0.06 && s < quitHold;
++
++    // Genuinely empty space (no content, no bar) is left to whatever the app cleared the frame
++    // to (see GetBackgroundClearColor() in openxr_program.cpp / HELLO_XR_THEME) instead of
++    // being painted black here - so it discards rather than writing a color.
++    if (inside < 0.5 && !inProgressBar && !inQuitFill) {
++        discard;
++    }
++
++    FragColor = vec4(inside > 0.5 ? textureGrad(equirectTex, uv, dx, dy).rgb : vec3(0.0), 1.0);
+ 
+     // Progress bar: a thin strip near the bottom of the screen, drawn straight in screen
+     // space (not projected onto the pano), so it stays flat and legible no matter what
+     // projection mode is active or what direction you're looking. mode.y/mode.z aren't used
+     // by anything above - reusing them here instead of growing the push-constant struct past
+     // the 128 bytes Vulkan guarantees (it's already exactly at that limit).
+-    float barAlpha = float(ubuf.mode.z) / 255.0;
+-    if (barAlpha > 0.0 && t > 0.94 && t < 0.98) {
++    if (inProgressBar) {
+         float progress = float(ubuf.mode.y) / 1000.0;
+         vec3 barColor = (s < progress) ? vec3(1.0, 1.0, 1.0) : vec3(0.35, 0.35, 0.35);
+         FragColor.rgb = mix(FragColor.rgb, barColor, barAlpha);
+     }
++
++    // Quit-confirm hold: a red-orange bar near the TOP that fills left-to-right while the WMR
++    // Menu button is held (openxr_program.cpp's hold-to-confirm timer). Opposite edge from the
++    // playback progress bar above so the two can never be confused for one another; always
++    // full alpha while holding, since unlike the progress bar there is no need to auto-hide
++    // something that is only ever visible while actively held.
++    if (inQuitFill) {
++        vec3 quitColor = vec3(1.0, 0.25, 0.15);
++        FragColor.rgb = mix(FragColor.rgb, quitColor, 0.9);
++    }
+ }
+-- 
+2.47.3
+
