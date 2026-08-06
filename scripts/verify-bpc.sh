@@ -19,11 +19,15 @@ echo "=== driver en memoria ==="
 head -1 /proc/driver/nvidia/version | sed 's/^/  /'
 
 echo
-echo "=== el parche esta en el arbol fuente? ==="
+echo "=== el parche esta aplicado? ==="
 if grep -q "digital.bpc != 0" /usr/src/nvidia-*/src/nvidia-modeset/src/nvkms-dpy.c 2>/dev/null; then
-    echo "  SI (lineas 3456-3457 de nvkms-dpy.c)"
+    echo "  SI, editado directo en el arbol fuente (lineas 3456-3457 de nvkms-dpy.c)"
+elif grep -q "0004-nvkms-do-not-clamp-to-6bpc" /usr/src/nvidia-*/dkms.conf 2>/dev/null; then
+    echo "  SI, via PATCH[] de dkms.conf (el arbol fuente se mantiene limpio a proposito -"
+    echo "  DKMS lo aplica a una copia en tiempo de build, ver docs/13-bug-6bpc.md)"
 else
-    echo "  !! NO -- el parche no esta. Corre apply-bpc-patch.sh primero."
+    echo "  !! NO -- el parche no esta por ninguna via. Corre apply-bpc-patch.sh o"
+    echo "  bootstrap-lab.sh patch-nv primero."
     exit 1
 fi
 
