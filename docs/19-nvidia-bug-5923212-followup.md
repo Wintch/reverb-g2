@@ -91,6 +91,36 @@ somewhere in NVIDIA's Windows driver for this device (a quirk/allowlist), which 
 Happy to run more targeted captures if anyone with visibility into the internal bug can
 point at what to look for specifically.
 
+**Update (2026-08-05, evening): live Windows capture — no special pixel clock, no extra USB
+command**
+
+With direct access to a Windows machine driving the same headset, I read the *active* timing
+with CRU (Custom Resolution Utility) while 90 Hz was working: `2880x1440 @ 89.999 Hz
+(428.58 MHz)`, `htotal=2980 vtotal=1598`. This is exactly the base-block DTD from the EDID,
+unmodified — same pixel clock, same totals. Windows isn't using any special or out-of-band
+timing for this mode: it's exactly what the EDID itself publishes.
+
+This reframes the open question above (is there a "special" pixel clock cached somewhere in
+the Windows driver for this device?): there isn't, at least not in the sense of a magic value
+that differs from the EDID. Windows drives the 60 Hz mode (709.15 MHz, DisplayID descriptor
+#2) and the 90 Hz mode (428.58 MHz, base-block DTD) both "as-is," straight from the EDID.
+What separates the two isn't the pixel clock itself — it's specifically crossing the
+refresh-rate threshold, consistent with the factorial results above.
+
+I also captured, over USB (Wireshark + USBPcap), the exact moment of a live refresh-rate
+change on Windows (60→90 Hz and 90→60 Hz, without disconnecting the headset). No additional
+HID command appears during the transition — only the usual status report (`DEVICE_STATUS`,
+33 bytes) updating refresh/htotal/vtotal, identical in shape to what's already seen in steady
+state. This rules out a hidden, Windows-specific USB activation sequence as well.
+
+At this point, from the Windows user-tooling side (Wireshark/USBPcap, CRU, HWiNFO64, GPU-Z,
+NVIDIA's own control panel) there's nothing left to check: no special EDID, no hidden USB
+command, no visible DSC (the Reverb G2 doesn't even show up as a selectable display in the
+NVIDIA panel or in Windows Settings while in direct/HMD mode). What's still invisible from
+here is exactly the open question above: what happens during DisplayPort link training
+(DPCD/AUX), or inside the closed GSP firmware — no user-space tool reaches either of those on
+any OS.
+
 ---
 
 ## Chequeo local (2026-08-05, sin reboot): bits de stereo/3D en el EDID — nada
