@@ -8,7 +8,13 @@
 > la lista "en orden de peso" más abajo** (conseguir un GPU AMD para el lab) — ya no hace
 > falta, no lo persigas si aparece este documento en una sesión nueva. Detalle completo en
 > `docs/19-nvidia-bug-5923212-followup.md` y el resumen entero del proyecto en
-> `docs/21-project-retrospective.md`. `docs/11-linux-hmd-landscape.md` y las secciones de
+> `docs/21-project-retrospective.md`. **Ojo con el PR de NVIDIA:** más abajo este documento
+> dice "el bug del bpc está cerrado y publicado" — eso es sobre la investigación, NO sobre
+> el PR. `github.com/NVIDIA/open-gpu-kernel-modules/pull/1275` sigue **`open`, sin mergear**
+> (verificado 2026-08-06 vía API de GitHub, después de que alguien en LVRA lo señalara — el
+> retrospectivo tenía este mismo error, ya corregido). No asumir "merged" sin volver a
+> chequear la API antes de decirlo en cualquier lado público.
+> `docs/11-linux-hmd-landscape.md` y las secciones de
 > `docs/06-known-issues.md` sobre el 90Hz quedaron con una nota de corrección arriba, pero
 > conservan el análisis viejo tal cual — no lo tomes como estado actual sin leer la nota.
 
