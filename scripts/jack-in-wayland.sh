@@ -2,9 +2,12 @@
 # Starts Monado in a WAYLAND session using DRM lease, instead of NVIDIA Direct-Mode
 # from X11. This is the path by which Project-VR reports the G2 running at 4320x2160@90.
 #
-#   ./jack-in-wayland.sh [mode]     mode: 0 = 2880x1440@90
-#                                         1 = 4320x2160@90  (the one Project-VR uses)
-#                                         2 = 4320x2160@60  (the only one that works today in X11)
+#   ./jack-in-wayland.sh [mode] [tracking]
+#                                    mode: 0 = 2880x1440@90
+#                                          1 = 4320x2160@90  (the one Project-VR uses)
+#                                          2 = 4320x2160@60  (the only one that works today in X11)
+#                                    tracking: 3dof = IMU only, rotation only (default)
+#                                              6dof = real SLAM via Basalt (position + rotation)
 #
 # Why this is MUCH simpler than jack-in.sh: in X11 you have to fight X for the display
 # (free DP-0, cycle the CRTC, restore the portrait rotation). With DRM lease the
@@ -14,17 +17,33 @@
 set -u
 
 MODE="${1:-1}"
-# "3dof" is jack-in.sh's syntax, not this script's — and atoi("3dof")=3 silently requested a
-# nonexistent mode (happened on 2026-08-06). Here the argument is ONLY the mode index.
+# "3dof" is jack-in.sh's syntax for its single positional arg, not this script's mode index —
+# and atoi("3dof")=3 silently requested a nonexistent mode (happened on 2026-08-06). Here mode
+# is ONLY the display-mode index; tracking is now a separate second argument (T060).
 case "$MODE" in
     0|1|2) ;;
     *) echo "invalid mode: '$MODE' (0 = 2880x1440@90, 1 = 4320x2160@90, 2 = 4320x2160@60)" >&2; exit 1 ;;
+esac
+TRACKING="${2:-3dof}"
+case "$TRACKING" in
+    3dof|6dof) ;;
+    *) echo "invalid tracking: '$TRACKING' (3dof or 6dof)" >&2; exit 1 ;;
 esac
 VR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 [ -d "$HOME/vr/monado" ] && VR="$HOME/vr"
 SERVICE="$VR/monado/build/src/xrt/targets/service/monado-service"
 LOG="$VR/jack-in-wayland.log"
 SOCKET="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/monado_comp_ipc"
+
+# T060: Basalt (~/vr/basalt/build/libbasalt.so) was never actually built here for a long
+# time despite docs referencing SLAM measurements -- cmake --preset library was silently
+# failing on undocumented deps and leaving a configured-but-not-built tree. Check for the
+# real .so, not just the directory, before promising 6dof.
+BASALT_LIB="$VR/basalt/build/libbasalt.so"
+if [ "$TRACKING" = "6dof" ] && [ ! -e "$BASALT_LIB" ]; then
+    echo "6dof requested but $BASALT_LIB doesn't exist -- build it first (docs/01, 'Basalt's own deps')." >&2
+    exit 1
+fi
 
 if [ "${XDG_SESSION_TYPE:-}" != "wayland" ]; then
     echo "This needs a WAYLAND session (XDG_SESSION_TYPE=${XDG_SESSION_TYPE:-unset})." >&2
@@ -76,7 +95,13 @@ else
     echo "     it will report 'Found no connectors available' if this doesn't clear." >&2
 fi
 
-echo "Starting Monado (mode $MODE) via DRM lease... log: $LOG"
+if [ "$TRACKING" = "6dof" ]; then
+    TRACKING_ENV=(WMR_SLAM=1 "VIT_SYSTEM_LIBRARY_PATH=$BASALT_LIB")
+else
+    TRACKING_ENV=(WMR_SLAM=0 WMR_CAMERAS=0)
+fi
+
+echo "Starting Monado (mode $MODE, tracking $TRACKING) via DRM lease... log: $LOG"
 
 # Keep the previous run's log. Truncating on every start destroyed the one log that could
 # have proven why tracking froze mid-session on 2026-08-07 (T045): a later service start
@@ -96,7 +121,7 @@ env XRT_COMPOSITOR_FORCE_WAYLAND_DIRECT=1 \
     XRT_COMPOSITOR_DESIRED_MODE="$MODE" \
     XRT_COMPOSITOR_LOG=debug \
     XRT_NO_STDIN=1 \
-    WMR_SLAM=0 WMR_CAMERAS=0 \
+    "${TRACKING_ENV[@]}" \
     WMR_DISPLAY_INIT_SLEEP_SECONDS=2 \
     setsid stdbuf -oL -eL "$SERVICE" < /dev/null > "$LOG" 2>&1 &
 

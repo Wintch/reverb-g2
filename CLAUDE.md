@@ -588,6 +588,17 @@ blocker.
   rev2A cable recommendation should be treated as still-open, not retired.** Not yet
   tested: whether audio glitches mid-playback during a live dropout (vs. just failing to
   start), the mic path, or what makes the storm start/stop.
+- **`~/vr/basalt` can look built when it isn't — check for the actual `.so`, not just
+  the directory.** Found 2026-08-07 (T060): `cmake --preset library` was silently
+  failing on undocumented deps (`libepoxy-dev libyaml-cpp-dev libsqlite3-dev`, on top of
+  the already-known `libbz2-dev liblz4-dev libssl-dev`), leaving a `CMakeCache.txt` with
+  no `build.ninja` and no `libbasalt.so` — `docs/06`'s Basalt-divergence entry had never
+  actually been reproduced in this checkout. Once built clean, SLAM (`WMR_SLAM=1`) works
+  well: real 6DoF, no divergence, comparable jitter to 3DoF both at rest and moving
+  (T060-T061). **`./scripts/jack-in-wayland.sh [mode] [3dof|6dof]`** now wires this in
+  properly (second arg, default `3dof`) instead of hardcoding `WMR_SLAM=0
+  WMR_CAMERAS=0` — it checks `~/vr/basalt/build/libbasalt.so` exists before promising
+  6dof and sets `VIT_SYSTEM_LIBRARY_PATH` automatically.
 - **`pgrep -f` matches itself** in environments where the shell carries the pattern in its
   cmdline. Use `pgrep -f "monado[-]service"`. A PID that changes on every check is the
   tell.
