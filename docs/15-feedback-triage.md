@@ -210,6 +210,10 @@ and the issue gets seen by engineering directly. Text ready in `docs/14`.
 
 ## Proposed order
 
+> **OVERTAKEN (2026-08-07):** item 1 happened (post edited, then edited again with the
+> 90Hz resolution — `docs/19`); items 2-4 became moot when the bpc patch turned out to be
+> the complete fix on the plain native modes. Kept as the record of the plan at the time.
+
 1. **Edit the original post** (not reply) with the DisplayID correction —which strengthens it—,
    the three new negative results, and the attachments. Full text ready to paste, in
    `docs/14`. Then open the issue on GitHub and link it from the post.

@@ -526,10 +526,16 @@ docs/12-g2-protocol.md     >>> PROTOCOL REFERENCE <<< everything we know about t
 docs/13-bug-6bpc.md         >>> THE BUG <<< NVIDIA clamps the G2 to 6 bits per color
 docs/14-nvidia-report.md    >>> PUBLISHED REPORT <<< + the corrected body ready to edit in
 docs/15-feedback-triage.md  external feedback on the report, item by item, with verdict
+docs/16-lab-vblank.md       vblank/pixel-clock factorial (conclusion superseded, see its banner)
+docs/17-publishing.md       preparing the repo for publication
+docs/18-monado-upstreaming.md  upstreaming the Monado WMR patches (4 MRs open)
+docs/19-nvidia-bug-5923212-followup.md  >>> THE RESOLUTION <<< how 90Hz actually got fixed
+docs/20-desktop-plasma-crash.md  the connected headset vs. the KDE desktop
+docs/21-project-retrospective.md  project retrospective
 docs/22-cable-connector-diagnosis.md  >>> LINK ANATOMY <<< piece-by-piece diagnosis of cable/connector/power
 forum-attachments/          the thread's attachments, already assembled and ready to upload
 windows-kit/                Windows capture package (packaged into windows-kit.7z)
-patches/nvidia/             the 3 Project-VR patches for 595-open
+patches/nvidia/             the 3 Project-VR patches for 595-open + OUR 0004 bpc fix (the 90Hz solution)
 patches/monado/             7 of our patches (companion, controllers, WMR_CAMERAS)
 patches/hello_xr-player/    3 patches: the full 360/VR180 player
 scripts/bootstrap-lab.sh    automated lab install

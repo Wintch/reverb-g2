@@ -26,6 +26,11 @@ SOCKET="/run/user/$(id -u)/monado_comp_ipc"
 # guarantees that: HMD_OUTPUT=DP-1 ./jack-in.sh if xrandr says otherwise.
 HMD_OUTPUT="${HMD_OUTPUT:-DP-0}"
 
+# 2026-08-07 status note: the paragraph below is HISTORICAL. The 90Hz failure it describes
+# was resolved by the bpc patch (repo docs/13 + docs/19); the verified 90Hz path is
+# jack-in-wayland.sh (DRM lease, GNOME). This X11 script has NOT been retested at 90Hz
+# since the fix, so its 60Hz default stays as a conservative choice, not as a law of nature.
+#
 # Mode 2 = 4320x2160@60 (supersampled render target for the 2880x1440 panel). 60Hz is forced
 # because of NVIDIA driver bug 5923212 (driver 550.163.01): at 90Hz the DP link never trains and
 # the panel shows only its boot logo. Tested 2026-08-04 -- BOTH 90Hz modes fail (idx 0 =

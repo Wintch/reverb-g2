@@ -1,5 +1,14 @@
 # 13 — The bug: NVIDIA pins the G2 at 6 bits per color
 
+> **RESOLVED (2026-08-06): the bpc patch turned out to be the COMPLETE fix for 90Hz.**
+> This document's later sections say the patch "half-works" (white flicker, 90Hz still
+> broken) — those observations came from EDID-override/forced-mode testing; nobody had
+> retested the plain native EDID modes with the patch active. Tested clean, both native
+> 90Hz modes come up perfect, later re-verified with real video through the full player
+> (T041). Full resolution chain in `docs/19`; retrospective in `docs/21`. The "report to
+> NVIDIA" next step at the end was done (threads 379240 + 337744, PR #1275 — still open,
+> unmerged). Keep reading this file for the bug's anatomy, not for the 90Hz status.
+
 **Found on 2026-08-05, while reading the driver source code.** It's one line.
 
 ---

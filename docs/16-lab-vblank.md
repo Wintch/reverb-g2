@@ -1,5 +1,14 @@
 # 16 — The vblank experiment: is it the refresh rate, or the shape of the timing?
 
+> **SUPERSEDED (2026-08-06): this factorial's central conclusion — "90 Hz is ruled out as
+> achievable within this HBR3 link" — is WRONG.** The gap: every cell used synthetic
+> injected timings; the plain native EDID modes were never retested after the bpc patch
+> existed (the "native fails" citation predates the patch by a day). Tested clean, native
+> 90Hz works perfectly — see `docs/19`'s "the patch DOES work" section for the line-by-line
+> trace of how this document's own notes propagated the stale assumption. The factorial's
+> *methodology* and its vblank/pixel-clock data remain valid measurements; only the
+> conclusion drawn from them is superseded. Kept intact below as the record.
+
 Prepared 2026-08-05 from the main system, with the lab SSD mounted. **The test EDID has
 already been generated and verified**: `experiments/vblank/`. Still needs to be run with the
 headset on — and there's also the question of **how to load it**: the "The EDID is already

@@ -1,6 +1,8 @@
 # 08 — Passthrough and play-area limits (idea, not started)
 
-**Status: noted on 2026-08-04. Nothing implemented.** Don't touch until 90Hz is closed out (ch. 04).
+**Status: noted on 2026-08-04. Nothing implemented.** ~~Don't touch until 90Hz is closed
+out (ch. 04).~~ 90Hz was closed out 2026-08-06 (`docs/19`) — the gate is lifted; this
+remains unstarted purely by priority.
 
 ## The idea
 

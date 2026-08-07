@@ -19,13 +19,10 @@
 # REQUIRES the "GNOME" (Wayland) entry at the SDDM login screen - not Plasma, not GNOME's
 # X11 entry. KWin does not offer the headset's connector for lease at all (chapter 04).
 #
-# Heads-up on what "confirmed clean" actually covers so far: the clean 90Hz verdicts
-# (T026-T029 in docs/pruebas.jsonl) were all through hmd-vk, a raw Vulkan tool that bypasses
-# Monado/OpenXR/hello_xr entirely, with solid test colors - not real content. The one time
-# real video went through this exact path (jack-in-wayland.sh + play360.sh, T021) it still
-# flickered, but that was BEFORE the reboot+USB-replug that's believed to have cleared a
-# stuck backlight state. Nobody has re-run real content through the full player since. This
-# script is that retest, not a rerun of something already settled - don't skip it.
+# Verified 2026-08-07 (T041 in docs/pruebas.jsonl): real video through this exact path at
+# 4320x2160@90 is clean, and the playlist chains unattended with wraparound. (Historical
+# context: until that test, the only clean-90Hz verdicts were via hmd-vk with solid test
+# colors, and the one prior real-video run, T021, still flickered - that caveat is closed.)
 #
 # Teardown always applies here: jack-in-wayland.sh itself unconditionally kills any prior
 # monado-service before starting (no reuse of an existing session), so this script owns

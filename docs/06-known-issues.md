@@ -155,8 +155,10 @@ timestamps) the next time it drops. **Do not buy a power supply.**
 
 ~3° mean error between frames with the headset STATIONARY (spam of `det(Q1Jl)==0`).
 `WMR_SLAM=0` (IMU 3DoF, flawless) is used for everything orientation-only. Investigation
-pending: calibration? environment visual texture? exposure? It's the most valuable
-technical unlock after 90Hz.
+pending: calibration? environment visual texture? exposure? With 90Hz closed (2026-08-06)
+this is now the top technical unlock; note the related-but-distinct constellation route
+for controller 6DoF already has a trial merge paused awaiting Monado MR feedback
+(`docs/03`, "Positional tracking").
 
 ## SteamVR won't launch (and it's not our fault)
 

@@ -127,6 +127,7 @@ experiments/   the headset's own EDID plus prepared variants for the 90 Hz work
 | [19](docs/19-nvidia-bug-5923212-followup.md) | Follow-up for the NVIDIA 60Hz-only bug thread |
 | [20](docs/20-desktop-plasma-crash.md) | A Plasma desktop crash hit during the lab work |
 | [21](docs/21-project-retrospective.md) | Project retrospective: machines, timeline, fixes, credits |
+| [22](docs/22-cable-connector-diagnosis.md) | Link anatomy + piece-by-piece diagnosis of cable/connector/power |
 
 ## Reference hardware
 

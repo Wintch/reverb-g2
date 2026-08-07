@@ -1,5 +1,13 @@
 # Next step
 
+> **UPDATE 2026-08-07:** items 2 of the list below (player/VR180 + playlist) are **DONE
+> and verified** — the directory playlist chains videos unattended and real content at
+> 4320x2160@90 through the full player is clean (T041, `docs/22-cable-connector-diagnosis.md`).
+> That same night the headset appeared to die entirely (DP, panel, then USB2) — root cause
+> was the visor-end cable connector, reseat fixed it; read `docs/22` before diagnosing any
+> "headset dead" symptom. Items 1 (controllers stress test), 3 and 4 below remain as
+> written. Also: the x3600 is now a validated second lab machine.
+
 ## READ FIRST — status as of 2026-08-06, early morning
 
 Written from the everyday system with the lab SSD mounted read-write at `/mnt/lab`, before
@@ -538,7 +546,8 @@ drop it, and reverb-g2's rewritten history is already force-pushed to GitHub).
 
 - Renamed `reverb-g2-linux` → **`reverb-g2`** (README explains why: the headset has no
   supported platform left on any OS, not just Linux). Working directory here is already the
-  renamed one; GitHub remote is `Wintch/reverb-g2` (private).
+  renamed one; GitHub remote is `Wintch/reverb-g2` (made public 2026-08-06 — this line
+  predates that; see `docs/17-publishing.md`).
 - `main` @ `301eaee`, matches GitHub, gate (`scripts/check-publishable.py`) passes clean.
 - FCC PDFs dropped from the tree (linked to fccid.io instead); Oasis driver attribution fixed
   (it's Matthieu Bucchianeri's, not HP's); HP Omnicept noted as a related test target in

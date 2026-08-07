@@ -13,6 +13,13 @@
 > correction already applied, **all three attachments uploaded**, and 0 replies. Still
 > pending: paste in v2 (Summary + renamed sections) and open the GitHub issue.
 >
+> **SUPERSEDED (2026-08-07): both of those happened, and the thread has moved on.** The
+> v2 body was posted 2026-08-06 and the thread later edited again with the 90Hz-resolved
+> outcome (see `docs/19`, "Forum action: DONE"); the GitHub side became PR #1275 (open,
+> unmerged). The report bodies below — including "the 90 Hz failure, which this patch
+> does not fix" — are **historical drafts**. Do NOT paste anything from this file over
+> the live posts; `docs/19` is the record of what's actually published.
+>
 > **OK, validated 2026-08-05:** the corrected body mentions the Project-VR patches
 > (all three, one by one) in the *"What we ruled out"* section → bullet **"Community
 > open-kernel patches for this headset"**. What it does **not** do is name the repo; see

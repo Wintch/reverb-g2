@@ -42,7 +42,9 @@ environment.
 Key variables it sets: `VIT_SYSTEM_LIBRARY_PATH` (Basalt),
 `XRT_COMPOSITOR_FORCE_NVIDIA_DISPLAY="HP Inc."` (the HMD allowlist doesn't include WMR),
 `XRT_COMPOSITOR_DESIRED_MODE=2` (60Hz — the only mode that works without the patched
-driver, ch. 04), `XRT_NO_STDIN=1`, and `WMR_SLAM=0` if `3dof` was passed.
+driver, ch. 04; with the bpc patch 90Hz works, but this script's X11 path hasn't been
+retested at 90Hz — the verified 90Hz launcher is `jack-in-wayland.sh`, see CLAUDE.md),
+`XRT_NO_STDIN=1`, and `WMR_SLAM=0` if `3dof` was passed.
 
 ## Process gotchas (learned the hard way — ALL real)
 

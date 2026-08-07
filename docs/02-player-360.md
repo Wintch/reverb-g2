@@ -216,11 +216,14 @@ With the headset on and `HELLO_XR_VIDEO_STATS=1`:
 
 ## Pending / roadmap
 
-- Test the transport keys live (implemented 2026-08-04, no interactive test yet).
+- ~~Test the transport keys live~~ DONE 2026-08-06 (see "Seek + progress bar" above:
+  keyboard tested via fake pty, controller verified with the headset on) and the playlist
+  path verified with video 2026-08-07 (T041).
 - Watch the `stereo3d-pack` material in the headset (prepared 2026-08-04, never seen inside the
   visor): `sbs` vs `vr180`, and calibrate depth with `-w`.
 - Fourth detection criterion for flat SBS without metadata (see the `stereo3d-pack` section).
-  After the 90 Hz test: the player tree is frozen today.
+  The 90 Hz freeze is over (resolved 2026-08-06, `docs/19`) — this is unblocked, pending by
+  priority only.
 - Video audio (silent today; decode→PipeWire + A/V sync).
 - Real zero-copy CUDA↔Vulkan (import the NVDEC surface as a Vulkan image, zero PCIe).
   Unnecessary today: we're already at full rate. This is THE optimization if 90Hz+8K demands more.

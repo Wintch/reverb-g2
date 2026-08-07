@@ -1,5 +1,14 @@
 # 04 — Lab 90Hz: Debian on separate SSD + patched 595-open driver
 
+> **OUTCOME (2026-08-06/07), since this file's running log stops before the ending:**
+> 90Hz RESOLVED — the 6bpc-clamp patch (`patches/nvidia/0004`, found via this lab, ch. 13)
+> was the complete fix; both native modes light clean on the plain EDID, and real video
+> through the full player at `4320x2160@90` (mode 1, via `jack-in-wayland.sh` + DRM lease
+> on GNOME) was verified flicker-free (T041). Resolution chain: `docs/19`; retrospective:
+> `docs/21`; the per-mode/vblank dead ends below are all superseded by those. The ch. 02
+> video smoke test at 90Hz implicitly passed with T041 (NVDEC falls back to software above
+> 4096 px width; 60 fps sustained, 0 starves).
+
 ## Why this way
 
 The G2 doesn't go above 60Hz on NVIDIA/Linux due to driver bugs (NVIDIA bug 5923212: DisplayID

@@ -22,17 +22,19 @@ driver that runs the G2 at 90 Hz.
 - [Repo and wiki](https://github.com/mbucchia/Oasis-Driver-for-Windows-Mixed-Reality)
 
 **Only supports NVIDIA.** It's the inverse asymmetry to ours: on Windows the path that works is
-NVIDIA's; on Linux the only credible 90 Hz report is with AMD (Monado issue #332). Why, we don't
-know.
+NVIDIA's; on Linux the only credible 90 Hz report *was* with AMD (Monado issue #332).
+**Resolved 2026-08-06: the asymmetry is gone** — NVIDIA/Linux reaches clean 90 Hz once the
+EDID bpc-clamp bug is patched (`docs/13`, `docs/19`), so "only AMD works on Linux" is
+historical, not current.
 
 | file | what it is | status |
 |---|---|---|
 | `bin/win64/driver_oasis.dll` | SteamVR driver (imports `HID.DLL` directly) | **read** (ch. 09) |
 | `bin/win64/HololensSensors.dll` | sensors + panel in userspace; contains **firmware** strings | partially read |
 | `bin/win64/MRUSBHost.dll` | raw USB/HID layer (`MrUsbDevice_SendHidCommand`, `CrystalKey*`) | exports read |
-| `bin/win64/MROEMFwHost.dll` | OEM firmware (`OemFwDevice_ReadDeviceInfo/WriteFirmware`) | **not yet looked at** |
-| `unlock/unlock_wmr.exe` (611 KB) | "unlock" tool | **not yet looked at** |
-| `bin/win64/client_utility.exe` | client utility (launched by the driver) | **not yet looked at** |
+| `bin/win64/MROEMFwHost.dll` | OEM firmware (`OemFwDevice_ReadDeviceInfo/WriteFirmware`) | closed without reading — see `docs/09` "Closed afterward (2026-08-05)" |
+| `unlock/unlock_wmr.exe` (611 KB) | "unlock" tool | closed without reading — same section of `docs/09` |
+| `bin/win64/client_utility.exe` | client utility (launched by the driver) | closed without reading — same section of `docs/09` |
 | `tracing/DriverTracing.wprp` + `Capture-ETL.bat` | the driver's ETW tracing profile | **not yet looked at** |
 | `bin/win64/PassthroughSource.dll` | camera passthrough | **not yet looked at** — relevant to ch. 08 |
 | `bin/win64/CalibrationAPI.dll` | camera/display calibration | not yet looked at |
