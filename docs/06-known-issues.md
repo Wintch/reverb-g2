@@ -217,8 +217,21 @@ Monado without launching SteamVR).
 > exists as a fallback either. **Net result: Funhouse, InCell, InMind, and SUPERHOT each
 > fail for a DIFFERENT root cause** (unrelated Proton/PhysX error; xrizer's own
 > `VR_InitInternal` crash; an unrelated Mono crash; container env sandboxing) — fixing one
-> would not fix the others. xrizer is not usable on this rig tonight with anything tried.
-> Full detail in `docs/pruebas.jsonl` T064-T065.
+> would not fix the others. Full detail in `docs/pruebas.jsonl` T064-T065.
+>
+> **Update, same night (T066-T067): SUPERHOT's container-sandboxing blocker cracked — xrizer
+> WORKS.** The missing piece for SUPERHOT (Proton): the Steam Linux Runtime container
+> doesn't expose the Monado IPC socket by default, even with `XR_RUNTIME_JSON` correctly
+> set — add `PRESSURE_VESSEL_FILESYSTEMS_RW=/run/user/1000/monado_comp_ipc` to the Steam
+> launch options. With that, SUPERHOT VR reached a real session: image, sound, `90Hz`,
+> confirmed by the user. Along the way, fixing the right-controller registration bug
+> (T051) properly at the source (`patches/monado/0012`, an `&&`/`||` bug in the bounded
+> status wait in `wmr_hmd.c`) got both controllers showing up in Monado for the first time
+> all project. **Still open**: SUPERHOT's own buttons (grab, menu/quit) don't respond
+> in-game even with both controllers correctly registered and `hello_xr` confirming clean
+> `oculus/touch_controller` bindings — not yet isolated to Monado vs. xrizer, planned next
+> step is `XRT_DEBUG_GUI=1`'s live controller panel. First real, working, non-trivial
+> xrizer session this project has had.
 
 ## RESOLVED (2026-08-06, afternoon) — everything below in this section has been superseded
 

@@ -1,5 +1,33 @@
 # Context for the 90Hz lab agent
 
+> ## NEW MILESTONE (2026-08-07, ~07:37) — xrizer works: first real SteamVR-alternative game session, SUPERHOT VR at 90Hz with image, sound, and real 6DoF tracking. Read `docs/pruebas.jsonl` T063-T067.
+>
+> The whole night's second major thread, independent of the cable saga below: **xrizer**
+> (OpenVR reimplemented on OpenXR, bypasses SteamVR's broken `vrmonitor` entirely) went
+> from "not tested yet" to a real working session. Full toolchain built from scratch this
+> session — Steam, Rust, xrizer itself, Basalt (SLAM, also never actually built here
+> before despite docs referencing it), `libopenxr-loader1` installed system-wide. Two real
+> environment bugs found and fixed along the way: (1) `nvidia-driver-libs:i386` is the
+> correct i386 NVIDIA package for the 595 driver series — `libgl1-nvidia-glvnd-glx:i386`
+> is the wrong/old one and conflicts; (2) Proton/Steam titles run inside Valve's sandboxed
+> Steam Linux Runtime container, which does NOT expose the Monado IPC socket by default —
+> needs `PRESSURE_VESSEL_FILESYSTEMS_RW=/run/user/1000/monado_comp_ipc` in the Steam
+> launch options alongside `XR_RUNTIME_JSON`, or every attempt fails with
+> `ERROR_RUNTIME_UNAVAILABLE` no matter how many other things get fixed. **A real Monado
+> bug was also found and fixed** (not just a workaround): `wmr_hmd.c`'s bounded
+> controller-status wait used `&&` where it needed `||`, so the loop always exited the
+> instant the FIRST controller (always left) answered, never giving the second one (right)
+> a chance — reproduced 9/9 times, now fixed and both controllers register every time
+> (`patches/monado/0012`, not yet upstreamed). **What's still open**: SUPERHOT's own
+> buttons (grab, menu/quit) don't do anything in-game yet, even with both controllers
+> correctly registered in Monado and `hello_xr` confirming clean `oculus/touch_controller`
+> bindings for both hands — not root-caused, whether it's Monado-level (raw input not
+> reaching the driver) or xrizer-level (input not translated to the game) is the first
+> thing to check next session, via `XRT_DEBUG_GUI=1`'s live controller panel. Of the 4
+> installed OpenVR titles tried, only SUPERHOT reached a real session — Funhouse, InCell,
+> and InMind each fail for their own unrelated reason (Proton/PhysX, an xrizer
+> `VR_InitInternal` crash, and an unrelated Mono crash respectively), not a shared bug.
+>
 > ## RESOLVED (2026-08-07, ~00:20) — it was the VISOR-END CABLE CONNECTOR all along; a reseat fixed everything. Playlist + 90Hz-with-real-content BOTH verified. Read `docs/22`.
 >
 > **Final resolution, superseding every verdict below in this block:** the whole night's
