@@ -286,3 +286,51 @@ in the composited desktop. This might explain why the user says "it never looked
 before" — with the compositor active, even though `DP-0` was technically `enabled`, the
 composited rendering might have been hiding it or presenting it differently. Not confirmed,
 this is just the simplest reading of the evidence available now.
+
+## Follow-up (2026-08-07): the `GLPlatformInterface=egl` workaround caused black borders around windows later, and the agent made it worse trying to fix it live
+
+**The exact "not verified, don't assume" risk flagged above materialized**, in a session
+unrelated to the headset (mid-DP-1-hardware-diagnosis, see `docs/pruebas.jsonl` T030-T034):
+after some time running with `~/.config/kwinrc`'s `[Compositing] GLPlatformInterface=egl`
+still in place (leftover from the invisible-cursor fix above), the user reported **black
+borders around windows**. `kwin_x11`'s own log confirmed the compositor still wasn't
+starting (`Creating the OpenGL rendering failed: "Invalid QOpenGLContext::
+globalShareContext()"`), consistent with the deliberate no-compositor workaround, but now
+visibly degrading window rendering, not just hiding the cursor fix's tradeoff.
+
+**Do NOT try to fix this live by running `kwin_x11 --replace` from the Claude Code agent's
+Bash tool.** Tried exactly that, twice, second time with the full correct session
+environment copied byte-for-byte from a genuinely running `plasmashell` process
+(`DISPLAY=:0`, real `XAUTHORITY` from `/proc/<pid>/environ` — not the SDDM greeter's auth
+file used the first time, `DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus`,
+`XDG_RUNTIME_DIR`). **Both times `kwin_x11` fell back to `nouveau` instead of the NVIDIA
+driver** (`failed to load driver: nouveau`), even though `/dev/dri/card0` and `renderD128`
+have correct `video`/`render` group permissions and `glxinfo` run from the same shell shows
+the identical failure — so it isn't a stale-cookie or missing-env-var problem, something
+about GLX/EGL vendor resolution genuinely doesn't work for a compositor launched from this
+agent's shell context on this box. **Collateral damage that session:** `plasmashell`
+segfaulted (SIGSEGV, `drkonqi` caught it) and its KDE-auto-restarted replacement fell back
+to Mesa's `zink` (OpenGL-over-Vulkan) instead of the NVIDIA Vulkan ICD, which then hit
+`VK_ERROR_DEVICE_LOST` and kept crash-looping. Opening a plain X11 app (`konsole`) from the
+same shell DID work fine throughout (it doesn't need GLX) — so simple app-launching from
+the agent's shell is fine, only compositor/heavy-GL processes are the problem.
+
+**What actually worked: a plain reboot.** Not attempted this same session (ran out of
+time), but this project has already established (see the DP-1 hotplug saga, same day) that
+a clean reboot reliably resets driver/session state here when live poking doesn't.
+
+**Still unexplained, for whoever picks this up:** why GLX/EGL vendor resolution picks
+`nouveau` specifically when driven from this shell context, when the underlying device
+nodes and permissions look identical to a normal login session. Worth checking, if it
+recurs: `__GLX_VENDOR_LIBRARY_NAME`, `__EGL_VENDOR_LIBRARY_FILENAMES`, and whether the
+agent's shell sits in a different cgroup/namespace than the graphical session that would
+explain a DRI device visibility difference despite `ls -la /dev/dri` looking normal.
+
+**Requested follow-up, not yet built:** the user asked for this incident to feed into a
+future "survival script" — not designed yet as of this note. Whoever builds it should scope
+it explicitly: is it (a) a *detector* that recognizes this failure signature (`kwin_x11`
+log's `globalShareContext` line + `zink`/`VK_ERROR_DEVICE_LOST` in `plasmashell`'s log) and
+recommends/performs a safe recovery instead of more live tinkering, (b) a hard *guardrail*
+that refuses to let an agent run compositor-replacing commands (`kwin_x11 --replace`,
+`plasmashell --replace`, similar) from a non-interactive shell at all, or (c) both. Ask the
+user which scope they meant before building it — don't assume.

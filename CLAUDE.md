@@ -60,6 +60,36 @@
 > Monado run in the same boot — run cold, right after a session switch, it always reads "0
 > connectors" regardless of which compositor, because the connector isn't hotplugged yet.
 > Don't treat a cold `check-lease.sh` run as evidence about KWin vs. GNOME by itself.
+>
+> **Update, same night, after the reboot above: reboot did NOT fix it (T032), and it's now
+> narrowed to hardware.** Moved the headset's cable from `DP-1` to `DP-2` (a port proven
+> healthy — the monitor that lived there works fine elsewhere) and **the failure followed
+> the headset** (T033): still `disconnected`, still no HP logo. This rules out "bad GPU
+> port" — it's the headset's own combo cable/dongle, or its DP output stage, not the host.
+> Cross-checked on the Windows machine with this exact physical cable (T034): SteamVR fails
+> with a generic error 422 (documented as common for G2 + the Oasis driver, not conclusive
+> on its own) and the panel doesn't light — **but the HP logo DOES show**, unlike the total
+> blackout on Linux. So the cable isn't 100% dead (Windows gets further), which complicates
+> a clean "dead cable" verdict. **Still open, needs the user:** is there a separable DP
+> segment between the dongle and the PC to swap for a spare, and is there more detail behind
+> Windows' error 422 worth chasing. Don't re-run the software-side checks already covered
+> above (USB replug ×2, power-cut, reboot, both DP ports, both GNOME/Wayland and — pending —
+> Plasma/X11) — they're exhausted, this is a physical-layer question now.
+>
+> **Unrelated but costly mistake, same night, keep out of the way next time:** while waiting
+> to test the X11 path, the user reported black borders around windows (leftover
+> `GLPlatformInterface=egl` from the cursor fix in `docs/20`, compositor not starting). The
+> agent tried to fix it live with `kwin_x11 --replace` from its own Bash tool shell — **this
+> made it worse**: GLX/EGL fell back to `nouveau` instead of NVIDIA even with the fully
+> correct session environment copied from a real `plasmashell` process, and `plasmashell`
+> itself segfaulted and crash-looped into Mesa `zink`/`VK_ERROR_DEVICE_LOST`. Full incident,
+> what was ruled out, and the requested-but-not-yet-built "survival script" idea (scope
+> still undecided, ask the user before building) are in `docs/20-desktop-plasma-crash.md`,
+> final section. **Rule going forward: don't run `kwin_x11 --replace` (or any
+> compositor-replacing command) from this agent's shell.** Plain X11 apps (e.g. `konsole`)
+> launch fine from here — it's specifically compositor/heavy-GL processes that break. A
+> plain reboot is what actually recovers the desktop; that's what's happening as this note
+> is being written, again.
 
 > ## RESOLVED (2026-08-06, evening) — 90Hz works clean, no AMD or anything else needed
 >
