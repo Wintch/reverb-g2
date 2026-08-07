@@ -21,6 +21,18 @@
 > Wayland leases, headset lands on `DP-3` there — connector names differ per machine).
 > The paragraphs below are kept as the honest record of how two wrong verdicts happened.
 >
+> **Update, ~1h later: the reseat is a MITIGATION, not a repair — the rev2A replacement
+> cable is now a firm buy.** The USB2 branch dropped again ~40 min post-reseat (T044,
+> recovered with a PC-end USB replug alone), and repeated panel on/off cycling then drove
+> the contact into a third failure mode: companion enumerates but all HID I/O returns -1,
+> device number climbing dozens/minute (T043). Triggered by panel-activation power
+> transitions. **Until the new cable: minimize service restarts / panel cycling; long
+> steady sessions are fine** (T042: 25 min at 90Hz, user verdict "se vio perfecto" — the
+> CLAUDE.md 15-minute stability criterion is MET, and with it the "on par with Windows"
+> cutoff). Also established (T043): controller **hot-add doesn't exist** — power
+> controllers on BEFORE starting the service; the 10-boot controller stress test is
+> deferred until the new cable. Details in `docs/22`'s "Recurrence" section.
+>
 > **Goal at the start of this session:** verify the directory-playlist feature for
 > `hello_xr` (`HELLO_XR_VIDEO360=<dir>`, from patch `0003-360-viewer-directory-playlists...`,
 > already built and merged in `~/vr/OpenXR-SDK-Source` since 2026-08-04) actually plays

@@ -25,7 +25,9 @@ NVIDIA thread (379240), and the 4 Monado MRs opened against upstream (`monado/mo
    applied via `bootstrap-lab.sh sources`; also already uploaded upstream as an MR, see
    above, but that doesn't change anything locally):
    ```bash
-   ./jack-in.sh 3dof     # turn on the controllers before or after, no longer matters
+   ./jack-in.sh 3dof     # controllers must be ON BEFORE this (hot-add doesn't exist: T043
+                         # proved late power-on never reaches Monado; the old "before or
+                         # after, no longer matters" claim here overstated T025)
    grep -E "left:|right:" ~/Documents/reverb-g2/jack-in.log
    # should say: left: HP Reverb G2 Left Controller / right: HP Reverb G2 Right Controller
    ```

@@ -51,6 +51,12 @@ rm -f "$SOCKET"
 
 echo "Starting Monado (mode $MODE) via DRM lease... log: $LOG"
 
+# Keep the previous run's log. Truncating on every start destroyed the one log that could
+# have proven why tracking froze mid-session on 2026-08-07 (T045): a later service start
+# wiped the evidence. One generation back is enough for the "what did the LAST session say"
+# question, without unbounded growth.
+[ -f "$LOG" ] && cp -f "$LOG" "${LOG%.log}.prev.log"
+
 # WMR_DISPLAY_INIT_SLEEP_SECONDS=2 is load-bearing just like in X11: the panel turns off
 # on its own after ~3s if it doesn't receive a video signal, and with the default 4s Monado wakes up
 # when it has already turned off.

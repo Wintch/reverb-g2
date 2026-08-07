@@ -150,6 +150,72 @@ first in the community's own fix list; it should have been tried before any verd
 - NVDEC's 4096-px width ceiling reconfirmed there (4320-wide h264 → software decode,
   steady 60 fps, 0 starves — not a problem in practice).
 
+## Recurrence, same night (T044, T043) — the reseat is a mitigation, not a repair
+
+~40 minutes after the reseat (and right after a flawless 25-minute steady-state run,
+T042), the USB2 branch dropped again on the screen-off/service-restart transition. Two
+new data points for the ladder:
+
+- **Soft vs. hard states**: this recurrence recovered with step (a) alone — a PC-end USB
+  replug, instant clean re-enumeration, zero `-71` retries. The overnight death needed
+  step (d). Same contact, different severity.
+- **A third failure mode exists**: *enumerates but HID I/O fails* — `lsusb` shows the
+  companion, yet every `wmr_hmd_activate_reverb` Send/Get returns -1, and the device
+  number climbs by dozens per minute (violent re-enumeration flapping). Observed
+  triggered by **panel activation attempts**: the power transition through the same
+  marginal contact knocks the USB2 hub out — `docs/06`'s old "hub reset scales with
+  panel load" mechanism, amplified by the degraded contact. So: check `lsusb` device
+  NUMBERS across a few seconds, not just presence, before trusting the branch.
+
+**Operational guidance until the replacement cable arrives**: steady-state sessions are
+fine (25 min flawless); what kills the contact is **panel on/off cycling** — activation
+spikes and screen-off re-enumerations. Minimize service restarts; batch content into one
+session (the playlist exists for exactly this). The rev2A replacement cable is now a
+**firm recommendation**, not a contingency. The 10-boot-cycle controller stress test
+(T043) is deferred until the new cable is in.
+
+Also nailed down by T043 while it lasted: **controller hot-add does not exist** —
+controllers powered on against a running session never reach Monado (the second
+controller vibration is only the headset firmware's BT-link ack; Monado only probes at
+startup, exactly as `jack-in.sh`'s comment says). Power controllers on BEFORE starting
+the service, always.
+
+## The tracking freeze (T045) — a fourth symptom of the same cable, and how to spot it
+
+During T041/T042 the user watched ~27 minutes of flawless video **with head tracking
+dead** — image glued to the face — and only realized/reported it afterwards (the content
+was front-facing VR180, easy to watch without turning). A reproduction attempt the same
+night showed tracking fully healthy: `HELLO_XR_POSE_STATS=1` measured the documented
+3DoF jitter floor at rest (mean 0.0003-0.0016°/frame, max 0.056° — byte-identical to the
+historical measurement) and real movement when the head turns (mean up to 1.5°/frame,
+peaks 2.9°, steady 90 fps). So the freeze was **session-specific, not a player or driver
+regression**.
+
+Best-supported hypothesis (direct proof destroyed, see below): a USB hiccup from the
+degraded contact killed Monado's WMR reading thread (`wmr_run_thread`, the IMU packet
+reader) mid-session, and **Monado never restarts it** — pose freezes at the last value
+while compositor, video and panel continue perfectly. Same night, the HID channel showed
+exactly that kind of intermittency (`screen_on` write returning -1 seconds after a
+successful activation). Upstream improvement candidate, not filed: auto-restart of the
+reader thread on EOF/error.
+
+**Field guide**: image glued to the face + everything else fine → `grep "Exiting reading
+thread" jack-in-wayland.log` while the session is still up. A session restart recovers
+it. And the user's own observation deserves recording: mechanical cable movement during
+long Windows play sessions never triggers anything — failures cluster at **power/state
+transitions** (activation, screen-off), not under flexing. That fits both a
+transition-sensitive marginal contact and the alternative "wedged cable/visor
+electronics" reading (the visor is dual-powered — brick 12V + USB 5V — so nothing short
+of the visor-end disconnect removes all power from its chips; T030 cut only the brick,
+T031 cut only USB, both failed; the visor reseat cuts everything at once and worked).
+Discriminating test for the NEXT hard failure: unplug USB **and** brick together for
+~20s *without* touching the visor connector — if that recovers it, it's wedged
+electronics, not the contact, and there's a no-disassembly recovery procedure.
+
+**Evidence-handling lesson, already fixed**: `jack-in-wayland.sh` used to truncate its
+log on every start — the controller-cycle runs wiped the one log that could have proven
+the T042 freeze mechanism. It now keeps one generation back (`jack-in-wayland.prev.log`).
+
 ## Minor open item spotted in the T041 log
 
 On teardown-by-timeout mid-playlist, `hello_xr` emits Vulkan validation errors
