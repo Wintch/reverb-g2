@@ -36,6 +36,20 @@ rule; confirm on the next real reconnection cycle.
 
 > This section used to say the audio was an incurable physical cable fault. **That was
 > false.** The error is left documented because it cost months of misdiagnosis.
+>
+> **Correction of the correction (2026-08-07): in the end, the cable really was dying —
+> just slowly.** The same kernel signature documented below (`Cannot enable. Maybe the USB
+> cable is bad?` + `error -71`, SuperSpeed OK / USB2 branch dead) came back overnight and
+> this time it is **port-independent**: identical on three USB controllers across two
+> physical machines (T039-T040 in `docs/pruebas.jsonl`), after the DP lanes and panel
+> power had already died hours earlier the same night — with USB then still healthy, so
+> the corollary below ("companion missing → display missing, check USB first") did **not**
+> explain that first phase. Full chronology and verdict at the top of `CLAUDE.md`:
+> progressive wholesale cable failure; replacement cable (rev 2A) needed. This section's
+> 2026-08-04 diagnosis was right *for that day* — the port/orientation change genuinely
+> recovered a then-marginal link — but "the cable's signal margins are so tight that the
+> outcome depends on the specific contact" (written below at the time) turned out to be
+> the early warning of a failing cable, not a stable property.
 
 The G2 cable carries a SuperSpeed branch and a USB 2.0 branch through the same physical
 port. On the USB-A port we were using, the SuperSpeed branch enumerated fine and **the USB

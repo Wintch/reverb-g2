@@ -1,6 +1,6 @@
 # Context for the 90Hz lab agent
 
-> ## IN PROGRESS (2026-08-07, night) — headset panel went fully black; DP-1 won't hotplug; PC reboot pending as next test
+> ## CLOSED (2026-08-07, ~00:00) — the headset's cable died progressively over one night; replacement cable needed. Nothing host-side is broken.
 >
 > **Goal at the start of this session:** verify the directory-playlist feature for
 > `hello_xr` (`HELLO_XR_VIDEO360=<dir>`, from patch `0003-360-viewer-directory-playlists...`,
@@ -97,6 +97,25 @@
 > connection; (c) replacement cable (the classic fix); (d) if a new cable changes nothing,
 > it's the visor's display board — service territory. The 90Hz/playlist verification queue
 > stays frozen until the headset lights again.
+>
+> **VERDICT, end of the night (T039-T040): the cable is dying wholesale, conductor group
+> by conductor group.** After the visor-end reseat (done, connector inspected, no change),
+> the lab SSD was booted on the **second machine ("x3600", Ryzen 5 3600)** — and there the
+> **USB2 branch died too**: the SuperSpeed branch (USB3 hub + HoloLens sensors) enumerates
+> fine, but the USB2 hub → companion `03f0:0580` + audio fail with the kernel literally
+> printing `Cannot enable. Maybe the USB cable is bad?` + `error -71` through ~21 retries
+> and automatic port power-cycles. Same signature as the 2026-08-04 port saga in `docs/06`
+> — but this time **port-independent**: identical on two different USB controllers on the
+> x3600, after the 5600's ports earlier the same night. Sequence of death: DP lanes + panel
+> power first (~01:00, with USB still 5/5 and activation delivered — so NOT explained by
+> the docs/06 "companion missing → no display" corollary), USB2 pair hours later, USB3
+> pairs still alive. Three independent conductor groups failing in sequence across two
+> machines and two OSes = the cable, full stop. **Buy: "HP Reverb G2 cable rev 2A"**
+> (a.k.a. "OCuLink to USB-C + DisplayPort cable"). The visor itself looks healthy (its
+> internal sensors still respond through the same cable). Optional pending test: flex/wiggle
+> localization with a live USB monitor to find the break point. **Useful side discovery:**
+> the lab SSD boots fine on the x3600 — also an RTX 3060 Ti, patched 595.71.05 loads, GNOME
+> Wayland available. A second, validated lab machine for when the new cable arrives.
 >
 > **Unrelated but costly mistake, same night, keep out of the way next time:** while waiting
 > to test the X11 path, the user reported black borders around windows (leftover
