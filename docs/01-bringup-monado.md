@@ -26,6 +26,15 @@ git clone --recursive https://gitlab.freedesktop.org/mateosss/basalt.git
 cd basalt && cmake --preset library && cmake --build build   # libbasalt.so only
 ```
 
+Basalt's own deps, not covered by the list above (found 2026-08-07, T060: this repo's
+`~/vr/basalt` had never actually been built before -- `cmake --preset library` was
+failing on these, silently leaving a configured-but-not-built tree that looked done at a
+glance):
+
+```bash
+sudo apt install -y libbz2-dev liblz4-dev libssl-dev libepoxy-dev libyaml-cpp-dev libsqlite3-dev
+```
+
 ## Permissions
 
 `scripts/70-wmr-reverb.rules` → `/etc/udev/rules.d/` (+ reload + replug). User in

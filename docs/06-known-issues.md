@@ -153,6 +153,21 @@ timestamps) the next time it drops. **Do not buy a power supply.**
 
 ## Basalt SLAM diverges (6DoF head tracking)
 
+> **Update 2026-08-07 (T060): NOT reproduced with a fresh build, don't treat this entry
+> as current status without retesting.** Discovered while investigating that
+> `~/vr/basalt` had in fact never been compiled on this machine/checkout (CMake was
+> configured but `build.ninja`/`libbasalt.so` never existed -- three dependency groups
+> were missing: `libbz2-dev liblz4-dev libssl-dev` then `libepoxy-dev libyaml-cpp-dev
+> libsqlite3-dev`, none fully documented together before). After building clean and
+> running `WMR_SLAM=1` (`cam_count=4`, `PositionTracking=True`), 20s stationary-on-table
+> showed inter-frame rotation mean 0.001-0.006°, max 0.04-0.14° -- comparable to the
+> 3DoF jitter floor, zero `det(Q1Jl)==0` spam. Whether this is a newer upstream Basalt
+> commit behaving differently, or the original ~3° measurement came from a different
+> environment/calibration, is unknown -- no verified SLAM data existed in this exact
+> repo/machine before today. Not yet tested: worn/moving tracking quality, longer
+> sessions, or interaction with the marginal USB2 contact (docs/22) since the tracking
+> cameras are on the separate USB3 branch. Full detail in `docs/pruebas.jsonl` T060.
+
 ~3° mean error between frames with the headset STATIONARY (spam of `det(Q1Jl)==0`).
 `WMR_SLAM=0` (IMU 3DoF, flawless) is used for everything orientation-only. Investigation
 pending: calibration? environment visual texture? exposure? With 90Hz closed (2026-08-06)
