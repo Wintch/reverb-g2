@@ -202,6 +202,23 @@ Monado without launching SteamVR).
 > usable yet on this rig, on either available title** — but the setup is fully in place
 > (source at `~/vr/xrizer`, `openvrpaths.vrpath` configured, the `LD_LIBRARY_PATH` fix
 > known) for whoever picks this up next. Full detail in `docs/pruebas.jsonl` T063.
+>
+> **Same-day follow-up (T064-T065): batch-tested every VR title downloaded, all fail, for
+> FOUR unrelated reasons — this is not one bug.** `libopenxr-loader1` was installed
+> system-wide via `apt` (superseding the `LD_LIBRARY_PATH` workaround above for native
+> processes). InMind VR: user-confirmed physically (grey blank 2D window, headset
+> backlight-only) that it crashes before ever touching xrizer — a Mono runtime abort
+> unrelated to VR. **SUPERHOT VR (Proton)**: reveals a new, different blocker —
+> `XR_RUNTIME_JSON` set via Steam launch options never reaches the process at all, because
+> Proton titles run inside Valve's Steam Linux Runtime container (pressure-vessel/bwrap),
+> which sandboxes the environment. Neither the `LD_LIBRARY_PATH` fix nor the system-wide
+> loader package changed the result — confirmed via `xrizer.txt` timestamps that fresh
+> attempts still fail identically. No system-wide `/etc/xdg/openxr/1/active_runtime.json`
+> exists as a fallback either. **Net result: Funhouse, InCell, InMind, and SUPERHOT each
+> fail for a DIFFERENT root cause** (unrelated Proton/PhysX error; xrizer's own
+> `VR_InitInternal` crash; an unrelated Mono crash; container env sandboxing) — fixing one
+> would not fix the others. xrizer is not usable on this rig tonight with anything tried.
+> Full detail in `docs/pruebas.jsonl` T064-T065.
 
 ## RESOLVED (2026-08-06, afternoon) — everything below in this section has been superseded
 
