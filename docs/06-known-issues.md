@@ -37,19 +37,24 @@ rule; confirm on the next real reconnection cycle.
 > This section used to say the audio was an incurable physical cable fault. **That was
 > false.** The error is left documented because it cost months of misdiagnosis.
 >
-> **Correction of the correction (2026-08-07): in the end, the cable really was dying —
-> just slowly.** The same kernel signature documented below (`Cannot enable. Maybe the USB
-> cable is bad?` + `error -71`, SuperSpeed OK / USB2 branch dead) came back overnight and
-> this time it is **port-independent**: identical on three USB controllers across two
-> physical machines (T039-T040 in `docs/pruebas.jsonl`), after the DP lanes and panel
-> power had already died hours earlier the same night — with USB then still healthy, so
-> the corollary below ("companion missing → display missing, check USB first") did **not**
-> explain that first phase. Full chronology and verdict at the top of `CLAUDE.md`:
-> progressive wholesale cable failure; replacement cable (rev 2A) needed. This section's
-> 2026-08-04 diagnosis was right *for that day* — the port/orientation change genuinely
-> recovered a then-marginal link — but "the cable's signal margins are so tight that the
-> outcome depends on the specific contact" (written below at the time) turned out to be
-> the early warning of a failing cable, not a stable property.
+> **Correction of the correction (2026-08-07, final): it was neither the port nor a dying
+> cable — it's the VISOR-END CONNECTOR.** The same kernel signature documented below
+> (`Cannot enable. Maybe the USB cable is bad?` + `error -71`, SuperSpeed OK / USB2 branch
+> dead) came back overnight, this time **port-independent** (identical on three USB
+> controllers across two physical machines, T039-T040), after the DP lanes and panel power
+> had already died hours earlier *with USB still healthy* — so the corollary below
+> ("companion missing → display missing, check USB first") did **not** explain that first
+> phase. A "the cable died, buy a rev2A" verdict was issued... and then **reseating the
+> detachable connector where the cable enters the visor (behind the magnetic face gasket)
+> fixed every symptom at once** — USB2 branch, panel power, DP hotplug, 90Hz, everything
+> (T041). That single connector carries all four conductor groups, which is why one
+> marginal contact can mimic several independent faults, including this section's whole
+> 2026-08-04 saga: the port/orientation changes that day most likely "worked" by
+> mechanically disturbing the same connector, and "the cable's signal margins are so
+> tight that the outcome depends on the specific contact" was literally true — the
+> contact in question just wasn't at the PC end. Full measured anatomy and the
+> piece-by-piece diagnostic ladder: `docs/22-cable-connector-diagnosis.md`. If these
+> symptoms appear: reseat the visor-end connector FIRST, ports second.
 
 The G2 cable carries a SuperSpeed branch and a USB 2.0 branch through the same physical
 port. On the USB-A port we were using, the SuperSpeed branch enumerated fine and **the USB

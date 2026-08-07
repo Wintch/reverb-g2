@@ -1,6 +1,25 @@
 # Context for the 90Hz lab agent
 
-> ## CLOSED (2026-08-07, ~00:00) — the headset's cable died progressively over one night; replacement cable needed. Nothing host-side is broken.
+> ## RESOLVED (2026-08-07, ~00:20) — it was the VISOR-END CABLE CONNECTOR all along; a reseat fixed everything. Playlist + 90Hz-with-real-content BOTH verified. Read `docs/22`.
+>
+> **Final resolution, superseding every verdict below in this block:** the whole night's
+> "progressive multi-group death" (DP+panel first, USB2 hours later) was ONE marginal
+> contact — the detachable connector where the cable enters the visor, behind the magnetic
+> face gasket. Reseating it (T039→T041) brought back, at once: the USB2 branch, panel
+> power (`panel.py activate` → HP logo), DP hotplug (384-byte EDID, `DP-3` on the x3600),
+> the mutter lease, and `4320x2160@90`. The controlled result that proves it: a mains
+> power-cut alone (T030) fixed nothing; reseat+power-cut together fixed everything — the
+> reseat discriminates. **The cable is fine; no rev2A purchase needed unless it recurs.**
+> The two frozen verifications then PASSED immediately (T041, user-verified): the
+> 3-video directory playlist chains unattended with wraparound, and real video through
+> the full player at 90Hz is clean — T021's flicker is gone; the last 90Hz caveat is
+> closed. Full measured anatomy of the link (what powers what, what the box LED does and
+> doesn't tell you, why the HP logo is a pure power+HID diagnostic independent of DP) and
+> the piece-by-piece diagnostic ladder are in **`docs/22-cable-connector-diagnosis.md`** —
+> read that before ever debugging "headset dead" symptoms again. Bonus: the x3600 is now a
+> validated second lab machine (lab SSD boots, patched driver loads on its 3060 Ti, GNOME
+> Wayland leases, headset lands on `DP-3` there — connector names differ per machine).
+> The paragraphs below are kept as the honest record of how two wrong verdicts happened.
 >
 > **Goal at the start of this session:** verify the directory-playlist feature for
 > `hello_xr` (`HELLO_XR_VIDEO360=<dir>`, from patch `0003-360-viewer-directory-playlists...`,
@@ -507,6 +526,7 @@ docs/12-g2-protocol.md     >>> PROTOCOL REFERENCE <<< everything we know about t
 docs/13-bug-6bpc.md         >>> THE BUG <<< NVIDIA clamps the G2 to 6 bits per color
 docs/14-nvidia-report.md    >>> PUBLISHED REPORT <<< + the corrected body ready to edit in
 docs/15-feedback-triage.md  external feedback on the report, item by item, with verdict
+docs/22-cable-connector-diagnosis.md  >>> LINK ANATOMY <<< piece-by-piece diagnosis of cable/connector/power
 forum-attachments/          the thread's attachments, already assembled and ready to upload
 windows-kit/                Windows capture package (packaged into windows-kit.7z)
 patches/nvidia/             the 3 Project-VR patches for 595-open
