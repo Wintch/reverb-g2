@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# check-usb-split.sh — verifica, después de bootear, si el SSD raíz quedó
-# separado del controlador xHCI que usa el casco.
+# check-usb-split.sh — verifies, after booting, whether the root SSD ended up
+# separated from the xHCI controller used by the headset.
 #
-# Objetivo: sda en 0000:02:00.0 (chipset A520), casco en 0000:07:00.3 (Matisse).
+# Goal: sda on 0000:02:00.0 (A520 chipset), headset on 0000:07:00.3 (Matisse).
 
-# El disco raíz puede no llamarse sda una vez movido a SATA: resolverlo desde el
-# punto de montaje de /, no por nombre fijo.
+# The root disk may not be called sda once moved to SATA: resolve it from the
+# mount point of /, not by a fixed name.
 ROOTDEV=$(findmnt -no SOURCE / 2>/dev/null)
 ROOTDISK=$(lsblk -no PKNAME "$ROOTDEV" 2>/dev/null | head -1)
 [ -n "$ROOTDISK" ] || ROOTDISK=$(basename "$ROOTDEV")
@@ -17,12 +17,12 @@ BUS_SSD=$(echo "$SYSPATH" | grep -o 'usb[0-9]*/[0-9]*-[0-9.]*' | head -1 | cut -
 SPD=$(cat "/sys/bus/usb/devices/$BUS_SSD/speed" 2>/dev/null)
 
 if [ "$TRAN" = "usb" ]; then
-  echo "Disco raíz ($ROOTDISK): tran=usb  bus=$BUS_SSD  speed=${SPD}M  ctrl=$CTRL_SSD"
+  echo "Root disk ($ROOTDISK): tran=usb  bus=$BUS_SSD  speed=${SPD}M  ctrl=$CTRL_SSD"
 else
-  echo "Disco raíz ($ROOTDISK): tran=$TRAN  ctrl=$CTRL_SSD"
+  echo "Root disk ($ROOTDISK): tran=$TRAN  ctrl=$CTRL_SSD"
 fi
 echo
-echo "Casco:"
+echo "Headset:"
 for d in /sys/bus/usb/devices/*; do
   [ -f "$d/idVendor" ] || continue
   case "$(cat "$d/idVendor"):$(cat "$d/idProduct")" in
@@ -32,27 +32,27 @@ for d in /sys/bus/usb/devices/*; do
 done
 echo
 if [ "$TRAN" != "usb" ]; then
-  echo "RESULTADO: OK — el disco raíz ya NO está en USB (tran=$TRAN, ctrl=$CTRL_SSD)."
-  echo "El casco tiene su xHCI para él solo. Causa raíz del cuelgue eliminada."
+  echo "RESULT: OK — the root disk is NO LONGER on USB (tran=$TRAN, ctrl=$CTRL_SSD)."
+  echo "The headset has its xHCI all to itself. Root cause of the hang eliminated."
   echo
-  echo "Siguiente: test de estrés (manual cap. 00, procedimiento 4)."
+  echo "Next: stress test (manual chapter 00, procedure 4)."
 elif [ "$CTRL_SSD" = "0000:02:00.0" ]; then
-  echo "RESULTADO: PARCIAL — el SSD sigue en USB pero en otro xHCI que el casco."
+  echo "RESULT: PARTIAL — the SSD is still on USB but on a different xHCI than the headset."
   [ "$SPD" -ge 5000 ] 2>/dev/null \
-    && echo "Velocidad OK (${SPD}M, SuperSpeed)." \
-    || echo "ATENCION: ${SPD}M — puerto USB2. Mover a un conector USB3 de 02:00.0."
+    && echo "Speed OK (${SPD}M, SuperSpeed)." \
+    || echo "WARNING: ${SPD}M — USB2 port. Move to a USB3 connector on 02:00.0."
   echo
-  echo "Sirve como mitigación, pero el fix de fondo es pasarlo a SATA (cap. 00, proc. 1)."
+  echo "Works as a mitigation, but the real fix is moving it to SATA (chapter 00, proc. 1)."
 else
-  echo "RESULTADO: NO — el disco raíz sigue en $CTRL_SSD, el mismo xHCI que el casco."
-  echo "Mover de puerto USB ya se probó y NO alcanza: los 4 USB3 traseros son todos"
-  echo "de 07:00.3 y los del chipset solo salen por headers internos no cableados."
-  echo "Fix real: pasar el SSD a SATA (manual cap. 00, procedimiento 1)."
+  echo "RESULT: NO — the root disk is still on $CTRL_SSD, the same xHCI as the headset."
+  echo "Moving USB ports was already tried and is NOT enough: all 4 rear USB3 ports are"
+  echo "on 07:00.3 and the chipset's only come out through unwired internal headers."
+  echo "Real fix: move the SSD to SATA (manual chapter 00, procedure 1)."
 fi
 echo
 echo "--- extras ---"
-echo "grupos: $(id -nG)"
-echo "journalctl -k: $(journalctl -k -n1 --no-pager -q >/dev/null 2>&1 && echo accesible || echo 'sin acceso (falta relogin o el grupo adm)')"
+echo "groups: $(id -nG)"
+echo "journalctl -k: $(journalctl -k -n1 --no-pager -q >/dev/null 2>&1 && echo accessible || echo 'no access (needs relogin or the adm group)')"
 echo "autosuspend:"
 for d in /sys/bus/usb/devices/*; do
   [ -f "$d/idVendor" ] || continue

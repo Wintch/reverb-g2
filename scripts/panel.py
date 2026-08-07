@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Controla el panel del G2 por HID, sin Monado.
+"""Controls the G2 panel via HID, without Monado.
 
-  ./panel.py activate    secuencia completa de encendido (la que hace falta de verdad)
-  ./panel.py on          solo el screen-enable {0x04,0x01}
+  ./panel.py activate    full power-on sequence (the one that's actually needed)
+  ./panel.py on          just the screen-enable {0x04,0x01}
   ./panel.py off         screen-disable {0x04,0x00}
-  ./panel.py cycle       off -> espera re-enumeracion -> on
+  ./panel.py cycle       off -> wait for re-enumeration -> on
 
-Replica `wmr_hmd_activate_reverb()` de Monado (wmr_hmd.c:767) contra el companion
-`03f0:0580`. Sirve para manejar el panel sin levantar el runtime entero, por ejemplo para
-probar modesets con `hmd-modeset`.
+Replicates `wmr_hmd_activate_reverb()` from Monado (wmr_hmd.c:767) against the companion
+`03f0:0580`. Useful for driving the panel without bringing up the whole runtime, e.g. to
+test modesets with `hmd-modeset`.
 
-MEDIDO (2026-08-04):
-  - `on` SOLO no alcanza: sin la secuencia de activacion el panel queda completamente
-    apagado, ni siquiera aparece el logo de HP. Usar `activate`.
-  - el `off` puede hacer RE-ENUMERAR al companion y cambiarle el nodo hidraw (vimos
-    hidraw8 -> hidraw7). Por eso se re-escanea siempre y nunca se cachea el path.
+MEASURED (2026-08-04):
+  - `on` ALONE is not enough: without the activation sequence the panel stays completely
+    off, not even the HP logo shows up. Use `activate`.
+  - `off` can make the companion RE-ENUMERATE and change its hidraw node (we've seen
+    hidraw8 -> hidraw7). That's why it always rescans and never caches the path.
 """
 import fcntl, glob, os, sys, time
 
@@ -44,7 +44,7 @@ def wait_for_companion(timeout=20):
     while time.time() < deadline:
         dev = find_companion()
         if dev:
-            try:                       # aparece en sysfs antes de estar abrible
+            try:                       # appears in sysfs before it's openable
                 open(dev, "wb+", buffering=0).close()
                 return dev
             except OSError:
@@ -56,7 +56,7 @@ def wait_for_companion(timeout=20):
 def open_companion():
     dev = wait_for_companion()
     if not dev:
-        sys.exit("no aparece el companion 03f0:0580 -- revisa el puerto USB (cap. 00)")
+        sys.exit("companion 03f0:0580 not found -- check the USB port (ch. 00)")
     return dev
 
 
@@ -72,8 +72,8 @@ def set_screen(state):
 def activate():
     dev = open_companion()
     with open(dev, "wb+", buffering=0) as f:
-        time.sleep(0.3)                        # Monado: "300ms es lo que hace Windows"
-        for _ in range(4):                     # el hack del G1 heredado de OpenHMD
+        time.sleep(0.3)                        # Monado: "300ms is what Windows does"
+        for _ in range(4):                     # the G1 hack inherited from OpenHMD
             buf = bytearray(64)
             buf[0], buf[1] = 0x50, 0x01
             fcntl.ioctl(f, HIDIOCSFEATURE(64), buf)
@@ -84,7 +84,7 @@ def activate():
             except OSError as e:
                 print(f"  get 0x50: {e}")
             time.sleep(0.01)
-        for rid in (0x09, 0x08, 0x06):         # lecturas de identificacion
+        for rid in (0x09, 0x08, 0x06):         # identification reads
             g = bytearray(64)
             g[0] = rid
             try:
@@ -93,7 +93,7 @@ def activate():
             except OSError as e:
                 print(f"  get 0x{rid:02x}: {e}")
         fcntl.ioctl(f, HIDIOCSFEATURE(2), bytearray([0x04, 0x01]))
-    print(f"  {dev}: activacion completa + screen on")
+    print(f"  {dev}: full activation + screen on")
 
 
 def main():
@@ -104,11 +104,11 @@ def main():
         activate()
     elif cmd == "cycle":
         before = set_screen(False)
-        print("  esperando re-enumeracion...")
+        print("  waiting for re-enumeration...")
         time.sleep(2)
         after = wait_for_companion()
         if after and after != before:
-            print(f"  re-enumero: {before} -> {after}")
+            print(f"  re-enumerated: {before} -> {after}")
         set_screen(True)
     else:
         set_screen(cmd == "on")

@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# find-port.sh — identifica a qué controlador xHCI pertenece cada puerto físico.
+# find-port.sh — identifies which xHCI controller each physical port belongs to.
 #
-# Uso: correrlo y ENCHUFAR/DESENCHUFAR un dispositivo USB cualquiera (pendrive,
-# receptor Logitech, mouse) en los puertos del gabinete, uno por uno. Cada vez
-# que aparece algo nuevo imprime el bus y el controlador PCI.
+# Usage: run it and PLUG/UNPLUG any USB device (thumb drive, Logitech receiver,
+# mouse) into the case's ports, one at a time. Every time something new appears
+# it prints the bus and the PCI controller.
 #
-# Buscamos un puerto que reporte  ctrl=0000:02:00.0  (chipset A520).
-# El SSD raíz NO se toca en caliente: primero se encuentra el puerto con este
-# script, después se apaga la máquina y se mueve el cable.
+# We're looking for a port that reports  ctrl=0000:02:00.0  (A520 chipset).
+# The root SSD is NOT touched hot: first the port is found with this
+# script, then the machine is powered off and the cable is moved.
 #
-# Ctrl-C para salir.
+# Ctrl-C to exit.
 
 snapshot() {
   for d in /sys/bus/usb/devices/[0-9]*-[0-9]*; do
@@ -27,14 +27,14 @@ describe() {
     "$(cat "$d/version" 2>/dev/null | tr -d ' ')" \
     "$(cat "$d/speed" 2>/dev/null)" "$ctrl"
   if [ "$ctrl" = "0000:02:00.0" ]; then
-    printf '   <<< ESTE PUERTO SIRVE\n'
+    printf '   <<< THIS PORT WORKS\n'
   else
-    printf '   (mismo xHCI que el casco, NO sirve)\n'
+    printf '   (same xHCI as the headset, does NOT work)\n'
   fi
 }
 
-echo "Vigilando USB. Enchufá/desenchufá un dispositivo de prueba en cada puerto."
-echo "Objetivo: ctrl=0000:02:00.0 . Ctrl-C para salir."
+echo "Watching USB. Plug/unplug a test device into each port."
+echo "Goal: ctrl=0000:02:00.0 . Ctrl-C to exit."
 echo
 prev=$(snapshot)
 while true; do
@@ -42,10 +42,10 @@ while true; do
   cur=$(snapshot)
   if [ "$cur" != "$prev" ]; then
     while read -r dev; do
-      [ -n "$dev" ] && { echo "[+] conectado:"; describe "$dev"; }
+      [ -n "$dev" ] && { echo "[+] connected:"; describe "$dev"; }
     done < <(comm -13 <(echo "$prev") <(echo "$cur"))
     while read -r dev; do
-      [ -n "$dev" ] && echo "[-] desconectado: $dev"
+      [ -n "$dev" ] && echo "[-] disconnected: $dev"
     done < <(comm -23 <(echo "$prev") <(echo "$cur"))
     prev="$cur"
   fi

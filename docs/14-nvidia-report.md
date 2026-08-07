@@ -1,45 +1,45 @@
-# 14 — Reporte para NVIDIA
+# 14 — Report for NVIDIA
 
-> ## ⚠️ CUÁL DE LOS DOS CUERPOS USAR
+> ## ⚠️ WHICH OF THE TWO BODIES TO USE
 >
-> Este archivo tiene **dos** versiones completas del reporte. No confundirlas:
+> This file contains **two** complete versions of the report. Don't mix them up:
 >
-> | sección | qué es | usar |
+> | section | what it is | use |
 > |---|---|---|
-> | "Cuerpo del reporte" (abajo) | la versión original, con el error del DisplayID (decía 2.0 / Type VII; es 1.2 / Type I). Ya reemplazada en el hilo | ❌ no — queda sólo como registro |
-> | **"CUERPO CORREGIDO v2"** (después de `# PUBLICADO`) | **el nuevo.** Error corregido + Summary arriba de todo + secciones renombradas | ✅ **este** |
+> | "Report body" (below) | the original version, with the DisplayID error (said 2.0 / Type VII; it's actually 1.2 / Type I). Already replaced in the thread | ❌ no — kept only as a record |
+> | **"CORRECTED BODY v2"** (after `# PUBLISHED`) | **the new one.** Error corrected + Summary at the top + sections renamed | ✅ **this one** |
 >
-> **Estado del hilo al 2026-08-05:** post vivo y público, con la corrección del DisplayID
-> ya aplicada, **los tres adjuntos subidos**, y 0 respuestas. Falta: pegar la v2 (Summary +
-> renombres) y abrir el issue en GitHub.
+> **Thread status as of 2026-08-05:** post is live and public, with the DisplayID
+> correction already applied, **all three attachments uploaded**, and 0 replies. Still
+> pending: paste in v2 (Summary + renamed sections) and open the GitHub issue.
 >
-> **OK, validado el 2026-08-05:** el cuerpo corregido menciona los parches de Project-VR
-> (los tres, uno por uno) en la sección *"What we ruled out"* → bullet **"Community
-> open-kernel patches for this headset"**. Lo que **no** hace es nombrar el repo; ver
-> "Sobre nombrar a Project-VR" al final de esa sección para el porqué y para la variante
-> con el nombre puesto, por si preferís esa.
+> **OK, validated 2026-08-05:** the corrected body mentions the Project-VR patches
+> (all three, one by one) in the *"What we ruled out"* section → bullet **"Community
+> open-kernel patches for this headset"**. What it does **not** do is name the repo; see
+> "On naming Project-VR" at the end of that section for the reasoning and for the variant
+> with the name included, in case you'd rather use that one.
 >
-> Adjuntos ya armados en `forum-attachments/`. Triage del feedback en `docs/15`.
+> Attachments already assembled in `forum-attachments/`. Feedback triage in `docs/15`.
 
-## Cuerpo publicado el 2026-08-05 (con el error del DisplayID) — histórico
+## Body published 2026-08-05 (with the DisplayID error) — historical
 
-**Verificado por el usuario (2026-08-05):**
-- El hilo y el bug `5923212` están confirmados — el usuario abrió el hilo y el número es
-  correcto. Se puede citar tal cual.
-- **El dato de AMD (issue #332 de Monado, `dimitriscr`) se decidió NO incluir.** No se
-  verificó de primera mano, y aunque fuera cierto no ayuda al reporte: decirle a NVIDIA
-  "funciona con la competencia" no aporta nada a que sus ingenieros entiendan la causa. El
-  reporte ya es sólido sin eso — tiene código citado con línea exacta, un parche que
-  funciona, y verificación física con protocolo. Por eso ese dato ya estaba fuera del cuerpo
-  principal; queda confirmado que se mantiene así.
-- Todo lo demás en este reporte (patch, mediciones, bytes, logs) es nuestro, medido en este
-  rig, y se cita con confianza.
+**Verified by the user (2026-08-05):**
+- The thread and bug `5923212` are confirmed — the user opened the thread and the number is
+  correct. It can be cited as-is.
+- **The AMD data point (Monado issue #332, `dimitriscr`) was decided NOT to be included.** It
+  was not verified firsthand, and even if true it doesn't help the report: telling NVIDIA
+  "it works on the competitor's hardware" contributes nothing toward their engineers
+  understanding the root cause. The report is already solid without it — it has code cited
+  with exact line numbers, a working patch, and physical verification with a protocol. That's
+  why that data point was already left out of the main body; confirmed it stays that way.
+- Everything else in this report (patch, measurements, bytes, logs) is ours, measured on this
+  rig, and cited with confidence.
 
-Lo que sigue está en inglés porque es para el foro de NVIDIA. Copialo tal cual, o editalo.
+What follows is in English because it's for the NVIDIA forum. Copy it as-is, or edit it.
 
 ---
 
-### Título sugerido
+### Suggested title
 
 ```
 HP Reverb G2 clamped to 6 bpc because its EDID leaves color depth undefined — root cause
@@ -48,7 +48,7 @@ found + two-line patch, but 90 Hz still fails to light the panel (nvkms-dpy.c)
 
 ---
 
-### Cuerpo del reporte
+### Report body
 
 ```markdown
 Hi, replying with a specific root-cause finding for the "no more than 60Hz" issue on this
@@ -201,73 +201,74 @@ Patch attached: `0004-nvkms-do-not-clamp-to-6bpc-when-EDID-leaves-color-depth.pa
 
 ---
 
-### Adjuntos sugeridos
+### Suggested attachments
 
 - `patches/nvidia/0004-nvkms-do-not-clamp-to-6bpc-when-EDID-leaves-color-de.patch`
-- El EDID crudo del casco (`hmd.edid`, 384 bytes) de cualquiera de los `nv-report-*/`
-- Opcional: el `nvidia-bug-report.gz` de un `nv-report-*/` — es grande (500+ KB comprimido),
-  mejor ofrecerlo "si lo necesitan" en vez de adjuntarlo de una
+- The headset's raw EDID (`hmd.edid`, 384 bytes) from any of the `nv-report-*/`
+- Optional: the `nvidia-bug-report.gz` from an `nv-report-*/` — it's large (500+ KB
+  compressed), better to offer it "if needed" rather than attach it upfront
 
-### Qué NO incluí, a propósito
+### What I deliberately did NOT include
 
-- Números de versión de driver fuera de la 595.71.05 (esa parte del rango 590–610 es de
-  otros posteos, no nuestro)
-- Cualquier afirmación sobre qué dijo el staff de NVIDIA textualmente — no lo verificamos
-  nosotros mismos esta sesión
-- El dato de AMD/`dimitriscr` quedó afuera del cuerpo principal por la misma razón: no lo
-  leímos de primera mano. Si querés sumarlo como reforzador, verificalo primero y agregalo
-  vos con tus palabras, no como cita nuestra.
+- Driver version numbers outside 595.71.05 (the part about the 590–610 range comes from
+  other posts, not ours)
+- Any claim about what NVIDIA staff literally said — we didn't verify that ourselves this
+  session
+- The AMD/`dimitriscr` data point was left out of the main body for the same reason: we
+  didn't read it firsthand. If you want to add it as reinforcement, verify it first and add
+  it in your own words, not as a citation from us.
 
 ---
 
-# PUBLICADO el 2026-08-05
+# PUBLISHED on 2026-08-05
 
 <https://forums.developer.nvidia.com/t/hp-reverb-g2-clamped-to-6-bpc-because-its-edid-leaves-color-depth-undefined-root-cause-found-two-line-patch-but-90-hz-still-fails-to-light/379240>
 
 ---
 
-## CUERPO CORREGIDO v2 — la edición final del post (2026-08-05)
+## CORRECTED BODY v2 — the final edit of the post (2026-08-05)
 
-**Historia hasta acá.** El post se publicó con un error (decía DisplayID 2.0 / Type VII; es
-1.2 / Type I). Se editó con la corrección, Akismet lo retuvo unos minutos, y un moderador lo
-liberó. **Ahora está vivo, público, y con 0 respuestas** — o sea que todavía se lo puede dejar
-en su mejor versión sin que nadie haya leído una versión peor.
+**Story so far.** The post was published with an error (it said DisplayID 2.0 / Type VII; it's
+actually 1.2 / Type I). It was edited with the correction, Akismet held it for a few minutes,
+and a moderator released it. **It's now live, public, and has 0 replies** — meaning it can
+still be left in its best version without anyone having read a worse one.
 
-**Esta v2 agrega, sobre lo ya publicado:**
+**This v2 adds, on top of what's already published:**
 
-1. Un bloque **Summary** arriba de todo que separa los dos hallazgos: el bug confirmado con
-   parche de dos líneas (que **no** es específico del casco) y el fallo de 90 Hz sin resolver.
-   Un ingeniero que abre el hilo tiene que saber en diez segundos que hay algo accionable y
-   barato adentro; antes había que leer medio reporte para descubrirlo.
-2. Se sacó el *"Hi, replying with..."* del arranque: esto es un tema nuevo, no una respuesta,
-   y arrancar con "replying" confundía. La referencia al bug 5923212 quedó, al final del
+1. A **Summary** block at the very top that separates the two findings: the confirmed bug
+   with the two-line patch (which is **not** specific to the headset) and the unresolved 90 Hz
+   failure. An engineer opening the thread needs to know within ten seconds that there's
+   something actionable and cheap inside; before, you had to read half the report to find
+   that out.
+2. Removed the *"Hi, replying with..."* opener: this is a new topic, not a reply, and starting
+   with "replying" was confusing. The reference to bug 5923212 stayed, at the end of the
    Summary.
-3. `**Root cause**` → `**Finding 1 — the 6 bpc clamp: root cause**`, y `**But this does not
+3. `**Root cause**` → `**Finding 1 — the 6 bpc clamp: root cause**`, and `**But this does not
    fix the 90 Hz modes**` → `**Finding 2 — the 90 Hz failure, which this patch does not
-   fix**`. Escanear el post ahora te da la estructura sola.
-4. Se declara explícitamente el protocolo de verificación física y que falló **nueve veces
-   sobre nueve, en dos vías de display que casi no comparten código**. Es el dato que separa
-   este reporte de los demás del foro, y estaba enterrado.
+   fix**`. Scanning the post now gives you the structure on its own.
+4. Explicitly states the physical verification protocol and that it failed **nine times out
+   of nine, across two display paths that share almost no code**. This is the data point that
+   sets this report apart from the rest of the forum, and it was buried.
 
-**Que ésta sea la ÚLTIMA edición.** Cada edición reencola en Akismet, y editar repetido es
-justo el patrón que el filtro puntúa. Todo junto, de una: pegar el cuerpo y subir los tres
-adjuntos en la misma acción.
+**Let this be the LAST edit.** Every edit re-queues in Akismet, and repeated editing is
+exactly the pattern the filter scores on. Everything at once: paste the body and upload the
+three attachments in the same action.
 
-**Adjuntos** (armados en `forum-attachments/`):
+**Attachments** (assembled in `forum-attachments/`):
 
-| archivo | qué es |
+| file | what it is |
 |---|---|
-| `g2-edid.zip` | EDID crudo (384 B), el EDID de repro con 8 bpc, el decode anotado, y un README |
-| `nvidia-bug-report.log.gz` | 545 KB, capturado con el parche puesto |
-| `0004-nvkms-no-6bpc-clamp.patch.txt` | el parche (`.txt` porque el foro no acepta `.patch`) |
+| `g2-edid.zip` | raw EDID (384 B), the 8 bpc repro EDID, the annotated decode, and a README |
+| `nvidia-bug-report.log.gz` | 545 KB, captured with the patch applied |
+| `0004-nvkms-no-6bpc-clamp.patch.txt` | the patch (`.txt` because the forum doesn't accept `.patch`) |
 
-Los `.bin` van dentro del `.zip` porque Discourse rechaza esa extensión suelta.
+The `.bin` files go inside the `.zip` because Discourse rejects that extension on its own.
 
-**Lo último del cuerpo es un link al issue de GitHub, que todavía no existe.** Dos opciones:
-abrir el issue primero y pegar la URL antes de editar (mejor: una sola edición), o borrar esa
-línea ahora y dejar la URL después en una respuesta.
+**The last line of the body is a link to the GitHub issue, which doesn't exist yet.** Two
+options: open the issue first and paste the URL before editing (better: a single edit), or
+delete that line now and add the URL later in a reply.
 
-Cuerpo completo, listo para pegar sobre el original:
+Full body, ready to paste over the original:
 
 ````markdown
 **Summary**
@@ -490,25 +491,25 @@ reproduces this on demand.
 - `nvidia-bug-report.log.gz` — captured with the patch applied
 
 The bpc part of this is also filed as an issue against the open kernel modules:
-PEGAR_URL_DEL_ISSUE_ACA
+PASTE_ISSUE_URL_HERE
 ````
 
-### Sobre nombrar a Project-VR en el cuerpo corregido
+### On naming Project-VR in the corrected body
 
-Los tres parches **sí están mencionados**, en el bullet *"Community open-kernel patches for
-this headset"*, descritos uno por uno y con el archivo exacto (`dp_wardatabase.cpp`, ManufID
-`0x220E`). Lo que se omitió a propósito es el **nombre del repo**, por una razón concreta:
+The three patches **are indeed mentioned**, in the *"Community open-kernel patches for
+this headset"* bullet, described one by one with the exact file (`dp_wardatabase.cpp`, ManufID
+`0x220E`). What was deliberately left out is the **repo name**, for a concrete reason:
 
-`docs/06` deja registrado que **Project-VR no es un caso positivo verificado** — su evidencia
-de "90 Hz andando" es una sesión Vulkan/OpenXR exitosa con sus logs, exactamente la clase de
-evidencia que este proyecto demostró nueve veces que convive con el panel muerto. Nombrarlo en
-un reporte a NVIDIA le mete a alguien de ingeniería la idea de que *hay* un caso funcionando en
-Linux, que es justamente lo que no podemos sostener. Descrito por contenido, el dato que sí
-aportamos —"estos tres cambios no encienden el panel a 90 Hz en GA104"— queda intacto y sin
-importar un claim ajeno.
+`docs/06` records that **Project-VR is not a verified positive case** — its evidence for
+"90 Hz working" is a successful Vulkan/OpenXR session with its logs, exactly the kind of
+evidence this project demonstrated nine times can coexist with a dead panel. Naming it in a
+report to NVIDIA plants the idea in an engineer's head that there *is* a working case on
+Linux, which is precisely what we cannot back up. Described by content, the data point we do
+contribute — "these three changes don't light the panel at 90 Hz on GA104" — stays intact
+without pulling in someone else's claim.
 
-**Si preferís nombrarlo igual** (es defendible: le da a NVIDIA los parches en una URL y da
-crédito al autor), reemplazá la primera oración de ese bullet por:
+**If you'd rather name it anyway** (it's defensible: it gives NVIDIA the patches via a URL and
+credits the author), replace the first sentence of that bullet with:
 
 ```markdown
 - **Community open-kernel patches for this headset**: in addition to my bpc patch, this
@@ -521,22 +522,22 @@ crédito al autor), reemplazá la primera oración de ese bullet por:
   applied on GA104, both 90 Hz modes still fail physically.
 ```
 
-Esa variante es honesta y probablemente la mejor de las dos: nombra la fuente, da la URL, y
-al mismo tiempo aclara por qué no cuenta como caso positivo. Queda a tu criterio.
+That variant is honest and probably the better of the two: it names the source, gives the
+URL, and at the same time clarifies why it doesn't count as a positive case. Your call.
 
-## Issue para `NVIDIA/open-gpu-kernel-modules` (listo para pegar)
+## Issue for `NVIDIA/open-gpu-kernel-modules` (ready to paste)
 
-Mismo hallazgo, recortado a lo que es puramente un bug de código: sin el 90 Hz, sin el casco,
-sin nada que dependa de creerle a nuestra verificación física. Linkea el hilo del foro para el
-contexto largo.
+Same finding, trimmed down to what is purely a code bug: no 90 Hz, no headset, nothing that
+depends on trusting our physical verification. Links to the forum thread for the longer
+context.
 
-**Título:**
+**Title:**
 
 ```
 nvkms-dpy.c: DP sinks that leave EDID Color Bit Depth undefined are clamped to 6 bpc
 ```
 
-**Cuerpo:**
+**Body:**
 
 ```markdown
 ### Summary

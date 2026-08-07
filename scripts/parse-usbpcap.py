@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
-"""Parsea capturas pcapng de USBPcap (Windows) y saca los canales del casco. Sin dependencias.
+"""Parses USBPcap (Windows) pcapng captures and extracts the headset channels. No dependencies.
 
-El sistema del lab no tiene tshark, y bajarlo para leer un .pcapng es innecesario: el formato
-es simple y streameable, que ademas hace falta porque las capturas son de cientos de MB.
+The lab system doesn't have tshark, and downloading it just to read a .pcapng is unnecessary:
+the format is simple and streamable, which is also needed since the captures are hundreds of MB.
 
-Extrae los dos canales que decodificamos en Linux (cap. 12):
+Extracts the two channels we decoded on Linux (ch. 12):
 
-  0x05  DEVICE_STATUS  del companion, 33 bytes
-        byte 5      refresh en decimal
+  0x05  DEVICE_STATUS  from the companion, 33 bytes
+        byte 5      refresh in decimal
         bytes 19-20 htotal little-endian
         bytes 21-22 vtotal little-endian
-        byte 1      1 = el backlight prendio (poco fiable, ver cap. 12)
-  0x03  LOG DE FIRMWARE, 509 bytes ASCII
-        magic "Dlo+" | 4B ts | 2B seq | 1B nivel | texto
+        byte 1      1 = the backlight turned on (unreliable, see ch. 12)
+  0x03  FIRMWARE LOG, 509 bytes ASCII
+        magic "Dlo+" | 4B ts | 2B seq | 1B level | text
 
-  ./parse-usbpcap.py captura.pcapng [otra.pcapng ...]
+  ./parse-usbpcap.py capture.pcapng [another.pcapng ...]
 
-Formato pcapng: bloques de {tipo u32, largo u32, cuerpo, largo u32}. Nos interesan los
-Enhanced Packet Block (tipo 6). Formato USBPcap: cabecera de 27 bytes con headerLen al
-principio y dataLength al final; los datos empiezan en headerLen.
+pcapng format: blocks of {type u32, length u32, body, length u32}. We care about the
+Enhanced Packet Block (type 6). USBPcap format: 27-byte header with headerLen at the
+start and dataLength at the end; the data starts at headerLen.
 """
 import re
 import struct
@@ -31,15 +31,15 @@ IDB = 0x00000001
 
 
 def usb_packets(path):
-    """Genera (device, endpoint, transfer, data) por cada paquete USB de la captura."""
+    """Yields (device, endpoint, transfer, data) for each USB packet in the capture."""
     with open(path, "rb") as f:
-        # El SHB dice el endianness por su byte-order magic.
+        # The SHB tells us the endianness via its byte-order magic.
         head = f.read(12)
         if len(head) < 12:
             return
         btype = struct.unpack("<I", head[0:4])[0]
         if btype != SHB:
-            print(f"  !! {path}: no arranca con Section Header Block", file=sys.stderr)
+            print(f"  !! {path}: does not start with a Section Header Block", file=sys.stderr)
             return
         bom = struct.unpack("<I", head[8:12])[0]
         endi = "<" if bom == 0x1A2B3C4D else ">"
@@ -54,7 +54,7 @@ def usb_packets(path):
             if blen < 12:
                 return
             body = f.read(blen - 12)
-            f.read(4)  # largo repetido al final
+            f.read(4)  # length repeated at the end
             if btype != EPB or len(body) < 20:
                 continue
             caplen = struct.unpack(endi + "I", body[12:16])[0]
@@ -117,16 +117,16 @@ def main():
                     if (seq, txt) not in seen_fw:
                         seen_fw.add((seq, txt))
                         fw.append((seq, txt))
-        print(f"  paquetes USB: {n}")
-        print(f"  dispositivos vistos (addr:paquetes): "
+        print(f"  USB packets: {n}")
+        print(f"  devices seen (addr:packets): "
               f"{', '.join(f'{d}:{c}' for d, c in devs.most_common(8))}")
 
-        print(f"\n  --- DEVICE_STATUS (0x05): {len(status)} distintos ---")
+        print(f"\n  --- DEVICE_STATUS (0x05): {len(status)} distinct ---")
         for device, b in status:
             print(f"    [dev {device}] {show_status(b)}")
             print(f"       {b.hex(' ')}")
 
-        print(f"\n  --- LOG DE FIRMWARE (0x03): {len(fw)} entradas ---")
+        print(f"\n  --- FIRMWARE LOG (0x03): {len(fw)} entries ---")
         for seq, txt in fw:
             mark = "!!" if re.search(r"error|fail|err", txt, re.I) else "  "
             print(f"    {mark} seq={seq:<7} {txt}")

@@ -1,7 +1,7 @@
-// Lista los conectores DRM y sus propiedades relevantes para DRM lease de un HMD.
-// Lo que importa: "non-desktop" = 1 hace que el compositor NO lo use como monitor y lo
-// ofrezca por wp_drm_lease_v1. Si el G2 no lo tiene, el parche 0002 no esta haciendo
-// efecto en este path y Monado nunca va a ver un conector arrendable.
+// Lists DRM connectors and their properties relevant to DRM lease for an HMD.
+// What matters: "non-desktop" = 1 makes the compositor NOT use it as a monitor and
+// offer it via wp_drm_lease_v1. If the G2 doesn't have it, patch 0002 isn't taking
+// effect on this path and Monado will never see a leasable connector.
 #include <stdio.h>
 #include <string.h>
 #include <fcntl.h>
@@ -40,7 +40,7 @@ int main(int argc, char **argv) {
             }
             drmModeFreeObjectProperties(props);
         }
-        // Los primeros modos, para reconocer al casco por su resolucion
+        // The first modes, to identify the headset by its resolution
         for (int m = 0; m < c->count_modes && m < 3; m++)
             printf("    mode: %dx%d@%d\n", c->modes[m].hdisplay,
                    c->modes[m].vdisplay, c->modes[m].vrefresh);

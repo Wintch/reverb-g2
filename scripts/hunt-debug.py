@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Caza el canal HID 0x03 DEBUG del casco durante un intento de modo.
+"""Hunts the headset's HID 0x03 DEBUG channel during a mode attempt.
 
-Motivo: en el issue #332 de Monado, otro usuario (Kukeltje) reportó ver un error
-`DMA CMT ERR` en el canal 0x03 DEBUG justo durante el intento de 90Hz. Nosotros buscamos ese
-canal EN REPOSO y no emitía nada — pero puede emitir sólo cuando algo falla.
+Reason: in Monado issue #332, another user (Kukeltje) reported seeing a
+`DMA CMT ERR` error on the 0x03 DEBUG channel right during a 90Hz attempt. We looked at
+that channel AT REST and it emitted nothing — but it may only emit when something fails.
 
-Escucha los DOS dispositivos y muestra todo lo que NO sea el stream de sensores (0x01), en
-hex y en ASCII, porque los mensajes de debug del firmware suelen ser texto.
+Listens on BOTH devices and shows everything that is NOT the sensor stream (0x01), in
+hex and ASCII, because firmware debug messages are usually text.
 
-  ./hunt-debug.py [segundos]
+  ./hunt-debug.py [seconds]
 
-Correr en paralelo con hmd-vk pidiendo el modo que falla.
+Run in parallel with hmd-vk requesting the mode that fails.
 
-Tipos (wmr_protocol.h): 0x01 SENSORS, 0x02 CONTROL, 0x03 DEBUG, 0x05 BT_IFACE,
+Types (wmr_protocol.h): 0x01 SENSORS, 0x02 CONTROL, 0x03 DEBUG, 0x05 BT_IFACE,
 0x06/0x0E controllers, 0x16 BT_CONTROL, 0x17 CONTROLLER_STATUS.
-En la interfaz BT hay además un sub-mensaje 0x19 = WMR_BT_IFACE_MSG_DEBUG.
+The BT interface also has a sub-message 0x19 = WMR_BT_IFACE_MSG_DEBUG.
 """
 import collections, glob, os, select, sys, time
 
@@ -47,7 +47,7 @@ def main():
     for label, vp in DEVS:
         p = find(vp)
         if not p:
-            print(f"  !! no encuentro {label}")
+            print(f"  !! can't find {label}")
             continue
         try:
             fds[os.open(p, os.O_RDONLY | os.O_NONBLOCK)] = label
@@ -55,7 +55,7 @@ def main():
         except OSError as e:
             print(f"  !! {label}: {e}")
     if not fds:
-        sys.exit("sin dispositivos")
+        sys.exit("no devices")
 
     counts = collections.Counter()
     interesting = 0
@@ -73,21 +73,21 @@ def main():
             rid = b[0]
             counts[(label, rid)] += 1
             if rid == 0x01 and label == "sensors":
-                continue                      # el stream de IMU, ruido para esto
+                continue                      # the IMU stream, noise for this purpose
             interesting += 1
             t = time.time() - t0
             print(f"  [{t:6.2f}s] {label:<9} 0x{rid:02x} {NAMES.get(rid,'?'):<12} len={len(b)}")
             print(f"            hex   {b[:48].hex(' ')}")
             txt = ascii_of(b)
-            if sum(1 for c in txt if c != ".") > 4:      # solo si hay texto de verdad
+            if sum(1 for c in txt if c != ".") > 4:      # only if there's real text
                 print(f"            ascii {txt}")
 
-    print("\n  conteo por tipo:")
+    print("\n  count by type:")
     for (label, rid), n in sorted(counts.items(), key=lambda x: -x[1]):
         print(f"    {label:<10} 0x{rid:02x} {NAMES.get(rid,'?'):<13} {n}")
-    print(f"\n  mensajes no-SENSORS: {interesting}")
+    print(f"\n  non-SENSORS messages: {interesting}")
     if not counts.get(("sensors", 0x03)) and not counts.get(("companion", 0x03)):
-        print("  (ningun 0x03 DEBUG -- el canal sigue mudo)")
+        print("  (no 0x03 DEBUG -- the channel is still silent)")
 
 
 main()

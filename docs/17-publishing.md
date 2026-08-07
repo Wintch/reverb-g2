@@ -1,174 +1,176 @@
-# 17 — Publicar el repo
+# 17 — Publishing the repo
 
-Objetivo: que cualquiera con un Reverb G2 pueda seguir desarrollando esto. Destino
+Goal: that anyone with a Reverb G2 can keep developing this. Destination
 `github.com/Wintch/reverb-g2`.
 
-**La limpieza del historial ya se hizo** (2026-08-05, desde el sistema principal con el SSD
-del lab montado). Lo que sigue documenta qué había, qué se hizo y cómo verificarlo antes de
-cada push.
+**The history cleanup has already been done** (2026-08-05, from the main system with the
+lab SSD mounted). What follows documents what was there, what was done, and how to verify
+it before each push.
 
 ---
 
-## Qué bloqueaba la publicación
+## What was blocking publication
 
-### 1. Blobs por encima del límite de GitHub
+### 1. Blobs above GitHub's limit
 
-Las dos capturas de USB estaban **en el historial de git**, no sólo en el árbol de trabajo:
+The two USB captures were **in the git history**, not just in the working tree:
 
 ```
 858.1 MB  docs/dump90hz.pcapng
 428.9 MB  docs/dump60hz.pcapng
 ```
 
-GitHub rechaza cualquier blob de más de 100 MB, así que el push fallaba de entrada, y
-borrarlas del árbol no alcanzaba. Git LFS tampoco servía: el tier gratis es 1 GB y esto
-eran 1.29 GB.
+GitHub rejects any blob over 100 MB, so the push failed right away, and deleting them from
+the tree wasn't enough. Git LFS didn't work either: the free tier is 1 GB and this was
+1.29 GB.
 
-Se sacaron del historial. No hubo pérdida real: el valor está en el análisis
-(`docs/12-g2-protocol.md`, `scripts/parse-usbpcap.py`), no en los dumps crudos. También
-salió `nv-report-*/build/hmd-vk`, un binario compilado que nunca debió estar trackeado.
+They were removed from the history. There was no real loss: the value is in the analysis
+(`docs/12-g2-protocol.md`, `scripts/parse-usbpcap.py`), not in the raw dumps. Also removed
+was `nv-report-*/build/hmd-vk`, a compiled binary that should never have been tracked.
 
-`.git` pasó de **412 MB a 8.8 MB**.
+`.git` went from **412 MB to 8.8 MB**.
 
-### 2. Identidad e identificadores de hardware
+### 2. Identity and hardware identifiers
 
-- Tres identidades distintas en los commits, unificadas a una sola.
-- El serial USB del casco aparecía en 6 archivos, redactado.
-- El `nvidia-bug-report` adjunto al foro llevaba además la MAC de la placa de red (dos
-  veces, directa y al revés como PCI Device Serial) y el serial del motherboard. Se
-  regeneró redactado: mismas 42787 líneas, sólo esas cuatro modificadas.
+- Three distinct identities in the commits, unified into one.
+- The headset's USB serial appeared in 6 files, redacted.
+- The `nvidia-bug-report` attached to the forum thread also carried the network card's MAC
+  address (twice, forward and reversed as PCI Device Serial) and the motherboard serial. It
+  was regenerated redacted: same 42787 lines, only those four modified.
 
 ---
 
-## Cómo se hizo
+## How it was done
 
-Con `git filter-repo`, en dos pasadas. **Hace falta las dos** — la primera sola no alcanza,
-y esa fue la trampa:
+With `git filter-repo`, in two passes. **Both are needed** — the first alone isn't enough,
+and that was the trap:
 
 ```bash
-# 1. blobs + identidad de los commits
+# 1. blobs + commit identity
 git filter-repo --force \
     --path docs/dump90hz.pcapng --path docs/dump60hz.pcapng \
     --path nv-report-20260804-223535/build/hmd-vk --invert-paths \
     --mailmap /tmp/mailmap
 
-# 2. el CONTENIDO de los archivos
+# 2. the CONTENTS of the files
 git filter-repo --force --replace-text /tmp/redacciones
 ```
 
-`--mailmap` reescribe **autor y committer**, que es metadata. No toca lo que hay adentro de
-los archivos. Acá había dos parches de `patches/hello_xr-player/` con la dirección vieja en
-su línea `From:`, y sobrevivieron enteros a la primera pasada. Hay que buscar en el
-contenido de todos los commits, no sólo en los autores:
+`--mailmap` rewrites **author and committer**, which is metadata. It doesn't touch what's
+inside the files. Here there were two patches in `patches/hello_xr-player/` with the old
+address in their `From:` line, and they survived the first pass intact. You have to search
+the content of all commits, not just the authors:
 
 ```bash
-git grep -lI "<patrón>" $(git rev-list --all)
+git grep -lI "<pattern>" $(git rev-list --all)
 ```
 
-Los archivos `/tmp/mailmap` y `/tmp/redacciones` llevan literales que no deben publicarse,
-por eso van fuera del repo. Formatos:
+The files `/tmp/mailmap` and `/tmp/redacciones` carry literal values that must not be
+published, so they stay outside the repo. Formats:
 
 ```
 # mailmap
-Nombre Nuevo <nuevo@ejemplo.com> <viejo@ejemplo.com>
+New Name <new@example.com> <old@example.com>
 
 # redacciones (replace-text)
-LITERAL_VIEJO==>REEMPLAZO
+OLD_LITERAL==>REPLACEMENT
 ```
 
-### La trampa que sí nos mordió
+### The trap that actually got us
 
-La primera versión de esto era un script `publicar.sh` que llevaba **adentro** el serial y
-la dirección que estaba redactando, porque los necesitaba como patrón de búsqueda. Al
-correr la limpieza se redactó a sí mismo, quedando con `SERIAL="REDACTED"` y un chequeo que
-buscaba la palabra `REDACTED`. Inservible, y peor: si se hubiera publicado antes de la
-limpieza, habría publicado exactamente lo que intentaba ocultar.
+The first version of this was a script `publicar.sh` that carried **inside it** the serial
+and the address it was redacting, because it needed them as search patterns. When the
+cleanup ran, it redacted itself, ending up with `SERIAL="REDACTED"` and a check that looked
+for the word `REDACTED`. Useless, and worse: if it had been published before the cleanup,
+it would have published exactly what it was trying to hide.
 
-Por eso ahora los patrones viven en `scripts/.private-patterns`, que está en `.gitignore`.
+That's why the patterns now live in `scripts/.private-patterns`, which is in `.gitignore`.
 
 ---
 
-## Antes de cada push
+## Before each push
 
 ```bash
 ./scripts/check-publishable.py
 ```
 
-Chequea que haya una sola identidad en los commits, que ningún blob supere los 100 MB, y
-que ninguno de los patrones de `scripts/.private-patterns` aparezca en el historial. No
-modifica nada. Devuelve distinto de cero si algo falla.
+Checks that there's a single identity across the commits, that no blob exceeds 100 MB, and
+that none of the patterns in `scripts/.private-patterns` appear in the history. It doesn't
+modify anything. Returns non-zero if something fails.
 
-Ese archivo de patrones **no está en el repo** (a propósito). Si clonás esto en otra
-máquina, creá el tuyo: un patrón por línea, y las líneas con `#` se ignoran.
+That patterns file **is not in the repo** (on purpose). If you clone this on another
+machine, create your own: one pattern per line, and lines starting with `#` are ignored.
 
-## Publicar
+## Publishing
 
 ```bash
 git remote add origin git@github.com:Wintch/reverb-g2.git
 git push -u origin main
 ```
 
-`git filter-repo` borra el remote a propósito después de reescribir, por eso el
-`remote add` va después de la limpieza y no antes.
+`git filter-repo` deliberately deletes the remote after rewriting, which is why
+`remote add` comes after the cleanup and not before.
 
-El repo se creó **privado**. Conviene pushear privado, revisar en la web que quedó como se
-espera, y recién ahí pasarlo a público desde Settings. Un force-push posterior no saca de
-forma confiable lo que ya se indexó.
-
----
-
-## Lo que la redacción no arregla
-
-El `nvidia-bug-report` original **sigue en el servidor de NVIDIA** en su URL actual, aunque
-se reemplace el adjunto del hilo: Discourse no purga los uploads huérfanos al instante. Y
-quien lo haya bajado tiene el original. Al momento de redactarlo el post tenía 7 vistas y 0
-respuestas, así que la exposición real es baja — pero la redacción sirve para adelante, que
-es cuando el hilo va a tener tráfico si NVIDIA contesta.
+The repo was created **private**. It's best to push it private, check on the web that it
+looks as expected, and only then switch it to public from Settings. A later force-push
+doesn't reliably remove what's already been indexed.
 
 ---
 
-## Estructura: un solo repo
+## What redaction doesn't fix
 
-Se evaluó separar player / herramientas / drivers en tres repos y **se descartó**. Lo que
-hay en `patches/` no son forks: son series de parches contra upstream. Un parche sin el doc
-que explica por qué existe no sirve, y el doc sin el parche tampoco.
+The original `nvidia-bug-report` **is still on NVIDIA's server** at its current URL, even
+though the thread's attachment gets replaced: Discourse doesn't purge orphaned uploads
+instantly. And anyone who downloaded it has the original. At the time it was redacted, the
+post had 7 views and 0 replies, so the actual exposure is low — but the redaction matters
+going forward, for when the thread gets traffic if NVIDIA replies.
+
+---
+
+## Structure: a single repo
+
+Splitting player / tools / drivers into three repos was considered and **ruled out**. What's
+in `patches/` isn't forks: it's series of patches against upstream. A patch without the doc
+explaining why it exists isn't useful, and the doc without the patch isn't either.
 
 ```
-docs/          17 capítulos, del USB al bug de NVIDIA
-patches/nvidia/            3 de Project-VR + el nuestro (0004, ver PR #1275)
-patches/monado/            7 nuestros
-patches/hello_xr-player/   3, el player 360/VR180
-scripts/       34 herramientas
-experiments/   los EDID del experimento del vblank (docs/16)
+docs/          17 chapters, from the USB to the NVIDIA bug
+patches/nvidia/            3 from Project-VR + ours (0004, see PR #1275)
+patches/monado/            7 of ours
+patches/hello_xr-player/   3, the 360/VR180 player
+scripts/       34 tools
+experiments/   the EDIDs from the vblank experiment (docs/16)
 ```
 
-Lo único que sale del repo es el fix de NVIDIA, y ya salió:
+The only thing that goes outside the repo is the NVIDIA fix, and it already went out:
 https://github.com/NVIDIA/open-gpu-kernel-modules/pull/1275
 
-Los árboles de código no se versionan: `bootstrap-lab.sh` los clona de upstream en los SHA
-exactos contra los que se generaron los parches. Por eso el bundle pesa kilobytes y se ve
-exactamente qué es nuestro.
+The code trees aren't versioned: `bootstrap-lab.sh` clones them from upstream at the exact
+SHAs the patches were generated against. That's why the bundle weighs kilobytes, and it's
+clear exactly what's ours.
 
-## Lo que faltaba antes de hacerlo público
+## What was missing before making it public
 
-- [x] **Un README de entrada** (`README.md`, en inglés). Actualizado 2026-08-05 (noche)
-      para reflejar que el factorial de `docs/16` ya se corrió (no queda como tarea
-      pendiente para un tercero) y que el canal USB/HID también se cerró del lado Windows.
-- [x] **Los PDFs de la FCC** (6.8 MB, `docs/*.pdf`) se linkean, no se versionan —
-      `.gitignore` los excluye a todos (`*.[Pp][Dd][Ff]`), coherente con el mismo criterio
-      ya aplicado al datasheet del ANX7530.
+- [x] **An entry-point README** (`README.md`, in English). Updated 2026-08-05 (night) to
+      reflect that the `docs/16` factorial has already been run (it's no longer left as a
+      pending task for a third party) and that the USB/HID channel was also closed on the
+      Windows side.
+- [x] **The FCC PDFs** (6.8 MB, `docs/*.pdf`) are linked, not versioned — `.gitignore`
+      excludes all of them (`*.[Pp][Dd][Ff]`), consistent with the same criterion already
+      applied to the ANX7530 datasheet.
 
-Antes de pasar el repo de privado a público, además de correr `check-publishable.py`:
-revisar en la web de GitHub que el README rinda bien, y que ningún archivo de
-`windows-kit2/` (binarios de terceros, capturas propias) haya quedado trackeado por error
-— esa carpeta es intencionalmente local, ver `.gitignore`.
+Before switching the repo from private to public, besides running `check-publishable.py`:
+check on the GitHub web UI that the README renders well, and that no file in
+`windows-kit2/` (third-party binaries, our own captures) was left tracked by mistake —
+that folder is intentionally local, see `.gitignore`.
 
 ---
 
-## Acceso git desde el lab
+## Git access from the lab
 
-Resuelto. Hay una clave **propia del lab** (no se copió la del sistema principal, así se
-puede revocar una máquina sin tocar la otra), en `~/.ssh/id_ed25519`, con su entrada
-`Host github.com` en `~/.ssh/config`. La pública ya está cargada en la cuenta.
+Resolved. There's a key **specific to the lab** (the main system's key wasn't copied, so
+one machine can be revoked without touching the other), at `~/.ssh/id_ed25519`, with its
+`Host github.com` entry in `~/.ssh/config`. The public key is already loaded into the
+account.
 
-Verificar con `ssh -T git@github.com` — tiene que responder `Hi Wintch!`.
+Verify with `ssh -T git@github.com` — it has to respond `Hi Wintch!`.

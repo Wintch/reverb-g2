@@ -1,44 +1,45 @@
-# 06 — Problemas conocidos y por qué NO los perseguimos (con evidencia)
+# 06 — Known issues and why we're NOT chasing them (with evidence)
 
-## Popup molesto de "USB Audio" reconectando cada ~30s: silenciado, no arreglado (2026-08-06)
+## Annoying "USB Audio" popup reconnecting every ~30s: silenced, not fixed (2026-08-06)
 
-El audio del casco (más abajo, sección siguiente) sigue ciclando disconnect/reconnect cada
-~30s aproximadamente — eso no cambió. Lo que se agregó es una regla de WirePlumber
-(`scripts/wireplumber/51-disable-reverb-headset-audio.conf`, instalar en
-`~/.config/wireplumber/wireplumber.conf.d/`, reiniciar con
-`systemctl --user restart wireplumber`) que marca ese dispositivo específico
-(`device.vendor.id`/`device.product.id` = `0bda`/`4c15`) como `device.disabled`, para que
-WirePlumber nunca le cree un nodo de audio — sin nodo, no hay evento de "dispositivo
-conectado/desconectado" y no aparece el popup de KDE. El ciclo USB a nivel kernel sigue
-pasando exactamente igual (visible en `journalctl -k`), sólo que ahora es invisible para el
-usuario. Verificado: `/proc/asound/cards` y `pw-dump` ya no listan el dispositivo tras un
-ciclo de reconexión con la regla activa.
+The headset audio (see below, next section) is still cycling disconnect/reconnect roughly
+every ~30s — that hasn't changed. What was added is a WirePlumber rule
+(`scripts/wireplumber/51-disable-reverb-headset-audio.conf`, install to
+`~/.config/wireplumber/wireplumber.conf.d/`, restart with
+`systemctl --user restart wireplumber`) that marks that specific device
+(`device.vendor.id`/`device.product.id` = `0bda`/`4c15`) as `device.disabled`, so that
+WirePlumber never creates an audio node for it — with no node, there's no "device
+connected/disconnected" event and the KDE popup no longer appears. The USB cycling at the
+kernel level keeps happening exactly the same (visible in `journalctl -k`), it's just now
+invisible to the user. Verified: `/proc/asound/cards` and `pw-dump` no longer list the
+device after a reconnection cycle with the rule active.
 
-**Ojo:** esto no es necesariamente un defecto del modelo G2 en general — puede ser específico
-al estado de esta unidad particular (el mismo golpe físico que dejó la fuga de luz notada en
-`NEXT-STEP.md` de `linuxlab-kit` bien podría explicar también esto). No se investigó la causa
-de fondo del ciclo USB en sí, sólo se apagó el síntoma molesto.
+**Note:** this isn't necessarily a defect of the G2 model in general — it could be specific
+to this particular unit's condition (the same physical impact that caused the light leak
+noted in `NEXT-STEP.md` of `linuxlab-kit` could plausibly explain this too). The underlying
+cause of the USB cycling itself was not investigated, only the annoying symptom was
+silenced.
 
-**Segunda vuelta (2026-08-06, más tarde): el popup seguía apareciendo pese a la regla de
-arriba.** Causa: la regla de WirePlumber sólo tapa el nodo de audio de PipeWire — el
-dispositivo `0bda:4c15` también expone una interfaz HID separada ("Generic USB Audio
-Consumer Control", botones multimedia) que **`systemd-logind` vuelve a "watchear" en cada
-ciclo de reconexión** (`Watching system buttons on /dev/input/eventN`), y eso es lo que
-seguía disparando ruido. Esta vez el ciclo se midió mucho más rápido que los ~30s
-históricos — cada 5-10s. Fix: `scripts/72-reverb-audio-no-input-watch.rules`, instalar en
-`/etc/udev/rules.d/` + `udevadm control --reload-rules`. Le saca el tag `ID_INPUT_KEY` que
-el builtin `input_id` de udev le pone a esa interfaz, así logind deja de tratarla como
-dispositivo de botones. **Instalado pero sin verificar en vivo todavía** — el casco se
-apagó justo después de instalar la regla; confirmar en el próximo ciclo de reconexión real.
+**Second round (2026-08-06, later): the popup kept appearing despite the rule above.**
+Cause: the WirePlumber rule only covers PipeWire's audio node — the `0bda:4c15` device also
+exposes a separate HID interface ("Generic USB Audio Consumer Control", media buttons) that
+**`systemd-logind` re-"watches" on every reconnection cycle** (`Watching system buttons on
+/dev/input/eventN`), and that's what kept triggering the noise. This time the cycle measured
+much faster than the historical ~30s — every 5-10s. Fix:
+`scripts/72-reverb-audio-no-input-watch.rules`, install to `/etc/udev/rules.d/` +
+`udevadm control --reload-rules`. It strips the `ID_INPUT_KEY` tag that udev's builtin
+`input_id` puts on that interface, so logind stops treating it as a button device.
+**Installed but not verified live yet** — the headset powered off right after installing the
+rule; confirm on the next real reconnection cycle.
 
-## Audio del casco: RESUELTO — era el puerto USB (2026-08-04)
+## Headset audio: RESOLVED — it was the USB port (2026-08-04)
 
-> Esta sección decía que el audio era una falla física incurable del cable. **Era falso.**
-> Se deja el error documentado porque costó meses de diagnóstico equivocado.
+> This section used to say the audio was an incurable physical cable fault. **That was
+> false.** The error is left documented because it cost months of misdiagnosis.
 
-El cable del G2 lleva una rama SuperSpeed y una rama USB 2.0 por el mismo puerto físico. En
-el puerto USB-A que usábamos, la rama SuperSpeed enumeraba bien y **la rama USB 2.0 nunca
-entrenaba el link**:
+The G2 cable carries a SuperSpeed branch and a USB 2.0 branch through the same physical
+port. On the USB-A port we were using, the SuperSpeed branch enumerated fine and **the USB
+2.0 branch never trained the link**:
 
 ```
 usb usb3-port2: Cannot enable. Maybe the USB cable is bad?
@@ -46,235 +47,238 @@ usb 3-2: device not accepting address 6, error -71
 usb usb3-port2: unable to enumerate USB device
 ```
 
-Todo lo que vive en esa rama quedaba ausente: el companion `03f0:0580` (HID de control **y**
-audio). Por eso Monado caía a Simulated HMD y por eso no aparecía ningún device de audio.
-En terminología WMR esto es el **error 7-14**, "required USB2 components not found", una
-falla documentada del G2: el cable es extra largo y deja los márgenes de señal USB muy
-justos.
+Everything living on that branch was missing: the companion `03f0:0580` (control HID **and**
+audio). That's why Monado fell back to Simulated HMD and why no audio device appeared. In
+WMR terminology this is **error 7-14**, "required USB2 components not found", a documented
+G2 failure mode: the cable is extra long and leaves USB signal margins very tight.
 
-**Mover el casco a otro puerto USB-A trasero lo arregló por completo.** Cero `error -71`
-desde entonces. Girar el conector USB-C 180° dentro del adaptador C→A también ayudó por su
-cuenta (levantó los sensores HoloLens). Probar el puerto primero, la orientación después.
+**Moving the headset to a different rear USB-A port fixed it completely.** Zero `error -71`
+since then. Rotating the USB-C connector 180° inside the C-to-A adapter also helped on its
+own (it brought up the HoloLens sensors). Try the port first, the orientation second.
 
-### Enumeración correcta — los cinco tienen que estar
+### Correct enumeration — all five have to be present
 
 ```
 3-1    04b4:6506  HP WMR hub (USB2)         480M
-3-1.2  0bda:4c15  USB Audio                 480M   <- parlantes + micrófono del casco
-3-1.3  03f0:0580  QHMD A85V s/n REDACTED   12M   <- companion, HID de control
+3-1.2  0bda:4c15  USB Audio                 480M   <- headset speakers + mic
+3-1.3  03f0:0580  QHMD A85V s/n REDACTED   12M   <- companion, control HID
 4-1    04b4:6504  HP WMR hub (USB3)        5000M
 4-1.1  045e:0659  HoloLens Sensors         5000M
 ```
 
-Si falta `03f0:0580`, **no debuguear Monado** — revisar el puerto.
+If `03f0:0580` is missing, **don't debug Monado** — check the port.
 
-### Matiz importante, medido en el lab (2026-08-04, tarde)
+### Important nuance, measured in the lab (2026-08-04, afternoon)
 
-"Cambiar de puerto" resultó ser una descripción incompleta de la cura. Reproducido con
-método en el lab:
+"Changing ports" turned out to be an incomplete description of the fix. Reproduced
+methodically in the lab:
 
-1. Estado inicial: enumeraba **sólo** el hub SuperSpeed (`04b4:6504`), nada detrás de él.
-   `usb3-port2: Cannot enable` + `error -71` en la rama USB2.
-2. Se movió el cable a otro puerto USB-A trasero. **El fallo se movió con el casco**:
-   pasó a `usb3-port3`, mismo `error -71`. Eso **descarta que el puerto sea la causa** — lo
-   que sí cambió es que aparecieron los `045e:0659 HoloLens Sensors`.
-3. Recién al reconectar el conjunto (cable + orientación del USB-C en el adaptador C→A)
-   enumeraron los cinco de una.
+1. Initial state: only the SuperSpeed hub (`04b4:6504`) enumerated, nothing behind it.
+   `usb3-port2: Cannot enable` + `error -71` on the USB2 branch.
+2. The cable was moved to a different rear USB-A port. **The fault moved with the
+   headset**: it shifted to `usb3-port3`, same `error -71`. That **rules out the port as
+   the cause** — what did change is that the `045e:0659 HoloLens Sensors` appeared.
+3. Only when reseating the whole assembly (cable + USB-C orientation in the C-to-A adapter)
+   did all five enumerate at once.
 
-O sea: los márgenes de señal de ese cable están tan justos que el resultado depende del
-contacto concreto, no de qué puerto sea. **El síntoma es progresivo, no binario** — se puede
-tener SuperSpeed sin USB2, o SuperSpeed + sensores sin companion. Criterio de corte: contar
-los cinco en `lsusb`, nunca "parece conectado".
+In other words: this cable's signal margins are so tight that the outcome depends on the
+specific contact, not on which port it is. **The symptom is progressive, not binary** — you
+can have SuperSpeed without USB2, or SuperSpeed + sensors without the companion. Cutoff
+criterion: count all five in `lsusb`, never "looks connected".
 
-Corolario para diagnóstico: **si el companion falta, el display tampoco aparece**. Con
-`03f0:0580` ausente, `DP-0` figura `disconnected` en xrandr y el kernel no ve ningún sink
-DisplayPort nuevo, porque el panel no linkea hasta recibir la activación WMR por HID. Ver
-`DP-0 disconnected` con el casco enchufado **no** significa problema de video ni de cable
-DP: mirar primero el USB.
+Corollary for diagnosis: **if the companion is missing, the display doesn't appear either**.
+With `03f0:0580` absent, `DP-0` shows `disconnected` in xrandr and the kernel sees no new
+DisplayPort sink, because the panel doesn't link until it receives the WMR activation over
+HID. Seeing `DP-0 disconnected` with the headset plugged in **doesn't** mean a video or DP
+cable problem: check the USB first.
 
-### El audio, cómo encontrarlo
+### The audio, how to find it
 
-Enumera como card ALSA `USB-Audio - Generic USB Audio` (`0bda:4c15`, chip Realtek), **sin
-ninguna cadena HP/Reverb/WMR**. Por eso los chequeos que grepeaban `hp|reverb|wmr` daban
-"no hay audio del casco" aun estando presente. Confirmado audible 2026-08-04, y estable:
-30 segundos de reproducción continua sin un solo corte.
+It enumerates as ALSA card `USB-Audio - Generic USB Audio` (`0bda:4c15`, Realtek chip),
+**with no HP/Reverb/WMR string anywhere**. That's why checks grepping for `hp|reverb|wmr`
+reported "no headset audio" even when it was present. Confirmed audible 2026-08-04, and
+stable: 30 seconds of continuous playback without a single dropout.
 
-Sink `alsa_output.usb-Generic_USB_Audio-00.analog-stereo` + su source (el micrófono). El
-device reporta mal su rango de volumen (`Unlikely big volume range (=800)`, PCM en `-25600`)
-y PipeWire delega el volumen a esa escala rota, así que **un porcentaje intermedio puede ser
-inaudible: probar siempre al 100%**.
+Sink `alsa_output.usb-Generic_USB_Audio-00.analog-stereo` + its source (the microphone). The
+device misreports its volume range (`Unlikely big volume range (=800)`, PCM at `-25600`) and
+PipeWire defers to that broken scale, so **a mid-range percentage can be inaudible: always
+test at 100%**.
 
-Esto explica también el síntoma que el usuario venía sufriendo en Windows desde siempre
-(device de audio que aparece, se mutea y desaparece). Nunca fue un problema de sistema
-operativo.
+This also explains the symptom the user had been suffering on Windows all along (audio
+device that appears, mutes, and disappears). It was never an operating-system problem.
 
-## Caídas del hub USB2 bajo carga: NO es la fuente (2026-08-04, tarde)
+## USB2 hub drops under load: it's NOT the PSU (2026-08-04, afternoon)
 
-Con el panel encendido, el hub USB 2.0 interno (`04b4:6506`) se resetea cada tanto y se
-lleva al companion `03f0:0580` y al audio. Desconexión limpia + re-enumeración limpia, sin
-`error -71`. Medido a la mañana con gradiente de carga: 0/10 drops sin Monado → 6/15 con
-panel + render. Eso parecía un brownout, y la conclusión de la mañana fue "cambiar la
-fuente DC".
+With the panel on, the internal USB 2.0 hub (`04b4:6506`) resets every so often and takes
+the companion `03f0:0580` and the audio down with it. Clean disconnect + clean
+re-enumeration, no `error -71`. Measured in the morning with a load gradient: 0/10 drops
+without Monado → 6/15 with panel + render. That looked like a brownout, and the morning's
+conclusion was "replace the DC power supply".
 
-**Esa conclusión está retirada.** Evidencia del usuario: en **Windows 11 el mismo casco,
-misma fuente, mismo todo, anduvo HORAS a 90Hz** (que consume más que nuestro 60Hz) sin una
-sola caída. Si faltara corriente, Windows caería igual — el hardware no sabe qué OS corre.
-Lo único frágil en Windows fue siempre el audio (device que aparece, se mutea, desaparece),
-o sea la rama de audio es problemática en ambos OS por su cuenta.
+**That conclusion is withdrawn.** Evidence from the user: on **Windows 11 the same headset,
+same power supply, same everything, ran for HOURS at 90Hz** (which draws more than our
+60Hz) without a single drop. If current were insufficient, Windows would drop too — the
+hardware doesn't know which OS is running. The only fragile thing on Windows was always the
+audio (device that appears, mutes, disappears), meaning the audio branch is problematic on
+both OSes on its own.
 
-Reproducido además 2 veces hoy: companion caído durante horas de uso → `kill` a Monado →
-**vuelve solo a los ~5 segundos**. Un problema eléctrico no se arregla cerrando un proceso.
+Also reproduced twice today: companion drops during hours of use → `kill` Monado →
+**comes back on its own after ~5 seconds**. An electrical problem doesn't get fixed by
+killing a process.
 
-**Hipótesis vigente:** el driver WMR de Monado maneja los reportes HID (keepalive/estado)
-distinto que el stack de Windows, y algo de ese tráfico — o su ausencia — hace que el
-firmware del casco recicle el hub. Correlaciona con carga porque Monado bajo carga cambia
-su timing de HID. Pendiente: instrumentar `wmr_hmd.c` (logging de cada report + timestamps)
-la próxima vez que se caiga. **No comprar fuente.**
+**Current hypothesis:** Monado's WMR driver handles HID reports (keepalive/state)
+differently than the Windows stack, and something about that traffic — or its absence —
+makes the headset firmware recycle the hub. It correlates with load because Monado under
+load changes its HID timing. Pending: instrument `wmr_hmd.c` (logging every report +
+timestamps) the next time it drops. **Do not buy a power supply.**
 
-## Basalt SLAM diverge (6DoF de cabeza)
+## Basalt SLAM diverges (6DoF head tracking)
 
-~3° de error medio entre frames con el casco INMÓVIL (spam de `det(Q1Jl)==0`). Se usa
-`WMR_SLAM=0` (IMU 3DoF, impecable) para todo lo orientation-only. Investigación pendiente:
-¿calibración? ¿textura visual del ambiente? ¿exposición? Es el desbloqueo técnico más
-valioso después del 90Hz.
+~3° mean error between frames with the headset STATIONARY (spam of `det(Q1Jl)==0`).
+`WMR_SLAM=0` (IMU 3DoF, flawless) is used for everything orientation-only. Investigation
+pending: calibration? environment visual texture? exposure? It's the most valuable
+technical unlock after 90Hz.
 
-## SteamVR no levanta (y no es culpa nuestra)
+## SteamVR won't launch (and it's not our fault)
 
-El driver Monado para SteamVR carga OK (con el RPATH del patch 0002 + bundle de libs),
-pero `vrmonitor` de Valve crashea por `libQt5Multimedia.so.5` faltante **dentro del
-runtime container de Valve**. Camino recomendado: ~~OpenComposite~~ — sin mantenimiento
-desde 2024. El reemplazo activo es **xrizer** (OpenVR reimplementado sobre OpenXR, corre
-contra Monado sin levantar SteamVR) — no probado aún.
+The Monado driver for SteamVR loads fine (with patch 0002's RPATH + lib bundle), but
+Valve's `vrmonitor` crashes due to a missing `libQt5Multimedia.so.5` **inside Valve's
+runtime container**. Recommended path: ~~OpenComposite~~ — unmaintained since 2024. The
+active replacement is **xrizer** (OpenVR reimplemented on top of OpenXR, runs against
+Monado without launching SteamVR) — not tested yet.
 
-## RESUELTO (2026-08-06, tarde) — todo lo que sigue en esta sección quedó superado
+## RESOLVED (2026-08-06, afternoon) — everything below in this section has been superseded
 
-**El 90Hz anda limpio en esta misma GPU (Ampere, sin AMD ni ningún otro hardware nuevo).**
-El parche del bpc (`patches/nvidia/0004`) era la solución completa — lo que faltaba no era
-otra causa, era volver a probar el modo nativo del EDID sin override después de tener el
-parche puesto, cosa que nadie había hecho hasta ese día. Detalle completo:
-`docs/19-nvidia-bug-5923212-followup.md`. El análisis de abajo (incluido el "corolario" de
-que ningún caso humano confirmado existe con ninguna GPU) se conserva tal cual para el
-historial de la investigación — no lo tomes como estado vigente.
+**90Hz runs clean on this very GPU (Ampere, no AMD or any other new hardware).** The bpc
+patch (`patches/nvidia/0004`) was the complete solution — what was missing wasn't another
+cause, it was re-testing the EDID's native mode without an override after the patch was
+applied, which nobody had done until that day. Full detail:
+`docs/19-nvidia-bug-5923212-followup.md`. The analysis below (including the "corollary"
+that no confirmed human case exists with any GPU) is kept as-is for the investigation's
+record — don't take it as current status.
 
-## 90Hz — los parches del 595-open NO lo arreglan (2026-08-04, 18:55)
+## 90Hz — the 595-open patches do NOT fix it (2026-08-04, 18:55)
 
-Se creía: bug del driver NVIDIA (5923212), no de hardware ni de Monado; sin fix upstream
-hasta 610.x inclusive; el lab con el 595-open parcheado era el plan activo.
+Belief at the time: NVIDIA driver bug (5923212), not hardware or Monado; no upstream fix
+through 610.x inclusive; the lab with a patched 595-open was the active plan.
 
-**Medido: no alcanza.** Con los tres parches de Project-VR instalados vía DKMS y el módulo
-parcheado confirmado en memoria, los dos modos de 90Hz siguen dejando el panel apagado con
-el logo de HP — idéntico al baseline sin parches. Verificación física, seis casos, tabla
-completa en el cap. 04. El control a 60Hz corrido después dio imagen perfecta, así que el
-setup estaba sano.
+**Measured: not enough.** With Project-VR's three patches installed via DKMS and the
+patched module confirmed loaded in memory, both 90Hz modes still leave the panel stuck on
+the HP logo — identical to the unpatched baseline. Physical verification, six cases, full
+table in chapter 04. The 60Hz control run afterward gave a perfect image, so the setup was
+healthy.
 
-### DESCARTADO: "falta un comando HID que le pida el modo al casco" (2026-08-04, 21:00)
+### RULED OUT: "missing an HID command that requests the mode from the headset" (2026-08-04, 21:00)
 
-Se creía, y se escribió como hipótesis viva en el cap. 04 y en `CLAUDE.md`: el driver WMR de
-Monado manda la misma secuencia HID de activación para 60 y para 90Hz (`wmr_hmd.c:767`), y el
-"parche 90Hz" sólo setea `nominal_frame_interval_ns` para el pacing (`wmr_hmd.c:1992`) — no
-toca el panel. De ahí salió todo el `docs/07` (capturar el HID de Windows).
+Belief at the time, written up as a live hypothesis in chapter 04 and in `CLAUDE.md`:
+Monado's WMR driver sends the same activation HID sequence for both 60 and 90Hz
+(`wmr_hmd.c:767`), and the "90Hz patch" only sets `nominal_frame_interval_ns` for pacing
+(`wmr_hmd.c:1992`) — it doesn't touch the panel. That's what led to all of `docs/07`
+(capturing Windows' HID traffic).
 
-**Es falso, y hay dos evidencias independientes:**
+**It's false, and there are two independent pieces of evidence:**
 
-1. **Por argumento (19:30):** Project-VR llega a `4320x2160@90` con parches al driver de
-   video y sin ningún comando propietario.
-2. **Por lectura del binario (21:00):** se montaron read-only las NTFS del disco de Windows y
-   se desensambló el **Oasis Driver** — el driver standalone que corre el G2 a 90Hz y
-   que habla con el casco directo, sin pasar por el runtime WMR del SO. Su **único** comando
-   de panel es *Display Enable* (HID Usage Page `0x03` VR Controls, Usage `0x21`), que es
-   exactamente el `{0x04, 0x01}` que Monado ya manda. No existe comando de refresh rate.
-   Procedimiento y falsos positivos en **`docs/09-oasis-driver-re.md`**.
+1. **By argument (19:30):** Project-VR reaches `4320x2160@90` with patches to the video
+   driver and no proprietary command whatsoever.
+2. **By reading the binary (21:00):** the Windows disk's NTFS partitions were mounted
+   read-only and the **Oasis Driver** was disassembled — the standalone driver that runs
+   the G2 at 90Hz and talks to the headset directly, bypassing the OS's WMR runtime. Its
+   **only** panel command is *Display Enable* (HID Usage Page `0x03` VR Controls, Usage
+   `0x21`), which is exactly the `{0x04, 0x01}` that Monado already sends. There is no
+   refresh-rate command. Procedure and false positives in **`docs/09-oasis-driver-re.md`**.
 
-Los dos falsos positivos que hay que no volver a perseguir: `HmdDriver_SetFrameRate` es de
-las cámaras (`IspFrameRate`/`SensorFrameRate`, igual que `OV7251SetFrameRate`), y
-`Detected change of refresh rate` es contabilidad interna de SteamVR sobre
-`Prop_DisplayFrequency_Float`.
+The two false positives not to chase again: `HmdDriver_SetFrameRate` belongs to the cameras
+(`IspFrameRate`/`SensorFrameRate`, same as `OV7251SetFrameRate`), and `Detected change of
+refresh rate` is SteamVR's internal bookkeeping around `Prop_DisplayFrequency_Float`.
 
-**Conclusión: la secuencia HID de Monado es correcta y suficiente. El panel adopta el refresh
-del video que le llega.** `docs/07-windows-hid-capture.md` queda archivado — no hace falta
-bootear Windows.
+**Conclusion: Monado's HID sequence is correct and sufficient. The panel adopts the refresh
+rate of the video signal it receives.** `docs/07-windows-hid-capture.md` is now archived —
+no need to boot Windows.
 
-Nota de proceso: esta hipótesis murió dos veces porque entre la primera y la segunda
-`CLAUDE.md` quedó desactualizado dándola por viva, y se la volvió a citar como "la única que
-explica los resultados". Al cerrar una línea, actualizar `CLAUDE.md` **en el mismo commit**.
+Process note: this hypothesis died twice because between the first and second time,
+`CLAUDE.md` was left out of date still treating it as live, and it got cited again as "the
+only one that explains the results". When closing out a line of investigation, update
+`CLAUDE.md` **in the same commit**.
 
-### CUIDADO: Project-VR NO es un caso positivo verificado (2026-08-04, 23:00)
+### CAUTION: Project-VR is NOT a verified positive case (2026-08-04, 23:00)
 
-Todo el plan del lab se apoyaba en que [Project-VR](https://github.com/AshishKumar4/Project-VR)
-tenia el G2 andando a `4320x2160@90` en Linux. **Ese claim no resiste.**
+The entire lab plan rested on [Project-VR](https://github.com/AshishKumar4/Project-VR)
+having the G2 running at `4320x2160@90` on Linux. **That claim doesn't hold up.**
 
-- 0 estrellas, 0 forks, 0 issues, 0 PRs. Cero menciones externas en toda la web.
-- **Cero imagenes o video en sus 177 archivos.** Un solo commit de volcado inicial (2026-07-03).
-- Validado en Ada (RTX 4080), nunca en Ampere.
-- Y lo decisivo: su evidencia de "90Hz funcionando" es **una sesion Vulkan/OpenXR exitosa y
-  sus logs** — exactamente la clase de evidencia que este proyecto ya demostro nueve veces
-  que es **compatible con el panel muerto**. La API reporta 90.0 fps felices con el logo de HP.
+- 0 stars, 0 forks, 0 issues, 0 PRs. Zero external mentions anywhere on the web.
+- **Zero images or video across its 177 files.** A single initial-dump commit (2026-07-03).
+- Validated on Ada (RTX 4080), never on Ampere.
+- And the decisive point: its evidence for "90Hz working" is **a successful Vulkan/OpenXR
+  session and its logs** — exactly the kind of evidence this project already demonstrated
+  nine times over is **compatible with a dead panel**. The API happily reports 90.0 fps
+  with the HP logo on screen.
 
-Seria el cuarto falso positivo de la misma familia que el cable, la fuente y el audio: una
-conclusion dada por buena sin que un humano haya mirado.
+It would be the fourth false positive in the same family as the cable, the power supply,
+and the audio: a conclusion accepted as good without a human ever looking.
 
-**No invertir mas tiempo en sus parches tal como estan.** La unica forma de rehabilitarlo es
-pedirle al autor una foto o un video del panel encendido a 90Hz.
+**Do not invest more time in its patches as they stand.** The only way to rehabilitate it
+is to ask the author for a photo or video of the panel lit up at 90Hz.
 
-Corolario incomodo: **no hay UN SOLO caso humano confirmado de G2 a 90Hz en Linux, con ninguna
-GPU** — tampoco AMD. Veniamos preguntandonos por que a nosotros no nos andaba lo que a otros
-si; puede que no le haya andado a nadie.
+Uncomfortable corollary: **there is NOT A SINGLE confirmed human case of a G2 at 90Hz on
+Linux, on any GPU** — not even AMD. We'd been asking ourselves why it wasn't working for us
+when it worked for others; maybe it never worked for anyone.
 
-### El bug de NVIDIA es transversal y esta abierto (2026-08-04)
+### The NVIDIA bug is cross-cutting and still open (2026-08-04)
 
-Del hilo del foro (bug interno **5923212**): NVIDIA **admitio y reprodujo** el bug el
-2026-03-20, y sigue sin resolucion al 2026-07-19. Falla igual en **Turing, Ampere y
-Blackwell** (2070 SUPER, 3090, A5000, 5070 Ti) y de la serie 590.x a la 610.x.
+From the forum thread (internal bug **5923212**): NVIDIA **acknowledged and reproduced**
+the bug on 2026-03-20, and it's still unresolved as of 2026-07-19. It fails the same way on
+**Turing, Ampere, and Blackwell** (2070 SUPER, 3090, A5000, 5070 Ti) and across the 590.x to
+610.x series.
 
-Esto explica por que los 3 parches de Project-VR no cambiaron nada: si el bug vive en el
-firmware GSP o en el blob cerrado de userspace, ningun parche a los *open kernel modules*
-puede alcanzarlo. Y cambia el objetivo: de "encontrar el parche correcto" a "confirmar en que
-capa vive y aportar evidencia al bug".
+This explains why Project-VR's 3 patches changed nothing: if the bug lives in the GSP
+firmware or the closed userspace blob, no patch to the *open kernel modules* can reach it.
+And it shifts the goal: from "find the right patch" to "confirm which layer it lives in and
+contribute evidence to the bug report".
 
-### DESCARTADO: DSC como causa (2026-08-04, 21:30) — la cuarta teoría de bandwidth que cae
+### RULED OUT: DSC as the cause (2026-08-04, 21:30) — the fourth bandwidth theory to fall
 
-Muerto lo del HID, el sospechoso era DSC: el parche 0001 de Project-VR dice arreglar el
-*"90 Hz handshake"* de DSC 1.1. Pero los números del EDID del casco no lo sostienen:
+With the HID theory dead, the suspect was DSC: Project-VR's patch 0001 claims to fix the
+*"90 Hz handshake"* for DSC 1.1. But the headset's EDID numbers don't support it:
 
-| modo | pixel clock | 24 bpp | ¿anda? |
+| mode | pixel clock | 24 bpp | works? |
 |---|---|---|---|
 | 2880x1440@90 | 428.6 MHz | **10.29 Gbps** | NO |
-| 4320x2160@60 | 709.1 MHz | 17.02 Gbps | SÍ |
+| 4320x2160@60 | 709.1 MHz | 17.02 Gbps | YES |
 | 4320x2160@90 | 905.4 MHz | 21.73 Gbps | NO |
 
-Enlace: 4 lanes HBR3 = **25.92 Gbps** útiles. El modo `2880x1440@90` pide menos de la mitad
-que el `4320x2160@60` que funciona: **no puede necesitar compresión**, y falla igual. DSC
-explicaría a lo sumo el modo de 4320@90 a 30 bpp, no el otro. Tabla completa y el test que
-falta correr, en el cap. 04.
+Link: 4 lanes HBR3 = **25.92 Gbps** usable. The `2880x1440@90` mode requests less than half
+of the working `4320x2160@60`: **it can't need compression**, and it fails just the same.
+DSC could at most explain the 4320@90 mode at 30 bpp, not the other one. Full table and the
+test still to run, in chapter 04.
 
-### Descartado: contención de displays / dominios de reloj de la GPU
+### Ruled out: display contention / GPU clock domains
 
-Distinto del bandwidth del cable DP (más abajo): esto era sobre el display engine con
-varios heads activos. Se probó con un solo monitor y con **cero** — el casco como único
-display del sistema — y el panel sigue apagado. Además el modo 90Hz que falla consume menos
-pixel clock (428 MHz) que el modo 60Hz que anda (709 MHz). No es esto.
+Different from the DP cable bandwidth (above): this was about the display engine with
+multiple active heads. Tested with a single monitor and with **zero** — the headset as the
+system's only display — and the panel is still off. Also, the failing 90Hz mode uses less
+pixel clock (428 MHz) than the working 60Hz mode (709 MHz). This isn't it.
 
-## Controllers: solo 3DoF
+## Controllers: 3DoF only
 
-Límite de código del driver WMR upstream (posición hardcodeada). Roadmap constellation en
-cap. 03. La confiabilidad de conexión ya la arreglamos (patches/monado/0001-0004).
+Code limitation in the upstream WMR driver (hardcoded position). Constellation roadmap in
+chapter 03. We already fixed connection reliability (patches/monado/0001-0004).
 
-## Cuelgue total 2026-08-04 (resuelto por diseño)
+## Full system hang 2026-08-04 (resolved by design)
 
-Disco raíz USB compartiendo xHCI con el casco + autosuspend. Cap. 00 tiene el análisis y
-los procedimientos. Los .mp4 truncados de esa mañana (marsa*, sin moov atom) no son
-recuperables — re-descargar.
+USB root disk sharing an xHCI controller with the headset + autosuspend. Chapter 00 has the
+analysis and the procedures. That morning's truncated .mp4 files (marsa*, missing moov
+atom) are not recoverable — re-download them.
 
-## El casco conectado puede romper el escritorio KDE entero (2026-08-06)
+## The headset being connected can break the entire KDE desktop (2026-08-06)
 
-No es el bug del 90Hz (`docs/13`) — es distinto y más grave: con el casco conectado, KDE
-Plasma X11 puede quedar sin panel/iconos, o con el lock screen sin campo de contraseña,
-porque `plasmashell`/`kwin` pierden el contexto gráfico en loop. Causa confirmada al menos
-una vez: KDE tenía `DP-0` (el casco) guardado como monitor de escritorio a 90Hz. Detalle,
-fix y lo que queda sin explicar en **`docs/20-desktop-plasma-crash.md`**.
+This isn't the 90Hz bug (`docs/13`) — it's different and more severe: with the headset
+connected, KDE Plasma X11 can end up with no panel/icons, or with a lock screen missing the
+password field, because `plasmashell`/`kwin` lose their graphics context in a loop. Cause
+confirmed at least once: KDE had `DP-0` (the headset) saved as a desktop monitor at 90Hz.
+Detail, fix, and what remains unexplained in **`docs/20-desktop-plasma-crash.md`**.
 
-## Hardware roto conocido
+## Known broken hardware
 
-- 16GB RAM (upgrade a 32 planeado); zram configurado al 100% con zstd.
-- NVMe 1.8TB enteramente NTFS (Windows) — el futuro setup ideal debería darle una
-  partición nativa a Linux para media/scratch de Resolve.
+- 16GB RAM (upgrade to 32 planned); zram configured at 100% with zstd.
+- 1.8TB NVMe entirely NTFS (Windows) — the ideal future setup should give Linux a native
+  partition for Resolve media/scratch.

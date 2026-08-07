@@ -1,4 +1,4 @@
-// ¿El lease incluye un PLANO? Si no, SetCrtc "anda" pero no hay nada que escanear.
+// Does the lease include a PLANE? If not, SetCrtc "works" but there's nothing to scan out.
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <string.h>
@@ -31,29 +31,29 @@ static void ra(void*d,struct wl_registry*r,uint32_t nm,const char*ifc,uint32_t v
 static void rd(void*d,struct wl_registry*r,uint32_t n){(void)d;(void)r;(void)n;}
 static const struct wl_registry_listener RL={ra,rd};
 int main(void){
- struct wl_display*dp=wl_display_connect(NULL); if(!dp){puts("sin wayland");return 1;}
+ struct wl_display*dp=wl_display_connect(NULL); if(!dp){puts("no wayland");return 1;}
  struct wl_registry*rg=wl_display_get_registry(dp);
  wl_registry_add_listener(rg,&RL,NULL);
  wl_display_roundtrip(dp); wl_display_roundtrip(dp); wl_display_roundtrip(dp);
- if(!cn){puts("sin conector arrendable");return 1;}
+ if(!cn){puts("no leasable connector");return 1;}
  struct wp_drm_lease_request_v1*rq=wp_drm_lease_device_v1_create_lease_request(dev);
  wp_drm_lease_request_v1_request_connector(rq,cn);
  struct wp_drm_lease_v1*ls=wp_drm_lease_request_v1_submit(rq);
  wp_drm_lease_v1_add_listener(ls,&LL,NULL);
  while(!done) if(wl_display_dispatch(dp)<0) break;
- if(lfd<0){puts("lease negado");return 1;}
- printf("lease fd=%d  conector=%u\n",lfd,cid);
+ if(lfd<0){puts("lease denied");return 1;}
+ printf("lease fd=%d  connector=%u\n",lfd,cid);
  drmModeRes*r=drmModeGetResources(lfd);
- printf("recursos del lease: %d crtcs, %d conectores, %d encoders\n",
+ printf("lease resources: %d crtcs, %d connectors, %d encoders\n",
         r?r->count_crtcs:-1, r?r->count_connectors:-1, r?r->count_encoders:-1);
  printf("cap UNIVERSAL_PLANES: %d\n", drmSetClientCap(lfd,DRM_CLIENT_CAP_UNIVERSAL_PLANES,1));
  printf("cap ATOMIC         : %d\n", drmSetClientCap(lfd,DRM_CLIENT_CAP_ATOMIC,1));
  drmModePlaneRes*pr=drmModeGetPlaneResources(lfd);
- if(!pr){puts("drmModeGetPlaneResources fallo");return 1;}
- printf(">>> PLANOS EN EL LEASE: %u\n",pr->count_planes);
+ if(!pr){puts("drmModeGetPlaneResources failed");return 1;}
+ printf(">>> PLANES IN THE LEASE: %u\n",pr->count_planes);
  for(uint32_t k=0;k<pr->count_planes;k++){
   drmModePlane*pl=drmModeGetPlane(lfd,pr->planes[k]);
-  if(pl){printf("   plano %u  crtc=%u  possible_crtcs=0x%x  formatos=%u\n",
+  if(pl){printf("   plane %u  crtc=%u  possible_crtcs=0x%x  formats=%u\n",
                 pl->plane_id,pl->crtc_id,pl->possible_crtcs,pl->count_formats);}
  }
  return 0;}

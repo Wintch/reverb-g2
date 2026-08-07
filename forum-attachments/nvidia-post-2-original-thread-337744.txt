@@ -4,8 +4,8 @@ HOW TO POST: short reply at the end of this thread (the original bug 5923212 thr
 abchauhan is). Not a reply to any specific post — points readers to the bpc thread (379240)
 for the full detail instead of duplicating it here. Post this one second, after 379240.
 
-STATUS 2026-08-06 (tarde): POSTEADO Y EDITADO — el bloque "EDIT (same day...)" de
-abajo ya está aplicado en el post público. Este archivo es la copia de referencia.
+STATUS 2026-08-06 (afternoon): POSTED AND EDITED — the "EDIT (same day...)" block
+below is already applied in the public post. This file is the reference copy.
 
 --- COPY BELOW THIS LINE ---
 

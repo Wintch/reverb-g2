@@ -1,35 +1,35 @@
 #!/bin/bash
-# Prueba un modo y da VEREDICTO AUTOMATICO, sin que nadie se ponga el casco.
+# Tests a mode and gives an AUTOMATIC VERDICT, without anyone putting on the headset.
 #
-#   ./hmd-test.sh <indice-de-modo> [segundos]
-#   ./hmd-test.sh 2      -> 4320x2160@60  (el control que anda)
+#   ./hmd-test.sh <mode-index> [seconds]
+#   ./hmd-test.sh 2      -> 4320x2160@60  (the control that works)
 #   ./hmd-test.sh 0      -> 2880x1440@90
 #   ./hmd-test.sh 1      -> 4320x2160@90
 #
-# COMO FUNCIONA, y por que se le puede creer:
-# El companion manda DEVICE_STATUS (0x05) cuando cambia el estado de pantalla. Decodificado
-# por nosotros (matriz de 7 ensayos, cap. 04):
-#     byte 5      refresh en decimal        (0x3c=60, 0x5a=90)
+# HOW IT WORKS, and why it can be trusted:
+# The companion sends DEVICE_STATUS (0x05) when the display state changes. Decoded
+# by us (matrix of 7 trials, chap. 04):
+#     byte 5      refresh in decimal        (0x3c=60, 0x5a=90)
 #     bytes 19-20 htotal  little-endian
 #     bytes 21-22 vtotal  little-endian
-#     byte 1      1 = el backlight PRENDIO  <- el veredicto
-# El byte 1 aparecio en 3 de 3 corridas del modo que funciona y en 0 de 8 de los que fallan.
-# Coincide con el comentario de Monado en wmr_hmd.c para el Reverb G1: ese mensaje llega
+#     byte 1      1 = the backlight TURNED ON  <- the verdict
+# Byte 1 appeared in 3 of 3 runs of the mode that works and in 0 of 8 of the ones that fail.
+# This matches Monado's comment in wmr_hmd.c for the Reverb G1: that message arrives
 # "once the HMD screen backlight visibly powers on".
 #
-# OJO: el detector esta validado contra DOS observaciones fisicas del usuario (T001 y T002 en
-# docs/pruebas.jsonl). Es solido pero no infalible: cada tanto conviene revalidarlo con un
-# humano mirando, sobre todo si aparece un resultado sorprendente. La regla del proyecto sigue
-# siendo que lo fisico manda.
+# NOTE: the detector is validated against TWO physical observations from the user (T001 and T002 in
+# docs/pruebas.jsonl). It's solid but not infallible: it's worth periodically revalidating it with a
+# human watching, especially if a surprising result appears. The project's rule remains
+# that physical observation has the final say.
 
 set -u
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO" || exit 1
-MODE="${1:?uso: $0 <indice-de-modo> [segundos]}"
+MODE="${1:?usage: $0 <mode-index> [seconds]}"
 SECS="${2:-18}"
 
 BIN=$(ls -t "$REPO"/nv-report-*/build/hmd-vk 2>/dev/null | head -1)
-[ -x "$BIN" ] || { echo "no encuentro hmd-vk compilado" >&2; exit 1; }
+[ -x "$BIN" ] || { echo "cannot find compiled hmd-vk" >&2; exit 1; }
 
 LOG="${TMPDIR:-/tmp}/hmd-test-$$.txt"
 ./scripts/panel-status.py $((SECS + 8)) > "$LOG" 2>&1 &
@@ -51,8 +51,8 @@ for line in open(sys.argv[1]):
         rows.append(b)
 
 if not rows:
-    print("  SIN VEREDICTO: el casco no mando ningun DEVICE_STATUS.")
-    print("  (puede ser que el panel ya estuviera en ese estado y no hubo cambio)")
+    print("  NO VERDICT: the headset didn't send any DEVICE_STATUS.")
+    print("  (it's possible the panel was already in that state and there was no change)")
     sys.exit(2)
 
 print(f"  {'refresh':>8} {'htotal':>7} {'vtotal':>7}  backlight")
@@ -62,12 +62,12 @@ for b in rows:
     vt = b[21] | (b[22] << 8)
     on = (b[1] == 1)
     lit = lit or on
-    print(f"  {b[5]:>8} {ht:>7} {vt:>7}  {'PRENDIO' if on else '-'}")
+    print(f"  {b[5]:>8} {ht:>7} {vt:>7}  {'ON' if on else '-'}")
 
 print()
 if lit:
-    print("  >>> VEREDICTO: ANDA  (el casco reporta backlight encendido)")
+    print("  >>> VERDICT: WORKS  (the headset reports backlight on)")
 else:
-    print("  >>> VEREDICTO: FALLA (timing recibido correcto, pero el backlight nunca prendio)")
+    print("  >>> VERDICT: FAILS (timing received correctly, but the backlight never turned on)")
 sys.exit(0 if lit else 1)
 PY

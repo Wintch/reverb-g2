@@ -1,42 +1,45 @@
-# 05 — DaVinci Resolve en el lab (makeresolvedeb)
+# 05 — DaVinci Resolve on the lab rig (makeresolvedeb)
 
-Ruta probada por el usuario: [makeresolvedeb](https://www.danieltufvesson.com/makeresolvedeb),
-que convierte el instalador oficial de Blackmagic en un .deb limpio para Debian.
+Path the user already validated: [makeresolvedeb](https://www.danieltufvesson.com/makeresolvedeb),
+which converts Blackmagic's official installer into a clean .deb for Debian.
 
-## Instalación
+## Installation
 
 ```bash
-# 1. Bajar el .run/.zip oficial de Resolve (Linux) desde blackmagicdesign.com/support
-# 2. Bajar el script makeresolvedeb de danieltufvesson.com/makeresolvedeb
-# 3. Generar e instalar el deb (ejemplo con la versión free):
+# 1. Download the official Resolve .run/.zip (Linux) from blackmagicdesign.com/support
+# 2. Download the makeresolvedeb script from danieltufvesson.com/makeresolvedeb
+# 3. Generate and install the deb (example with the free version):
 unzip DaVinci_Resolve_*_Linux.zip
 ./makeresolvedeb_*.sh DaVinci_Resolve_*_Linux.run
 sudo dpkg -i davinci-resolve_*_amd64.deb
 ```
 
-Requisito GPU: con el stack de NVIDIA del lab (repo debian13, `nvidia-open` +
-`nvidia-driver-cuda`) Resolve encuentra CUDA sin pasos extra. Si falta,
+GPU requirement: with the lab's NVIDIA stack (debian13 repo, `nvidia-open` +
+`nvidia-driver-cuda`) Resolve finds CUDA with no extra steps. If missing,
 `sudo apt install nvidia-driver-cuda`.
 
-## La limitación que hay que saber (versión free en Linux)
+## The limitation you need to know about (free version on Linux)
 
-**Resolve free en Linux NO decodifica H.264/HEVC ni AAC** (Studio sí). El material de
-cámara/teléfono típico entra mudo o no entra. Workflow estándar: transcodificar a DNxHR
-antes de editar — y para eso ya tenemos NVDEC/NVENC en esta máquina:
+**Resolve free on Linux does NOT decode H.264/HEVC or AAC** (Studio does). Typical
+camera/phone footage comes in silent or doesn't come in at all. Standard workflow:
+transcode to DNxHR before editing — and for that we already have NVDEC/NVENC on this
+machine:
 
 ```bash
-# H.264/HEVC -> DNxHR HQ + PCM (rápido: decode NVDEC, ~sin CPU)
+# H.264/HEVC -> DNxHR HQ + PCM (fast: NVDEC decode, ~no CPU)
 ffmpeg -hwaccel cuda -i entrada.mp4 \
        -c:v dnxhd -profile:v dnxhr_hq -pix_fmt yuv422p \
        -c:a pcm_s16le salida.mov
 ```
 
-DNxHR HQ 4K ≈ 700 GB/hora — pensar el destino (el NVMe NTFS es visible desde Linux para
-lectura; para trabajar en serio conviene una partición nativa, se decide en el setup ideal).
+DNxHR HQ 4K ≈ 700 GB/hour — think about the destination (the NTFS NVMe is visible from
+Linux for reading; for serious work a native partition is preferable, to be decided in
+the ideal setup).
 
-## Nota de contexto
+## Context note
 
-Resolve ya fue validado andando en el sistema principal (sesión de research de agosto
-2026). El lab lo re-valida sobre el driver 595 parcheado — si Resolve muestra artefactos o
-inestabilidad ahí, es dato importante ANTES de migrar el sistema principal al driver nuevo.
-En el setup ideal, Resolve vive en el usuario `edit`, sin nada de VR corriendo al lado.
+Resolve was already validated running on the main system (August 2026 research session).
+The lab re-validates it on the patched 595 driver — if Resolve shows artifacts or
+instability there, that's important data BEFORE migrating the main system to the new
+driver. In the ideal setup, Resolve lives under the `edit` user, with no VR running
+alongside it.

@@ -1,31 +1,32 @@
-// hmd-modeset — modeset directo sobre el conector del casco, sin Monado ni Vulkan.
+// hmd-modeset — direct modeset on the headset's connector, without Monado or Vulkan.
 //
-//   ./hmd-modeset list                lista los modos del EDID y sale
-//   ./hmd-modeset native <idx> [seg]  usa un modo del EDID sin tocarlo
-//   ./hmd-modeset <hz> [seg]          modeline sintetica (OJO: NVIDIA la rechaza, ver abajo)
+//   ./hmd-modeset list                lists the EDID modes and exits
+//   ./hmd-modeset native <idx> [sec]  uses an EDID mode unmodified
+//   ./hmd-modeset <hz> [sec]          synthetic modeline (NOTE: NVIDIA rejects it, see below)
 //
-// Consigue el display por wp_drm_lease_v1, igual que Monado: el compositor Wayland nunca usa
-// el casco (esta marcado non-desktop), asi que arrendarlo no toca ningun monitor del
-// escritorio y no hace falta cambiar de VT ni parar GNOME.
+// Gets the display via wp_drm_lease_v1, same as Monado: the Wayland compositor never uses
+// the headset (it's marked non-desktop), so leasing it doesn't touch any desktop monitor
+// and there's no need to switch VT or stop GNOME.
 //
-// MEDIDO, y por eso el orden de esta herramienta:
+// MEASURED, and that's why this tool is ordered this way:
 //
-//  1. El panel se APAGA SOLO a los ~3 s si no le llega senal. Por eso todo el setup
-//     (lease, CRTC, framebuffers) se hace ANTES de encender el panel, y la activacion HID
-//     va inmediatamente despues del primer modeset.
-//  2. Mandar solo el screen-enable {0x04,0x01} NO alcanza: sin la secuencia completa de
-//     activacion del Reverb el panel queda muerto, ni siquiera muestra el logo de HP.
-//     Se delega en scripts/panel.py (override con HMD_PANEL_CMD).
-//  3. Monado reenvia el screen-enable despues de que las cosas se asientan, porque el
-//     companion puede re-enumerar y perderse el comando. Aca se hace lo mismo.
-//  4. NVIDIA rechaza con EINVAL cualquier modeline que no venga del EDID, asi que el modo
-//     "<hz>" sintetico casi seguro falla. Se deja porque el EINVAL en si es informacion.
+//  1. The panel turns ITSELF OFF after ~3 s if it doesn't receive a signal. That's why all
+//     the setup (lease, CRTC, framebuffers) happens BEFORE turning on the panel, and the
+//     HID activation happens immediately after the first modeset.
+//  2. Just sending screen-enable {0x04,0x01} is NOT enough: without the Reverb's full
+//     activation sequence the panel stays dead, it doesn't even show the HP logo.
+//     This is delegated to scripts/panel.py (override with HMD_PANEL_CMD).
+//  3. Monado resends the screen-enable after things settle, because the companion can
+//     re-enumerate and miss the command. The same trick is used here.
+//  4. NVIDIA rejects with EINVAL any modeline that doesn't come from the EDID, so the
+//     synthetic "<hz>" mode almost certainly fails. It's kept because the EINVAL itself
+//     is useful information.
 //
-// El page-flip loop no es decorativo: contar flips COMPLETADOS mide si el CRTC realmente
-// esta escaneando y generando vblanks. Es la unica senal no-fisica confiable que tenemos,
-// porque Vulkan/OpenXR reportan 90 fps felices con el panel negro.
+// The page-flip loop isn't decorative: counting COMPLETED flips measures whether the CRTC
+// is actually scanning out and generating vblanks. It's the only reliable non-physical
+// signal we have, because Vulkan/OpenXR happily report 90 fps with the panel black.
 //
-// Igual: la verificacion final es FISICA. Hay que mirar adentro del casco.
+// Still: the final verification is PHYSICAL. You have to look inside the headset.
 
 #define _GNU_SOURCE
 #include <errno.h>
@@ -50,7 +51,7 @@ static int lease_fd = -1, probe_fd = -1, lease_done;
 static uint32_t hmd_conn_id;
 static char hmd_name[64];
 
-// ---- protocolo de lease ---------------------------------------------------------------
+// ---- lease protocol ---------------------------------------------------------------
 
 static void c_name(void *d, struct wp_drm_lease_connector_v1 *c, const char *n)
 { (void)d; (void)c; snprintf(hmd_name, sizeof(hmd_name), "%s", n); }
@@ -105,8 +106,9 @@ struct fb {
 	uint8_t *px;
 };
 
-// Devuelve 0 si ok. Prueba AddFB2 (con formato explicito) y cae a AddFB si hace falta;
-// cual de los dos anduvo es informacion util sobre que acepta nvidia-drm para scanout.
+// Returns 0 on success. Tries AddFB2 (with explicit format) and falls back to AddFB if
+// needed; which of the two worked is useful information about what nvidia-drm accepts
+// for scanout.
 static int fb_create(int fd, uint32_t w, uint32_t h, uint32_t argb, struct fb *out,
                      const char **how)
 {
@@ -128,7 +130,7 @@ static int fb_create(int fd, uint32_t w, uint32_t h, uint32_t argb, struct fb *o
 	} else if (!drmModeAddFB(fd, w, h, 24, 32, creq.pitch, creq.handle, &out->fb_id)) {
 		*how = "AddFB (legacy, depth24/bpp32)";
 	} else {
-		fprintf(stderr, "  AddFB2 y AddFB fallaron: %s\n", strerror(errno));
+		fprintf(stderr, "  AddFB2 and AddFB both failed: %s\n", strerror(errno));
 		return -1;
 	}
 
@@ -140,8 +142,8 @@ static int fb_create(int fd, uint32_t w, uint32_t h, uint32_t argb, struct fb *o
 	out->px = mmap(0, creq.size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, mreq.offset);
 	if (out->px == MAP_FAILED) { perror("  mmap"); return -1; }
 
-	// Color plano + una banda vertical de contraste maximo. Si el panel engancha, esto es
-	// imposible de confundir con "no veo nada".
+	// Flat color + a vertical band of maximum contrast. If the panel locks on, this is
+	// impossible to confuse with "I don't see anything".
 	for (uint32_t y = 0; y < h; y++) {
 		uint32_t *row = (uint32_t *)(out->px + y * creq.pitch);
 		for (uint32_t x = 0; x < w; x++)
@@ -150,7 +152,7 @@ static int fb_create(int fd, uint32_t w, uint32_t h, uint32_t argb, struct fb *o
 	return 0;
 }
 
-// ---- propiedades KMS (para atomic) -----------------------------------------------------
+// ---- KMS properties (for atomic) -----------------------------------------------------
 
 static uint32_t prop_id(int fd, uint32_t obj, uint32_t type, const char *name)
 {
@@ -207,7 +209,7 @@ static double now_s(void)
 int main(int argc, char **argv)
 {
 	if (argc < 2) {
-		fprintf(stderr, "uso: %s list | native <idx> [seg] | <hz> [seg]\n", argv[0]);
+		fprintf(stderr, "usage: %s list | native <idx> [sec] | <hz> [sec]\n", argv[0]);
 		return 2;
 	}
 	int list_only = !strcmp(argv[1], "list");
@@ -215,19 +217,19 @@ int main(int argc, char **argv)
 	int secs = 30;
 
 	struct wl_display *dpy = wl_display_connect(NULL);
-	if (!dpy) { fprintf(stderr, "no hay sesion Wayland\n"); return 1; }
+	if (!dpy) { fprintf(stderr, "no Wayland session\n"); return 1; }
 	struct wl_registry *reg = wl_display_get_registry(dpy);
 	wl_registry_add_listener(reg, &reg_listener, NULL);
 	wl_display_roundtrip(dpy);
-	if (!lease_dev) { fprintf(stderr, "el compositor no ofrece wp_drm_lease_device_v1\n"); return 1; }
+	if (!lease_dev) { fprintf(stderr, "the compositor doesn't offer wp_drm_lease_device_v1\n"); return 1; }
 	wl_display_roundtrip(dpy);
 	wl_display_roundtrip(dpy);
-	if (!hmd_conn) { fprintf(stderr, "el compositor no ofrece conectores arrendables\n"); return 1; }
-	printf("conector: %s (id %u)\n", hmd_name, hmd_conn_id);
+	if (!hmd_conn) { fprintf(stderr, "the compositor doesn't offer leasable connectors\n"); return 1; }
+	printf("connector: %s (id %u)\n", hmd_name, hmd_conn_id);
 
 	drmModeConnector *c = drmModeGetConnector(probe_fd, hmd_conn_id);
 	if (!c) { perror("drmModeGetConnector"); return 1; }
-	printf("modos del EDID (%d):\n", c->count_modes);
+	printf("EDID modes (%d):\n", c->count_modes);
 	for (int i = 0; i < c->count_modes; i++) {
 		drmModeModeInfo *m = &c->modes[i];
 		printf("  [%d] %ux%u  clock=%u kHz  htot=%u vtot=%u  -> %.2f Hz\n", i,
@@ -239,10 +241,10 @@ int main(int argc, char **argv)
 	drmModeModeInfo mode;
 	if (use_native) {
 		int idx = argc > 2 ? atoi(argv[2]) : 1;
-		if (idx < 0 || idx >= c->count_modes) { fprintf(stderr, "indice fuera de rango\n"); return 2; }
+		if (idx < 0 || idx >= c->count_modes) { fprintf(stderr, "index out of range\n"); return 2; }
 		mode = c->modes[idx];
 		if (argc > 3) secs = atoi(argv[3]);
-		printf("\nmodo NATIVO [%d] sin modificar\n", idx);
+		printf("\nNATIVE mode [%d] unmodified\n", idx);
 	} else {
 		double hz = atof(argv[1]);
 		if (argc > 2) secs = atoi(argv[2]);
@@ -254,33 +256,33 @@ int main(int argc, char **argv)
 		mode.vrefresh = (uint32_t)(hz + 0.5);
 		snprintf(mode.name, sizeof(mode.name), "%ux%u@%d", mode.hdisplay, mode.vdisplay,
 		         mode.vrefresh);
-		printf("\nmodeline SINTETICA (NVIDIA suele rechazarla)\n");
+		printf("\nSYNTHETIC modeline (NVIDIA usually rejects it)\n");
 	}
 	double target_hz = mode.clock * 1000.0 / (mode.htotal * (double)mode.vtotal);
 	printf("  %ux%u  clock=%u kHz  htot=%u vtot=%u  -> %.3f Hz\n",
 	       mode.hdisplay, mode.vdisplay, mode.clock, mode.htotal, mode.vtotal, target_hz);
 
-	// --- todo el setup ANTES de tocar el panel (se apaga solo a los ~3 s sin senal) ---
+	// --- all setup BEFORE touching the panel (it turns itself off after ~3 s without signal) ---
 	struct wp_drm_lease_request_v1 *req = wp_drm_lease_device_v1_create_lease_request(lease_dev);
 	wp_drm_lease_request_v1_request_connector(req, hmd_conn);
 	struct wp_drm_lease_v1 *lease = wp_drm_lease_request_v1_submit(req);
 	wp_drm_lease_v1_add_listener(lease, &lease_listener, NULL);
 	while (!lease_done)
 		if (wl_display_dispatch(dpy) < 0) break;
-	if (lease_fd < 0) { fprintf(stderr, "el compositor NEGO el lease\n"); return 1; }
+	if (lease_fd < 0) { fprintf(stderr, "the compositor DENIED the lease\n"); return 1; }
 
-	// Las caps cambian QUE se ve, asi que van antes de pedir recursos. Sin
-	// UNIVERSAL_PLANES no aparece el plano primario, y el page flip legacy sobre un lease
-	// falla con EINVAL (medido).
+	// The caps change WHAT is visible, so they go before requesting resources. Without
+	// UNIVERSAL_PLANES the primary plane doesn't show up, and legacy page flip on a lease
+	// fails with EINVAL (measured).
 	int cap_up = drmSetClientCap(lease_fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1);
 	int cap_at = drmSetClientCap(lease_fd, DRM_CLIENT_CAP_ATOMIC, 1);
 	int atomic = (cap_up == 0 && cap_at == 0);
 
 	drmModeRes *res = drmModeGetResources(lease_fd);
-	if (!res || res->count_crtcs < 1) { fprintf(stderr, "el lease no trajo CRTC\n"); return 1; }
+	if (!res || res->count_crtcs < 1) { fprintf(stderr, "the lease didn't bring a CRTC\n"); return 1; }
 	uint32_t crtc_id = res->crtcs[0];
 	printf("lease OK (fd %d, crtc %u)  atomic=%s\n", lease_fd, crtc_id,
-	       atomic ? "si" : "NO");
+	       atomic ? "yes" : "NO");
 
 	uint32_t plane_id = 0;
 	if (atomic) {
@@ -292,10 +294,10 @@ int main(int argc, char **argv)
 			if (found && t == DRM_PLANE_TYPE_PRIMARY) { plane_id = pr->planes[k]; break; }
 		}
 		if (!plane_id) {
-			fprintf(stderr, "no encontre plano primario en el lease\n");
+			fprintf(stderr, "couldn't find a primary plane in the lease\n");
 			atomic = 0;
 		} else {
-			printf("plano primario: %u\n", plane_id);
+			printf("primary plane: %u\n", plane_id);
 		}
 	}
 
@@ -305,7 +307,7 @@ int main(int argc, char **argv)
 	if (fb_create(lease_fd, mode.hdisplay, mode.vdisplay, 0x000060FF, &fbs[1], &how)) return 1;
 	printf("framebuffers: %s  (%ux%u pitch=%u)\n", how, mode.hdisplay, mode.vdisplay, fbs[0].pitch);
 
-	// --- modeset, y el panel INMEDIATAMENTE despues ---
+	// --- modeset, and the panel IMMEDIATELY after ---
 	uint32_t blob_id = 0;
 	uint32_t p_conn_crtc = 0, p_crtc_mode = 0, p_crtc_active = 0;
 	uint32_t p_fb = 0, p_pcrtc = 0, p_sx = 0, p_sy = 0, p_sw = 0, p_sh = 0,
@@ -329,7 +331,7 @@ int main(int argc, char **argv)
 		p_cw = prop_id(lease_fd, plane_id, DRM_MODE_OBJECT_PLANE, "CRTC_W");
 		p_ch = prop_id(lease_fd, plane_id, DRM_MODE_OBJECT_PLANE, "CRTC_H");
 		if (!(p_conn_crtc && p_crtc_mode && p_crtc_active && p_fb && p_pcrtc)) {
-			fprintf(stderr, "faltan propiedades KMS; caigo a legacy\n");
+			fprintf(stderr, "missing KMS properties; falling back to legacy\n");
 			atomic = 0;
 		}
 	}
@@ -352,38 +354,38 @@ int main(int argc, char **argv)
 		int r = drmModeAtomicCommit(lease_fd, req, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
 		drmModeAtomicFree(req);
 		if (r) {
-			printf("\n>>> commit ATOMICO RECHAZADO: %s\n", strerror(errno));
-			printf(">>> caigo a SetCrtc legacy\n");
+			printf("\n>>> ATOMIC commit REJECTED: %s\n", strerror(errno));
+			printf(">>> falling back to legacy SetCrtc\n");
 			atomic = 0;
 		} else {
-			printf("\n>>> modeset ATOMICO aceptado\n");
+			printf("\n>>> ATOMIC modeset accepted\n");
 		}
 	}
 
 	if (!atomic) {
 		if (drmModeSetCrtc(lease_fd, crtc_id, fbs[0].fb_id, 0, 0, &hmd_conn_id, 1, &mode)) {
-			printf("\n>>> drmModeSetCrtc RECHAZADO: %s\n", strerror(errno));
-			printf(">>> el driver no acepto esta modeline: no llego a salir por el cable\n");
+			printf("\n>>> drmModeSetCrtc REJECTED: %s\n", strerror(errno));
+			printf(">>> the driver didn't accept this modeline: it never made it out over the cable\n");
 			return 1;
 		}
-		printf("\n>>> modeset legacy aceptado\n");
+		printf("\n>>> legacy modeset accepted\n");
 	}
 
 	const char *panel_cmd = getenv("HMD_PANEL_CMD");
 	if (!panel_cmd) panel_cmd = "./scripts/panel.py activate";
-	printf(">>> activando panel: %s\n", panel_cmd);
-	if (system(panel_cmd) != 0) fprintf(stderr, "  (la activacion del panel fallo)\n");
+	printf(">>> activating panel: %s\n", panel_cmd);
+	if (system(panel_cmd) != 0) fprintf(stderr, "  (panel activation failed)\n");
 
 	drmModeCrtc *got = drmModeGetCrtc(lease_fd, crtc_id);
 	if (got) {
-		printf(">>> CRTC leido de vuelta: mode_valid=%d  %ux%u  fb=%u\n",
+		printf(">>> CRTC read back: mode_valid=%d  %ux%u  fb=%u\n",
 		       got->mode_valid, got->mode.hdisplay, got->mode.vdisplay, got->buffer_id);
 	}
 
-	// --- page flips: mide si el CRTC realmente escanea ---
-	printf(">>> flipeando %d s. MIRA ADENTRO DEL CASCO.\n", secs);
-	printf(">>> naranja/azul parpadeando con rayas blancas = engancho\n");
-	printf(">>> logo de HP, negro, o nada = no engancho\n\n");
+	// --- page flips: measures whether the CRTC is actually scanning out ---
+	printf(">>> flipping for %d s. LOOK INSIDE THE HEADSET.\n", secs);
+	printf(">>> flashing orange/blue with white stripes = locked on\n");
+	printf(">>> HP logo, black, or nothing = didn't lock on\n\n");
 	fflush(stdout);
 
 	drmEventContext ev = { .version = 2, .page_flip_handler = on_flip };
@@ -407,7 +409,7 @@ int main(int argc, char **argv)
 			}
 			if (r) {
 				if (!flip_err++)
-					printf("  flip (%s) fallo: %s\n",
+					printf("  flip (%s) failed: %s\n",
 					       atomic ? "atomic" : "legacy", strerror(errno));
 			} else {
 				pending = 1;
@@ -418,18 +420,18 @@ int main(int argc, char **argv)
 			drmHandleEvent(lease_fd, &ev);
 
 		double t = now_s();
-		// Monado reenvia el screen-enable cuando todo se asento, porque el companion puede
-		// re-enumerar y comerse el primero. Mismo truco.
+		// Monado resends the screen-enable once everything has settled, because the
+		// companion can re-enumerate and eat the first one. Same trick.
 		if (resent == 0 && t - t0 > 2.5) {
 			resent = t;
 			const char *on = getenv("HMD_PANEL_ON_CMD");
 			if (!on) on = "./scripts/panel.py on";
 			system(on);
-			printf("  [%.1fs] screen-enable reenviado\n", t - t0);
+			printf("  [%.1fs] screen-enable resent\n", t - t0);
 			fflush(stdout);
 		}
 		if (t - last >= 2.0) {
-			printf("  [%5.1fs] %.2f flips/s  (objetivo %.2f Hz)\n",
+			printf("  [%5.1fs] %.2f flips/s  (target %.2f Hz)\n",
 			       t - t0, (flips - last_flips) / (t - last), target_hz);
 			fflush(stdout);
 			last = t;
@@ -438,11 +440,11 @@ int main(int argc, char **argv)
 	}
 
 	double dur = now_s() - t0;
-	printf("\nresumen: %d flips en %.1f s = %.2f Hz medidos (objetivo %.2f)\n",
+	printf("\nsummary: %d flips in %.1f s = %.2f Hz measured (target %.2f)\n",
 	       flips, dur, flips / dur, target_hz);
 	if (flip_err)
-		printf("  %d page flips fallaron\n", flip_err);
+		printf("  %d page flips failed\n", flip_err);
 	if (flips < 5)
-		printf("  !! casi no hubo flips: el CRTC NO esta escaneando\n");
+		printf("  !! almost no flips: the CRTC is NOT scanning out\n");
 	return 0;
 }

@@ -1,57 +1,57 @@
 #!/usr/bin/env python3
-"""Analiza la captura de Windows y la diffea contra lo medido en Linux.
+"""Analyzes the Windows capture and diffs it against what was measured on Linux.
 
-Se corre DE VUELTA EN LINUX, sobre el .tsv que produce run-diagnostics.ps1.
+Run BACK ON LINUX, on the .tsv that run-diagnostics.ps1 produces.
 
-Busca los dos canales que descubrimos el 2026-08-04:
+Looks for the two channels discovered on 2026-08-04:
 
-  0x05  DEVICE_STATUS  del companion 03f0:0580, 33 bytes.
-        byte 5      refresh en decimal      (confirmado: 0x3c=60, 0x5a=90)
-        byte 18     bpc-related             (06 sin parchear, 08 con el parche del bpc)
-        bytes 19-20 htotal little-endian    (confirmado contra el EDID)
-        bytes 21-22 vtotal little-endian    (confirmado contra el EDID)
-        byte 6                              unico byte que no matchea contra Windows
-                                             incluso en 60Hz (que anda en los dos lados) --
-                                             probablemente un contador de sesion/reconexion,
-                                             no algo especifico del SO. Ver docs/13, docs/16.
+  0x05  DEVICE_STATUS  from the 03f0:0580 companion, 33 bytes.
+        byte 5      refresh in decimal      (confirmed: 0x3c=60, 0x5a=90)
+        byte 18     bpc-related             (06 unpatched, 08 with the bpc patch)
+        bytes 19-20 htotal little-endian    (confirmed against the EDID)
+        bytes 21-22 vtotal little-endian    (confirmed against the EDID)
+        byte 6                              the only byte that doesn't match Windows
+                                             even at 60Hz (which works on both sides) --
+                                             probably a session/reconnect counter,
+                                             not something OS-specific. See docs/13, docs/16.
 
-  0x03  LOG DE FIRMWARE del HoloLens Sensors 045e:0659, 509 bytes, ASCII.
-        formato: magic "Dlo+" | 4B ts | 2B seq | 1B nivel | texto
+  0x03  HoloLens Sensors FIRMWARE LOG 045e:0659, 509 bytes, ASCII.
+        format: magic "Dlo+" | 4B ts | 2B seq | 1B level | text
 
   ./analyze-windows.py windows-90hz.tsv [windows-60hz.tsv]
 """
 import re, sys
 
-# Capturados en Linux el 2026-08-05 CON el parche del bpc puesto (scripts/capture-hid.sh,
-# usbmon crudo -- ver hid-mode{0,2}.txt). La version anterior de este diccionario era de
-# ANTES del parche (2026-08-04) y contaminaba cualquier comparacion contra Windows: el
-# byte 18 por si solo ya bastaba para que la diferencia fuera "parche si/no", no "SO
-# distinto". Con estos valores, el 60Hz que anda en los dos lados da IDENTICO byte a byte
-# salvo el byte 6 (ver nota arriba) -- confirma lo que docs/13 ya habia encontrado.
+# Captured on Linux on 2026-08-05 WITH the bpc patch applied (scripts/capture-hid.sh,
+# raw usbmon -- see hid-mode{0,2}.txt). The previous version of this dictionary was from
+# BEFORE the patch (2026-08-04) and contaminated any comparison against Windows: byte 18
+# alone was already enough to make the difference read as "patch yes/no" instead of
+# "different OS". With these values, the 60Hz that works on both sides comes out IDENTICAL
+# byte for byte except for byte 6 (see note above) -- confirms what docs/13 had already found.
 REF_LINUX = {
-    "60Hz ANDA  (Linux, parchado)": "05 01 01 01 01 3c 00 00 00 05 2c 14 04 00 77 77 00 00 08 44 11 72 0a 01 00 80 00 80 00 80 00 80",
-    "90Hz FALLA (Linux, 2880x1440, parchado)": "05 01 01 01 01 5a 00 00 00 0c 1a 1e 02 00 77 00 00 00 08 a4 0b 3e 06 01 00 80 00 80 ff ff ff ff",
-    # Este ya se comparo contra Windows en docs/13 (T004, 2026-08-05) y dio BYTE-IDENTICO
-    # -- no hace falta recapturarlo. Se deja aca de referencia, no para volver a perseguirlo.
-    "90Hz FALLA (Linux, 4320x2160, parchado -- ya confirmado igual a Windows en docs/13)":
+    "60Hz WORKS  (Linux, patched)": "05 01 01 01 01 3c 00 00 00 05 2c 14 04 00 77 77 00 00 08 44 11 72 0a 01 00 80 00 80 00 80 00 80",
+    "90Hz FAILS (Linux, 2880x1440, patched)": "05 01 01 01 01 5a 00 00 00 0c 1a 1e 02 00 77 00 00 00 08 a4 0b 3e 06 01 00 80 00 80 ff ff ff ff",
+    # This one was already compared against Windows in docs/13 (T004, 2026-08-05) and came
+    # out BYTE-IDENTICAL -- no need to recapture it. Kept here for reference, not to chase again.
+    "90Hz FAILS (Linux, 4320x2160, patched -- already confirmed identical to Windows in docs/13)":
         "05 01 01 01 01 5a 00 00 00 09 38 1e 04 00 77 77 00 00 08 44 11 e4 08 01 00 80 00 80 00 80 00 80 02",
 }
 
 
 def parse_tsv(path):
-    """Devuelve (status, fwlog): listas de bytes de cada canal.
+    """Returns (status, fwlog): lists of bytes for each channel.
 
-    El payload HID puede caer en dos columnas distintas segun si Wireshark lo
-    disecciona como HID o lo deja crudo: usb.capdata (bulk/isocrono) o
-    usbhid.data (interrupt reconocido como reporte HID) -- el DEVICE_STATUS que
-    buscamos es justamente interrupt, asi que vive en usbhid.data, NO en
-    usb.capdata. Revisamos las dos ultimas columnas por las dudas.
+    The HID payload can land in two different columns depending on whether
+    Wireshark dissects it as HID or leaves it raw: usb.capdata (bulk/isochronous)
+    or usbhid.data (interrupt recognized as an HID report) -- the DEVICE_STATUS
+    we're looking for is precisely interrupt, so it lives in usbhid.data, NOT in
+    usb.capdata. We check the last two columns just in case.
     """
     status, fwlog = [], []
     for line in open(path, errors="replace"):
         cols = line.rstrip("\n").split("\t")
-        # usb.capdata y usbhid.data son mutuamente excluyentes por frame -- a lo sumo
-        # una de las dos columnas viene poblada. Tomamos la primera que tenga algo.
+        # usb.capdata and usbhid.data are mutually exclusive per frame -- at most
+        # one of the two columns is populated. We take the first one that has something.
         data = next((c.strip() for c in cols[-2:] if c.strip()), "")
         if not data:
             continue
@@ -97,10 +97,10 @@ def main():
     for path in sys.argv[1:]:
         print(f"\n{'='*78}\n  {path}\n{'='*78}")
         status, fwlog = parse_tsv(path)
-        print(f"  DEVICE_STATUS (0x05): {len(status)}   LOG DE FIRMWARE (0x03): {len(fwlog)}")
+        print(f"  DEVICE_STATUS (0x05): {len(status)}   FIRMWARE LOG (0x03): {len(fwlog)}")
 
         if status:
-            print("\n  --- estados de panel vistos en Windows ---")
+            print("\n  --- panel states seen on Windows ---")
             seen = set()
             for b in status:
                 h = b.hex(" ")
@@ -111,7 +111,7 @@ def main():
                 print(f"      {h}")
 
         if fwlog:
-            print("\n  --- log de firmware ---")
+            print("\n  --- firmware log ---")
             seen = set()
             for b in fwlog:
                 for seq, txt in fw_entries(b):
@@ -121,15 +121,15 @@ def main():
                     mark = "!!" if re.search(r"error|fail|err", txt, re.I) else "  "
                     print(f"    {mark} seq={seq:<7} {txt}")
 
-    print(f"\n{'='*78}\n  REFERENCIA: lo medido en Linux\n{'='*78}")
+    print(f"\n{'='*78}\n  REFERENCE: what was measured on Linux\n{'='*78}")
     for k, v in REF_LINUX.items():
         print(f"  {k}\n    {v}")
     print("""
-  QUE MIRAR:
-  Si Windows a 90Hz (con el panel ENCENDIDO) muestra bytes 9/10/12/14/15/24-31
-  distintos a los del "90Hz FALLA (Linux)", esos bytes son la diferencia y ahi
-  esta la causa. Si son identicos, el casco esta en el mismo estado en los dos
-  sistemas y hay que buscar en otra capa.
+  WHAT TO LOOK FOR:
+  If Windows at 90Hz (with the panel ON) shows bytes 9/10/12/14/15/24-31
+  different from those in "90Hz FAILS (Linux)", those bytes are the difference
+  and that's where the cause is. If they're identical, the headset is in the
+  same state on both systems and the search needs to move to another layer.
 """)
 
 

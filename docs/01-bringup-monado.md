@@ -1,9 +1,9 @@
-# 01 — Bring-up de Monado + Basalt para el Reverb G2
+# 01 — Monado + Basalt Bring-up for the Reverb G2
 
-Resumen operativo del camino ya recorrido (agosto 2026). Sirve igual para el sistema
-principal y para reproducir en el lab.
+Operational summary of the path covered so far (August 2026). Equally useful for the
+main system and for reproducing on the lab rig.
 
-## Dependencias (Debian 13)
+## Dependencies (Debian 13)
 
 ```bash
 sudo apt install -y git cmake ninja-build meson pkg-config glslang-tools \
@@ -12,8 +12,8 @@ sudo apt install -y git cmake ninja-build meson pkg-config glslang-tools \
     libgl-dev libglx-dev libglvnd-dev libxcb-randr0-dev libx11-xcb-dev
 ```
 
-(`libglvnd-dev` y los `xcb-randr` no son opcionales: sin el primero falla el target
-`OpenGL::GLX` de CMake; sin los segundos el direct-mode NVIDIA queda stubbeado.)
+(`libglvnd-dev` and `xcb-randr` are not optional: without the former, CMake's
+`OpenGL::GLX` target fails; without the latter, NVIDIA direct-mode ends up stubbed out.)
 
 ## Build
 
@@ -23,41 +23,43 @@ cd monado && git am ../reverb-g2/patches/monado/*.patch
 cmake -B build -GNinja && ninja -C build
 
 git clone --recursive https://gitlab.freedesktop.org/mateosss/basalt.git
-cd basalt && cmake --preset library && cmake --build build   # solo libbasalt.so
+cd basalt && cmake --preset library && cmake --build build   # libbasalt.so only
 ```
 
-## Permisos
+## Permissions
 
-`scripts/70-wmr-reverb.rules` → `/etc/udev/rules.d/` (+ reload + replug). Usuario en
-`plugdev`. Sin esto: LIBUSB_ERROR_ACCESS en las cámaras y crash/degradación.
+`scripts/70-wmr-reverb.rules` → `/etc/udev/rules.d/` (+ reload + replug). User in
+`plugdev`. Without this: LIBUSB_ERROR_ACCESS on the cameras and crash/degradation.
 
-## Levantar todo
+## Bringing everything up
 
-`scripts/jack-in.sh [3dof]` hace la secuencia completa y correcta:
-X11 check → apagar DP-0 (libera el panel del casco para el lease) → esperar settle →
-re-asertar el layout de monitores (el driver rompe la rotación de DP-3 al tocar CRTCs) →
-esperar el companion device (03f0:0580) → lanzar monado-service con el entorno correcto.
+`scripts/jack-in.sh [3dof]` runs the complete, correct sequence:
+X11 check → turn off DP-0 (frees the headset panel for the lease) → wait for settle →
+re-assert the monitor layout (the driver breaks DP-3's rotation when touching CRTCs) →
+wait for the companion device (03f0:0580) → launch monado-service with the correct
+environment.
 
-Variables clave que setea: `VIT_SYSTEM_LIBRARY_PATH` (Basalt), 
-`XRT_COMPOSITOR_FORCE_NVIDIA_DISPLAY="HP Inc."` (allowlist de HMDs no incluye WMR),
-`XRT_COMPOSITOR_DESIRED_MODE=2` (60Hz — único modo que anda sin driver parcheado, cap. 04),
-`XRT_NO_STDIN=1`, y `WMR_SLAM=0` si se pasó `3dof`.
+Key variables it sets: `VIT_SYSTEM_LIBRARY_PATH` (Basalt),
+`XRT_COMPOSITOR_FORCE_NVIDIA_DISPLAY="HP Inc."` (the HMD allowlist doesn't include WMR),
+`XRT_COMPOSITOR_DESIRED_MODE=2` (60Hz — the only mode that works without the patched
+driver, ch. 04), `XRT_NO_STDIN=1`, and `WMR_SLAM=0` if `3dof` was passed.
 
-## Gotchas de proceso (aprendidos a golpes — TODOS reales)
+## Process gotchas (learned the hard way — ALL real)
 
-- **Siempre** `rm -f /run/user/$UID/monado_comp_ipc` antes de relanzar (kill -9 no lo borra).
-- `pkill` no es confiable acá: matar por PID explícito (`pgrep` → `kill -9 <pid>`, de a
-  uno) y **verificar** con `ps`/`nvidia-smi` — un monado-service zombie reteniendo el
-  lease de DP-0 nos costó horas.
-- Verificar `Using builder wmr` en el log antes de confiar cualquier test: si el companion
-  device estaba caído al arrancar, Monado cae a "Simulated HMD" en silencio.
-- `monado-service` y `hello_xr` tratan EOF de stdin como quit: `XRT_NO_STDIN=1` para el
-  servicio, `sleep N |` para hello_xr.
-- Tras apagar DP-0, esperar ≥8s antes del lease (race de `vkAcquireXlibDisplayEXT`).
+- **Always** `rm -f /run/user/$UID/monado_comp_ipc` before relaunching (kill -9 doesn't
+  remove it).
+- `pkill` isn't reliable here: kill by explicit PID (`pgrep` → `kill -9 <pid>`, one at a
+  time) and **verify** with `ps`/`nvidia-smi` — a zombie monado-service holding the DP-0
+  lease cost us hours.
+- Verify `Using builder wmr` in the log before trusting any test: if the companion device
+  was down at startup, Monado silently falls back to "Simulated HMD".
+- `monado-service` and `hello_xr` treat stdin EOF as quit: `XRT_NO_STDIN=1` for the
+  service, `sleep N |` for hello_xr.
+- After turning off DP-0, wait ≥8s before the lease (race in `vkAcquireXlibDisplayEXT`).
 
 ## Tracking: 3DoF vs SLAM
 
-Medido con el casco quieto en la mesa: Basalt SLAM diverge (~3° de rotación media entre
-frames, picos de 30°); IMU-only = 0.0013° (2000x mejor). Para 360/cine: `3dof` siempre.
-6DoF real necesita arreglar la divergencia de Basalt (pendiente, alta prioridad después
-del 90Hz). Los datos y la instrumentación (`HELLO_XR_POSE_STATS`) están en el cap. 02.
+Measured with the headset stationary on the table: Basalt SLAM diverges (~3° mean
+rotation between frames, spikes of 30°); IMU-only = 0.0013° (2000x better). For
+360/cinema: always `3dof`. Real 6DoF needs the Basalt divergence fixed (pending, high
+priority after 90Hz). The data and instrumentation (`HELLO_XR_POSE_STATS`) are in ch. 02.

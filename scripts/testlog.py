@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Registro de pruebas físicas del casco. Existe por un problema real de este proyecto.
+"""Log of physical headset tests. Exists because of a real problem in this project.
 
-La verificación del 90Hz es FÍSICA: sólo vale lo que el usuario ve adentro del casco. Pero
-las corridas tenían duración fija, así que una prueba podía "vencer" mientras el usuario
-todavía estaba mirando o antes de que contestara, y después no se sabía a qué corrida
-correspondía cada "no veo nada". Eso ya contamino resultados.
+Verifying 90Hz is PHYSICAL: only what the user sees inside the headset counts. But
+the runs had a fixed duration, so a test could "expire" while the user was still
+looking or before they answered, and afterward there was no way to know which run
+each "I don't see anything" corresponded to. That already contaminated results.
 
-Reglas que impone este script:
-  - cada prueba tiene un ID y queda escrita ANTES de que el usuario mire;
-  - el veredicto se anota textual, con las palabras del usuario;
-  - una prueba sin veredicto queda marcada PENDIENTE y se ve en el listado.
+Rules this script enforces:
+  - every test has an ID and is written BEFORE the user looks;
+  - the verdict is recorded verbatim, in the user's own words;
+  - a test with no verdict is marked PENDING and shows up in the listing.
 
-  ./testlog.py open  "<modo>" "<que reporto el driver>"   -> imprime el ID
-  ./testlog.py close <ID> "<lo que dijo el usuario>"
+  ./testlog.py open  "<mode>" "<what the driver reported>"   -> prints the ID
+  ./testlog.py close <ID> "<what the user said>"
   ./testlog.py list
 """
 import datetime, json, os, sys
@@ -40,7 +40,7 @@ def main():
 
     if cmd == "open":
         if len(sys.argv) < 3:
-            sys.exit("falta el modo")
+            sys.exit("missing mode")
         n = len(rows) + 1
         rec = {
             "id": f"T{n:03d}",
@@ -56,7 +56,7 @@ def main():
 
     elif cmd == "close":
         if len(sys.argv) < 4:
-            sys.exit("uso: close <ID> \"<lo que dijo el usuario>\"")
+            sys.exit("usage: close <ID> \"<what the user said>\"")
         tid, verdict = sys.argv[2], sys.argv[3]
         hit = False
         for r in rows:
@@ -65,22 +65,22 @@ def main():
                 r["cerrada"] = stamp()
                 hit = True
         if not hit:
-            sys.exit(f"no existe {tid}")
+            sys.exit(f"{tid} does not exist")
         with open(LOG, "w") as f:
             for r in rows:
                 f.write(json.dumps(r, ensure_ascii=False) + "\n")
-        print(f"{tid} cerrada: {verdict}")
+        print(f"{tid} closed: {verdict}")
 
     elif cmd == "list":
         if not rows:
-            print("  (sin pruebas)")
+            print("  (no tests)")
             return
         for r in rows:
-            v = r["veredicto"] if r["veredicto"] else "*** PENDIENTE ***"
+            v = r["veredicto"] if r["veredicto"] else "*** PENDING ***"
             print(f"  {r['id']}  {r['abierta']}  {r['modo']:<26}  {v}")
         pend = [r["id"] for r in rows if not r["veredicto"]]
         if pend:
-            print(f"\n  sin veredicto: {', '.join(pend)}")
+            print(f"\n  no verdict: {', '.join(pend)}")
 
     else:
         sys.exit(__doc__)

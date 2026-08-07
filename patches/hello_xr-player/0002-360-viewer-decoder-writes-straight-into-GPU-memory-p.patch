@@ -590,17 +590,17 @@ index 0000000..d74a89f
 +            mode = stereo ? "VR180 3D" : "VR180";
 +            break;
 +        default:
-+            mode = stereo ? "PLANO 3D" : "PLANO";
++            mode = stereo ? "FLAT 3D" : "FLAT";
 +            break;
 +    }
 +
-+    std::string line = Fmt("  MODO: %s", mode.c_str());
++    std::string line = Fmt("  MODE: %s", mode.c_str());
 +    if (stereo) {
 +        line += Fmt(" (%s%s)", layout.stereo == PanoStereo::SideBySide ? "side-by-side" : "over-under",
-+                    layout.swapEyes ? ", ojos invertidos" : "");
++                    layout.swapEyes ? ", swapped eyes" : "");
 +    }
-+    line += Fmt("\n  Archivo: %dx%d", width, height);
-+    if (stereo) line += Fmt("  ->  %dx%d por ojo", eyeW, eyeH);
++    line += Fmt("\n  File: %dx%d", width, height);
++    if (stereo) line += Fmt("  ->  %dx%d per eye", eyeW, eyeH);
 +    if (fps > 0.0) line += Fmt("  |  %.2f fps", fps);
 +    if (!codec.empty()) line += Fmt("  |  %s", codec.c_str());
 +    return line;

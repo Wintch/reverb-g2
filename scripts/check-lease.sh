@@ -1,58 +1,58 @@
 #!/bin/bash
-# Contesta UNA pregunta, sin levantar Monado: ¿el compositor Wayland ofrece el conector
-# del casco para DRM lease? Es lo que discrimina si el culpable es el compositor (KWin
-# no ofrecía ninguno) o el driver NVIDIA.
+# Answers ONE question, without starting Monado: does the Wayland compositor offer the
+# headset's connector for DRM lease? That's what discriminates whether the culprit is the
+# compositor (KWin offered none) or the NVIDIA driver.
 #
-# Correr DENTRO de la sesión Wayland, como usuario.
+# Run INSIDE the Wayland session, as a regular user.
 
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "=== sesión ==="
+echo "=== session ==="
 echo "  XDG_SESSION_TYPE=${XDG_SESSION_TYPE:-unset}   XDG_CURRENT_DESKTOP=${XDG_CURRENT_DESKTOP:-unset}"
 if [ "${XDG_SESSION_TYPE:-}" != "wayland" ]; then
-    echo "  !! Esto necesita una sesión Wayland. Cerrá sesión y elegí 'GNOME on Wayland'"
-    echo "     en SDDM (ojo: hay DOS entradas llamadas 'GNOME', una es X11)."
+    echo "  !! This needs a Wayland session. Log out and pick 'GNOME on Wayland'"
+    echo "     in SDDM (watch out: there are TWO entries called 'GNOME', one is X11)."
     exit 1
 fi
 
 echo
-echo "=== lado kernel/NVIDIA: conector non-desktop ==="
-# El parche 0002 marca el conector del casco como non-desktop=1 y expone los 3 modos.
+echo "=== kernel/NVIDIA side: non-desktop connector ==="
+# Patch 0002 marks the headset's connector as non-desktop=1 and exposes the 3 modes.
 BIN="${TMPDIR:-/tmp}/drmprops.$$"
 if gcc -o "$BIN" "$HERE/drmprops.c" -ldrm -I/usr/include/libdrm 2>/dev/null; then
     "$BIN" | awk '/^connector/{c=$0; nd=""} /non-desktop  = 1/{print c; nd=1} nd&&/mode:/{print}'
     rm -f "$BIN"
 else
-    echo "  (no pude compilar drmprops.c -- falta libdrm-dev?)"
+    echo "  (couldn't compile drmprops.c -- missing libdrm-dev?)"
 fi
 
 echo
-echo "=== lado compositor: ¿publica el global de DRM lease? ==="
+echo "=== compositor side: does it publish the DRM lease global? ==="
 if ! command -v wayland-info >/dev/null; then
-    echo "  wayland-info no está (apt install wayland-utils)"; exit 1
+    echo "  wayland-info is not installed (apt install wayland-utils)"; exit 1
 fi
 INFO="$(wayland-info 2>/dev/null)"
 if echo "$INFO" | grep -q wp_drm_lease_device_v1; then
-    echo "  SÍ: $(echo "$INFO" | grep -m1 wp_drm_lease_device_v1 | sed 's/^ *//')"
+    echo "  YES: $(echo "$INFO" | grep -m1 wp_drm_lease_device_v1 | sed 's/^ *//')"
 else
-    echo "  NO -- el compositor ni siquiera anuncia wp_drm_lease_device_v1."
-    echo "     Sin eso no hay lease posible; no tiene sentido correr jack-in-wayland.sh."
+    echo "  NO -- the compositor doesn't even announce wp_drm_lease_device_v1."
+    echo "     Without that there's no possible lease; no point running jack-in-wayland.sh."
     exit 2
 fi
 
 echo
-echo "=== ¿cuántos conectores ofrece en ese device? ==="
-# KWin 6.3.6 anunciaba el device y ofrecía CERO conectores: ese era el síntoma exacto.
-# OJO: wayland-info imprime "connector:" a secas, sin espacio ni id en la misma linea.
-# Contar "connector: " (con espacio) da 0 SIEMPRE y hace pasar por fallo un exito.
+echo "=== how many connectors does it offer on that device? ==="
+# KWin 6.3.6 announced the device and offered ZERO connectors: that was the exact symptom.
+# NOTE: wayland-info prints "connector:" bare, with no space or id on the same line.
+# Counting "connector: " (with a space) always gives 0 and turns a success into a false failure.
 BLOCK="$(echo "$INFO" | sed -n '/wp_drm_lease_device_v1/,/^interface/p')"
 N=$(echo "$BLOCK" | grep -cE '^[[:space:]]*connector:[[:space:]]*$' || true)
 echo "$BLOCK" | head -30
 echo
 if [ "$N" -gt 0 ]; then
-    echo "  --> Ofrece conectores. Seguí con: ./jack-in-wayland.sh 1"
+    echo "  --> Offers connectors. Continue with: ./jack-in-wayland.sh 1"
 else
-    echo "  --> CERO conectores, igual que KWin. Si mutter SIN parchear tampoco los ofrece,"
-    echo "      el culpable no es el compositor: es NVIDIA."
+    echo "  --> ZERO connectors, same as KWin. If unpatched mutter doesn't offer any either,"
+    echo "      the culprit isn't the compositor: it's NVIDIA."
 fi

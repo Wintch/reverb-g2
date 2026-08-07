@@ -1,268 +1,272 @@
-# 16 — El experimento del vblank: ¿es el refresh, o la forma del timing?
+# 16 — The vblank experiment: is it the refresh rate, or the shape of the timing?
 
-Preparado 2026-08-05 desde el sistema principal, con el SSD del lab montado. **El EDID de
-prueba ya está generado y verificado**: `experiments/vblank/`. Falta correrlo con el casco
-puesto — y falta además resolver **cómo cargarlo**: la sección "El EDID ya está armado" más
-abajo lo deja como paso 0, sin vía confirmada todavía.
+Prepared 2026-08-05 from the main system, with the lab SSD mounted. **The test EDID has
+already been generated and verified**: `experiments/vblank/`. Still needs to be run with the
+headset on — and there's also the question of **how to load it**: the "The EDID is already
+built" section below leaves it as step 0, with no confirmed path yet.
 
 ---
 
-## PREFLIGHT — correr esto antes que nada
+## PREFLIGHT — run this before anything else
 
-Este experimento **sólo vale en el lab**, con el 595-open parcheado. Ya nos pasó una vez de
-empezar a medir en el sistema principal, que tiene el `nvidia-current` 550.163.01 de Debian
-**sin** el parche del bpc: ahí el clamp a 6 bpc está activo y cualquier resultado sale
-confundido con el bug que justamente sacamos del medio.
+This experiment **is only valid in the lab**, with the patched 595-open. We already got
+burned once starting to measure on the main system, which has Debian's `nvidia-current`
+550.163.01 **without** the bpc patch: there, the 6 bpc clamp is active and any result comes
+out confounded with the very bug we just ruled out.
 
 ```bash
-# 1. driver correcto
+# 1. correct driver
 grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+' /proc/driver/nvidia/version | head -1
-#    tiene que decir 595.71.05   (si dice 550.x estás en el sistema equivocado, rebooteá)
+#    must say 595.71.05   (if it says 550.x you're on the wrong system, reboot)
 
-# 2. modulos abiertos, no los propietarios
+# 2. open modules, not the proprietary ones
 modinfo nvidia 2>/dev/null | grep -i license
-#    tiene que incluir "Dual MIT/GPL"
+#    must include "Dual MIT/GPL"
 
-# 3. el parche del bpc esta adentro del modulo
+# 3. the bpc patch is inside the module
 ./scripts/verify-bpc.sh
 
-# 4. el casco enumera completo (los cinco)
+# 4. the headset enumerates completely (all five)
 lsusb | grep -E '04b4:6506|0bda:4c15|03f0:0580|04b4:6504|045e:0659' | wc -l
-#    tiene que dar 5; si falta 03f0:0580 es el puerto USB, no Monado (docs/00)
+#    must give 5; if 03f0:0580 is missing it's the USB port, not Monado (docs/00)
 
-# 5. y el bpc real en el cable
+# 5. and the real bpc on the cable
 dmesg | grep 'Notify Attach Begin' | tail -1
-#    tiene que decir 24 bpp, no 18
+#    must say 24 bpp, not 18
 ```
 
-Si cualquiera de los cinco falla, **parar**. Medir con el driver equivocado no da un
-resultado malo: da un resultado que parece bueno y apunta al lado que no es.
+If any of the five fails, **stop**. Measuring with the wrong driver doesn't produce a bad
+result: it produces a result that looks good and points to the wrong culprit.
 
 ---
 
-## De dónde venimos
+## Where we're coming from
 
-El clamp a 6 bpc está cerrado (ver `docs/13`, `docs/14`):
+The 6 bpc clamp is closed (see `docs/13`, `docs/14`):
 
-- **PR abierto en NVIDIA:** https://github.com/NVIDIA/open-gpu-kernel-modules/pull/1275
-- **Hilo del foro:** post 379240, revisión 6
-- Con el parche el casco reporta `08` en el byte 18 y su status HID de 33 bytes queda
-  idéntico byte a byte al de Windows
+- **Open PR on NVIDIA:** https://github.com/NVIDIA/open-gpu-kernel-modules/pull/1275
+- **Forum thread:** post 379240, revision 6
+- With the patch the headset reports `08` in byte 18 and its 33-byte HID status ends up
+  byte-identical to Windows'
 
-Y sin embargo **los dos modos de 90 Hz siguen sin mostrar imagen**: el panel enciende y
-parpadea en blanco. El de 60 Hz anda.
+And yet **the two 90 Hz modes still show no image**: the panel powers on and flickers white.
+The 60 Hz mode works.
 
 ---
 
-## La hipótesis
+## The hypothesis
 
-En los tres modos que el EDID del G2 ofrece, el blanking **horizontal** es idéntico
-(50/4/46). La única variable estructural es el **vertical**:
+Across the three modes the G2's EDID offers, the **horizontal** blanking is identical
+(50/4/46). The only structural variable is the **vertical**:
 
-| modo | vblank | resultado |
+| mode | vblank | result |
 |---|---|---|
-| 4320x2160@60 | **514 líneas** | anda |
-| 4320x2160@90 | 116 líneas | falla |
-| 2880x1440@90 | 158 líneas | falla |
+| 4320x2160@60 | **514 lines** | works |
+| 4320x2160@90 | 116 lines | fails |
+| 2880x1440@90 | 158 lines | fails |
 
-Es decir: **"90 Hz" y "vblank corto" están perfectamente confundidos**. Nunca se observó
-un vblank corto a 60 Hz, ni uno largo a 90 Hz. Con estos tres modos es imposible saber
-cuál de las dos variables rompe el panel.
+In other words: **"90 Hz" and "short vblank" are perfectly confounded**. A short vblank at
+60 Hz was never observed, nor a long one at 90 Hz. With these three modes there's no way to
+know which of the two variables breaks the panel.
 
-El experimento inyecta los dos modos que faltan y completa el factorial.
+The experiment injects the two missing modes and completes the factorial.
 
 ---
 
-## Diseño
+## Design
 
-|  | vblank corto (158) | vblank largo (514) |
+|  | short vblank (158) | long vblank (514) |
 |---|---|---|
 | **60 Hz** | **A** — 285.72 MHz | **CTRL** — 349.38 MHz |
-| **90 Hz** | nativo slot 0: **falla** | **B** — 524.06 MHz |
+| **90 Hz** | native slot 0: **fails** | **B** — 524.06 MHz |
 
-Los tres inyectados quedan muy por debajo de los 709.15 MHz del modo que ya funciona
-(6.86 / 8.39 / 12.58 Gbps a 24 bpp), así que ninguno introduce presión de ancho de banda.
+The three injected modes stay well below the 709.15 MHz of the mode that already works
+(6.86 / 8.39 / 12.58 Gbps at 24 bpp), so none of them introduces bandwidth pressure.
 
-**Por qué 2880x1440 y no 4320x2160:** el DTD del bloque base tiene el campo de horizontal
-active de **12 bits — máximo 4095 px**. 4320 no entra. Por eso el propio G2 pone
-2880x1440 en el bloque base y sus dos modos de 4320 en el bloque DisplayID, cuyos
-descriptores Type I usan campos de 16 bits. Usar 2880x1440 además mantiene la resolución
-constante contra el modo nativo que falla, que es una comparación más limpia.
+**Why 2880x1440 and not 4320x2160:** the base block's DTD has a 12-bit horizontal active
+field — **maximum 4095 px**. 4320 doesn't fit. That's why the G2 itself puts 2880x1440 in
+the base block and its two 4320 modes in the DisplayID block, whose Type I descriptors use
+16-bit fields. Using 2880x1440 also keeps the resolution constant against the native mode
+that fails, which makes for a cleaner comparison.
 
-**`CTRL` no es opcional y va primero.** Sin él, si A falla no se puede distinguir "el
-vblank corto rompe el panel" de "cualquier modo inyectado rompe". Es la línea de base.
+**`CTRL` isn't optional and comes first.** Without it, if A fails there's no way to
+distinguish "short vblank breaks the panel" from "any injected mode breaks it." It's the
+baseline.
 
 ---
 
-## El EDID ya está armado
+## The EDID is already built
 
-`experiments/vblank/g2-vblank-test.edid` — 384 bytes, partiendo de
-`experiments/vblank/hmd.edid`. Los tres modos entran en los slots de DTD que
-estaban libres, así que **queda un solo EDID con todo el factorial**: se corre la
-experiencia entera en una sesión, sin re-overridear entre test y test.
+`experiments/vblank/g2-vblank-test.edid` — 384 bytes, starting from
+`experiments/vblank/hmd.edid`. The three modes fit into the DTD slots that were free, so
+**a single EDID ends up covering the whole factorial**: the entire run happens in one
+session, with no re-overriding between tests.
 
 ```
-bloque base   slot 0  2880x1440@90  428.58 MHz  vblank 158   nativo, FALLA
+base block    slot 0  2880x1440@90  428.58 MHz  vblank 158   native, FAILS
               slot 1  2880x1440@60  349.38 MHz  vblank 514   CTRL
               slot 2  2880x1440@60  285.72 MHz  vblank 158   TEST A
               slot 3  2880x1440@90  524.06 MHz  vblank 514   TEST B
-DisplayID     desc 1  4320x2160@90  905.40 MHz  vblank 116   nativo, FALLA  (intacto)
-              desc 2  4320x2160@60  709.15 MHz  vblank 514   nativo, ANDA   (intacto)
+DisplayID     desc 1  4320x2160@90  905.40 MHz  vblank 116   native, FAILS  (untouched)
+              desc 2  4320x2160@60  709.15 MHz  vblank 514   native, WORKS  (untouched)
 ```
 
-Verificado: round-trip de codificación en los tres, checksum del bloque base correcto,
-y los dos bloques de extensión sin tocar byte a byte.
+Verified: encoding round-trip on all three, base block checksum correct, and both extension
+blocks untouched byte-for-byte.
 
-Para regenerarlo o variarlo:
+To regenerate or vary it:
 
 ```bash
 ./scripts/edid-tool.py inject-mode experiments/vblank/hmd.edid \
     -o experiments/vblank/g2-vblank-test.edid CTRL:1 A:2 B:3
 
-# sin asignaciones lista los presets y qué hay en cada slot
+# with no assignments, lists the presets and what's in each slot
 ./scripts/edid-tool.py inject-mode experiments/vblank/hmd.edid
 ```
 
-**PENDIENTE, y es el paso 0 real de este experimento — no hay una vía de carga confirmada
-todavía.** El bug de 6 bpc se cerró con un parche al *driver* (parche 0004), no con un
-override de EDID: nunca hizo falta lograr que NVIDIA leyera un EDID falso. `docs/13`
-lista tres candidatos, ninguno probado:
+**PENDING, and this is the real step 0 of this experiment — there's no confirmed loading
+path yet.** The 6 bpc bug was closed with a *driver* patch (patch 0004), not an EDID
+override: there was never a need to get NVIDIA to read a fake EDID. `docs/13` lists three
+candidates, none tested:
 
-1. `/sys/kernel/debug/dri/*/DP-1/edid_override` (debugfs) — el más barato de probar primero.
-   Duda abierta: no se sabe si NVKMS lee el EDID por el helper genérico de DRM (lo vería) o
-   por su canal AUX propio (no lo vería). Escribir el archivo **no dispara hotplug**: hay que
-   desconectar/reconectar el conector después.
-2. `nvidia_modeset.config_file` — mecanismo propio de NVKMS, parámetro compilado y presente,
-   pero la sintaxis del nombre de dpy no está documentada. Se descubre con
-   `nvidia_modeset.debug=1` y leyendo dmesg como root durante un modeset real.
-3. Parchear el EDID que reporta el propio casco (bytes reales sobre el cable), si hay algún
-   punto de inyección entre el puente Analogix y el host — sin explorar.
+1. `/sys/kernel/debug/dri/*/DP-1/edid_override` (debugfs) — the cheapest to try first. Open
+   question: it's not known whether NVKMS reads the EDID through DRM's generic helper (would
+   see it) or through its own AUX channel (wouldn't see it). Writing the file **does not
+   trigger a hotplug**: the connector needs to be disconnected/reconnected afterward.
+2. `nvidia_modeset.config_file` — NVKMS's own mechanism, a compiled-in parameter that's
+   present, but the dpy-name syntax isn't documented. Discoverable with
+   `nvidia_modeset.debug=1` and reading dmesg as root during a real modeset.
+3. Patching the EDID that the headset itself reports (actual bytes over the cable), if
+   there's some injection point between the Analogix bridge and the host — unexplored.
 
-Probar en ese orden. Si ninguno funciona, el experimento no es concluyente por esta vía y
-hay que replantear cómo inyectar el modo (la fila "CTRL falla" de la tabla de más abajo
-cubre justo ese caso, aunque ahí la causa real sería la vía de carga, no la hipótesis).
+Try in that order. If none of them works, the experiment isn't conclusive through this
+path and the mode-injection approach needs to be rethought (the "CTRL fails" row in the
+table below covers exactly that case, though there the real cause would be the loading
+path, not the hypothesis).
 
-**Opción 1 — descartada (2026-08-05), con evidencia:** se escribió
-`g2-vblank-test.edid` en `/sys/kernel/debug/dri/*/DP-1/edid_override` (los tres alias del
-mismo conector: `0000:05:00.0`, `0`, `128`) y se cicló `force` (`off` → `on`, un segundo de
-por medio) para forzar el re-probe. Resultado: `/sys/class/drm/card0-DP-1/edid` quedó
-**byte-idéntico** (`cmp` exit 0, mismo md5) a `hmd.edid` **sin modificar** — no al EDID que
-se acababa de escribir. Conclusión: el driver NVIDIA no pasa por el helper genérico de DRM
-(`drm_get_edid`/`connector->edid_override`) para poblar el EDID de este conector; lo lee por
-su propio canal (RM/AUX), que ignora el override. Responde la duda abierta que tenía esta
-opción: **no lo ve**. No reintentar esta vía tal cual — pasar directo a la opción 2.
-
----
-
-## Cómo correrlo
-
-Orden: **CTRL → B → A**. Si B anda, ya está la respuesta y A es sólo confirmación.
-
-### La verificación es física
-
-La API miente: reporta modeset exitoso y 90.0 fps con el panel apagado. **Hay que ponerse
-el casco y mirar.** Para cada modo, anotar:
-
-- ¿enciende el panel? (backlight)
-- ¿muestra contenido con color, o blanco/parpadeo?
-- `dmesg`, línea `Notify Attach Begin`: pclk, raster, bpp — confirmar que dice `24 bpp`
-- byte 18 del status report HID (`scripts/decode-status.sh`)
+**Option 1 — ruled out (2026-08-05), with evidence:** `g2-vblank-test.edid` was written to
+`/sys/kernel/debug/dri/*/DP-1/edid_override` (the three aliases of the same connector:
+`0000:05:00.0`, `0`, `128`) and `force` was cycled (`off` → `on`, one second apart) to force
+a re-probe. Result: `/sys/class/drm/card0-DP-1/edid` came back **byte-identical** (`cmp`
+exit 0, same md5) to `hmd.edid` **unmodified** — not to the EDID that had just been written.
+Conclusion: the NVIDIA driver doesn't go through DRM's generic helper
+(`drm_get_edid`/`connector->edid_override`) to populate this connector's EDID; it reads it
+through its own channel (RM/AUX), which ignores the override. This answers the open question
+this option had: **it doesn't see it**. Don't retry this path as-is — go straight to option
+2.
 
 ---
 
-## Cómo leer el resultado
+## How to run it
 
-| CTRL | B | A | conclusión |
+Order: **CTRL → B → A**. If B works, the answer is already in and A is just confirmation.
+
+### The verification is physical
+
+The API lies: it reports a successful modeset and 90.0 fps with the panel off. **You have to
+put the headset on and look.** For each mode, note:
+
+- does the panel turn on? (backlight)
+- does it show content in color, or white/flickering?
+- `dmesg`, `Notify Attach Begin` line: pclk, raster, bpp — confirm it says `24 bpp`
+- byte 18 of the HID status report (`scripts/decode-status.sh`)
+
+---
+
+## How to read the result
+
+| CTRL | B | A | conclusion |
 |---|---|---|---|
-| falla | — | — | los modos inyectados no encienden este panel. **No concluyente**: falla el override o la vía de inyección, no la hipótesis. Replantear antes de seguir |
-| anda | **anda** | — | **90 Hz no es el problema; el vblank corto sí.** El mejor resultado posible: le da a NVIDIA una variable concreta en vez de "miren el GSP" |
-| anda | falla | anda | es el refresh, 90 Hz específicamente. Descarta el vblank y cierra esta línea |
-| anda | falla | falla | ni el vblank ni el refresh por separado — apunta al pixel clock o a la combinación |
+| fails | — | — | the injected modes don't power this panel on. **Not conclusive**: the override or the injection path fails, not the hypothesis. Rethink before continuing |
+| works | **works** | — | **90 Hz isn't the problem; the short vblank is.** The best possible outcome: it gives NVIDIA a concrete variable instead of "look at the GSP" |
+| works | fails | works | it's the refresh rate, 90 Hz specifically. Rules out the vblank and closes this line |
+| works | fails | fails | neither the vblank nor the refresh rate on its own — points to the pixel clock or the combination |
 
-Cualquiera de las tres filas concluyentes es material para un reply al hilo 379240.
+Any of the three conclusive rows is material for a reply on thread 379240.
 
 ---
 
-## Corrido (2026-08-05): CTRL falla — y con evidencia de por qué no es el override
+## Run (2026-08-05): CTRL fails — with evidence of why it isn't the override
 
-**Vía de carga confirmada primero.** `nvidia_modeset.config_file` con la clave corregida
-`override.[0000:05:00.0].DP-0` (el nombre interno de NVKMS es 0-based; ver `NEXT-STEP.md`
-para la cadena de código completa) cargó al reboot: `dmesg` dijo `Successfully read
-.../nvkms-override-candidates.conf` sin warning, `/sys/class/drm/card0-DP-1/edid` quedó
-byte-idéntico (md5 `749a63f7...`) a `g2-vblank-test.edid`, y `drmprops` confirmó
-`connector 130 ... modes=6` — subió de 3 a 6, exactamente los 4 slots del bloque base más
-los 2 descriptores DisplayID sin tocar. La vía 2 queda **confirmada de punta a punta**, no
-sólo a nivel del atributo sysfs sino hasta el conteo de modos que ve DRM.
+**Loading path confirmed first.** `nvidia_modeset.config_file` with the corrected key
+`override.[0000:05:00.0].DP-0` (NVKMS's internal naming is 0-based; see `NEXT-STEP.md` for
+the full code trail) loaded on reboot: `dmesg` said `Successfully read
+.../nvkms-override-candidates.conf` with no warning, `/sys/class/drm/card0-DP-1/edid` came
+back byte-identical (md5 `749a63f7...`) to `g2-vblank-test.edid`, and `drmprops` confirmed
+`connector 130 ... modes=6` — up from 3 to 6, exactly the 4 base-block slots plus the 2
+untouched DisplayID descriptors. Path 2 is now **confirmed end to end**, not just at the
+sysfs attribute level but all the way to the mode count DRM sees.
 
-**Orden de índice, confirmado por precisión de refresh (Vulkan vs `edid-tool.py decode`):**
-`hmd-vk native <idx>` enumera **en el mismo orden que los slots del EDID** — primero el
-bloque base (0-3), después DisplayID (4-5):
+**Index order, confirmed by refresh-rate precision (Vulkan vs `edid-tool.py decode`):**
+`hmd-vk native <idx>` enumerates **in the same order as the EDID slots** — base block first
+(0-3), then DisplayID (4-5):
 
-| idx Vulkan | refresh reportado | corresponde a |
+| Vulkan idx | reported refresh | corresponds to |
 |---|---|---|
-| 0 | 89.999 Hz | nativo 2880x1440@90, slot 0, ya sabido FALLA |
+| 0 | 89.999 Hz | native 2880x1440@90, slot 0, already known to FAIL |
 | 1 | 60.001 Hz | **CTRL** |
 | 2 | 59.999 Hz | **A** |
 | 3 | 90.000 Hz | **B** |
-| 4 | 90.001 Hz | nativo 4320x2160@90, ya sabido FALLA |
-| 5 | 60.000 Hz | nativo 4320x2160@60, ya sabido ANDA |
+| 4 | 90.001 Hz | native 4320x2160@90, already known to FAIL |
+| 5 | 60.000 Hz | native 4320x2160@60, already known to WORK |
 
-**Resultado físico, con el casco puesto, PREFLIGHT completo (595.71.05, Dual MIT/GPL, parche
-0004 presente, los 5 USB, `Notify Attach Begin` en 24 bpp):**
+**Physical result, headset on, full PREFLIGHT (595.71.05, Dual MIT/GPL, patch 0004 present,
+all 5 USB devices, `Notify Attach Begin` at 24 bpp):**
 
-| modo | HID (`DEVICE_STATUS`, segundo mensaje) | físico |
+| mode | HID (`DEVICE_STATUS`, second message) | physical |
 |---|---|---|
-| **CTRL** (idx1) | htotal=2980 vtotal=1954 refresh=60 bpc=8 — **exacto al diseño** | logo HP, nada |
-| **B** (idx3) | htotal=2980 vtotal=1954 refresh=90 bpc=8 — **exacto al diseño** | logo HP, nada |
-| **A** (idx2) | htotal=2980 vtotal=1598 refresh=60 bpc=8 — **exacto al diseño** | logo HP, nada |
+| **CTRL** (idx1) | htotal=2980 vtotal=1954 refresh=60 bpc=8 — **exact match to design** | HP logo, nothing |
+| **B** (idx3) | htotal=2980 vtotal=1954 refresh=90 bpc=8 — **exact match to design** | HP logo, nothing |
+| **A** (idx2) | htotal=2980 vtotal=1598 refresh=60 bpc=8 — **exact match to design** | HP logo, nothing |
 
-Es la fila **"CTRL falla"** de la tabla de arriba — pero con un dato que la tabla no
-anticipaba: el casco reporta por HID el timing **byte a byte idéntico** al que se inyectó
-en cada uno de los tres casos (`scripts/decode-status.sh` ya había establecido que byte 5 =
-refresh decimal y bytes 19-22 = htotal/vtotal little-endian). Eso **descarta** la mitad de
-la ambigüedad de esa fila: no es que "el override no llegó" — llegó, hasta el link físico,
-con el bpc correcto (byte 18 = 08 en los tres). Lo que falla es la vía de inyección en sí
-(**"la vía de inyección"**, la otra mitad de la ambigüedad que la fila sí previó), no que el
-casco nunca haya visto el modo pedido.
+This is the **"CTRL fails"** row from the table above — but with a data point the table
+didn't anticipate: the headset reports over HID a timing **byte-for-byte identical** to
+what was injected in each of the three cases (`scripts/decode-status.sh` had already
+established that byte 5 = refresh in decimal and bytes 19-22 = htotal/vtotal little-endian).
+That **rules out** half the ambiguity of that row: it isn't that "the override never
+arrived" — it did, all the way to the physical link, with the correct bpc (byte 18 = 08 in
+all three). What's failing is the injection path itself (**"the injection path"**, the other
+half of the ambiguity the row did anticipate), not that the headset never saw the requested
+mode.
 
-**Y hay un candidato concreto para esa vía, que la tabla no tenía como variable: la
-resolución.** Los tres modos inyectados son **2880x1440** — y ésa es la resolución del
-único otro modo nativo que existe a esa anchura, `2880x1440@90` (slot 0), que **ya fallaba
-antes de este experimento** (T002, sesión anterior: "hp prendido, pantalla apagada"). O sea
-que 2880x1440 **nunca mostró nada, a ningún refresh, en toda la historia del proyecto**: ni
-nativo a 90 Hz, ni inyectado a 60 con vblank largo (CTRL, la forma exacta del modo que sí
-anda), ni inyectado a 60 con vblank corto (A), ni inyectado a 90 con vblank largo (B). El
-único modo que alguna vez mostró video es 4320x2160@60 (T001). Con sólo estos datos, **la
-resolución explica el 100% de los resultados sin necesitar el refresh ni el vblank**: quizás
-el firmware del panel (o el puente Analogix) sólo acepta los anchos de banda / resoluciones
-para los que fue calibrado, y 2880x1440 simplemente no es uno de ellos — independiente de
-qué tan correcto sea el timing eléctrico.
+**And there's a concrete candidate for that path, one the table didn't have as a variable:
+resolution.** All three injected modes are **2880x1440** — and that's the resolution of the
+only other native mode that exists at that width, `2880x1440@90` (slot 0), which **already
+failed before this experiment** (T002, earlier session: "HP logo on, screen off"). Meaning
+2880x1440 **never showed anything, at any refresh rate, in the entire history of the
+project**: not native at 90 Hz, not injected at 60 with a long vblank (CTRL, the exact shape
+of the mode that does work), not injected at 60 with a short vblank (A), not injected at 90
+with a long vblank (B). The only mode that ever showed video is 4320x2160@60 (T001). With
+just this data, **resolution explains 100% of the results without needing the refresh rate
+or the vblank**: maybe the panel firmware (or the Analogix bridge) only accepts the
+bandwidths/resolutions it was calibrated for, and 2880x1440 simply isn't one of them —
+regardless of how correct the electrical timing is.
 
-Esto no cierra el factorial, lo **replantea**: hay que repetirlo inyectando en los
-descriptores DisplayID Type I (4320x2160), como ya preveía la sección "Si hace falta
-repetirlo a 4320x2160" más abajo — ahí sí hay un caso confirmado que funciona a esa
-resolución, así que cualquier resultado que salga de mover sólo el vblank/refresh en 4320
-no va a tener este mismo confound.
+This doesn't close the factorial, it **reframes it**: it needs to be repeated injecting into
+the DisplayID Type I descriptors (4320x2160), as the "If it needs to be repeated at
+4320x2160" section below already anticipated — there, there is a confirmed working case at
+that resolution, so any result that comes from moving only the vblank/refresh at 4320 won't
+carry this same confound.
 
-**Anomalía sin explicar, anotada para no perderla:** en el segundo mensaje HID de **A**
-(único de los tres), el byte 1 pasó de `00` a `01`. Según el comentario de Monado sobre el
-G1 (citado en `panel-status.py`), ese bit en el segundo mensaje señala que el backlight
-**visiblemente prendió**. En CTRL y B ese byte se quedó en `00` los dos. Pero el usuario
-reportó "nada, apagado, solo logo hp" para A igual que para los otros dos — así que, o el
-bit no es fiable como señal de contenido visible, o hubo algo transitorio en esa corrida
-puntual. Queda abierto; no tomarlo como evidencia de que A funcionó parcialmente.
+**Unexplained anomaly, noted so it isn't lost:** in the second HID message of **A** (unique
+among the three), byte 1 went from `00` to `01`. According to Monado's comment about the G1
+(quoted in `panel-status.py`), that bit in the second message signals that the backlight
+**visibly turned on**. In CTRL and B that byte stayed at `00` both times. But the user
+reported "nothing, off, just the HP logo" for A same as the other two — so either the bit
+isn't reliable as a signal of visible content, or something transient happened during that
+particular run. Left open; not to be taken as evidence that A partially worked.
 
-Testlogs T008/T009/T010 (`docs/pruebas.jsonl`) tienen los HID crudos completos.
+Testlogs T008/T009/T010 (`docs/pruebas.jsonl`) have the full raw HID data.
 
 ---
 
-## Segunda ronda (2026-08-05, noche): el mismo factorial, sobre 4320x2160
+## Second round (2026-08-05, night): the same factorial, on 4320x2160
 
-`scripts/edid-tool.py inject-did` ya está escrito y probado (round-trip por el decoder
-completo, checksums de la sección DisplayID y del bloque de extensión verificados, resto de
-los bloques intacto). Escribe sobre los descriptores Type I del bloque DisplayID en vez del
-bloque base, así que esta vez el factorial corre a 4320x2160 — la única resolución con un
-caso confirmado que anda — y no tiene el confound de resolución de la ronda anterior.
+`scripts/edid-tool.py inject-did` is now written and tested (round-trip through the full
+decoder, checksums of the DisplayID section and the extension block verified, rest of the
+blocks untouched). It writes over the Type I descriptors of the DisplayID block instead of
+the base block, so this time the factorial runs at 4320x2160 — the only resolution with a
+confirmed working case — and doesn't carry the resolution confound from the previous round.
 
 ```bash
 ./scripts/edid-tool.py inject-did experiments/vblank/hmd.edid \
@@ -273,294 +277,306 @@ caso confirmado que anda — y no tiene el confound de resolución de la ronda a
     -o experiments/vblank/g2-vblank-4k-a.edid A4K:1
 ```
 
-Los tres reemplazan el **descriptor #1** (el que ya fallaba a 90 Hz) y dejan el
-**descriptor #2** (@60, vblank 514, el que anda) intacto como control físico en cada EDID.
+All three replace **descriptor #1** (the one that was already failing at 90 Hz) and leave
+**descriptor #2** (@60, vblank 514, the one that works) untouched as a physical control in
+each EDID.
 
 | preset | timing | pclk | Gbps @24bpp |
 |---|---|---|---|
-| `CTRL4K` | 4320x2160@60 vblank 514 (igual forma que el descriptor #2 real) | 709.14 MHz | 17.02 |
-| `A4K` | 4320x2160@60 vblank 116 (igual forma que el descriptor #1 real, pero a 60Hz) | 603.60 MHz | 14.49 |
+| `CTRL4K` | 4320x2160@60 vblank 514 (same shape as the real descriptor #2) | 709.14 MHz | 17.02 |
+| `A4K` | 4320x2160@60 vblank 116 (same shape as the real descriptor #1, but at 60Hz) | 603.60 MHz | 14.49 |
 | `B4K` | 4320x2160@90 vblank 240 | 954.72 MHz | 22.91 |
 
-**Por qué `B4K` usa vblank 240 y no 514, a diferencia del factorial anterior:** a 4320 de
-ancho, vblank 514 a 90 Hz pasa **25.53 Gbps @24bpp** — pegado al techo de HBR3 (25.92), sin
-margen. 240 sigue siendo muy superior al 116 que falla (más del doble) y deja margen real
-de ancho de banda, así que sigue discriminando la hipótesis sin arriesgar un segundo
-confound (ancho de banda esta vez, no resolución).
+**Why `B4K` uses vblank 240 and not 514, unlike the previous factorial:** at 4320 width,
+vblank 514 at 90 Hz hits **25.53 Gbps @24bpp** — pinned against the HBR3 ceiling (25.92),
+with no margin. 240 is still well above the 116 that fails (more than double) and leaves
+real bandwidth margin, so it still discriminates the hypothesis without risking a second
+confound (bandwidth this time, not resolution).
 
-**Cada EDID nuevo necesita su propio reboot.** Se confirmó por fuente
-(`nvkms-dpy-override.c: DpyOverrideReadEdid`) que NVKMS copia el contenido del archivo a un
-buffer en memoria una sola vez, al parsear `config_file` durante la carga del módulo — no
-lo vuelve a leer del disco después. Sobreescribir el archivo sin reiniciar no tiene efecto.
-`experiments/vblank/nvkms-override-candidates.conf` ya apunta al primero (`CTRL4K`); para
-pasar al siguiente hay que editar esa línea y reiniciar de nuevo.
+**Each new EDID needs its own reboot.** Confirmed from source
+(`nvkms-dpy-override.c: DpyOverrideReadEdid`) that NVKMS copies the file's contents into an
+in-memory buffer only once, while parsing `config_file` during module load — it doesn't read
+it from disk again afterward. Overwriting the file without rebooting has no effect.
+`experiments/vblank/nvkms-override-candidates.conf` already points at the first one
+(`CTRL4K`); moving to the next one means editing that line and rebooting again.
 
-**Orden: CTRL4K → B4K → A4K**, mismo criterio que la ronda anterior. Después de cada reboot:
-PREFLIGHT completo (arriba) y `hmd-vk list` para confirmar el índice real antes de
-presentar — con `CTRL4K` cerca de 60 Hz igual que el descriptor #2, van a aparecer dos
-modos casi idénticos y hay que fijarse en cuál mueve la refresca exacta (`hmd-vk list` la
-imprime con 3 decimales, como ya se hizo en la ronda anterior) o directamente correr los
-dos y comparar contra el HID.
+**Order: CTRL4K → B4K → A4K**, same criterion as the previous round. After each reboot: full
+PREFLIGHT (above) and `hmd-vk list` to confirm the actual index before presenting — with
+`CTRL4K` close to 60 Hz same as descriptor #2, two nearly identical modes are going to show
+up and you need to check which one shows the exact refresh (`hmd-vk list` prints it to 3
+decimals, as was already done in the previous round) or just run both and compare against
+the HID.
 
-**Lectura del resultado:** si `CTRL4K` (clonar el modo que anda a la otra posición) también
-falla, la explicación ya no puede ser "vblank" ni "resolución" — sería algo posicional
-(cuál descriptor, o el bit `preferred`) y hay que replantear otra vez. Si `CTRL4K` anda,
-seguir con `B4K`: si anda, es la respuesta (90 Hz no es el problema, el vblank corto sí). Si
-`B4K` falla y `A4K` anda, es el refresh específicamente. Si los dos fallan, ninguno de los
-dos por separado — apunta al pixel clock o a la combinación.
+**Reading the result:** if `CTRL4K` (cloning the working mode into the other position) also
+fails, the explanation can no longer be "vblank" nor "resolution" — it would be something
+positional (which descriptor, or the `preferred` bit) and it needs to be rethought again. If
+`CTRL4K` works, continue with `B4K`: if it works, that's the answer (90 Hz isn't the
+problem, the short vblank is). If `B4K` fails and `A4K` works, it's the refresh rate
+specifically. If both fail, neither one on its own — points to the pixel clock or the
+combination.
 
-### `CTRL4K` corrido (2026-08-05, noche): anda — el descriptor #1 no es la causa
+### `CTRL4K` run (2026-08-05, night): works — descriptor #1 isn't the cause
 
-Override cargado y verificado con `scripts/verify-override.sh` (nuevo: junta en un solo
-script todo lo que necesita root — `dmesg`, forzar `detect()`, comparar md5 del EDID activo
-— para no pedir la contraseña de sudo comando por comando). `dmesg` limpio,
-`Successfully read...`, md5 del EDID activo (`993031c3...`) idéntico al archivo.
+Override loaded and verified with `scripts/verify-override.sh` (new: bundles everything that
+needs root into a single script — `dmesg`, forcing `detect()`, comparing the active EDID's
+md5 — so as not to ask for the sudo password command by command). `dmesg` clean,
+`Successfully read...`, active EDID md5 (`993031c3...`) identical to the file.
 
-`hmd-vk list` mostró 3 modos (no 6: esta ronda usa el `hmd.edid` base sin tocar + sólo los 2
-descriptores DisplayID, uno de ellos modificado): `[0] 2880x1440@89.999` (nativo, bloque
-base, ya sabido FALLA), `[1] 4320x2160@60.000` y `[2] 4320x2160@60.000` — **idénticos a 3
-decimales**, esperado porque `CTRL4K` fue diseñado para clonar la forma exacta del
-descriptor #2. Se presentó `[1]` (el descriptor #1 modificado, antes ocupado por el
-4320x2160@90 que siempre falló) por orden de enumeración (bloque base primero, después
-DisplayID en orden — confirmado en la ronda anterior).
+`hmd-vk list` showed 3 modes (not 6: this round uses the untouched base `hmd.edid` + only
+the 2 DisplayID descriptors, one of them modified): `[0] 2880x1440@89.999` (native, base
+block, already known to FAIL), `[1] 4320x2160@60.000` and `[2] 4320x2160@60.000` —
+**identical to 3 decimals**, expected because `CTRL4K` was designed to clone the exact shape
+of descriptor #2. `[1]` was presented (the modified descriptor #1, previously occupied by
+the 4320x2160@90 that always failed) by enumeration order (base block first, then DisplayID
+in order — confirmed in the previous round).
 
-**Resultado físico: colores alternando (azul, blanco, verde) — el panel prendió con
-contenido real.** Paleta distinta a la esperada (naranja/azul/verde), pero inequívocamente
-lejos del logo de HP o negro que dan los modos que fallan. HID (`panel-status.py`)
-corroboró: byte 5 = `0x3c` (60 decimal, exacto), y el segundo mensaje `DEVICE_STATUS` pasó
-byte 1 de `00` a `01` — la señal de "backlight visiblemente prendido" del comentario de
-Monado sobre el G1 — coincidiendo esta vez con una confirmación física real (a diferencia
-de la anomalía sin explicar de `A` en la ronda anterior, donde ese mismo bit se prendió sin
-video visible). Log completo y testlog T012 en `docs/pruebas.jsonl`.
+**Physical result: alternating colors (blue, white, green) — the panel powered on with real
+content.** A different palette than expected (orange/blue/green), but unambiguously far from
+the HP logo or black that the failing modes produce. HID (`panel-status.py`) corroborated:
+byte 5 = `0x3c` (60 decimal, exact), and the second `DEVICE_STATUS` message flipped byte 1
+from `00` to `01` — the "backlight visibly turned on" signal from Monado's comment about the
+G1 — this time coinciding with a real physical confirmation (unlike the unexplained anomaly
+of `A` in the previous round, where that same bit turned on with no visible video). Full log
+and testlog T012 in `docs/pruebas.jsonl`.
 
-**Conclusión: la posición del descriptor #1 no es la causa.** Clonar un timing sano ahí
-funciona igual que en su posición original. Eso deja en pie la hipótesis del vblank —
-sigue `B4K` (90 Hz, vblank corto, mismo descriptor #1) como el test que de verdad decide.
+**Conclusion: descriptor #1's position isn't the cause.** Cloning a sane timing there works
+the same as in its original position. That leaves the vblank hypothesis standing — next is
+`B4K` (90 Hz, short vblank, same descriptor #1) as the test that actually decides it.
 
-### `B4K` corrido (2026-08-05, noche): FALLA — 90Hz + vblank corto, en la posición ya probada sana
+### `B4K` run (2026-08-05, night): FAILS — 90Hz + short vblank, in the position already proven sane
 
-Mismo procedimiento: `verify-override.sh` confirmó carga (dmesg limpio, md5 activo
-`506f366f...` idéntico al archivo), PREFLIGHT completo incluyendo `Notify Attach Begin`
-(`pclk 954720000 raster 4420x2400 24 bpp` — exacto al diseño de `B4K`: vtotal 2400 = 2160 +
-vblank 240). `hmd-vk list` mostró `[1]` en `90.000 Hz` como esperado.
+Same procedure: `verify-override.sh` confirmed loading (clean dmesg, active md5
+`506f366f...` identical to the file), full PREFLIGHT including `Notify Attach Begin`
+(`pclk 954720000 raster 4420x2400 24 bpp` — exact match to `B4K`'s design: vtotal 2400 =
+2160 + vblank 240). `hmd-vk list` showed `[1]` at `90.000 Hz` as expected.
 
-**Resultado físico: nada, sólo el logo de HP.** Igual que todos los 90Hz nativos previos.
-HID (T013) capturó sólo 2 mensajes `DEVICE_STATUS`, los dos con byte 5 = `0x3c` (60
-decimal) — **no `0x5a` (90)** — y byte 1 en `00` las dos veces (sin la señal de backlight
-prendido). A diferencia del factorial de la ronda anterior (`docs/pruebas.jsonl` T008-T010),
-donde el casco sí reportaba por HID el refresh de 90 exacto pese a fallar visualmente, acá
-el companion nunca llegó a reportar 90 — se quedó en el último estado conocido (60, de
-`CTRL4K`) y después "se fue" (re-enumeró) sin más mensajes. Diferencia real entre las dos
-rondas, anotada tal cual sin explicación todavía: puede ser timing de arranque de
-`panel-status.py` respecto del modeset, o que acá el link nunca entrena lo suficiente para
-que el companion se entere del cambio — no alcanza con lo medido para decidir cuál.
+**Physical result: nothing, just the HP logo.** Same as all previous native 90Hz cases.
+HID (T013) captured only 2 `DEVICE_STATUS` messages, both with byte 5 = `0x3c` (60
+decimal) — **not `0x5a` (90)** — and byte 1 at `00` both times (no backlight-on signal).
+Unlike the previous round's factorial (`docs/pruebas.jsonl` T008-T010), where the headset
+did report the exact 90 refresh over HID despite failing visually, here the companion never
+got to report 90 — it stayed at the last known state (60, from `CTRL4K`) and then
+"disappeared" (re-enumerated) with no further messages. A real difference between the two
+rounds, noted as-is without an explanation yet: it could be startup timing of
+`panel-status.py` relative to the modeset, or it could be that here the link never trains
+enough for the companion to learn about the change — what's been measured isn't enough to
+decide which.
 
-**Sigue `A4K`** (60 Hz, vblank corto — mismo descriptor, mismo pixel clock más bajo, sin el
-salto a 90Hz) para separar si la causa es el refresh en sí o el vblank/pixel-clock.
+**Next is `A4K`** (60 Hz, short vblank — same descriptor, same lower pixel clock, without
+the jump to 90Hz) to separate whether the cause is the refresh rate itself or the
+vblank/pixel-clock.
 
-### `A4K` corrido (2026-08-05, noche): FALLA — y esto cierra el factorial
+### `A4K` run (2026-08-05, night): FAILS — and this closes the factorial
 
-`verify-override.sh` confirmó carga (md5 `e1f99097...` idéntico), PREFLIGHT completo,
-`Notify Attach Begin`: `pclk 603600000 raster 4420x2276 24 bpp` — exacto al diseño (vtotal
-2160+116). **Resultado físico: pantalla apagada, sólo logo HP.** HID (T014) confirmó
-refresh=`0x3c` (60, exacto) y htotal/vtotal (`4420`/`8e4`=2276, bytes 19-22) exactos al
-diseño — el timing llegó perfecto otra vez — pero el bit de backlight-prendido (byte 1 del
-segundo mensaje, el mismo que sí se prendió en `CTRL4K`/T012) se quedó en `00` en los dos
-mensajes. Igual que `B4K`: el link nunca llega a encender el panel.
+`verify-override.sh` confirmed loading (md5 `e1f99097...` identical), full PREFLIGHT,
+`Notify Attach Begin`: `pclk 603600000 raster 4420x2276 24 bpp` — exact match to design
+(vtotal 2160+116). **Physical result: screen off, just the HP logo.** HID (T014) confirmed
+refresh=`0x3c` (60, exact) and htotal/vtotal (`4420`/`8e4`=2276, bytes 19-22) exact to
+design — the timing arrived perfect again — but the backlight-on bit (byte 1 of the second
+message, the same one that did turn on in `CTRL4K`/T012) stayed at `00` in both messages.
+Same as `B4K`: the link never gets to turn the panel on.
 
-**Conclusión del factorial 2x2 completo:**
+**Conclusion of the complete 2x2 factorial:**
 
-| | vblank largo (514) | vblank corto (116/240) |
+| | long vblank (514) | short vblank (116/240) |
 |---|---|---|
-| **60 Hz** | `CTRL4K` — **ANDA** | `A4K` — **FALLA** |
-| **90 Hz** | (no probado a 4320; ver abajo) | `B4K` — **FALLA** |
+| **60 Hz** | `CTRL4K` — **WORKS** | `A4K` — **FAILS** |
+| **90 Hz** | (not tested at 4320; see below) | `B4K` — **FAILS** |
 
-**No es el refresh. Es el vblank corto.** `CTRL4K` y `A4K` son los dos a 60 Hz — uno anda y
-el otro no, y la única diferencia es el vblank (514 vs 116). Eso también cierra en seco la
-explicación de ancho de banda: `A4K` corre a 603.6 MHz, muy por debajo del techo HBR3
-(25.92 Gbps), y aun así falla igual que `B4K` a 954.72 MHz. No importa cuánto margen de
-bandwidth haya — lo que rompe el enganche es la duración corta del blanking vertical en sí,
-no los bits por segundo que hacen falta para sostenerlo.
+**It isn't the refresh rate. It's the short vblank.** `CTRL4K` and `A4K` are both at 60
+Hz — one works and the other doesn't, and the only difference is the vblank (514 vs 116).
+That also flatly closes off the bandwidth explanation: `A4K` runs at 603.6 MHz, well below
+the HBR3 ceiling (25.92 Gbps), and still fails just like `B4K` at 954.72 MHz. It doesn't
+matter how much bandwidth margin there is — what breaks the link is the short duration of
+the vertical blanking itself, not the bits per second needed to sustain it.
 
-**Esto cambia el objetivo del proyecto.** El límite no es "90 Hz": es un vblank mínimo, en
-algún punto entre 116/240 (fallan) y 514 (anda). Si ese mínimo es compatible con 90 Hz
-dentro del ancho de banda de HBR3, **90 Hz es alcanzable** con el vblank correcto — el
-candidato más directo es exactamente la combinación que se había descartado por margen
-justo de bandwidth: 4320x2160@90 con vblank 514 (25.53 Gbps de 25.92 — 1.5% de margen). Si
-ANDA, se acabó el lab. Si falla, hace falta bisectar el vblank mínimo entre 240 y 514 (el
-"segundo experimento" de más abajo, pero corrido a 4320 con `inject-did` en vez de al
-bloque base) para encontrar el punto de corte real y desde ahí buscar un refresh que entre.
+**This changes the project's goal.** The limit isn't "90 Hz": it's a minimum vblank,
+somewhere between 116/240 (fail) and 514 (works). If that minimum is compatible with 90 Hz
+within HBR3's bandwidth, **90 Hz is achievable** with the right vblank — the most direct
+candidate is exactly the combination that had been ruled out for tight bandwidth margin:
+4320x2160@90 with vblank 514 (25.53 of 25.92 Gbps — 1.5% margin). If it WORKS, the lab is
+done. If it fails, the minimum vblank needs to be bisected between 240 and 514 (the "second
+experiment" below, but run at 4320 with `inject-did` instead of on the base block) to find
+the real cutoff point and from there look for a refresh rate that fits.
 
-Testlog T014 completo en `docs/pruebas.jsonl`.
+Full testlog T014 in `docs/pruebas.jsonl`.
 
-### `90long` corrido (2026-08-05, noche): FALLA — y esto acota el problema a microsegundos
+### `90long` run (2026-08-05, night): FAILS — and this narrows the problem down to microseconds
 
-`verify-override.sh` confirmó carga (md5 `82483a9f...`), PREFLIGHT completo, `Notify Attach
-Begin`: `pclk 1063720000 raster 4420x2674 24 bpp` — exacto al diseño (vtotal 2160+514, el
-mismo vblank que anda a 60 Hz, ahora a 90). **Resultado físico: sólo logo HP, negro.**
+`verify-override.sh` confirmed loading (md5 `82483a9f...`), full PREFLIGHT, `Notify Attach
+Begin`: `pclk 1063720000 raster 4420x2674 24 bpp` — exact match to design (vtotal 2160+514,
+the same vblank that works at 60 Hz, now at 90). **Physical result: just the HP logo,
+black.**
 
-Novedad respecto de `B4K`: el HID (T015) esta vez **sí** actualizó — refresh `0x5a` (90,
-exacto) y htotal/vtotal (`4420`/`0a72`=2674) exactos al diseño, byte 1 de backlight en `00`
-las dos veces. O sea que el modo sí llegó completo hasta el link, con el mismo vblank
-(en líneas) que funciona perfecto a 60 Hz — y aun así no engancha. Descarta que el fallo de
-`B4K` fuera "el HID nunca se enteró"; a 90 Hz, ni con vblank correcto en líneas alcanza.
+New compared to `B4K`: this time the HID (T015) **did** update — refresh `0x5a` (90, exact)
+and htotal/vtotal (`4420`/`0a72`=2674) exact to design, backlight byte 1 at `00` both times.
+Meaning the mode did arrive complete all the way to the link, with the same vblank (in
+lines) that works perfectly at 60 Hz — and it still doesn't lock. This rules out `B4K`'s
+failure being "the HID never found out"; at 90 Hz, not even a correct vblank in lines is
+enough.
 
-**Los cuatro resultados ordenan limpio por tiempo de blanking vertical, no por líneas:**
+**The four results line up cleanly by vertical blanking time, not by lines:**
 
-| modo | vblank (líneas) | refresh | vblank (ms) = vblank/((vact+vblank)·rate) | resultado |
+| mode | vblank (lines) | refresh | vblank (ms) = vblank/((vact+vblank)·rate) | result |
 |---|---|---|---|---|
-| `A4K` | 116 | 60 Hz | 0.849 ms | FALLA |
-| `B4K` | 240 | 90 Hz | 1.111 ms | FALLA |
-| `90long` | 514 | 90 Hz | 2.136 ms | FALLA |
-| `CTRL4K` | 514 | 60 Hz | **3.204 ms** | **ANDA** |
+| `A4K` | 116 | 60 Hz | 0.849 ms | FAILS |
+| `B4K` | 240 | 90 Hz | 1.111 ms | FAILS |
+| `90long` | 514 | 90 Hz | 2.136 ms | FAILS |
+| `CTRL4K` | 514 | 60 Hz | **3.204 ms** | **WORKS** |
 
-Notar que `90long` y `CTRL4K` tienen el **mismo número de líneas** de vblank (514) y aun así
-uno falla y el otro anda — la única diferencia es el refresh, que cambia cuánto *tiempo*
-real dura ese blanking (a mayor refresh, cada línea dura menos). Eso descarta "cantidad de
-líneas" como la variable relevante y apunta a una duración mínima en microsegundos que el
-panel/puente Analogix necesita durante el vblank para lo que sea que hace ahí (quizás
-reentrenar, quizás procesar el frame anterior) — hipótesis, no confirmada todavía.
+Note that `90long` and `CTRL4K` have the **same number of lines** of vblank (514) and yet
+one fails and the other works — the only difference is the refresh rate, which changes how
+much real *time* that blanking lasts (at a higher refresh, each line lasts less). That rules
+out "number of lines" as the relevant variable and points to a minimum duration in
+microseconds that the panel/Analogix bridge needs during the vblank for whatever it does
+there (maybe retraining, maybe processing the previous frame) — a hypothesis, not confirmed
+yet.
 
-**Por qué esto es un problema para 90 Hz específicamente:** el techo de HBR3 (25.92 Gbps
-@24bpp) limita el pixel clock a ~1080 MHz. A 90 Hz con `htotal=4420`, eso pone un vblank
-máximo de **~555 líneas ≈ 2.27 ms** — por debajo de los 3.204 ms que ya sabemos que
-funcionan. Si el umbral real de tiempo necesario está más cerca de 3.2 ms que de 2.27 ms,
-**90 Hz podría no ser alcanzable dentro de HBR3 con ningún vblank**, sin importar cuánto se
-estire — el ancho de banda se agota antes de llegar al tiempo mínimo.
+**Why this is a problem for 90 Hz specifically:** the HBR3 ceiling (25.92 Gbps @24bpp) caps
+the pixel clock at ~1080 MHz. At 90 Hz with `htotal=4420`, that puts a maximum vblank of
+**~555 lines ≈ 2.27 ms** — below the 3.204 ms already known to work. If the real time
+threshold needed is closer to 3.2 ms than to 2.27 ms, **90 Hz might not be achievable within
+HBR3 with any vblank**, no matter how much it's stretched — bandwidth runs out before
+reaching the minimum time.
 
-**Antes de gastar otro reboot cerca del límite de banda a 90 Hz, conviene acotar el umbral
-real a 60 Hz**, donde no hay presión de bandwidth y se puede probar cualquier vblank.
-Candidato siguiente: `vblank=340` líneas a 60 Hz da exactamente 2.27 ms — el mismo tiempo
-que sería el máximo posible a 90 Hz dentro de HBR3.
+**Before spending another reboot near the bandwidth limit at 90 Hz, it's worth narrowing
+down the real threshold at 60 Hz**, where there's no bandwidth pressure and any vblank can
+be tested. Next candidate: `vblank=340` lines at 60 Hz gives exactly 2.27 ms — the same time
+that would be the maximum possible at 90 Hz within HBR3.
 
 ```bash
 ./scripts/edid-tool.py inject-did experiments/vblank/hmd.edid \
     -o experiments/vblank/g2-vblank-4k-bisect1.edid 340@60:1
 ```
 
-663.00 MHz, vtotal 2500 — 15.91 Gbps, muy lejos de cualquier límite. **Si esto FALLA, 90 Hz
-queda descartado dentro de HBR3** (no hay vblank que a la vez entre en el ancho de banda y
-llegue al tiempo mínimo). **Si ANDA**, sigue bisectando hacia arriba entre 340 y 514 líneas
-(a 60 Hz, sin presión de banda) para acotar el umbral real, y recién con eso evaluar si cabe
-a 90 Hz o si hace falta buscar un refresh intermedio (72/75/80 Hz) que sí entre.
+663.00 MHz, vtotal 2500 — 15.91 Gbps, far from any limit. **If this FAILS, 90 Hz is ruled
+out within HBR3** (there's no vblank that both fits the bandwidth and reaches the minimum
+time). **If it WORKS**, keep bisecting upward between 340 and 514 lines (at 60 Hz, with no
+bandwidth pressure) to narrow down the real threshold, and only then evaluate whether it
+fits at 90 Hz or whether an intermediate refresh rate (72/75/80 Hz) that does fit needs to
+be found.
 
-Testlog T015 completo en `docs/pruebas.jsonl`.
+Full testlog T015 in `docs/pruebas.jsonl`.
 
-### `bisect1` corrido (2026-08-05, noche): FALLA — 90 Hz queda descartado dentro de HBR3
+### `bisect1` run (2026-08-05, night): FAILS — 90 Hz is ruled out within HBR3
 
-`verify-override.sh` confirmó carga (md5 `001af82f...`), `Notify Attach Begin`: `pclk
-663000000 raster 4420x2500 24 bpp` — exacto (vtotal 2160+340). **Resultado físico: sólo
-logo HP.** HID (T016) confirmó timing exacto (60Hz, htotal/vtotal 4420/2500) entregado
-perfecto, backlight nunca se prendió.
+`verify-override.sh` confirmed loading (md5 `001af82f...`), `Notify Attach Begin`: `pclk
+663000000 raster 4420x2500 24 bpp` — exact (vtotal 2160+340). **Physical result: just the
+HP logo.** HID (T016) confirmed exact timing (60Hz, htotal/vtotal 4420/2500) delivered
+perfectly, backlight never turned on.
 
-**vblank=340 a 60 Hz da 2.27 ms — el mismo tiempo que sería el máximo posible a 90 Hz
-dentro de HBR3 — y falla.** Eso confirma que el umbral real de tiempo está por encima de
-2.27 ms, y como el techo de ancho de banda a 90 Hz no permite superar ese valor bajo
-ninguna combinación de vblank, **90 Hz queda descartado como alcanzable dentro de este
-enlace DisplayPort HBR3**, sin importar qué vblank se use.
+**vblank=340 at 60 Hz gives 2.27 ms — the same time that would be the maximum possible at
+90 Hz within HBR3 — and it fails.** That confirms the real time threshold is above 2.27 ms,
+and since the bandwidth ceiling at 90 Hz doesn't allow exceeding that value under any
+vblank combination, **90 Hz is ruled out as achievable within this DisplayPort HBR3 link**,
+regardless of what vblank is used.
 
-**Decisión con el usuario: ir directo a un refresh intermedio con margen real, en vez de
-seguir bisectando el umbral exacto a 60 Hz.** A 80 Hz el techo de banda permite hasta 3.66
-ms (contra los 3.204 ms que ya sabemos que andan a 60 Hz) — mucho más margen que a 90 Hz.
-Candidato: `vblank=775` a 80 Hz → 1037.82 MHz, 3.301 ms, 24.91 de 25.92 Gbps (~4% de margen,
-no pegado al límite como los intentos anteriores a 90 Hz).
+**Decision with the user: go straight to an intermediate refresh rate with real margin,
+instead of continuing to bisect the exact threshold at 60 Hz.** At 80 Hz the bandwidth
+ceiling allows up to 3.66 ms (against the 3.204 ms already known to work at 60 Hz) — much
+more margin than at 90 Hz. Candidate: `vblank=775` at 80 Hz → 1037.82 MHz, 3.301 ms, 24.91
+of 25.92 Gbps (~4% margin, not pinned against the limit like the previous attempts at 90
+Hz).
 
 ```bash
 ./scripts/edid-tool.py inject-did experiments/vblank/hmd.edid \
     -o experiments/vblank/g2-vblank-4k-80hz.edid 775@80:1
 ```
 
-**Esto redefine el objetivo del proyecto.** `CLAUDE.md` afirma que "la única cura" para el
-parpadeo es llegar a 90 Hz — pero esa afirmación nunca se puso a prueba a un refresh
-intermedio, era una suposición basada en cómo WMR anuncia sus modos nativos (sólo 60/90 en
-el EDID), no una medición. Si 80 Hz (o el refresh más alto que entre en HBR3 con vblank
-suficiente) reduce o elimina el parpadeo perceptible, cambia el criterio de éxito del lab.
-Si no lo reduce, hay que revisar si el parpadeo es específico de la frecuencia del strobe
-del backlight a 90 Hz y no simplemente "más alto es mejor".
+**This redefines the project's goal.** `CLAUDE.md` claims that "the only cure" for the
+flicker is reaching 90 Hz — but that claim was never tested at an intermediate refresh rate,
+it was an assumption based on how WMR advertises its native modes (only 60/90 in the EDID),
+not a measurement. If 80 Hz (or the highest refresh rate that fits within HBR3 with a
+sufficient vblank) reduces or eliminates the perceptible flicker, it changes the lab's
+success criterion. If it doesn't reduce it, then whether the flicker is specific to the
+backlight strobe frequency at 90 Hz needs to be reviewed, rather than simply "higher is
+better."
 
-Testlog T016 completo en `docs/pruebas.jsonl`.
+Full testlog T016 in `docs/pruebas.jsonl`.
 
-### `80hz` corrido (2026-08-05, noche): FALLA — refuta la hipótesis del umbral de tiempo
+### `80hz` run (2026-08-05, night): FAILS — refutes the time-threshold hypothesis
 
-`verify-override.sh` confirmó carga, `Notify Attach Begin`: `pclk 1037820000 raster
-4420x2935 24 bpp` — exacto al diseño (vtotal 2160+775). **Resultado físico: sin imagen,
-sólo logo.** HID (T017) confirmó refresh `0x50` (80, exacto) y htotal/vtotal
-(`4420`/`0b77`=2935) exactos.
+`verify-override.sh` confirmed loading, `Notify Attach Begin`: `pclk 1037820000 raster
+4420x2935 24 bpp` — exact match to design (vtotal 2160+775). **Physical result: no image,
+just the logo.** HID (T017) confirmed refresh `0x50` (80, exact) and htotal/vtotal
+(`4420`/`0b77`=2935) exact.
 
-**Esto rompe la hipótesis de "umbral de tiempo de blanking".** `80hz` tiene **3.301 ms** de
-blanking vertical — *más* que los 3.204 ms de `CTRL4K`, que sí anda. Si el tiempo de
-blanking fuera la variable relevante, `80hz` debería haber andado. No andó. La hipótesis
-armada a partir de los primeros cuatro puntos (que ordenaban perfecto por tiempo) queda
-refutada por el quinto. Anotado explícitamente para no repetir el error: **no se vuelve a
-usar esta hipótesis como si estuviera confirmada.**
+**This breaks the "blanking time threshold" hypothesis.** `80hz` has **3.301 ms** of
+vertical blanking — *more* than `CTRL4K`'s 3.204 ms, which does work. If blanking time were
+the relevant variable, `80hz` should have worked. It didn't. The hypothesis built from the
+first four data points (which lined up perfectly by time) is refuted by the fifth. Noted
+explicitly so as not to repeat the mistake: **this hypothesis is not to be used again as if
+it were confirmed.**
 
-**Patrón que sí sobrevive a los seis puntos, y es más simple:** el único modo que alguna vez
-mostró video, en toda la historia del proyecto, tiene **pixel clock ≈ 709.15 MHz** (el
-descriptor #2 nativo, y `CTRL4K`, su clon). Todos los demás — nativos y sintéticos —
-tienen un pixel clock distinto, y todos fallaron:
+**Pattern that does survive all six data points, and is simpler:** the only mode that has
+ever shown video, in the entire history of the project, has a **pixel clock ≈ 709.15 MHz**
+(the native descriptor #2, and `CTRL4K`, its clone). All the others — native and
+synthetic — have a different pixel clock, and all of them failed:
 
-| modo | pixel clock | resultado |
+| mode | pixel clock | result |
 |---|---|---|
-| nativo 2880x1440@90 (T002) | 428.58 MHz | FALLA |
-| nativo 4320x2160@90 (T003/T007) | 905.40 MHz | FALLA |
-| `A4K` | 603.60 MHz | FALLA |
-| `B4K` | 954.72 MHz | FALLA |
-| `90long` | 1063.72 MHz | FALLA |
-| `bisect1` | 663.00 MHz | FALLA |
-| `80hz` | 1037.82 MHz | FALLA |
-| **nativo 4320x2160@60** | **709.15 MHz** | **ANDA** |
-| **`CTRL4K`** | **709.14 MHz** | **ANDA** |
+| native 2880x1440@90 (T002) | 428.58 MHz | FAILS |
+| native 4320x2160@90 (T003/T007) | 905.40 MHz | FAILS |
+| `A4K` | 603.60 MHz | FAILS |
+| `B4K` | 954.72 MHz | FAILS |
+| `90long` | 1063.72 MHz | FAILS |
+| `bisect1` | 663.00 MHz | FAILS |
+| `80hz` | 1037.82 MHz | FAILS |
+| **native 4320x2160@60** | **709.15 MHz** | **WORKS** |
+| **`CTRL4K`** | **709.14 MHz** | **WORKS** |
 
-Esto también reinterpreta un resultado de la ronda anterior que había quedado sin explicar
-del todo: `CTRL` (T008, primera ronda, 2880x1440@60 con vblank largo) había fallado y se
-atribuyó al confound de resolución (2880x1440 "nunca mostró nada"). Con este patrón, hay una
-explicación alternativa que encaja igual de bien: 2880x1440@60 tiene un pixel clock de
-~397 MHz — tampoco 709.15 MHz — así que el mismo mecanismo lo explica sin necesitar invocar
-la resolución en absoluto.
+This also reinterprets a result from the previous round that had been left not fully
+explained: `CTRL` (T008, first round, 2880x1440@60 with a long vblank) had failed and was
+attributed to the resolution confound (2880x1440 "never showed anything"). With this
+pattern, there's an alternative explanation that fits equally well: 2880x1440@60 has a
+pixel clock of ~397 MHz — also not 709.15 MHz — so the same mechanism explains it without
+needing to invoke resolution at all.
 
-**Hipótesis nueva, sin confirmar: el puente Analogix (o el panel mismo) sólo engancha a un
-pixel clock específico (~709 MHz), independiente de resolución, refresh o vblank.** Si es
-así, no hay combinación de EDID que alcance 90 Hz (ni ningún otro refresh) sobre este link:
-el límite no es de timing sino del PLL del puente, y la vía HID de Windows para llegar a 90
-Hz tendría que estar reprogramando ese reloj por otro canal (DPCD/AUX, no la vía EDID/modo
-que este experimento puede tocar).
+**New hypothesis, unconfirmed: the Analogix bridge (or the panel itself) only locks at a
+specific pixel clock (~709 MHz), independent of resolution, refresh rate, or vblank.** If
+that's the case, no EDID combination reaches 90 Hz (or any other refresh rate) over this
+link: the limit isn't a timing one but the bridge's PLL, and Windows' HID path to reach 90
+Hz would have to be reprogramming that clock through another channel (DPCD/AUX, not the
+EDID/mode path this experiment can touch).
 
-**Test que separa esta hipótesis de "sólo 60 Hz enclava" (sin tocar el refresh):** armar un
-modo a 60 Hz con vblank generoso (conocido bueno, ~514 líneas) pero con un pixel clock
-distinto de 709 MHz — cambiando el *horizontal* blanking en vez del vertical (algo que
-ningún test hasta ahora tocó: todos usaron el mismo horizontal 50/4/46). Si eso también
-falla, el pixel clock específico es la variable, no el refresh. Si anda, el pixel clock no
-importa y el patrón de la tabla es coincidencia (los seis fallos también comparten refresh
-≠ 60, así que no se puede separar todavía con los datos que hay).
+**Test that separates this hypothesis from "only 60 Hz locks" (without touching the
+refresh rate):** build a 60 Hz mode with a generous vblank (known good, ~514 lines) but with
+a pixel clock different from 709 MHz — by changing the *horizontal* blanking instead of the
+vertical (something no test so far has touched: all of them used the same horizontal
+50/4/46). If that also fails, the specific pixel clock is the variable, not the refresh
+rate. If it works, the pixel clock doesn't matter and the pattern in the table is
+coincidence (the six failures also all share refresh ≠ 60, so it can't be separated yet
+with the data on hand).
 
-Testlog T017 completo en `docs/pruebas.jsonl`.
+Full testlog T017 in `docs/pruebas.jsonl`.
 
 ---
 
-## Segundo experimento: el barrido de refresh
+## Second experiment: the refresh sweep
 
-El factorial dice *si* el vblank importa. No dice *dónde* está el límite en el eje del
-refresh. Para eso se mantiene la forma del timing fija y se mueve sólo el refresh:
+The factorial tells us *whether* the vblank matters. It doesn't tell us *where* the limit
+is along the refresh-rate axis. For that, the shape of the timing is held fixed and only the
+refresh rate is moved:
 
 ```bash
 ./scripts/edid-tool.py inject-mode experiments/vblank/hmd.edid \
     -o experiments/vblank/sweep-70-75-80.edid  SHORT@70:1 SHORT@75:2 SHORT@80:3
 ```
 
-`SHORT` es el blanking de los modos que fallan (vblank 158), `LONG` el del que anda
-(vblank 514). La forma paramétrica es `BLANKING@RATE` y acepta cualquier refresh entre
-24 y 240.
+`SHORT` is the blanking of the modes that fail (vblank 158), `LONG` that of the one that
+works (vblank 514). The parametric form is `BLANKING@RATE` and accepts any refresh rate
+between 24 and 240.
 
-**El bloque base tiene 4 slots y el 0 lleva el modo nativo, así que entran 3 por EDID.**
-Por eso el barrido se hace **bisectando**, no de una sola pasada:
+**The base block has 4 slots and slot 0 carries the native mode, so 3 fit per EDID.** That's
+why the sweep is done by **bisecting**, not in a single pass:
 
-| ronda | modos | qué contesta |
+| round | modes | what it answers |
 |---|---|---|
-| 1 | `SHORT@70` `SHORT@75` `SHORT@80` | ¿hay umbral, y en qué tercio cae? |
-| 2 | tres valores alrededor del cambio | lo acota a ±1-2 Hz |
+| 1 | `SHORT@70` `SHORT@75` `SHORT@80` | is there a threshold, and which third does it fall in? |
+| 2 | three values around the change | narrows it to ±1-2 Hz |
 
-Referencia de pixel clocks con `SHORT` (todos muy por debajo de los 709 MHz del modo que
-anda, así que ninguno mete presión de ancho de banda):
+Pixel clock reference with `SHORT` (all well below the 709 MHz of the working mode, so none
+of them introduces bandwidth pressure):
 
 ```
 SHORT@65  309.53 MHz     SHORT@75  357.15 MHz
@@ -568,41 +584,42 @@ SHORT@70  333.34 MHz     SHORT@80  380.96 MHz
 SHORT@72  342.87 MHz     SHORT@85  404.77 MHz
 ```
 
-Cómo se lee: si el panel anda hasta cierto refresh y falla a partir de ahí **con la forma
-de timing constante**, hay un umbral duro y es un dato mucho más accionable que "90 Hz
-falla". Si en cambio falla a cualquier refresh distinto de 60 con `SHORT`, no es un umbral
-sino la forma del timing — y refuerza lo que diga el factorial.
+How to read it: if the panel works up to a certain refresh rate and fails past it **with
+the timing shape held constant**, there's a hard threshold and it's a far more actionable
+data point than "90 Hz fails." If instead it fails at any refresh rate other than 60 with
+`SHORT`, it isn't a threshold but the shape of the timing — and it reinforces whatever the
+factorial says.
 
-Correr esto **después** del factorial: si `B` (90 Hz con vblank largo) anda, el eje del
-refresh ya quedó descartado y el barrido pierde sentido.
+Run this **after** the factorial: if `B` (90 Hz with a long vblank) works, the refresh-rate
+axis is already ruled out and the sweep loses its point.
 
 ---
 
-## Si hace falta repetirlo a 4320x2160
+## If it needs to be repeated at 4320x2160
 
-`edid-tool.py` ya **decodifica** los descriptores Type I de DisplayID (`decode_did_type1`),
-pero todavía no los escribe. El encoder se escribió y se validó contra este EDID real: el
-decoder reproduce exactamente `905.400 MHz` con vblank 116 y `709.150 MHz` con vblank 514,
-así que el layout está confirmado empíricamente y agregar un `inject-did` es directo.
+`edid-tool.py` already **decodes** the DisplayID Type I descriptors (`decode_did_type1`),
+but doesn't write them yet. The encoder was written and validated against this real EDID:
+the decoder reproduces exactly `905.400 MHz` with vblank 116 and `709.150 MHz` with vblank
+514, so the layout is empirically confirmed and adding an `inject-did` is straightforward.
 
-Layout del Type I (20 bytes, todos los campos menos las polaridades guardan `valor - 1`):
+Type I layout (20 bytes, every field except the polarities stores `value - 1`):
 
 ```
-0-2   pixel clock / 10 kHz, 24 bits LSB primero
+0-2   pixel clock / 10 kHz, 24 bits LSB first
 3     flags: bit7 preferred, bit4 interlaced
 4-5   horizontal active        6-7    horizontal blanking
-8-9   horizontal front porch, bit15 = polaridad hsync
+8-9   horizontal front porch, bit15 = hsync polarity
 10-11 horizontal sync width
 12-13 vertical active          14-15  vertical blanking
-16-17 vertical front porch, bit15 = polaridad vsync
+16-17 vertical front porch, bit15 = vsync polarity
 18-19 vertical sync width
 ```
 
-Hay que corregir **dos** checksums: el de la sección DisplayID (último byte de la sección,
-que arranca en `blk+1` y mide `5 + section_size`) y el del bloque de extensión EDID
-(`blk+127`).
+**Two** checksums need correcting: the one for the DisplayID section (last byte of the
+section, which starts at `blk+1` and spans `5 + section_size`) and the one for the EDID
+extension block (`blk+127`).
 
-Presets sugeridos, todos dentro de HBR3 (25.92 Gbps):
+Suggested presets, all within HBR3 (25.92 Gbps):
 
 | preset | timing | pclk | Gbps @24bpp |
 |---|---|---|---|
@@ -610,39 +627,39 @@ Presets sugeridos, todos dentro de HBR3 (25.92 Gbps):
 | `A4K` | 4320x2160@60 vblank 116 | 603.60 MHz | 14.49 |
 | `B4K` | 4320x2160@90 vblank 240 | 954.72 MHz | 22.91 |
 
-Con sólo dos descriptores en el bloque, conviene reemplazar el **desc 1** (el @90 que ya
-falla) y dejar el desc 2 (@60) intacto como control.
+With only two descriptors in the block, it's best to replace **desc 1** (the @90 that
+already fails) and leave desc 2 (@60) untouched as a control.
 
 ---
 
-## Correcciones ya aplicadas — no reintroducir
+## Corrections already applied — do not reintroduce
 
-El reporte publicado tuvo errores que se corrigieron sobre la marcha. Si se redacta algo
-nuevo para el foro o el PR:
+The published report had errors that were fixed along the way. If something new is drafted
+for the forum or the PR:
 
-- La extensión del G2 es **DisplayID 1.2** (byte de versión `0x12`), con dos descriptores
-  **Type I**. NO es DisplayID 2.0 ni Type VII. *(verificado contra los bytes reales)*
-- `input.u.digital.bpc` se asigna en **tres** lugares del árbol, no dos: `nvt_edid.c:932`,
-  `nvt_edidext_displayid20.c:314`, y `nvkms-dpy.c:2257` — este último dentro de
-  `CreateParsedEdidFromNVT_TIMING()`, que nunca corre para un sink con EDID real.
-- Números de línea en el tag 595.71.05: clamp DP en `nvkms-dpy.c:3456`, dispatch DisplayID
-  en `nvt_edid.c:1101`. En `main` (610.57.04) son 3468 y 1101.
-- DSC se descarta **por aritmética**, no por ausencia de strings en `dmesg`: el modo que
-  anda son 17.0 Gbps sin comprimir y el que falla 10.3, así que DSC no puede ser requerido
-  para el que falla.
-- El `.patch.txt` adjunto en el foro es **viejo**: dice "DisplayID 2.0" y trae el header de
-  hunk mal contado. Hay uno regenerado en `patches/nvidia/`.
+- The G2's extension is **DisplayID 1.2** (version byte `0x12`), with two **Type I**
+  descriptors. It is NOT DisplayID 2.0 nor Type VII. *(verified against the real bytes)*
+- `input.u.digital.bpc` is assigned in **three** places in the tree, not two: `nvt_edid.c:932`,
+  `nvt_edidext_displayid20.c:314`, and `nvkms-dpy.c:2257` — this last one inside
+  `CreateParsedEdidFromNVT_TIMING()`, which never runs for a sink with a real EDID.
+- Line numbers on the 595.71.05 tag: DP clamp in `nvkms-dpy.c:3456`, DisplayID dispatch in
+  `nvt_edid.c:1101`. On `main` (610.57.04) they're 3468 and 1101.
+- DSC is ruled out **by arithmetic**, not by the absence of strings in `dmesg`: the working
+  mode is 17.0 Gbps uncompressed and the failing one 10.3, so DSC can't be required for the
+  one that fails.
+- The `.patch.txt` attached on the forum is **outdated**: it says "DisplayID 2.0" and has a
+  miscounted hunk header. A regenerated one is in `patches/nvidia/`.
 
-## Verificado contra los bytes reales del EDID
+## Verified against the real EDID bytes
 
-Todo esto se chequeó contra `experiments/vblank/hmd.edid`, y coincide con lo que
-afirma el post del foro:
+All of this was checked against `experiments/vblank/hmd.edid`, and it matches what the
+forum post states:
 
 ```
 byte 0x14 = 0x80          digital, color bit depth = 000 (undefined)
-checksum base block 0xE8  suma del bloque = 0
+checksum base block 0xE8  block sum = 0
 ManufID 0x220E            = HPN
-CTA byte 3 = 0x00         sin YCbCr 4:4:4 ni 4:2:2
-DisplayID: 70 12 79 00 00 03   version 1.2, tag 0x03, 40 bytes = 2 descriptores Type I
-g2-edid-8bpc-repro.bin    difiere en exactamente 2 bytes: 0x14 y 0x7F, checksum válido
+CTA byte 3 = 0x00         no YCbCr 4:4:4 nor 4:2:2
+DisplayID: 70 12 79 00 00 03   version 1.2, tag 0x03, 40 bytes = 2 Type I descriptors
+g2-edid-8bpc-repro.bin    differs in exactly 2 bytes: 0x14 and 0x7F, valid checksum
 ```

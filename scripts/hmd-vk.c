@@ -1,30 +1,30 @@
-// hmd-vk — maneja el panel del casco por el MISMO camino que Monado: Vulkan display,
-// no KMS. Sirve para pedir modos que no estan en el EDID y barrer refresh rates.
+// hmd-vk — drives the headset panel through the SAME path as Monado: Vulkan display,
+// not KMS. Useful for requesting modes that aren't in the EDID and sweeping refresh rates.
 //
-//   ./hmd-vk list                    lista los modos que reporta VULKAN (no el EDID)
-//   ./hmd-vk native <idx> [seg]      usa un modo tal cual lo reporta Vulkan
-//   ./hmd-vk custom <w> <h> <mHz>    modo ARBITRARIO via vkCreateDisplayModeKHR
-//                             [seg]  ej: custom 2880 1440 75000  -> 75.000 Hz
+//   ./hmd-vk list                    lists the modes VULKAN reports (not the EDID)
+//   ./hmd-vk native <idx> [secs]     uses a mode exactly as Vulkan reports it
+//   ./hmd-vk custom <w> <h> <mHz>    ARBITRARY mode via vkCreateDisplayModeKHR
+//                             [secs] e.g.: custom 2880 1440 75000  -> 75.000 Hz
 //
-//   seg = 0  ->  mantiene la imagen INDEFINIDAMENTE hasta que lo mates.
-//                Es el default a proposito: una prueba fisica no puede vencer mientras el
-//                usuario la esta mirando o antes de que conteste. Ya paso y contamino
-//                resultados.
+//   secs = 0  ->  keeps the image up INDEFINITELY until you kill it.
+//                 This is the default on purpose: a physical test can't time out while the
+//                 user is looking at it or before they respond. This has happened before and
+//                 contaminated results.
 //
-// POR QUE VULKAN Y NO KMS (medido, ver cap. 04):
-// El intento anterior hacia modeset por DRM lease con ioctls de KMS. NVIDIA acepta TODO
-// (SetCrtc, AtomicCommit con ALLOW_MODESET, mode_valid=1 al releer) y no sale nada por el
-// cable: el panel queda en el logo de HP incluso con el modo de 60Hz que Monado maneja
-// perfecto. En el driver NVIDIA el DRM/KMS es una capa parcial para displays en
-// direct-mode; quien programa el hardware es nvidia-modeset por el path de Vulkan. Monado
-// usa VK_EXT_acquire_drm_display + VK_KHR_display + VK_EXT_direct_mode_display, asi que
-// esto hace lo mismo.
+// WHY VULKAN AND NOT KMS (measured, see ch. 04):
+// The previous attempt did a modeset via DRM lease with KMS ioctls. NVIDIA accepts EVERYTHING
+// (SetCrtc, AtomicCommit with ALLOW_MODESET, mode_valid=1 on readback) and nothing comes out
+// over the cable: the panel stays on the HP logo even with the 60Hz mode that Monado drives
+// perfectly. In the NVIDIA driver, DRM/KMS is a partial layer for displays in
+// direct-mode; the hardware is actually programmed by nvidia-modeset via the Vulkan path.
+// Monado uses VK_EXT_acquire_drm_display + VK_KHR_display + VK_EXT_direct_mode_display, so
+// this does the same thing.
 //
-// El display se consigue por wp_drm_lease_v1 (el conector esta non-desktop, el compositor
-// no lo usa), y ese fd arrendado se le pasa a vkGetDrmDisplayEXT/vkAcquireDrmDisplayEXT.
-// No hace falta cambiar de VT ni parar GNOME, y no se toca ningun monitor del escritorio.
+// The display is obtained via wp_drm_lease_v1 (the connector is non-desktop, the compositor
+// doesn't use it), and that leased fd is passed to vkGetDrmDisplayEXT/vkAcquireDrmDisplayEXT.
+// No need to switch VTs or stop GNOME, and no desktop monitor is touched.
 //
-// La verificacion sigue siendo FISICA. Hay que mirar adentro del casco.
+// Verification is still PHYSICAL. You have to look inside the headset.
 
 #define _GNU_SOURCE
 #include <stdint.h>
@@ -46,7 +46,7 @@
 		}                                                                          \
 	} while (0)
 
-// ---- lease (mismo mecanismo que hmd-modeset.c) ------------------------------------------
+// ---- lease (same mechanism as hmd-modeset.c) ------------------------------------------
 
 static struct wp_drm_lease_device_v1 *lease_dev;
 static struct wp_drm_lease_connector_v1 *hmd_conn;
@@ -98,15 +98,15 @@ static const struct wl_registry_listener RL = { reg_add, reg_del };
 static int get_lease(void)
 {
 	struct wl_display *dpy = wl_display_connect(NULL);
-	if (!dpy) { fprintf(stderr, "no hay sesion Wayland\n"); return -1; }
+	if (!dpy) { fprintf(stderr, "no Wayland session\n"); return -1; }
 	struct wl_registry *reg = wl_display_get_registry(dpy);
 	wl_registry_add_listener(reg, &RL, NULL);
 	wl_display_roundtrip(dpy);
-	if (!lease_dev) { fprintf(stderr, "el compositor no ofrece wp_drm_lease_device_v1\n"); return -1; }
+	if (!lease_dev) { fprintf(stderr, "compositor doesn't offer wp_drm_lease_device_v1\n"); return -1; }
 	wl_display_roundtrip(dpy);
 	wl_display_roundtrip(dpy);
-	if (!hmd_conn) { fprintf(stderr, "el compositor no ofrece conectores arrendables\n"); return -1; }
-	printf("conector: %s (id %u)\n", hmd_name, hmd_conn_id);
+	if (!hmd_conn) { fprintf(stderr, "compositor doesn't offer leasable connectors\n"); return -1; }
+	printf("connector: %s (id %u)\n", hmd_name, hmd_conn_id);
 
 	struct wp_drm_lease_request_v1 *rq = wp_drm_lease_device_v1_create_lease_request(lease_dev);
 	wp_drm_lease_request_v1_request_connector(rq, hmd_conn);
@@ -114,12 +114,12 @@ static int get_lease(void)
 	wp_drm_lease_v1_add_listener(ls, &LL, NULL);
 	while (!lease_done)
 		if (wl_display_dispatch(dpy) < 0) break;
-	if (lease_fd < 0) { fprintf(stderr, "el compositor NEGO el lease\n"); return -1; }
+	if (lease_fd < 0) { fprintf(stderr, "compositor DENIED the lease\n"); return -1; }
 	printf("lease OK (fd %d)\n", lease_fd);
 	return lease_fd;
 }
 
-// ---- utilidades -------------------------------------------------------------------------
+// ---- utilities -------------------------------------------------------------------------
 
 static double now_s(void)
 {
@@ -132,9 +132,9 @@ static void activate_panel(void)
 {
 	const char *cmd = getenv("HMD_PANEL_CMD");
 	if (!cmd) cmd = "./scripts/panel.py activate";
-	printf(">>> activando panel: %s\n", cmd);
+	printf(">>> activating panel: %s\n", cmd);
 	fflush(stdout);
-	if (system(cmd) != 0) fprintf(stderr, "  (la activacion del panel fallo)\n");
+	if (system(cmd) != 0) fprintf(stderr, "  (panel activation failed)\n");
 }
 
 // ---- main --------------------------------------------------------------------------------
@@ -143,19 +143,19 @@ int main(int argc, char **argv)
 {
 	if (argc < 2) {
 		fprintf(stderr,
-		        "uso: %s list | native <idx> [seg] | custom <w> <h> <mHz> [seg]\n"
-		        "     seg=0 (default) mantiene la imagen hasta que lo mates\n", argv[0]);
+		        "usage: %s list | native <idx> [secs] | custom <w> <h> <mHz> [secs]\n"
+		        "     secs=0 (default) keeps the image up until you kill it\n", argv[0]);
 		return 2;
 	}
 	int do_list = !strcmp(argv[1], "list");
 	int do_native = !strcmp(argv[1], "native");
 	int do_custom = !strcmp(argv[1], "custom");
-	if (!do_list && !do_native && !do_custom) { fprintf(stderr, "comando desconocido\n"); return 2; }
+	if (!do_list && !do_native && !do_custom) { fprintf(stderr, "unknown command\n"); return 2; }
 
 	int fd = get_lease();
 	if (fd < 0) return 1;
 
-	// --- instancia ---
+	// --- instance ---
 	const char *inst_exts[] = {
 		VK_KHR_SURFACE_EXTENSION_NAME,
 		VK_KHR_DISPLAY_EXTENSION_NAME,
@@ -176,17 +176,17 @@ int main(int argc, char **argv)
 	PFN_vkAcquireDrmDisplayEXT p_AcquireDrmDisplay =
 	    (PFN_vkAcquireDrmDisplayEXT)vkGetInstanceProcAddr(inst, "vkAcquireDrmDisplayEXT");
 	if (!p_GetDrmDisplay || !p_AcquireDrmDisplay) {
-		fprintf(stderr, "faltan vkGetDrmDisplayEXT / vkAcquireDrmDisplayEXT\n");
+		fprintf(stderr, "missing vkGetDrmDisplayEXT / vkAcquireDrmDisplayEXT\n");
 		return 1;
 	}
 
 	uint32_t ndev = 0;
 	vkEnumeratePhysicalDevices(inst, &ndev, NULL);
-	if (!ndev) { fprintf(stderr, "sin dispositivos Vulkan\n"); return 1; }
+	if (!ndev) { fprintf(stderr, "no Vulkan devices\n"); return 1; }
 	VkPhysicalDevice *devs = calloc(ndev, sizeof(*devs));
 	vkEnumeratePhysicalDevices(inst, &ndev, devs);
 
-	// El display arrendado sólo lo ve la GPU que lo maneja: probamos hasta que una lo tome.
+	// The leased display is only visible to the GPU driving it: we try until one claims it.
 	VkPhysicalDevice phys = VK_NULL_HANDLE;
 	VkDisplayKHR display = VK_NULL_HANDLE;
 	for (uint32_t i = 0; i < ndev; i++) {
@@ -197,16 +197,16 @@ int main(int argc, char **argv)
 		printf("  GPU '%s': vkGetDrmDisplayEXT -> %d\n", pp.deviceName, r);
 		if (r == VK_SUCCESS && d != VK_NULL_HANDLE) { phys = devs[i]; display = d; break; }
 	}
-	if (!phys) { fprintf(stderr, "ninguna GPU pudo tomar el conector %u\n", hmd_conn_id); return 1; }
+	if (!phys) { fprintf(stderr, "no GPU could claim connector %u\n", hmd_conn_id); return 1; }
 	VKCHK(p_AcquireDrmDisplay(phys, fd, display), "vkAcquireDrmDisplayEXT");
-	printf("display adquirido por Vulkan\n");
+	printf("display acquired by Vulkan\n");
 
-	// --- modos que reporta VULKAN (ojo: puede diferir del EDID) ---
+	// --- modes reported by VULKAN (note: may differ from the EDID) ---
 	uint32_t nmodes = 0;
 	vkGetDisplayModePropertiesKHR(phys, display, &nmodes, NULL);
 	VkDisplayModePropertiesKHR *modes = calloc(nmodes ? nmodes : 1, sizeof(*modes));
 	vkGetDisplayModePropertiesKHR(phys, display, &nmodes, modes);
-	printf("\nmodos que reporta Vulkan (%u):\n", nmodes);
+	printf("\nmodes reported by Vulkan (%u):\n", nmodes);
 	for (uint32_t i = 0; i < nmodes; i++) {
 		VkDisplayModeParametersKHR p = modes[i].parameters;
 		printf("  [%u] %ux%u @ %.3f Hz  (refreshRate=%u mHz)\n", i,
@@ -215,7 +215,7 @@ int main(int argc, char **argv)
 	}
 	if (do_list) return 0;
 
-	// --- elegir/crear el modo ---
+	// --- choose/create the mode ---
 	VkDisplayModeKHR mode = VK_NULL_HANDLE;
 	VkExtent2D extent;
 	uint32_t refresh_mhz;
@@ -224,13 +224,13 @@ int main(int argc, char **argv)
 	if (do_native) {
 		uint32_t idx = argc > 2 ? (uint32_t)atoi(argv[2]) : 0;
 		if (argc > 3) secs = atoi(argv[3]);
-		if (idx >= nmodes) { fprintf(stderr, "indice fuera de rango\n"); return 2; }
+		if (idx >= nmodes) { fprintf(stderr, "index out of range\n"); return 2; }
 		mode = modes[idx].displayMode;
 		extent = modes[idx].parameters.visibleRegion;
 		refresh_mhz = modes[idx].parameters.refreshRate;
-		printf("\nmodo NATIVO [%u] de Vulkan\n", idx);
+		printf("\nNATIVE mode [%u] from Vulkan\n", idx);
 	} else {
-		if (argc < 5) { fprintf(stderr, "uso: custom <w> <h> <mHz> [seg]\n"); return 2; }
+		if (argc < 5) { fprintf(stderr, "usage: custom <w> <h> <mHz> [secs]\n"); return 2; }
 		extent.width = (uint32_t)atoi(argv[2]);
 		extent.height = (uint32_t)atoi(argv[3]);
 		refresh_mhz = (uint32_t)atoi(argv[4]);
@@ -241,17 +241,17 @@ int main(int argc, char **argv)
 		};
 		VkResult r = vkCreateDisplayModeKHR(phys, display, &mci, NULL, &mode);
 		if (r != VK_SUCCESS) {
-			printf("\n>>> vkCreateDisplayModeKHR RECHAZADO: VkResult %d\n", r);
-			printf(">>> el driver no acepta %ux%u @ %.3f Hz\n",
+			printf("\n>>> vkCreateDisplayModeKHR REJECTED: VkResult %d\n", r);
+			printf(">>> the driver does not accept %ux%u @ %.3f Hz\n",
 			       extent.width, extent.height, refresh_mhz / 1000.0);
-			printf(">>> (esto YA ES un resultado: dice donde esta el limite)\n");
+			printf(">>> (this IS ALREADY a result: it shows where the limit is)\n");
 			return 1;
 		}
-		printf("\n>>> modo CUSTOM aceptado por el driver: %ux%u @ %.3f Hz\n",
+		printf("\n>>> CUSTOM mode accepted by the driver: %ux%u @ %.3f Hz\n",
 		       extent.width, extent.height, refresh_mhz / 1000.0);
 	}
 
-	// --- plano y surface ---
+	// --- plane and surface ---
 	uint32_t nplanes = 0;
 	vkGetPhysicalDeviceDisplayPlanePropertiesKHR(phys, &nplanes, NULL);
 	VkDisplayPlanePropertiesKHR *planes = calloc(nplanes ? nplanes : 1, sizeof(*planes));
@@ -269,8 +269,8 @@ int main(int argc, char **argv)
 		free(sup);
 		if (plane_idx != UINT32_MAX) break;
 	}
-	if (plane_idx == UINT32_MAX) { fprintf(stderr, "ningun plano soporta este display\n"); return 1; }
-	printf("plano %u (stack %u)\n", plane_idx, plane_stack);
+	if (plane_idx == UINT32_MAX) { fprintf(stderr, "no plane supports this display\n"); return 1; }
+	printf("plane %u (stack %u)\n", plane_idx, plane_stack);
 
 	VkDisplayPlaneCapabilitiesKHR caps;
 	vkGetDisplayPlaneCapabilitiesKHR(phys, mode, plane_idx, &caps);
@@ -303,7 +303,7 @@ int main(int argc, char **argv)
 		vkGetPhysicalDeviceSurfaceSupportKHR(phys, i, surface, &present);
 		if ((qf[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) && present) { qi = i; break; }
 	}
-	if (qi == UINT32_MAX) { fprintf(stderr, "sin queue grafica que presente\n"); return 1; }
+	if (qi == UINT32_MAX) { fprintf(stderr, "no graphics queue that can present\n"); return 1; }
 
 	float prio = 1.0f;
 	VkDeviceQueueCreateInfo qci = { .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
@@ -325,11 +325,11 @@ int main(int argc, char **argv)
 	VkSurfaceFormatKHR *fmts = calloc(nfmt ? nfmt : 1, sizeof(*fmts));
 	vkGetPhysicalDeviceSurfaceFormatsKHR(phys, surface, &nfmt, fmts);
 
-	// El EDID del G2 NO declara profundidad de color (byte 0x14 = 0x80, "indefinida"), asi
-	// que la fuente elige. NVIDIA en Linux cae a 6 bits por color (nvidia-modeset loguea
-	// "18 bpp", y el casco reporta 6 en el byte 18 de su DEVICE_STATUS); Windows usa 8 y a
-	// 90Hz anda. HMD_VK_FORMAT permite probar si el formato del swapchain mueve esa eleccion.
-	printf("formatos de la surface (%u):\n", nfmt);
+	// The G2's EDID does NOT declare a color depth (byte 0x14 = 0x80, "undefined"), so
+	// the source picks one. NVIDIA on Linux falls back to 6 bits per color (nvidia-modeset logs
+	// "18 bpp", and the headset reports 6 in byte 18 of its DEVICE_STATUS); Windows uses 8 and
+	// works at 90Hz. HMD_VK_FORMAT lets you test whether the swapchain format moves that choice.
+	printf("surface formats (%u):\n", nfmt);
 	for (uint32_t i = 0; i < nfmt; i++)
 		printf("  [%u] format=%d colorSpace=%d\n", i, fmts[i].format, fmts[i].colorSpace);
 	uint32_t fmt_idx = 0;
@@ -337,9 +337,9 @@ int main(int argc, char **argv)
 	if (fmt_env) {
 		uint32_t want = (uint32_t)atoi(fmt_env);
 		if (want < nfmt) fmt_idx = want;
-		else fprintf(stderr, "  HMD_VK_FORMAT=%u fuera de rango, uso 0\n", want);
+		else fprintf(stderr, "  HMD_VK_FORMAT=%u out of range, using 0\n", want);
 	}
-	printf("usando formato [%u] = %d\n", fmt_idx, fmts[fmt_idx].format);
+	printf("using format [%u] = %d\n", fmt_idx, fmts[fmt_idx].format);
 
 	uint32_t nimg = scaps.minImageCount < 2 ? 2 : scaps.minImageCount;
 	if (scaps.maxImageCount && nimg > scaps.maxImageCount) nimg = scaps.maxImageCount;
@@ -365,7 +365,7 @@ int main(int argc, char **argv)
 	vkGetSwapchainImagesKHR(dev, swap, &nsi, NULL);
 	VkImage *imgs = calloc(nsi, sizeof(*imgs));
 	vkGetSwapchainImagesKHR(dev, swap, &nsi, imgs);
-	printf("swapchain: %u imagenes, formato %d, %ux%u\n", nsi, fmts[fmt_idx].format,
+	printf("swapchain: %u images, format %d, %ux%u\n", nsi, fmts[fmt_idx].format,
 	       extent.width, extent.height);
 
 	VkCommandPoolCreateInfo pci = { .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -388,23 +388,23 @@ int main(int argc, char **argv)
 	VkFence fence;
 	vkCreateFence(dev, &fci, NULL, &fence);
 
-	// --- primer frame, y el panel INMEDIATAMENTE despues ---
-	printf("\n>>> presentando. ");
-	if (secs > 0) printf("durante %d s.\n", secs);
-	else printf("INDEFINIDAMENTE (Ctrl-C o kill para cortar).\n");
-	printf(">>> deberias ver colores planos ALTERNANDO (naranja / azul / verde).\n");
-	printf(">>> logo de HP, negro, o nada = no engancho.\n\n");
+	// --- first frame, and the panel IMMEDIATELY after ---
+	printf("\n>>> presenting. ");
+	if (secs > 0) printf("for %d s.\n", secs);
+	else printf("INDEFINITELY (Ctrl-C or kill to stop).\n");
+	printf(">>> you should see flat colors ALTERNATING (orange / blue / green).\n");
+	printf(">>> HP logo, black, or nothing = didn't sync.\n\n");
 	fflush(stdout);
 
 	double t0 = now_s(), last = t0;
 	uint64_t frames = 0, last_frames = 0;
 	int activated = 0;
 
-	// Tres colores bien distintos: si el panel engancha es imposible confundirlo con "nada".
-	// OJO: alternan CADA FRAME (a 90fps es un estrobo de 30Hz por diseño) — sirven para
-	// "engancha/no engancha", NUNCA para juzgar parpadeo del backlight. Para eso,
-	// HMD_VK_SOLID=1 pinta blanco fijo, cero variación de fuente: cualquier parpadeo que se
-	// vea ahí es del panel/backlight, no del test.
+	// Three clearly distinct colors: if the panel syncs it's impossible to confuse it with "nothing".
+	// NOTE: they alternate EVERY FRAME (at 90fps that's a 30Hz strobe by design) — they're useful
+	// for "syncs/doesn't sync", NEVER for judging backlight flicker. For that,
+	// HMD_VK_SOLID=1 paints solid white, zero source variation: any flicker you see there
+	// is from the panel/backlight, not from the test.
 	const VkClearColorValue COLORS[3] = {
 		{ { 1.0f, 0.40f, 0.0f, 1.0f } },
 		{ { 0.0f, 0.35f, 1.0f, 1.0f } },
@@ -412,7 +412,7 @@ int main(int argc, char **argv)
 	};
 	const VkClearColorValue WHITE = { { 1.0f, 1.0f, 1.0f, 1.0f } };
 	const int solid = getenv("HMD_VK_SOLID") != NULL;
-	if (solid) printf(">>> HMD_VK_SOLID: blanco fijo (test de parpadeo de backlight).\n");
+	if (solid) printf(">>> HMD_VK_SOLID: solid white (backlight flicker test).\n");
 
 	for (;;) {
 		if (secs > 0 && now_s() - t0 >= secs) break;
@@ -474,22 +474,22 @@ int main(int argc, char **argv)
 		vkResetFences(dev, 1, &fence);
 		frames++;
 
-		// El panel se apaga solo a los ~3 s sin senal, asi que se enciende recien cuando ya
-		// hay frames saliendo -- y despues se reenvia el screen-enable, como hace Monado,
-		// porque el companion puede re-enumerar y comerse el primero.
+		// The panel turns itself off after ~3 s without a signal, so it's only turned on once
+		// frames are actually going out -- and afterward the screen-enable is resent, like
+		// Monado does, because the companion may re-enumerate and eat the first one.
 		if (!activated && frames >= 2) { activated = 1; activate_panel(); }
 		if (activated == 1 && now_s() - t0 > 4.0) {
 			activated = 2;
 			const char *on = getenv("HMD_PANEL_ON_CMD");
 			if (!on) on = "./scripts/panel.py on";
-			if (system(on) != 0) { /* no critico */ }
-			printf("  [%.1fs] screen-enable reenviado\n", now_s() - t0);
+			if (system(on) != 0) { /* not critical */ }
+			printf("  [%.1fs] screen-enable resent\n", now_s() - t0);
 			fflush(stdout);
 		}
 
 		double t = now_s();
 		if (t - last >= 3.0) {
-			printf("  [%6.1fs] %.2f fps presentados  (modo pedido %.3f Hz)\n",
+			printf("  [%6.1fs] %.2f fps presented  (requested mode %.3f Hz)\n",
 			       t - t0, (frames - last_frames) / (t - last), refresh_mhz / 1000.0);
 			fflush(stdout);
 			last = t;
@@ -498,7 +498,7 @@ int main(int argc, char **argv)
 	}
 
 	double dur = now_s() - t0;
-	printf("\nresumen: %llu frames en %.1f s = %.2f fps (modo pedido %.3f Hz)\n",
+	printf("\nsummary: %llu frames in %.1f s = %.2f fps (requested mode %.3f Hz)\n",
 	       (unsigned long long)frames, dur, frames / dur, refresh_mhz / 1000.0);
 	return 0;
 }

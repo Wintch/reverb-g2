@@ -438,9 +438,9 @@ index 0000000..5de17e1
 +
 +void ReportRate() {
 +    if (g_paused) {
-+        Log::Write(Log::Level::Info, "player: EN PAUSA (espacio para seguir)");
++        Log::Write(Log::Level::Info, "player: PAUSED (space to continue)");
 +    } else {
-+        Log::Write(Log::Level::Info, Fmt("player: velocidad %gx", kRates[g_rateIndex.load()]));
++        Log::Write(Log::Level::Info, Fmt("player: speed %gx", kRates[g_rateIndex.load()]));
 +    }
 +}
 +
@@ -501,7 +501,7 @@ index 0000000..5de17e1
 +        case 'n':
 +        case 'N':
 +            g_nextTrack = true;
-+            Log::Write(Log::Level::Info, "player: siguiente");
++            Log::Write(Log::Level::Info, "player: next");
 +            return true;
 +        case 'q':
 +        case 'Q':
@@ -541,7 +541,7 @@ index 0000000..5de17e1
 +}
 +
 +const char* HelpLine() {
-+    return "  Teclas: [espacio] pausa   [ ] velocidad   1 normal   n siguiente   q salir";
++    return "  Keys: [space] pause   [ ] speed   1 normal   n next   q quit";
 +}
 +
 +}  // namespace PlayerControl

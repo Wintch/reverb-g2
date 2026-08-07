@@ -1,12 +1,12 @@
 #!/bin/bash
-# Verifica el parche 0004 (no clavar 6 bpc cuando el EDID no declara profundidad).
-# Correr DESPUES de reiniciar. No necesita root.
+# Verifies patch 0004 (don't clamp to 6 bpc when the EDID doesn't declare bit depth).
+# Run AFTER rebooting. Doesn't need root.
 #
-#   ./scripts/verify-bpc.sh [indice-de-modo]      (default 1 = 4320x2160@90)
+#   ./scripts/verify-bpc.sh [mode-index]      (default 1 = 4320x2160@90)
 #
-# Dos señales, y hacen falta las dos:
-#   1. el byte 18 del DEVICE_STATUS tiene que pasar de 06 a 08   <- medicion del lado del CASCO
-#   2. verificacion FISICA a 90 Hz                               <- la que manda
+# Two signals, and both are needed:
+#   1. byte 18 of DEVICE_STATUS has to go from 06 to 08          <- measurement from the HEADSET side
+#   2. PHYSICAL verification at 90 Hz                            <- the one that decides it
 
 set -u
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -15,23 +15,23 @@ MODE="${1:-1}"
 S="${TMPDIR:-/tmp}/verify-bpc-$$"
 mkdir -p "$S"
 
-echo "=== driver en memoria ==="
+echo "=== driver in memory ==="
 head -1 /proc/driver/nvidia/version | sed 's/^/  /'
 
 echo
-echo "=== el parche esta aplicado? ==="
+echo "=== is the patch applied? ==="
 if grep -q "digital.bpc != 0" /usr/src/nvidia-*/src/nvidia-modeset/src/nvkms-dpy.c 2>/dev/null; then
-    echo "  SI, editado directo en el arbol fuente (lineas 3456-3457 de nvkms-dpy.c)"
+    echo "  YES, edited directly in the source tree (lines 3456-3457 of nvkms-dpy.c)"
 elif grep -q "0004-nvkms-do-not-clamp-to-6bpc" /usr/src/nvidia-*/dkms.conf 2>/dev/null; then
-    echo "  SI, via PATCH[] de dkms.conf (el arbol fuente se mantiene limpio a proposito -"
-    echo "  DKMS lo aplica a una copia en tiempo de build, ver docs/13-bug-6bpc.md)"
+    echo "  YES, via PATCH[] in dkms.conf (the source tree is kept clean on purpose -"
+    echo "  DKMS applies it to a copy at build time, see docs/13-bug-6bpc.md)"
 else
-    echo "  !! NO -- el parche no esta por ninguna via. Corre apply-bpc-patch.sh o"
-    echo "  bootstrap-lab.sh patch-nv primero."
+    echo "  !! NO -- the patch is not present through any path. Run apply-bpc-patch.sh or"
+    echo "  bootstrap-lab.sh patch-nv first."
     exit 1
 fi
 
-# El repro se compila fresco: el scratchpad se limpia con cada reboot.
+# The repro is built fresh each time: the scratchpad gets wiped on every reboot.
 BUILD="$S/build"; mkdir -p "$BUILD"
 XML=/usr/share/wayland-protocols/staging/drm-lease/drm-lease-v1.xml
 wayland-scanner client-header "$XML" "$BUILD/drm-lease-v1-client-protocol.h" || exit 1
@@ -40,28 +40,28 @@ gcc -O2 -o "$BUILD/hmd-vk" scripts/hmd-vk.c "$BUILD/drm-lease-v1-protocol.c" -I"
     $(pkg-config --cflags --libs wayland-client vulkan) || exit 1
 
 echo
-echo "=== despertando el panel (el conector aparece unos segundos despues) ==="
+echo "=== waking up the panel (the connector appears a few seconds later) ==="
 ./scripts/panel.py activate >/dev/null 2>&1
 for i in $(seq 1 8); do
     sleep 3
     st=$(cat /sys/class/drm/card0-DP-1/status 2>/dev/null)
-    [ "$st" = "connected" ] && { echo "  DP-1 connected a los $((i*3))s"; break; }
+    [ "$st" = "connected" ] && { echo "  DP-1 connected at $((i*3))s"; break; }
 done
 [ "$(cat /sys/class/drm/card0-DP-1/status 2>/dev/null)" = "connected" ] || {
-    echo "  !! el conector no aparecio. Revisa el USB (los cinco, cap. 00)."; exit 1; }
+    echo "  !! the connector never showed up. Check the USB (all five, cap. 00)."; exit 1; }
 
-ID=$(./scripts/testlog.py open "post-parche-0004 modo $MODE" "verificar byte18 06->08 y panel a 90Hz")
+ID=$(./scripts/testlog.py open "post-patch-0004 mode $MODE" "verify byte18 06->08 and panel at 90Hz")
 echo
-echo "=== PRUEBA $ID: escuchando al casco y presentando ==="
+echo "=== TEST $ID: listening to the headset and presenting ==="
 setsid nohup ./scripts/panel-status.py 90 > "$S/status.txt" 2>&1 < /dev/null & disown
 sleep 2
 setsid nohup "$BUILD/hmd-vk" native "$MODE" 0 > "$S/vk.log" 2>&1 < /dev/null & disown
 
 sleep 25
-grep -E "modo NATIVO|fps presentados" "$S/vk.log" | tail -2 | sed 's/^/  /'
+grep -E "NATIVE mode|fps presented" "$S/vk.log" | tail -2 | sed 's/^/  /'
 
 echo
-echo "=== lo que reporta el casco ==="
+echo "=== what the headset reports ==="
 python3 - "$S/status.txt" <<'PY'
 import sys
 rows=[]
@@ -70,22 +70,22 @@ for line in open(sys.argv[1]):
     b=[int(x,16) for x in line.split("len=")[1].split(" ",1)[1].strip().split()]
     if len(b)>=23: rows.append(b)
 if not rows:
-    print("  (sin mensajes -- el panel ya estaba en ese estado)"); sys.exit()
+    print("  (no messages -- the panel was already in that state)"); sys.exit()
 for b in rows:
     ht=b[19]|(b[20]<<8); vt=b[21]|(b[22]<<8)
     print(f"  refresh={b[5]:<4} htotal={ht:<6} vtotal={vt:<6} bpc(byte18)={b[18]}  backlight(b1)={b[1]}")
 bpc=[b[18] for b in rows if b[5]>0]
 print()
 if any(v==8 for v in bpc):
-    print("  >>> EL PARCHE FUNCIONO: el casco reporta 8 bits por componente.")
+    print("  >>> THE PATCH WORKED: the headset reports 8 bits per component.")
 elif any(v==6 for v in bpc):
-    print("  >>> el byte 18 SIGUE en 6. O el parche no llego al modulo, o hay otro clamp.")
+    print("  >>> byte 18 is STILL at 6. Either the patch never reached the module, or there's another clamp.")
 else:
-    print(f"  >>> valores de byte 18 vistos: {sorted(set(bpc))}")
+    print(f"  >>> byte 18 values seen: {sorted(set(bpc))}")
 PY
 
 echo
-echo "  La corrida se mantiene indefinidamente. PONETE EL CASCO Y MIRA."
-echo "  Cerrar con:  ./scripts/testlog.py close $ID \"lo que viste\""
-echo "  Cortar con:  kill \$(pgrep -f 'hmd-vk')"
-echo "  crudo en: $S"
+echo "  The run keeps going indefinitely. PUT ON THE HEADSET AND LOOK."
+echo "  Close with:  ./scripts/testlog.py close $ID \"what you saw\""
+echo "  Kill with:  kill \$(pgrep -f 'hmd-vk')"
+echo "  raw output in: $S"

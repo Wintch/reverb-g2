@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Decodifica y parchea el EDID del Reverb G2 (o cualquier EDID 1.4 + extensiones).
+"""Decodes and patches the EDID of the Reverb G2 (or any EDID 1.4 + extensions).
 
     ./scripts/edid-tool.py decode nv-report-*/hmd.edid
     ./scripts/edid-tool.py set-bpc nv-report-*/hmd.edid 8 -o g2-edid-8bpc.bin
@@ -7,29 +7,29 @@
     ./scripts/edid-tool.py inject-mode nv-report-*/hmd.edid -o test.bin CTRL:1 A:2 B:3
     ./scripts/edid-tool.py inject-did nv-report-*/hmd.edid -o test.bin B4K:1
 
-`decode` saca un volcado anotado, pensado para pegar/adjuntar en un reporte: incluye la
-derivación completa de los modelines desde los DTD del bloque base y desde los descriptores
-Type I del bloque DisplayID, que es lo que se compara contra `drmModeGetConnector`.
+`decode` produces an annotated dump, meant to be pasted/attached in a report: it includes the
+full derivation of the modelines from the DTDs of the base block and from the Type I
+descriptors of the DisplayID block, which is what gets compared against `drmModeGetConnector`.
 
-`set-bpc` reescribe los bits 6-4 del byte 0x14 (Color Bit Depth) y corrige el checksum del
-bloque base. Sirve para reproducir el bug del clamp a 6 bpc **sin parchear el driver**, si se
-tiene una vía de override de EDID que NVIDIA respete (ver docs/13).
+`set-bpc` rewrites bits 6-4 of byte 0x14 (Color Bit Depth) and fixes the checksum of the
+base block. It's used to reproduce the 6 bpc clamp bug **without patching the driver**, if
+you have an EDID override path that NVIDIA respects (see docs/13).
 
-`inject-mode` escribe timings sintéticos en los slots de DTD libres del bloque base, para el
-experimento del vblank de docs/16: desacoplar "90 Hz" de "vblank corto", que en los tres
-modos nativos del G2 están perfectamente confundidos. Sin argumentos de asignación lista los
-presets y qué hay en cada slot. Las asignaciones son `PRESET:SLOT` y se aplican todas de una
-sola pasada, así no hace falta encadenar archivos.
+`inject-mode` writes synthetic timings into the free DTD slots of the base block, for the
+vblank experiment in docs/16: decoupling "90 Hz" from "short vblank", which in the three
+native modes of the G2 are perfectly confounded. Without assignment arguments it lists the
+presets and what's in each slot. Assignments are `PRESET:SLOT` and are all applied in a
+single pass, so there's no need to chain files.
 
-`inject-did` es lo mismo que `inject-mode` pero sobre los descriptores Type I del bloque
-DisplayID (4320x2160) en vez de los DTD del bloque base (2880x1440). Existe porque el
-factorial corrido en `inject-mode` salió confundido con la resolución: 2880x1440 nunca
-mostró nada a ningún refresh en este proyecto, así que un fallo ahí no distingue "vblank
-corto" de "esta resolución no engancha". A 4320x2160 sí hay un caso confirmado que anda
-(el descriptor #2, @60), así que el mismo factorial ahí no tiene ese confound. Las
-asignaciones son `PRESET:DESCRIPTOR` (1 o 2, son sólo dos descriptores).
+`inject-did` is the same as `inject-mode` but on the Type I descriptors of the DisplayID
+block (4320x2160) instead of the DTDs of the base block (2880x1440). It exists because the
+factorial run in `inject-mode` came out confounded with resolution: 2880x1440 never
+showed anything at any refresh rate in this project, so a failure there doesn't distinguish
+"short vblank" from "this resolution doesn't latch". At 4320x2160 there IS a confirmed case
+that works (descriptor #2, @60), so the same factorial there doesn't have that confound. The
+assignments are `PRESET:DESCRIPTOR` (1 or 2, there are only two descriptors).
 
-Sin dependencias: sólo stdlib.
+No dependencies: stdlib only.
 """
 
 import sys
@@ -37,83 +37,84 @@ import sys
 BPC_FIELD = {0: "undefined", 1: 6, 2: 8, 3: 10, 4: 12, 5: 14, 6: 16, 7: "reserved"}
 BPC_TO_FIELD = {v: k for k, v in BPC_FIELD.items() if isinstance(v, int)}
 
-# Presets del experimento del vblank (docs/16). El DTD del bloque base tiene el campo de
-# horizontal active de 12 bits (máximo 4095 px), así que 4320x2160 NO entra acá — que es
-# justamente por qué el G2 lleva esos dos modos en el bloque DisplayID. El experimento va
-# entonces sobre 2880x1440, que además mantiene la resolución constante contra el modo
-# nativo que falla.
+# Presets for the vblank experiment (docs/16). The base block's DTD has a 12-bit
+# horizontal active field (max 4095 px), so 4320x2160 does NOT fit here -- which is
+# exactly why the G2 carries those two modes in the DisplayID block. The experiment
+# therefore runs on 2880x1440, which also keeps the resolution constant against the
+# native mode that fails.
 #
-#            vblank corto (158)      vblank largo (514)
+#            short vblank (158)      long vblank (514)
 #   60 Hz    A     285.72 MHz        CTRL  349.38 MHz
-#   90 Hz    nativo: FALLA           B     524.06 MHz
+#   90 Hz    native: FAILS           B     524.06 MHz
 #
-# Las dos formas de blanking vertical que existen en los modos nativos del G2, aplicadas a
-# 2880x1440. El horizontal (50/4/46) es idéntico en los tres modos nativos, así que se deja
-# fijo: la única variable estructural del sink es el vertical.
+# The two forms of vertical blanking present in the G2's native modes, applied to
+# 2880x1440. The horizontal (50/4/46) is identical across all three native modes, so it's
+# left fixed: the only structural variable of the sink is the vertical one.
 _H = (2880, 50, 4, 46)
 BLANKING = {
-    # nombre: (vact, vfp, vsw, vbp) -> vblank
-    "SHORT": (1440, 18, 2, 138),   # vblank 158, la forma de los modos que fallan
-    "LONG": (1440, 14, 2, 498),    # vblank 514, la forma del único modo que anda
+    # name: (vact, vfp, vsw, vbp) -> vblank
+    "SHORT": (1440, 18, 2, 138),   # vblank 158, the shape of the modes that fail
+    "LONG": (1440, 14, 2, 498),    # vblank 514, the shape of the one mode that works
 }
 
-# Alias con nombre para el factorial 2x2 de docs/16.
+# Named aliases for the 2x2 factorial in docs/16.
 MODE_PRESETS = {
-    # control: 60 Hz con el blanking largo. Dice si un modo inyectado enciende el panel en
-    # general. Sin esto, un fallo de A no distingue "vblank corto" de "cualquier inyectado
-    # falla". Correr SIEMPRE éste primero.
+    # control: 60 Hz with long blanking. Tells whether an injected mode powers on the
+    # panel at all. Without this, a failure in A doesn't distinguish "short vblank" from
+    # "any injected mode fails". ALWAYS run this one first.
     "CTRL": "LONG@60",
-    # el test: 60 Hz con el blanking corto del modo de 90 que falla.
+    # the test: 60 Hz with the short blanking of the 90 Hz mode that fails.
     "A": "SHORT@60",
-    # el recíproco: 90 Hz con vblank largo. Si esto anda, 90 Hz no es el problema.
+    # the reciprocal: 90 Hz with long vblank. If this works, 90 Hz is not the problem.
     "B": "LONG@90",
 }
 
 
 def resolve_preset(name):
-    """Devuelve la tupla de 9 campos de un preset.
+    """Returns the 9-field tuple for a preset.
 
-    Acepta los alias del factorial (CTRL, A, B) y la forma paramétrica
-    `BLANKING@RATE`, por ejemplo `SHORT@72`, para el barrido de refresh: mantiene fija
-    la forma del timing y mueve sólo el refresh, que es lo que el factorial no separa.
+    Accepts the factorial aliases (CTRL, A, B) and the parametric form
+    `BLANKING@RATE`, e.g. `SHORT@72`, for the refresh sweep: keeps the timing shape
+    fixed and moves only the refresh rate, which the factorial doesn't isolate on its own.
     """
     name = MODE_PRESETS.get(name, name)
     shape, _, rate_s = name.partition("@")
     if not rate_s or shape not in BLANKING:
-        raise ValueError(f"preset '{name}' inválido; se espera uno de {sorted(MODE_PRESETS)} "
-                         f"o BLANKING@RATE con BLANKING en {sorted(BLANKING)}")
+        raise ValueError(f"invalid preset '{name}'; expected one of {sorted(MODE_PRESETS)} "
+                         f"or BLANKING@RATE with BLANKING in {sorted(BLANKING)}")
     rate = int(rate_s)
     if not 24 <= rate <= 240:
-        raise ValueError(f"refresh {rate} Hz fuera del rango razonable (24-240)")
+        raise ValueError(f"refresh {rate} Hz outside the reasonable range (24-240)")
     return _H + BLANKING[shape] + (rate,)
 
 
-# Presets del mismo factorial pero a 4320x2160, sobre los descriptores Type I del bloque
-# DisplayID (docs/16, "Si hace falta repetirlo a 4320x2160"). El horizontal (50/4/46) es
-# igual que en el bloque base -- es el mismo sink, la misma forma. vfp/vsw reusan los
-# valores reales de los dos descriptores nativos (16/2 en el que falla a 90, 14/2 en el que
-# anda a 60); sólo cambia vbp para mover el vblank total.
+# Presets for the same factorial but at 4320x2160, on the Type I descriptors of the
+# DisplayID block (docs/16, "If this needs to be repeated at 4320x2160"). The horizontal
+# (50/4/46) is the same as in the base block -- it's the same sink, the same shape. vfp/vsw
+# reuse the actual values from the two native descriptors (16/2 in the one that fails at
+# 90, 14/2 in the one that works at 60); only vbp changes to move the total vblank.
 _H4K = (4320, 50, 4, 46)
 DID_PRESETS = {
-    # igual forma que el descriptor #2 real (el único que anda), vblank 514.
+    # same shape as the real descriptor #2 (the only one that works), vblank 514.
     "CTRL4K": (2160, 14, 2, 498, 60),
-    # igual forma que el descriptor #1 real (el que falla), pero a 60 Hz. vblank 116.
+    # same shape as the real descriptor #1 (the one that fails), but at 60 Hz. vblank 116.
     "A4K": (2160, 16, 2, 98, 60),
-    # 90 Hz con vblank largo, pero 514 a 4320 de ancho pasa 25.5 Gbps @24bpp -- pegado al
-    # techo de HBR3 (25.92). 240 deja margen y sigue siendo mucho más que el 116 que falla.
+    # 90 Hz with long vblank, but 514 at 4320 wide comes out to 25.5 Gbps @24bpp -- right at
+    # the HBR3 ceiling (25.92). 240 leaves margin and is still far more than the 116 that fails.
     "B4K": (2160, 14, 2, 224, 90),
 }
 
 
 def resolve_did_preset(name):
-    """Como resolve_preset() pero para los descriptores Type I de DisplayID (4320x2160).
+    """Like resolve_preset() but for DisplayID Type I descriptors (4320x2160).
 
-    Acepta los alias del factorial (CTRL4K, A4K, B4K), la forma paramétrica
-    `VBLANK@RATE` (por ejemplo `240@90`) para puntos intermedios de vblank/refresh, y
-    `HBP:VBLANK@RATE` (por ejemplo `1236:514@60`) para además mover el horizontal back
-    porch y así el pixel clock manteniendo fijo el resto -- ningún test anterior tocó el
-    horizontal (siempre 50/4/46), así que no separaba "el pixel clock específico importa"
-    de "el refresh/vblank importa" (docs/16, sección "esto rompe la hipótesis...").
+    Accepts the factorial aliases (CTRL4K, A4K, B4K), the parametric form
+    `VBLANK@RATE` (e.g. `240@90`) for intermediate vblank/refresh points, and
+    `HBP:VBLANK@RATE` (e.g. `1236:514@60`) to additionally move the horizontal back
+    porch and thus the pixel clock while keeping the rest fixed -- no earlier test touched
+    the horizontal (always 50/4/46), so it couldn't separate "the specific pixel clock
+    matters" from "the refresh/vblank matters" (docs/16, section "this breaks the
+    hypothesis that...").
     """
     if name in DID_PRESETS:
         vact, vfp, vsw, vbp, rate = DID_PRESETS[name]
@@ -127,15 +128,15 @@ def resolve_did_preset(name):
         hbp = hbp_default
         vblank_s, _, rate_s = name.partition("@")
     if not rate_s or not vblank_s.isdigit():
-        raise ValueError(f"preset '{name}' inválido; se espera uno de {sorted(DID_PRESETS)}, "
-                         "VBLANK@RATE (ej. 240@90) o HBP:VBLANK@RATE (ej. 1236:514@60)")
+        raise ValueError(f"invalid preset '{name}'; expected one of {sorted(DID_PRESETS)}, "
+                         "VBLANK@RATE (e.g. 240@90) or HBP:VBLANK@RATE (e.g. 1236:514@60)")
     vblank, rate = int(vblank_s), int(rate_s)
     if not 24 <= rate <= 240:
-        raise ValueError(f"refresh {rate} Hz fuera del rango razonable (24-240)")
+        raise ValueError(f"refresh {rate} Hz outside the reasonable range (24-240)")
     vfp, vsw = 14, 2
     vbp = vblank - vfp - vsw
     if vbp < 0:
-        raise ValueError(f"vblank {vblank} muy chico (mínimo {vfp + vsw})")
+        raise ValueError(f"vblank {vblank} too small (minimum {vfp + vsw})")
     return (hact, hfp, hsw, hbp, 2160, vfp, vsw, vbp, rate)
 
 
@@ -158,7 +159,7 @@ def hexdump(block, indent="  "):
 
 
 def decode_dtd(d):
-    """DTD de 18 bytes del bloque base EDID. Devuelve dict o None si no es un DTD."""
+    """18-byte DTD from the EDID base block. Returns dict or None if it's not a DTD."""
     pclk = (d[1] << 8 | d[0]) * 10_000
     if pclk == 0:
         return None
@@ -181,19 +182,19 @@ def decode_dtd(d):
 
 
 def encode_dtd(hact, hfp, hsw, hbp, vact, vfp, vsw, vbp, rate, h_mm=0, v_mm=0):
-    """Inversa de decode_dtd(): arma los 18 bytes de un DTD del bloque base."""
+    """Inverse of decode_dtd(): builds the 18 bytes of a base block DTD."""
     hblank, vblank = hfp + hsw + hbp, vfp + vsw + vbp
     pclk_hz = (hact + hblank) * (vact + vblank) * rate
     pclk = round(pclk_hz / 10_000)
     if not 1 <= pclk <= 0xFFFF:
-        raise ValueError(f"pixel clock {pclk_hz / 1e6:.3f} MHz fuera del campo EDID "
-                         "(máximo 655.35 MHz)")
+        raise ValueError(f"pixel clock {pclk_hz / 1e6:.3f} MHz outside the EDID field range "
+                         "(maximum 655.35 MHz)")
     for name, val, bits in (("h active", hact, 12), ("h blanking", hblank, 12),
                             ("v active", vact, 12), ("v blanking", vblank, 12),
                             ("h front porch", hfp, 10), ("h sync width", hsw, 10),
                             ("v front porch", vfp, 6), ("v sync width", vsw, 6)):
         if not 0 <= val < (1 << bits):
-            raise ValueError(f"{name} = {val} no entra en los {bits} bits del DTD")
+            raise ValueError(f"{name} = {val} doesn't fit in the DTD's {bits} bits")
     d = bytearray(18)
     d[0], d[1] = pclk & 0xFF, pclk >> 8
     d[2], d[3] = hact & 0xFF, hblank & 0xFF
@@ -211,7 +212,7 @@ def encode_dtd(hact, hfp, hsw, hbp, vact, vfp, vsw, vbp, rate, h_mm=0, v_mm=0):
 
 
 def decode_did_type1(d):
-    """Descriptor Type I Detailed Timing de DisplayID 1.x (20 bytes)."""
+    """DisplayID 1.x Type I Detailed Timing descriptor (20 bytes)."""
     pclk = ((d[2] << 16) | (d[1] << 8) | d[0]) + 1
     hact = (d[5] << 8 | d[4]) + 1
     hblank = (d[7] << 8 | d[6]) + 1
@@ -236,23 +237,24 @@ def decode_did_type1(d):
 def encode_did_type1(hact, hfp, hsw, hbp, vact, vfp, vsw, vbp, rate,
                       preferred=False, interlaced=False, extra_flags=0,
                       hsync_pos=True, vsync_pos=True):
-    """Inversa de decode_did_type1(): arma los 20 bytes de un descriptor Type I.
+    """Inverse of decode_did_type1(): builds the 20 bytes of a Type I descriptor.
 
-    `extra_flags` deja pasar bits de byte 3 que no se decodifican (hay al menos uno seteado
-    en los dos descriptores reales del G2, sin identificar) para no pisarlos sin querer.
+    `extra_flags` passes through byte 3 bits that aren't decoded (there's at least one
+    set in both real descriptors of the G2, unidentified) so they don't get clobbered
+    by accident.
     """
     hblank, vblank = hfp + hsw + hbp, vfp + vsw + vbp
     pclk_hz = (hact + hblank) * (vact + vblank) * rate
     pclk = round(pclk_hz / 10_000) - 1
     if not 0 <= pclk < (1 << 24):
-        raise ValueError(f"pixel clock {pclk_hz / 1e6:.3f} MHz fuera del campo DisplayID "
-                         "(máximo 167772.15 MHz)")
+        raise ValueError(f"pixel clock {pclk_hz / 1e6:.3f} MHz outside the DisplayID field range "
+                         "(maximum 167772.15 MHz)")
     for name, val, bits in (("h active", hact, 16), ("h blanking", hblank, 16),
                             ("v active", vact, 16), ("v blanking", vblank, 16),
                             ("h front porch", hfp, 15), ("h sync width", hsw, 16),
                             ("v front porch", vfp, 15), ("v sync width", vsw, 16)):
         if not 1 <= val <= (1 << bits):
-            raise ValueError(f"{name} = {val} no entra en los {bits} bits del descriptor")
+            raise ValueError(f"{name} = {val} doesn't fit in the descriptor's {bits} bits")
     d = bytearray(20)
     d[0], d[1], d[2] = pclk & 0xFF, (pclk >> 8) & 0xFF, (pclk >> 16) & 0xFF
     d[3] = (0x80 if preferred else 0) | (0x10 if interlaced else 0) | (extra_flags & 0x6F)
@@ -274,9 +276,9 @@ def encode_did_type1(hact, hfp, hsw, hbp, vact, vfp, vsw, vbp, rate,
 
 
 def fix_displayid_checksum(block):
-    """Corrige el checksum interno de la sección DisplayID (no el del bloque EDID de 128
-    bytes, que sigue siendo fix_checksum()). La sección arranca en offset 1 y mide
-    5 + section_bytes (offset 2), último byte de ese tramo es el checksum."""
+    """Fixes the internal checksum of the DisplayID section (not the 128-byte EDID
+    block checksum, which is still fix_checksum()). The section starts at offset 1 and
+    spans 5 + section_bytes (offset 2); the last byte of that span is the checksum."""
     b = bytearray(block)
     span_end = 1 + 5 + b[2]
     b[span_end - 1] = (-sum(b[1:span_end - 1])) & 0xFF
@@ -377,7 +379,7 @@ def main():
     cmd, path = sys.argv[1], sys.argv[2]
     data = open(path, "rb").read()
     if len(data) % 128:
-        print(f"aviso: {len(data)} bytes no es múltiplo de 128", file=sys.stderr)
+        print(f"warning: {len(data)} bytes is not a multiple of 128", file=sys.stderr)
 
     if cmd == "decode":
         print(decode(data))
@@ -386,7 +388,7 @@ def main():
     if cmd == "set-bpc":
         bpc = int(sys.argv[3])
         if bpc not in BPC_TO_FIELD:
-            print(f"bpc debe ser uno de {sorted(BPC_TO_FIELD)}", file=sys.stderr)
+            print(f"bpc must be one of {sorted(BPC_TO_FIELD)}", file=sys.stderr)
             return 1
         out_path = None
         if "-o" in sys.argv:
@@ -394,17 +396,17 @@ def main():
         b = bytearray(data)
         old = b[0x14]
         if not old & 0x80:
-            print("el EDID no es digital; no hay campo de color bit depth", file=sys.stderr)
+            print("the EDID is not digital; there's no color bit depth field", file=sys.stderr)
             return 1
         b[0x14] = (old & 0x8F) | (BPC_TO_FIELD[bpc] << 4)
         b[:128] = fix_checksum(bytes(b[:128]))
         print(f"byte 0x14: 0x{old:02x} -> 0x{b[0x14]:02x}  (color bit depth -> {bpc} bpc)")
-        print(f"byte 0x7f: 0x{data[127]:02x} -> 0x{b[127]:02x}  (checksum del bloque base)")
+        print(f"byte 0x7f: 0x{data[127]:02x} -> 0x{b[127]:02x}  (base block checksum)")
         if out_path:
             open(out_path, "wb").write(bytes(b))
-            print(f"escrito: {out_path}")
+            print(f"written: {out_path}")
         else:
-            print("(sin -o no se escribe nada)")
+            print("(no -o given, nothing written)")
         return 0
 
     if cmd == "inject-mode":
@@ -416,7 +418,7 @@ def main():
             rest = rest[:i] + rest[i + 2:]
 
         slots = [(n, 0x36 + n * 18) for n in range(4)]
-        print("slots de DTD del bloque base")
+        print("base block DTD slots")
         for n, off in slots:
             t = decode_dtd(data[off:off + 18])
             if t:
@@ -424,10 +426,10 @@ def main():
                 what = (f"timing {t['hact']}x{t['vact']}@{rate:.2f} "
                         f"{t['pclk'] / 1e6:.2f} MHz vblank={t['vtotal'] - t['vact']}")
             elif data[off:off + 3] == b"\x00\x00\x00":
-                what = ("LIBRE (dummy)" if data[off + 3] == 0x10
+                what = ("FREE (dummy)" if data[off + 3] == 0x10
                         else f"descriptor tag 0x{data[off + 3]:02x}")
             else:
-                what = "desconocido"
+                what = "unknown"
             print(f"  slot {n} (offset 0x{off:02x}): {what}")
         print()
 
@@ -439,18 +441,18 @@ def main():
                     f"{pclk / 1e6:7.2f} MHz  {pclk * 24 / 1e9:5.2f} Gbps @24bpp")
 
         if not rest:
-            print("alias del factorial 2x2 (docs/16)")
+            print("2x2 factorial aliases (docs/16)")
             for name, target in MODE_PRESETS.items():
                 print(f"  {name:5s} = {target:9s} {describe_preset(name)}")
-            print("\nforma paramétrica BLANKING@RATE, para el barrido de refresh")
+            print("\nparametric form BLANKING@RATE, for the refresh sweep")
             print(f"  BLANKING: {', '.join(sorted(BLANKING))}   "
                   f"(vblank {BLANKING['SHORT'][1] + BLANKING['SHORT'][2] + BLANKING['SHORT'][3]}"
-                  f" y {BLANKING['LONG'][1] + BLANKING['LONG'][2] + BLANKING['LONG'][3]})")
+                  f" and {BLANKING['LONG'][1] + BLANKING['LONG'][2] + BLANKING['LONG'][3]})")
             for r in (65, 70, 72, 75, 80, 85):
                 print(f"  SHORT@{r:<3d}  {describe_preset(f'SHORT@{r}')}")
-            print("\nel bloque base tiene 4 slots y el 0 lleva el modo nativo, así que")
-            print("entran 3 por EDID: el barrido se hace bisectando, no de una sola vez.")
-            print("\nasignaciones PRESET:SLOT, por ejemplo:")
+            print("\nthe base block has 4 slots and slot 0 carries the native mode, so")
+            print("only 3 fit per EDID: the sweep is done by bisecting, not all at once.")
+            print("\nPRESET:SLOT assignments, for example:")
             print("  ./scripts/edid-tool.py inject-mode hmd.edid -o test.bin CTRL:1 A:2 B:3")
             print("  ./scripts/edid-tool.py inject-mode hmd.edid -o sweep.bin \\")
             print("      SHORT@70:1 SHORT@75:2 SHORT@80:3")
@@ -459,7 +461,7 @@ def main():
         b = bytearray(data)
         for spec in rest:
             if ":" not in spec:
-                print(f"asignación inválida '{spec}', se espera PRESET:SLOT", file=sys.stderr)
+                print(f"invalid assignment '{spec}', expected PRESET:SLOT", file=sys.stderr)
                 return 1
             name, _, slot_s = spec.rpartition(":")
             try:
@@ -469,14 +471,14 @@ def main():
                 return 1
             slot = int(slot_s)
             if not 0 <= slot <= 3:
-                print(f"slot {slot} fuera de rango (0-3)", file=sys.stderr)
+                print(f"slot {slot} out of range (0-3)", file=sys.stderr)
                 return 1
             off = 0x36 + slot * 18
             old = decode_dtd(b[off:off + 18])
             h_mm = ((b[off + 14] >> 4) & 0x0F) << 8 | b[off + 12]
             v_mm = (b[off + 14] & 0x0F) << 8 | b[off + 13]
             if old:
-                print(f"aviso: el slot {slot} tenía un timing y se reemplaza", file=sys.stderr)
+                print(f"warning: slot {slot} had a timing and is being replaced", file=sys.stderr)
             try:
                 b[off:off + 18] = encode_dtd(*preset, h_mm=h_mm, v_mm=v_mm)
             except ValueError as e:
@@ -487,25 +489,25 @@ def main():
             got = (t["hact"], t["hfp"], t["hsw"], t["hbp"],
                    t["vact"], t["vfp"], t["vsw"], t["vbp"])
             if got != want[:8]:
-                print(f"round-trip falló en {name}: {want[:8]} != {got}", file=sys.stderr)
+                print(f"round-trip failed on {name}: {want[:8]} != {got}", file=sys.stderr)
                 return 1
             print(fmt_timing(t, f"{name} -> slot {slot} (offset 0x{off:02x})"))
 
         b[:128] = fix_checksum(bytes(b[:128]))
-        print(f"checksum del bloque base: 0x{data[127]:02x} -> 0x{b[127]:02x}")
+        print(f"base block checksum: 0x{data[127]:02x} -> 0x{b[127]:02x}")
         if (sum(b[:128]) & 0xFF) != 0:
-            print("checksum del bloque base quedó mal", file=sys.stderr)
+            print("base block checksum came out wrong", file=sys.stderr)
             return 1
         if bytes(b[128:]) != data[128:]:
-            print("las extensiones cambiaron y no deberían", file=sys.stderr)
+            print("extension blocks changed and they shouldn't have", file=sys.stderr)
             return 1
-        print("bloques de extensión intactos, checksums ok")
+        print("extension blocks intact, checksums ok")
 
         if out_path:
             open(out_path, "wb").write(bytes(b))
-            print(f"escrito: {out_path}  ({len(b)} bytes)")
+            print(f"written: {out_path}  ({len(b)} bytes)")
         else:
-            print("(sin -o no se escribe nada)")
+            print("(no -o given, nothing written)")
         return 0
 
     if cmd == "inject-did":
@@ -519,7 +521,7 @@ def main():
         bl = blocks(data)
         ext_idx = next((i for i, b in enumerate(bl) if i > 0 and b[0] == 0x70), None)
         if ext_idx is None:
-            print("no encontré un bloque de extensión DisplayID (tag 0x70)", file=sys.stderr)
+            print("couldn't find a DisplayID extension block (tag 0x70)", file=sys.stderr)
             return 1
         ext = bytearray(bl[ext_idx])
 
@@ -531,15 +533,15 @@ def main():
                 break
             pos += 3 + dlen
         if tag_pos is None:
-            print("no encontré un data block Type I/VII (tag 0x03) en la extensión",
+            print("couldn't find a Type I/VII data block (tag 0x03) in the extension",
                   file=sys.stderr)
             return 1
         dlen = ext[tag_pos + 2]
         ndesc = dlen // 20
         payload_off = tag_pos + 3
 
-        print(f"descriptores Type I en el bloque {ext_idx} (offset base 0x{payload_off:02x}, "
-              f"{ndesc} de 20 bytes)")
+        print(f"Type I descriptors in block {ext_idx} (base offset 0x{payload_off:02x}, "
+              f"{ndesc} of 20 bytes)")
         for n in range(ndesc):
             off = payload_off + n * 20
             t = decode_did_type1(ext[off:off + 20])
@@ -556,17 +558,17 @@ def main():
                     f"{pclk / 1e6:7.2f} MHz  {pclk * 24 / 1e9:5.2f} Gbps @24bpp")
 
         if not rest:
-            print("alias del factorial a 4320x2160 (docs/16)")
+            print("4320x2160 factorial aliases (docs/16)")
             for name in DID_PRESETS:
                 print(f"  {name:7s} {describe_did_preset(name)}")
-            print("\nforma paramétrica VBLANK@RATE, para puntos intermedios, ej. 240@90")
-            print(f"\nsólo hay {ndesc} descriptores en este EDID -- asignaciones PRESET:DESCRIPTOR")
+            print("\nparametric form VBLANK@RATE, for intermediate points, e.g. 240@90")
+            print(f"\nthis EDID only has {ndesc} descriptors -- PRESET:DESCRIPTOR assignments")
             print("  ./scripts/edid-tool.py inject-did hmd.edid -o test.bin B4K:1")
             return 0
 
         for spec in rest:
             if ":" not in spec:
-                print(f"asignación inválida '{spec}', se espera PRESET:DESCRIPTOR",
+                print(f"invalid assignment '{spec}', expected PRESET:DESCRIPTOR",
                       file=sys.stderr)
                 return 1
             name, _, slot_s = spec.rpartition(":")
@@ -577,13 +579,13 @@ def main():
                 return 1
             slot = int(slot_s)
             if not 1 <= slot <= ndesc:
-                print(f"descriptor {slot} fuera de rango (1-{ndesc})", file=sys.stderr)
+                print(f"descriptor {slot} out of range (1-{ndesc})", file=sys.stderr)
                 return 1
             off = payload_off + (slot - 1) * 20
             old = decode_did_type1(ext[off:off + 20])
             old_d3 = ext[off + 3]
-            print(f"aviso: el descriptor {slot} tenía {old['hact']}x{old['vact']} "
-                  f"vblank={old['vtotal'] - old['vact']} y se reemplaza", file=sys.stderr)
+            print(f"warning: descriptor {slot} had {old['hact']}x{old['vact']} "
+                  f"vblank={old['vtotal'] - old['vact']} and is being replaced", file=sys.stderr)
             try:
                 ext[off:off + 20] = encode_did_type1(
                     *preset, preferred=bool(old_d3 & 0x80), interlaced=bool(old_d3 & 0x10),
@@ -596,17 +598,17 @@ def main():
             got = (t["hact"], t["hfp"], t["hsw"], t["hbp"],
                    t["vact"], t["vfp"], t["vsw"], t["vbp"])
             if got != want[:8]:
-                print(f"round-trip falló en {name}: {want[:8]} != {got}", file=sys.stderr)
+                print(f"round-trip failed on {name}: {want[:8]} != {got}", file=sys.stderr)
                 return 1
             print(fmt_timing(t, f"{name} -> descriptor {slot} (offset 0x{off:02x})"))
 
         old_did_cs, old_blk_cs = ext[126], ext[127]
         ext = bytearray(fix_displayid_checksum(bytes(ext)))
         ext = bytearray(fix_checksum(bytes(ext)))
-        print(f"checksum sección DisplayID (byte 0x7e): 0x{old_did_cs:02x} -> 0x{ext[126]:02x}")
-        print(f"checksum bloque de extensión (byte 0x7f): 0x{old_blk_cs:02x} -> 0x{ext[127]:02x}")
+        print(f"DisplayID section checksum (byte 0x7e): 0x{old_did_cs:02x} -> 0x{ext[126]:02x}")
+        print(f"extension block checksum (byte 0x7f): 0x{old_blk_cs:02x} -> 0x{ext[127]:02x}")
         if (sum(ext) & 0xFF) != 0:
-            print("checksum del bloque de extensión quedó mal", file=sys.stderr)
+            print("extension block checksum came out wrong", file=sys.stderr)
             return 1
 
         out = bytearray(data)
@@ -614,18 +616,18 @@ def main():
         untouched = bytes(out[:ext_idx * 128]) + bytes(out[(ext_idx + 1) * 128:])
         untouched_orig = bytes(data[:ext_idx * 128]) + bytes(data[(ext_idx + 1) * 128:])
         if untouched != untouched_orig:
-            print("otros bloques cambiaron y no deberían", file=sys.stderr)
+            print("other blocks changed and they shouldn't have", file=sys.stderr)
             return 1
-        print("resto de los bloques intacto")
+        print("rest of the blocks intact")
 
         if out_path:
             open(out_path, "wb").write(bytes(out))
-            print(f"escrito: {out_path}  ({len(out)} bytes)")
+            print(f"written: {out_path}  ({len(out)} bytes)")
         else:
-            print("(sin -o no se escribe nada)")
+            print("(no -o given, nothing written)")
         return 0
 
-    print(f"comando desconocido: {cmd}", file=sys.stderr)
+    print(f"unknown command: {cmd}", file=sys.stderr)
     return 1
 
 

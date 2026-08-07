@@ -1,397 +1,420 @@
-# Contexto para el agente del lab de 90Hz
+# Context for the 90Hz lab agent
 
-> ## RESUELTO (2026-08-06, tarde) — el 90Hz anda limpio, no hace falta AMD ni nada más
+> ## RESOLVED (2026-08-06, evening) — 90Hz works clean, no AMD or anything else needed
 >
-> El parche del bpc (`patches/nvidia/0004`) era la solución completa. Nadie había vuelto a
-> probar los modos nativos del EDID sin override después de tenerlo instalado — al probarlo
-> limpio, `2880x1440@90` y `4320x2160@90` prenden perfectos. Esto **supersede el punto 2 de
-> la lista "en orden de peso" más abajo** (conseguir un GPU AMD para el lab) — ya no hace
-> falta, no lo persigas si aparece este documento en una sesión nueva. Detalle completo en
-> `docs/19-nvidia-bug-5923212-followup.md` y el resumen entero del proyecto en
-> `docs/21-project-retrospective.md`. **Ojo con el PR de NVIDIA:** más abajo este documento
-> dice "el bug del bpc está cerrado y publicado" — eso es sobre la investigación, NO sobre
-> el PR. `github.com/NVIDIA/open-gpu-kernel-modules/pull/1275` sigue **`open`, sin mergear**
-> (verificado 2026-08-06 vía API de GitHub, después de que alguien en LVRA lo señalara — el
-> retrospectivo tenía este mismo error, ya corregido). No asumir "merged" sin volver a
-> chequear la API antes de decirlo en cualquier lado público.
-> `docs/11-linux-hmd-landscape.md` y las secciones de
-> `docs/06-known-issues.md` sobre el 90Hz quedaron con una nota de corrección arriba, pero
-> conservan el análisis viejo tal cual — no lo tomes como estado actual sin leer la nota.
+> The bpc patch (`patches/nvidia/0004`) was the complete solution. Nobody had gone back to
+> test the native EDID modes without override after installing it — testing it
+> clean, `2880x1440@90` and `4320x2160@90` come up perfect. This **supersedes item 2 of
+> the "in order of weight" list below** (getting an AMD GPU for the lab) — it's no longer
+> needed, don't chase it if this document comes up in a new session. Full detail in
+> `docs/19-nvidia-bug-5923212-followup.md` and the entire project summary in
+> `docs/21-project-retrospective.md`. **Watch out with the NVIDIA PR:** further down this
+> document says "the bpc bug is closed and published" — that's about the investigation, NOT
+> about the PR. `github.com/NVIDIA/open-gpu-kernel-modules/pull/1275` is still **`open`,
+> unmerged** (verified 2026-08-06 via the GitHub API, after someone on LVRA pointed it out —
+> the retrospective had this same error, now fixed). Don't assume "merged" without checking
+> the API again before saying so anywhere public.
+> `docs/11-linux-hmd-landscape.md` and the 90Hz sections of
+> `docs/06-known-issues.md` got a correction note added at the top, but
+> keep the old analysis as-is — don't take it as current status without reading the note.
 
-> ## ESTADO AL 2026-08-06 — bug nuevo, distinto del 90Hz: el casco puede romper el escritorio
+> ## STATUS AS OF 2026-08-06 — new bug, distinct from the 90Hz one: the headset can break the desktop
 >
-> Con el casco conectado, **KDE Plasma (X11) puede volverse inestable hasta quedar sin
-> panel/iconos**, o con el lock screen mostrando solo el reloj sin campo de contraseña.
-> Causa confirmada al menos una vez: KDE guardó `DP-0` (el casco) como monitor de escritorio
-> habilitado a 90Hz — el mismo modo con link DP inestable que `docs/13` ya documenta — y eso
-> se lleva puesto el compositor entero (`QRhiGles2: Context is lost` en `plasmashell`/`kwin`).
-> Fix: `kscreen-doctor output.DP-0.disable`. **Pero el crash recurrió después con DP-0 ya
-> deshabilitado** (en el lock screen), así que puede haber un segundo problema no relacionado
-> al casco. **Actualización de la misma noche: `kscreen-doctor disable` en realidad NO apaga
-> DP-0 en caliente** (ni RandR crudo ni el MetaMode nativo de NVIDIA lo logran mientras el
-> casco sigue conectado — fallan los tres métodos, ver el doc) — probablemente por eso
-> "recurrió" con DP-0 supuestamente apagado. El workaround que sí funcionó fue mover las
-> ventanas atrapadas en DP-0 con un script de KWin (D-Bus), no tocar la pantalla. Detalle
-> completo, snippets que funcionan, y la lista de "qué retomar" en
-> `docs/20-desktop-plasma-crash.md`. **Antes de debuggear cualquier rareza del escritorio con
-> el casco conectado, correr `kscreen-doctor -o` y chequear si DP-0 está `enabled`** — y si
-> hay ventanas que no aparecen, sospechar que cayeron ahí antes de gastar tiempo en otra cosa.
+> With the headset connected, **KDE Plasma (X11) can become unstable to the point of losing
+> the panel/icons**, or the lock screen shows only the clock with no password field.
+> Confirmed cause at least once: KDE saved `DP-0` (the headset) as a desktop monitor
+> enabled at 90Hz — the same mode with the unstable DP link that `docs/13` already
+> documents — and that takes down the entire compositor with it (`QRhiGles2: Context is
+> lost` in `plasmashell`/`kwin`). Fix: `kscreen-doctor output.DP-0.disable`. **But the crash
+> recurred later with DP-0 already disabled** (on the lock screen), so there may be a second
+> problem unrelated to the headset. **Same-night update: `kscreen-doctor disable` doesn't
+> actually turn off DP-0 while hot** (neither raw RandR nor NVIDIA's native MetaMode manage
+> it while the headset stays connected — all three methods fail, see the doc) — that's
+> probably why it "recurred" with DP-0 supposedly off. The workaround that did work was
+> moving the windows trapped on DP-0 with a KWin script (D-Bus), not touching the display.
+> Full detail, working snippets, and the "what to pick back up" list in
+> `docs/20-desktop-plasma-crash.md`. **Before debugging any desktop weirdness with
+> the headset connected, run `kscreen-doctor -o` and check whether DP-0 is `enabled`** —
+> and if there are windows that don't show up, suspect they landed there before spending
+> time on anything else.
 
-> ## ESTADO AL 2026-08-05 (noche) — leer esto antes que el resto
+> ## STATUS AS OF 2026-08-05 (night) — read this before anything else
 >
-> El bug del bpc está **cerrado y publicado**:
+> The bpc bug is **closed and published**:
 >
-> - **PR en NVIDIA:** https://github.com/NVIDIA/open-gpu-kernel-modules/pull/1275
-> - **Hilo del foro:** post 379240, revisión 6, corregido y con los tres adjuntos
-> - Con el parche, el status HID de 33 bytes del casco queda idéntico byte a byte al de Windows
+> - **PR on NVIDIA:** https://github.com/NVIDIA/open-gpu-kernel-modules/pull/1275
+> - **Forum thread:** post 379240, revision 6, corrected and with all three attachments
+> - With the patch, the headset's 33-byte HID status ends up byte-for-byte identical to
+>   Windows'
 >
-> **El factorial de `docs/16-lab-vblank.md` ya se corrió completo** (7 puntos, EDIDs
-> inyectados por override de nvkms): descartó vblank (en líneas y en tiempo), refresh en sí,
-> y ancho de banda. El único patrón que sobrevivió fue "el único pixel clock que alguna vez
-> mostró imagen es el del modo 60Hz que ya andaba" — no hay una segunda variable escondida
-> en el EDID. **No hay que volver a esa vía**: el usuario decidió pivotear a reportar en vez
-> de seguir generando EDIDs a ciegas, y esa decisión sigue en pie.
+> **The full factorial in `docs/16-lab-vblank.md` has already been run** (7 points, EDIDs
+> injected via nvkms override): it ruled out vblank (both in lines and in time), refresh
+> itself, and bandwidth. The only pattern that survived was "the only pixel clock that ever
+> showed an image is the one from the 60Hz mode that already worked" — there's no second
+> hidden variable in the EDID. **Don't go back down that road**: the user decided to pivot to
+> reporting instead of continuing to generate EDIDs blindly, and that decision still stands.
 >
-> **El canal USB/HID del casco también está agotado**, no sólo en régimen estable (ya lo
-> decía este documento el 2026-08-05 temprano) sino en la TRANSICIÓN en vivo: se capturó un
-> cambio de refresh 60↔90 sin reconectar el casco (`windows-kit/`, ver
-> `docs/13-bug-6bpc.md` sección "2026-08-05 (noche)") y no aparece ningún comando ni reporte
-> HID especial en el momento del cambio — sólo el `DEVICE_STATUS` de siempre actualizando
-> refresh/htotal/vtotal. Tampoco sirve el panel de NVIDIA ni la Configuración de Windows para
-> ver DSC: el Reverb G2 no aparece ahí como display seleccionable (está en modo directo/HMD).
+> **The headset's USB/HID channel is also exhausted**, not only at steady state (this
+> document already said so early on 2026-08-05) but during the live TRANSITION: a 60↔90
+> refresh change was captured without reconnecting the headset (`windows-kit/`, see
+> `docs/13-bug-6bpc.md` section "2026-08-05 (night)") and no special command or HID report
+> appears at the moment of the change — only the usual `DEVICE_STATUS` updating
+> refresh/htotal/vtotal. The NVIDIA panel and Windows Settings are no use either for
+> checking DSC: the Reverb G2 doesn't show up there as a selectable display (it's in
+> direct/HMD mode).
 >
-> **Conclusión: no queda nada más para investigar con herramientas de usuario, en ningún
-> SO.** Lo que sigue, en orden de peso:
+> **Conclusion: there's nothing left to investigate with user-level tools, on either
+> OS.** What follows, in order of weight:
 >
-> 1. El reporte a NVIDIA (bug 5923212, cuerpo listo en `docs/19-nvidia-bug-5923212-followup.md
-docs/20-desktop-plasma-crash.md >>> EL CASCO CONECTADO ROMPE EL ESCRITORIO KDE <<<`)
->    — el usuario lo sube él mismo.
-> 2. Un GPU AMD puede llegar al lab para repetir el test de 90Hz en `amdgpu` — es el
->    experimento que más puede mover la aguja (ver `docs/11`), no es una sorpresa si aparece.
-> 3. Sniffear el canal AUX de DisplayPort con un logic analyzer — anotado, no intentado,
->    depende de tener el hardware (ver el checklist al final de `docs/13`).
+> 1. The report to NVIDIA (bug 5923212, body ready in `docs/19-nvidia-bug-5923212-followup.md
+docs/20-desktop-plasma-crash.md >>> THE CONNECTED HEADSET BREAKS THE KDE DESKTOP <<<`)
+>    — the user uploads it himself.
+> 2. An AMD GPU might arrive at the lab to repeat the 90Hz test on `amdgpu` — it's the
+>    experiment most likely to move the needle (see `docs/11`), it's not a surprise if it
+>    shows up.
+> 3. Sniffing the DisplayPort AUX channel with a logic analyzer — noted, not attempted,
+>    depends on having the hardware (see the checklist at the end of `docs/13`).
 >
-> `windows-kit/` quedó consolidado como herramienta general (`run-diagnostics.ps1`, un solo
-> comando) — no como una lista de tareas pendientes del 90Hz. Si algo dice "falta correr una
-> captura más de Windows", desconfiá: ya se llegó al fondo de ese canal.
+> `windows-kit/` ended up consolidated as a general-purpose tool (`run-diagnostics.ps1`, a
+> single command) — not as a list of pending 90Hz tasks. If something says "still need to
+> run one more Windows capture", be skeptical: that channel has already been fully mined.
 >
-> ### Publicación
+> ### Publication
 >
-> El repo se va a publicar en GitHub (`Wintch/reverb-g2`). Hay dos bloqueos, ver
-> `docs/17-publishing.md`. La clave SSH del lab ya está generada en `~/.ssh/id_ed25519`.
-> La identidad de git de este repo ya apunta a gmail.
+> The repo is going to be published on GitHub (`Wintch/reverb-g2`). There are two blockers,
+> see `docs/17-publishing.md`. The lab's SSH key is already generated at
+> `~/.ssh/id_ed25519`. This repo's git identity already points to gmail.
 
 
-Estás en una instalación **nueva y limpia** de Debian 13, en un SSD dedicado, cuyo único
-propósito es probar si el HP Reverb G2 puede correr a **90 Hz** con el driver NVIDIA
-595-open parcheado. Este repo es todo el conocimiento acumulado del proyecto. Leelo antes
-de proponer nada: hay varias cosas que ya se probaron y descartaron con medición.
+You are on a **brand-new, clean** Debian 13 install, on a dedicated SSD, whose sole
+purpose is to test whether the HP Reverb G2 can run at **90 Hz** with the patched NVIDIA
+595-open driver. This repo is all the accumulated knowledge of the project. Read it before
+proposing anything: several things have already been tried and ruled out with measurement.
 
-## El objetivo, en una línea
+## The goal, in one line
 
-**Que el panel del casco deje de parpadear.** El parpadeo es el strobe del backlight de
-baja persistencia del G2 a 60 Hz, y es inherente al modo 60 Hz. La única cura es llegar a
-90 Hz. No es un objetivo de rendimiento: el usuario dijo explícitamente que los fps del
-video son secundarios frente al parpadeo.
+**Get the headset panel to stop flickering.** The flicker is the strobe of the G2's
+low-persistence backlight at 60 Hz, and it's inherent to 60 Hz mode. The only cure is
+reaching 90 Hz. This isn't a performance goal: the user explicitly said video fps are
+secondary compared to the flicker.
 
-## Por dónde empezar
+## Where to start
 
-1. `docs/04-lab-90hz.md` — el plan completo del lab, paso por paso. Es tu guion.
-2. `scripts/bootstrap-lab.sh` — automatiza los pasos 1 a 4 de ese documento.
-3. `docs/06-known-issues.md` — lo que NO hay que volver a perseguir.
+1. `docs/04-lab-90hz.md` — the full lab plan, step by step. This is your script.
+2. `scripts/bootstrap-lab.sh` — automates steps 1 through 4 of that document.
+3. `docs/06-known-issues.md` — what NOT to chase again.
 
-Orden real:
+Actual order:
 ```bash
 ./scripts/bootstrap-lab.sh deps
-./scripts/bootstrap-lab.sh nvidia      # y REINICIAR
+./scripts/bootstrap-lab.sh nvidia      # and REBOOT
 ./scripts/bootstrap-lab.sh sources
 ./scripts/bootstrap-lab.sh build
-# baseline SIN parches: confirmar que 90Hz TODAVÍA falla (paso 3 del cap. 04)
-sudo ./scripts/bootstrap-lab.sh patch-nv    # y REINICIAR
-# y ahí sí, el test de 90Hz
+# baseline WITHOUT patches: confirm 90Hz STILL fails (step 3 of chapter 04)
+sudo ./scripts/bootstrap-lab.sh patch-nv    # and REBOOT
+# and only then, the 90Hz test
 ```
 
-**No te saltees el baseline sin parches.** Es lo que separa "el driver 595 por sí solo
-cambió algo" de "los parches lo arreglaron", y es la única forma de saber qué reportar.
+**Don't skip the baseline without patches.** It's what separates "the 595 driver alone
+changed something" from "the patches fixed it", and it's the only way to know what to
+report.
 
-### Dónde quedó todo (2026-08-05, 09:15) — reporte publicado; hay que EDITARLO
+### Where things stand (2026-08-05, 09:15) — report published; needs EDITING
 
-El reporte se publicó: [hilo 379240](https://forums.developer.nvidia.com/t/hp-reverb-g2-clamped-to-6-bpc-because-its-edid-leaves-color-depth-undefined-root-cause-found-two-line-patch-but-90-hz-still-fails-to-light/379240)
-(sin respuestas todavía). Llegó feedback externo de seis ítems; el triage completo, con cada
-uno contrastado contra lo ya medido, está en **`docs/15-feedback-triage.md`**.
+The report was published: [thread 379240](https://forums.developer.nvidia.com/t/hp-reverb-g2-clamped-to-6-bpc-because-its-edid-leaves-color-depth-undefined-root-cause-found-two-line-patch-but-90-hz-still-fails-to-light/379240)
+(no replies yet). External feedback came in with six items; the full triage, with each
+one checked against what's already been measured, is in **`docs/15-feedback-triage.md`**.
 
-**Lo urgente: el post publicado tiene un error y hay que editarlo antes de que lo lea más
-gente.** Dice *"its DisplayID 2.0 extension carries only a Type VII timing block"*. Es
-DisplayID **1.2** y el bloque es Type I. La conclusión no cambia y el argumento queda **más
-fuerte**: `nvt_edid.c:1101` bifurca por versión (`(pExt[1] & 0xF0) == 0x20`), así que el G2 va
-por el parser DisplayID 1.3, que **nunca escribe `digital.bpc`** — o sea que el clamp a 6 bpc
-es inevitable para *cualquier* sink DP con DisplayID 1.x que deje la profundidad sin declarar.
+**Urgent: the published post has an error and needs editing before more people read it.**
+It says *"its DisplayID 2.0 extension carries only a Type VII timing block"*. It's
+DisplayID **1.2** and the block is Type I. The conclusion doesn't change and the argument
+gets **stronger**: `nvt_edid.c:1101` branches by version (`(pExt[1] & 0xF0) == 0x20`), so
+the G2 goes through the DisplayID 1.3 parser, which **never writes `digital.bpc`** —
+meaning the clamp to 6 bpc is unavoidable for *any* DP sink with DisplayID 1.x that leaves
+depth undeclared.
 
-Cuerpo completo corregido, listo para pegar sobre el original, en **`docs/14`**. Adjuntos ya
-armados en `forum-attachments/` (EDID crudo + EDID de repro a 8 bpc + decode anotado, el
-parche, y el `nvidia-bug-report.log.gz`). También hay texto listo para abrir el issue en
-`NVIDIA/open-gpu-kernel-modules`.
+Full corrected body, ready to paste over the original, in **`docs/14`**. Attachments
+already assembled in `forum-attachments/` (raw EDID + 8-bpc repro EDID + annotated decode,
+the patch, and the `nvidia-bug-report.log.gz`). There's also text ready to open the issue
+on `NVIDIA/open-gpu-kernel-modules`.
 
-**Del feedback, lo que ya estaba cerrado** (no rehacerlo):
+**From the feedback, what was already closed** (don't redo it):
 
-- *"Aplicá los parches de Project-VR sobre el de bpc y bisecá"* — ya están aplicados los tres
-  (`PATCH[0..2]` en `dkms.conf`) más el `0004`. El resultado actual **es** el stack completo
-  en GA104. Y no hay caso positivo verificado en Ada del cual portar nada.
-- *"Puede ser el color space"* — lo cierra el propio EDID: CTA-861 byte 3 = `0x00`, el casco no
-  anuncia YCbCr 4:4:4 ni 4:2:2. El enlace es RGB obligatoriamente en los tres modos.
-- *"Compará el modeline derivado del EDID contra el que programa nvkms"* — hecho a mano
-  (`scripts/edid-tool.py decode`): coinciden exactamente en los tres modos. No hay segunda
-  causa raíz ahí.
+- *"Apply the Project-VR patches on top of the bpc one and bisect"* — all three are already
+  applied (`PATCH[0..2]` in `dkms.conf`) plus `0004`. The current result **is** the full
+  stack on GA104. And there's no verified positive case on Ada to port anything from.
+- *"It could be the color space"* — the EDID itself rules it out: CTA-861 byte 3 = `0x00`,
+  the headset doesn't advertise YCbCr 4:4:4 or 4:2:2. The link is mandatorily RGB in all
+  three modes.
+- *"Compare the modeline derived from the EDID against the one nvkms programs"* — done by
+  hand (`scripts/edid-tool.py decode`): they match exactly in all three modes. There's no
+  second root cause there.
 
-**Lo que sigue abierto, en orden:** (2) barrido de refresh 61/72/75/80 Hz — el que más
-discrimina, y se destraba volviendo a X11 con `Option "CustomEDID"`, que se había descartado
-por conveniencia y no por técnica; (3) captura USBPcap en Windows de la transición 60→90 (el
-desensamblado del Oasis acota lo que ese binario puede mandar, no lo que pasa por el bus, y
-quedan sin mirar los Detours de `driver_oasis.dll`); (4) DPCD por RM control call, caro y
-probablemente redundante.
+**What's still open, in order:** (2) refresh sweep at 61/72/75/80 Hz — the one that
+discriminates most, unblocked by going back to X11 with `Option "CustomEDID"`, which had
+been dropped for convenience, not for technical reasons; (3) USBPcap capture on Windows of
+the 60→90 transition (the Oasis disassembly only bounds what that binary can send, not what
+goes over the bus, and the `driver_oasis.dll` Detours are still unexamined); (4) DPCD via RM
+control call, expensive and probably redundant.
 
-#### Lo anterior (2026-08-05, 05:15) — el parche del bpc anda a medias, y se agotó el software
+#### Previously (2026-08-05, 05:15) — the bpc patch half-works, and the software route is exhausted
 
-**Actualización (01:50): se agotó también el firmware.** `NVreg_EnableGpuFirmwareLogs=1`
-activado y probado — el driver dice explícitamente que le falta `gsp_log_ga10x.bin` para
-loguear el firmware GSP. Se bajó el instalador oficial completo de NVIDIA (403 MB) para
-buscarlo: **NVIDIA no lo distribuye ni ahí** — el `gsp_ga10x.bin` del instalador es byte a
-byte idéntico (mismo MD5) al que ya teníamos. La lógica que decide el enganche a 90Hz corre
-en un firmware cerrado del que no existe versión pública que hable. Detalle completo en
-`docs/13-bug-6bpc.md`.
+**Update (01:50): the firmware route is exhausted too.** `NVreg_EnableGpuFirmwareLogs=1`
+enabled and tested — the driver explicitly says it's missing `gsp_log_ga10x.bin` to
+log the GSP firmware. Downloaded NVIDIA's full official installer (403 MB) to
+look for it: **NVIDIA doesn't distribute it there either** — the installer's
+`gsp_ga10x.bin` is byte-for-byte identical (same MD5) to the one we already had. The logic
+that decides the 90Hz handshake runs in closed firmware with no public version to speak of.
+Full detail in `docs/13-bug-6bpc.md`.
 
-Con DSC, color space y el modeline ya descartados también (ver más abajo), **se agotó lo que
-se puede investigar desde Linux sin ayuda de NVIDIA.** El siguiente paso es reportar, no
-seguir cavando solos.
+With DSC, color space, and the modeline also ruled out already (see below), **what can be
+investigated from Linux without NVIDIA's help is exhausted.** The next step is to report,
+not keep digging alone.
 
-#### Lo anterior (2026-08-05, 05:15) — el parche del bpc anda a medias
+#### Previously (2026-08-05, 05:15) — the bpc patch half-works
 
-**El bug del bpc era real y el parche funciona exactamente como predijo el código: el byte 18
-del casco pasó de 06 a 08.** Pero eso NO resolvió el 90Hz. Verificación física:
+**The bpc bug was real and the patch works exactly as the code predicted: the headset's
+byte 18 went from 06 to 08.** But that did NOT fix the 90Hz. Physical verification:
 
-- `4320x2160@90` y `2880x1440@90` (dos anchos de banda que difieren 2x): los DOS ahora
-  muestran **parpadeo blanco, sin color** — antes era logo estático sin actividad. Progreso
-  real, pero no la solución.
-- `4320x2160@60` (control, con el mismo parche): sigue con colores normales.
-- Como los dos modos de 90Hz fallan igual pese a tener anchos de banda muy distintos, **no es
-  un límite de ancho de banda MIPI**.
+- `4320x2160@90` and `2880x1440@90` (two bandwidths that differ by 2x): BOTH now
+  show **white flicker, no color** — before it was a static logo with no activity. Real
+  progress, but not the fix.
+- `4320x2160@60` (control, with the same patch): still shows normal colors.
+- Since both 90Hz modes fail the same way despite having very different bandwidths, **it's
+  not a MIPI bandwidth limit**.
 
-**El hallazgo más importante: el estado que reporta el casco ahora es BYTE-IDÉNTICO al de
-Windows** (los 33 bytes del `DEVICE_STATUS`, incluido el byte 11 que quedaba pendiente — se
-corrigió solo con el bpc). O sea que se agotó lo que este canal de medición puede decirnos: el
-casco le dice al host lo mismo que le dice a Windows, y el resultado visual es distinto. La
-diferencia que falta no es visible desde este ángulo — hay que buscarla en los logs de NVIDIA
-(¿DSC en silencio? ¿color space RGB vs YCbCr? ¿timing fino que htotal/vtotal no capturan?).
+**The most important finding: the state the headset now reports is BYTE-IDENTICAL to
+Windows'** (the 33 bytes of `DEVICE_STATUS`, including byte 11 which had been pending — it
+got fixed by the bpc change alone). Meaning what this measurement channel can tell us is
+exhausted: the headset tells the host the same thing it tells Windows, and the visual
+result is different. The missing difference isn't visible from this angle — it has to be
+looked for in NVIDIA's logs (silent DSC? RGB vs YCbCr color space? fine timing that
+htotal/vtotal don't capture?).
 
-Todo el detalle y el próximo paso concreto (recorrer `collect-nv.sh` con el parche puesto):
-**`docs/13-bug-6bpc.md`**.
+Full detail and the concrete next step (run through `collect-nv.sh` with the patch
+applied): **`docs/13-bug-6bpc.md`**.
 
-#### Lo anterior (2026-08-04, 20:45)
+#### Previously (2026-08-04, 20:45)
 
-**Se probó la segunda vía de display entera — Wayland + DRM lease en GNOME/mutter — y el
-90Hz falla idéntico. Ocho fallos ya. La causa casi no puede estar en NVIDIA.**
+**The entire second display path was tested — Wayland + DRM lease on GNOME/mutter — and
+90Hz fails identically. Eight failures now. The cause can barely be in NVIDIA.**
 
-El lease **funciona**: mutter 48.7 de Debian 13, sin parches, ofrece el conector del casco
-(`connector 130 DP-1 (HPN)`), Monado lo arrienda y toma `4320x2160@90.00`. Eso descarta el
-hilo del foro de NVIDIA sobre DRM lease: **el culpable de ese bloqueo era KWin**, que anuncia
-el device pero ofrece cero conectores. Y sin embargo, con el lease otorgado y el modo de 90
-tomado, el panel sigue muerto con el logo de HP. El control a 60Hz por la **misma** vía dio
-imagen perfecta. Tabla y logs en `docs/04-lab-90hz.md`, "GNOME/mutter ejecutado".
+The lease **works**: Debian 13's mutter 48.7, unpatched, offers the headset's connector
+(`connector 130 DP-1 (HPN)`), Monado leases it and takes `4320x2160@90.00`. That rules out
+the NVIDIA forum thread about DRM lease: **the culprit for that block was KWin**, which
+advertises the device but offers zero connectors. And yet, with the lease granted and the
+90 mode taken, the panel is still dead with the HP logo. The 60Hz control over the **same**
+path gave a perfect image. Table and logs in `docs/04-lab-90hz.md`, "GNOME/mutter run".
 
-Cambiamos X11 Direct-Mode por Wayland DRM lease — dos mecanismos que casi no comparten código
-del lado del driver — y el síntoma no se movió. Sumado a que el 595-open parcheado falló igual
-que el sin parchear, del lado de la vía de display ya no queda casi nada.
+We swapped X11 Direct-Mode for Wayland DRM lease — two mechanisms that share almost no
+driver-side code — and the symptom didn't move. Added to the fact that the patched
+595-open failed the same as the unpatched one, there's almost nothing left on the
+display-path side.
 
-Para chequear el lease sin levantar Monado: `scripts/check-lease.sh`.
+To check the lease without bringing up Monado: `scripts/check-lease.sh`.
 
-**Y se cerraron las dos hipótesis que quedaban, las dos por evidencia:**
+**And the two remaining hypotheses got closed, both by evidence:**
 
-- **NO falta un comando HID de modo.** Se desensambló el driver Oasis (el que corre el
-  G2 a 90Hz en Windows hablándole al casco directo). Su único comando de panel es *Display
-  Enable* — HID Usage Page `0x03`, Usage `0x21` — que es exactamente el `{0x04,0x01}` que
-  Monado ya manda. **No existe comando de refresh rate.** Método, falsos positivos y strings
-  del firmware en `docs/09-oasis-driver-re.md`. `docs/07` queda archivado: no hace falta
-  bootear Windows.
-- **NO es DSC.** Del EDID del casco: `2880x1440@90` pide **10.29 Gbps**, menos de la mitad que
-  el `4320x2160@60` que anda perfecto (17.02), contra 25.92 Gbps de enlace. Ese modo no puede
-  necesitar compresión y falla igual. Cuarta teoría de ancho de banda que cae medida.
+- **There's NO missing mode HID command.** The Oasis driver was disassembled (the one that
+  drives the G2 at 90Hz on Windows, talking to the headset directly). Its only panel
+  command is *Display Enable* — HID Usage Page `0x03`, Usage `0x21` — which is exactly the
+  `{0x04,0x01}` Monado already sends. **There's no refresh-rate command.** Method, false
+  positives, and firmware strings in `docs/09-oasis-driver-re.md`. `docs/07` is now
+  archived: no need to boot Windows.
+- **It's NOT DSC.** From the headset's EDID: `2880x1440@90` needs **10.29 Gbps**, less than
+  half of the `4320x2160@60` that works perfectly (17.02), against a 25.92 Gbps link. That
+  mode can't need compression and it fails the same. Fourth bandwidth theory ruled out by
+  measurement.
 
-**Lo único que comparten los dos modos que fallan es el 90 Hz.** No es bandwidth, no es
-compresión, no es un comando faltante, no es la vía de display, no es contención de heads,
-no es la fuente ni el cable.
+**The only thing the two failing modes share is 90 Hz.** It's not bandwidth, it's not
+compression, it's not a missing command, it's not the display path, it's not head
+contention, it's not the power supply or the cable.
 
-**El test más barato que discrimina y que NO está corrido:** `2880x1440@90` (modo 0) por
-Wayland DRM lease — `./scripts/jack-in-wayland.sh 0`. Sólo se probó en X11.
+**The cheapest discriminating test that has NOT been run:** `2880x1440@90` (mode 0) via
+Wayland DRM lease — `./scripts/jack-in-wayland.sh 0`. It's only been tested on X11.
 
-#### Lo anterior (2026-08-04, 19:10): los parches del 595-open NO arreglan el 90Hz
+#### Previously (2026-08-04, 19:10): the 595-open patches do NOT fix 90Hz
 
-Reboot hecho, módulo parcheado confirmado en memoria, test corrido con verificación física
-en seis casos (tabla completa en `docs/04-lab-90hz.md`, "Paso 5 ejecutado"). Los dos modos de
-90Hz siguen dejando el panel apagado con el logo de HP, idéntico al baseline sin parches. El
-control a 60Hz se corrió *después* de los fallos y dio imagen perfecta, así que el setup
-estaba sano y el resultado es limpio.
+Reboot done, patched module confirmed in memory, test run with physical verification
+across six cases (full table in `docs/04-lab-90hz.md`, "Step 5 executed"). Both 90Hz modes
+still leave the panel off with the HP logo, identical to the unpatched baseline. The 60Hz
+control was run *after* the failures and gave a perfect image, so the setup was sound and
+the result is clean.
 
-También se probó y **se descartó** una hipótesis nueva del usuario: contención de heads /
-dominios de reloj de la GPU (él ya había tenido que apagar paneles de 60Hz para llegar a
-144Hz en X11). Se probó con un solo monitor y con **cero** — el casco como único display del
-sistema — y sigue apagado. No es eso. Para repetirlo sin quedarse sin pantalla está
-`scripts/solo-hmd-test.sh`, que restaura el escritorio desde un `trap EXIT`.
+A new hypothesis from the user was also tested and **ruled out**: head contention / GPU
+clock domains (he'd already had to turn off 60Hz panels to reach 144Hz on X11). Tested with
+a single monitor and with **zero** — the headset as the system's only display — and it's
+still off. That's not it. To repeat it without losing your display there's
+`scripts/solo-hmd-test.sh`, which restores the desktop via a `trap EXIT`.
 
-~~**La línea viva ahora es otra**: puede que al casco nunca se le pida cambiar a 90Hz
-(`wmr_hmd.c:767` manda lo mismo a 60 y a 90). Falta la captura HID de Windows.~~
+~~**The live lead now is different**: maybe the headset is never asked to switch to 90Hz
+(`wmr_hmd.c:767` sends the same thing at 60 and at 90). The Windows HID capture is still
+needed.~~
 
-> **DESCARTADO el mismo día, dos veces** (ver arriba y `docs/09-oasis-driver-re.md`). Se deja
-> tachado en vez de borrado porque este párrafo, al quedar sin actualizar unas horas, hizo que
-> se resucitara la hipótesis y se la citara como "la única que explica los resultados".
-> **Al cerrar una línea, actualizar esta sección en el mismo commit.**
+> **RULED OUT the same day, twice** (see above and `docs/09-oasis-driver-re.md`). Left
+> struck through instead of deleted because this paragraph, after going a few hours without
+> an update, caused the hypothesis to be resurrected and cited as "the only one that
+> explains the results."
+> **When closing a lead, update this section in the same commit.**
 
-Pendientes que necesitan sudo (prioridad RT para Monado, zram, audio, deps de basalt) siguen
-sin hacer; ninguno bloqueaba el test.
+Pending items that need sudo (RT priority for Monado, zram, audio, basalt deps) are still
+not done; none of them blocked the test.
 
-## La regla más importante de todo el proyecto
+## The single most important rule of the whole project
 
-**La verificación del 90 Hz es FÍSICA. Hay que mirar adentro del casco.**
+**Verifying 90 Hz is PHYSICAL. You have to look inside the headset.**
 
-La API de Vulkan/OpenXR reporta éxito y unos felices 90.0 fps **con el panel completamente
-negro**. El fallo es invisible por encima del driver. Cualquier conclusión basada en logs,
-en `xrandr`, o en el framerate reportado es inválida. Pedile al usuario que se ponga el
-casco y te diga qué ve — es el único instrumento que sirve.
+The Vulkan/OpenXR API reports success and a happy 90.0 fps **with the panel completely
+black**. The failure is invisible above the driver. Any conclusion based on logs,
+on `xrandr`, or on the reported framerate is invalid. Ask the user to put on the
+headset and tell you what they see — it's the only instrument that works.
 
-Esto vale para todo el proyecto, no sólo para el 90 Hz: la foto 360, el video, el estéreo
-VR180, todo se validó con el usuario mirando. Si no lo vio un humano, no está verificado.
+This applies to the whole project, not just 90 Hz: the 360 photo, the video, VR180
+stereo, everything was validated with the user watching. If a human hasn't seen it, it
+isn't verified.
 
-## Estado del hardware y lo que ya está descartado
+## Hardware status and what's already ruled out
 
-**El casco funciona end-to-end en Linux.** Tracking 3DoF impecable, panel a 60 Hz, audio,
-y un player propio de 360/VR180 que reproduce 8K estéreo a 60 fps. Nada de eso es el
-problema.
+**The headset works end-to-end on Linux.** Flawless 3DoF tracking, panel at 60 Hz, audio,
+and a custom 360/VR180 player that plays 8K stereo at 60 fps. None of that is the
+problem.
 
-Cosas que **ya se investigaron y hay que dejar quietas** (detalle en `docs/06-known-issues.md`):
+Things that **have already been investigated and should be left alone** (detail in `docs/06-known-issues.md`):
 
-- **El cable / el puerto USB.** Era un puerto USB-A malo, ya resuelto. Si falta el
-  companion `03f0:0580`, revisá el puerto, no debuguees Monado.
-- **La fuente de alimentación del G2.** Se sospechó y se **descartó**: el mismo casco corre
-  90 Hz horas en Windows 11 sin una caída. No es eléctrico.
-- **Las cámaras de tracking.** Se midió: apagarlas no cambia nada (`WMR_CAMERAS=0`).
-- **El ancho de banda de DisplayPort.** Medido: el modo 60 Hz que funciona tiene pixel
-  clock MÁS alto que el modo 90 Hz nativo que falla. No es bandwidth: es el refresh rate.
-- **Los puertos DP de la GPU.** Test cruzado con un monitor: ambos sanos.
+- **The cable / the USB port.** It was a bad USB-A port, already fixed. If the
+  `03f0:0580` companion is missing, check the port, don't debug Monado.
+- **The G2's power supply.** Suspected and **ruled out**: the same headset runs
+  90 Hz for hours on Windows 11 without a single drop. It's not electrical.
+- **The tracking cameras.** Measured: turning them off changes nothing (`WMR_CAMERAS=0`).
+- **DisplayPort bandwidth.** Measured: the working 60 Hz mode has a HIGHER pixel
+  clock than the failing native 90 Hz mode. It's not bandwidth: it's the refresh rate.
+- **The GPU's DP ports.** Cross-tested with a monitor: both healthy.
 
-**Lo que sí queda abierto** (pero DESPUÉS del 90 Hz, no ahora): con el panel encendido, el
-hub USB2 interno del casco se resetea cada tanto y se lleva al companion y al audio. Vuelve
-solo a los ~5 s de matar `monado-service`. Sospechoso actual: cómo maneja el driver WMR de
-Monado los reportes HID de keepalive comparado con Windows. Es una molestia, no un bloqueo.
+**What does remain open** (but AFTER the 90 Hz, not now): with the panel on, the headset's
+internal USB2 hub resets every so often and takes the companion and audio down with it. It
+comes back on its own ~5 s after killing `monado-service`. Current suspect: how Monado's
+WMR driver handles keepalive HID reports compared to Windows. It's an annoyance, not a
+blocker.
 
-## Trampas concretas que te van a morder
+## Concrete traps that will bite you
 
-- **El player muestra NEGRO si no encuentra su contenido por defecto.** `LoadPhotoTexture()`
-  hace `THROW` cuando el archivo no abre, y eso mata la sesión XR: el compositor queda
-  presentando en negro y todo el resto del log dice "éxito". El default apunta a
-  `~/Documents/linux_vr_base/photo360/venice_sunset.jpg`, que sólo existe en el sistema
-  principal. Pasale `HELLO_XR_PHOTO360=` a algo que exista (en el lab hay una equirect de
-  prueba en `~/vr/media/test-equirect.jpg`). Antes de culpar al modo de video, verificá en
-  el log de Monado que haya `BEGIN_SESSION` **sin** `END_SESSION` inmediato.
-- **El player sale solo si le das `< /dev/null`.** `hello_xr` v3 lee las teclas de transporte
-  de stdin y trata `EOF` como "fin de corrida temporizada": lanzado con stdin cerrado muere en
-  menos de un segundo, con **exit 0 y sin una sola línea de error**. En el log de Monado se ve
-  `client_connected`, swapchains creados y destruidos, y `client_disconnected`, sin ningún
-  `BEGIN_SESSION` de la app — parece un fallo del compositor y no lo es. Usá `sleep N |
-  hello_xr ...`. Ojo que **monado-service** necesita lo contrario (`XRT_NO_STDIN=1`, si no
-  muere con `epoll_ctl(stdin) failed`): al servicio se le saca stdin, al player se le da vivo.
-- **Para Wayland hay que elegir bien la sesión en SDDM:** aparecen **dos** entradas llamadas
-  sólo "GNOME", una Wayland y otra X11. Elegí "GNOME on Wayland". Y KWin no sirve para el
-  lease. `scripts/check-lease.sh` lo verifica en dos segundos antes de perder tiempo.
-- **`jack-in.sh` ya no hardcodea las salidas de video** (arreglado 2026-08-04): saca una
-  foto del layout real con `xrandr` antes de tocar los CRTC y la restaura después, ciclando
-  la rotación y usando `kscreen-doctor` en KDE. Tampoco hardcodea rutas: detecta
-  `~/Documents/linux_vr_base` o `~/vr`, y acepta `VR_BASE=` y `HMD_OUTPUT=`.
-- **`play360.sh` tenía la misma ruta hardcodeada** (arreglado 2026-08-04): apuntaba a
-  `~/Documents/linux_vr_base` y en el lab moría con "falta compilar hello_xr". Ya autodetecta
-  igual que `jack-in.sh`. Si tocás uno, sincronizá `scripts/` con la copia de `~/vr/`.
-- **`XRT_COMPOSITOR_DESIRED_MODE` del entorno**: hasta el 2026-08-04 `jack-in.sh` lo pisaba
-  con 60Hz, así que el test de 90Hz del cap. 04 corría en silencio a 60 y reportaba éxito.
-  Ya respeta el valor externo — pero **verificá siempre en el log** qué modo agarró:
-  `grep "found display mode" ~/vr/jack-in.log`.
-- **El usuario se enoja, con razón, cuando le rompés el monitor vertical.** Pasó varias
-  veces. Cada vez que Monado toma `DP-0` en direct-mode, el driver NVIDIA reprograma los
-  CRTC y pierde la rotación del monitor portrait — y `xrandr` sigue *reportando* "right"
-  mientras el panel muestra landscape. El arreglo que funciona es ciclar la rotación
-  (`none` → `right`), y en KDE conviene hacerlo con `kscreen-doctor`, no con `xrandr`.
-- **Secuencia de arranque de Monado**: el panel sólo enciende cuando Monado manda la
-  activación WMR, pero Monado sólo puede tomar el display si X no lo está usando. Por eso
-  `jack-in.sh` arranca el servicio, lo mata con `kill -9` (un `SIGTERM` mandaría el
-  screen-off y volveríamos al principio), libera `DP-0`, y recién ahí arranca de verdad.
-  `WMR_DISPLAY_INIT_SLEEP_SECONDS=2` es load-bearing: con el default de 4 s el panel ya se
-  apagó cuando Monado lo busca, y el servicio se duerme para siempre.
-- **Borrá `/run/user/1000/monado_comp_ipc` antes de CADA arranque.** `SIGKILL` no lo limpia.
-- **`pgrep -f` se matchea a sí mismo** en entornos donde el shell lleva el patrón en su
-  cmdline. Usá `pgrep -f "monado[-]service"`. Un PID que cambia en cada chequeo es la señal.
-- **`pkill` está bloqueado** en el entorno de Claude Code (exit 144, aborta la cadena).
-  Usá `kill` sobre PIDs de `pgrep`.
-- **El parche 90Hz de Monado de Project-VR** (`nominal_frame_interval_ns = 1e9/90`) **ya
-  está aplicado** en el árbol del lab desde el 2026-08-04. Se aplicó *antes* del baseline a
-  propósito, para que el único cambio entre la medición sin parches y la de después sea el
-  driver NVIDIA. `bootstrap-lab.sh` no lo trae: si rehacés `sources` desde cero, bajalo de
-  `patches/consolidated/monado/0001-*.patch` del repo de Project-VR (aplica limpio).
+- **The player shows BLACK if it can't find its default content.** `LoadPhotoTexture()`
+  does a `THROW` when the file won't open, and that kills the XR session: the compositor
+  keeps presenting black and the rest of the log says "success". The default points to
+  `~/Documents/linux_vr_base/photo360/venice_sunset.jpg`, which only exists on the
+  main system. Pass `HELLO_XR_PHOTO360=` pointing to something that exists (the lab has a
+  test equirect at `~/vr/media/test-equirect.jpg`). Before blaming video mode, check
+  Monado's log for `BEGIN_SESSION` **without** an immediate `END_SESSION`.
+- **The player exits on its own if you give it `< /dev/null`.** `hello_xr` v3 reads
+  transport keys from stdin and treats `EOF` as "end of timed run": launched with stdin
+  closed, it dies in under a second, with **exit 0 and not a single error line**. Monado's
+  log shows `client_connected`, swapchains created and destroyed, and `client_disconnected`,
+  with no `BEGIN_SESSION` from the app at all — it looks like a compositor failure and it
+  isn't. Use `sleep N | hello_xr ...`. Note that **monado-service** needs the opposite
+  (`XRT_NO_STDIN=1`, otherwise it dies with `epoll_ctl(stdin) failed`): the service gets
+  stdin taken away, the player gets it kept alive.
+- **For Wayland you need to pick the right session in SDDM:** there are **two** entries
+  both just labeled "GNOME", one Wayland and one X11. Pick "GNOME on Wayland". And KWin
+  doesn't work for the lease. `scripts/check-lease.sh` verifies it in two seconds before you
+  waste time.
+- **`jack-in.sh` no longer hardcodes video outputs** (fixed 2026-08-04): it snapshots the
+  actual layout with `xrandr` before touching the CRTCs and restores it afterward, cycling
+  the rotation and using `kscreen-doctor` on KDE. It doesn't hardcode paths either: it
+  detects `~/Documents/linux_vr_base` or `~/vr`, and accepts `VR_BASE=` and `HMD_OUTPUT=`.
+- **`play360.sh` had the same hardcoded path** (fixed 2026-08-04): it pointed to
+  `~/Documents/linux_vr_base` and in the lab it would die with "hello_xr not built". It now
+  autodetects the same way `jack-in.sh` does. If you touch one, sync `scripts/` with the
+  copy in `~/vr/`.
+- **`XRT_COMPOSITOR_DESIRED_MODE` from the environment**: until 2026-08-04 `jack-in.sh`
+  overrode it with 60Hz, so the chapter 04 90Hz test was silently running at 60 and
+  reporting success. It now respects the external value — but **always check the log** for
+  which mode it picked: `grep "found display mode" ~/vr/jack-in.log`.
+- **The user gets annoyed, rightly, when you break his vertical monitor.** It's happened
+  several times. Every time Monado takes `DP-0` in direct-mode, the NVIDIA driver
+  reprograms the CRTCs and loses the portrait monitor's rotation — and `xrandr` keeps
+  *reporting* "right" while the panel shows landscape. The fix that works is cycling the
+  rotation (`none` → `right`), and on KDE it's best done with `kscreen-doctor`, not
+  `xrandr`.
+- **Monado's startup sequence**: the panel only powers on when Monado sends the WMR
+  activation, but Monado can only take the display if X isn't using it. That's why
+  `jack-in.sh` starts the service, kills it with `kill -9` (a `SIGTERM` would send the
+  screen-off and we'd be back at square one), frees `DP-0`, and only then starts it for
+  real. `WMR_DISPLAY_INIT_SLEEP_SECONDS=2` is load-bearing: with the default of 4 s the
+  panel has already turned off by the time Monado looks for it, and the service hangs
+  forever.
+- **Delete `/run/user/1000/monado_comp_ipc` before EVERY startup.** `SIGKILL` doesn't clean
+  it up.
+- **`pgrep -f` matches itself** in environments where the shell carries the pattern in its
+  cmdline. Use `pgrep -f "monado[-]service"`. A PID that changes on every check is the
+  tell.
+- **`pkill` is blocked** in the Claude Code environment (exit 144, aborts the chain).
+  Use `kill` on PIDs from `pgrep`.
+- **Project-VR's Monado 90Hz patch** (`nominal_frame_interval_ns = 1e9/90`) **is already
+  applied** in the lab tree as of 2026-08-04. It was applied *before* the baseline on
+  purpose, so the only change between the unpatched measurement and the later one is the
+  NVIDIA driver. `bootstrap-lab.sh` doesn't bring it in: if you redo `sources` from
+  scratch, grab it from `patches/consolidated/monado/0001-*.patch` in the Project-VR repo
+  (applies clean).
 
-## Qué hay en este repo
+## What's in this repo
 
 ```
-docs/00-hardware-usb.md     topología USB, el split SuperSpeed/USB2, procedimientos
-docs/01-bringup-monado.md   build y arranque del runtime
-docs/02-player-360.md       el player 360/VR180 (v3): proyecciones, pipeline, medición
-docs/03-controllers.md      estado de los controllers (3DoF, límite del driver upstream)
-docs/04-lab-90hz.md         >>> TU GUION <<<
-docs/05-resolve.md          DaVinci Resolve (otro objetivo del rig, no toca esto)
-docs/06-known-issues.md     lo descartado, con evidencia
-docs/07-windows-hid-capture.md  ARCHIVADO: el comando de modo no existe (ver cap. 09)
-docs/08-passthrough-limits.md  idea de passthrough + límites por marcas (no empezado)
-docs/09-oasis-driver-re.md  qué le manda Windows al panel, leído del driver Oasis
-docs/10-resources.md         índice de fuentes: driver de HP, FCC, chips, parque instalado
-docs/11-linux-hmd-landscape.md  ¿es sólo NVIDIA? otros cascos, DK2, y dónde publicar
-docs/12-g2-protocol.md     >>> REFERENCIA DEL PROTOCOLO <<< todo lo que sabemos del casco
-docs/13-bug-6bpc.md         >>> EL BUG <<< NVIDIA clava el G2 en 6 bits por color
-docs/14-nvidia-report.md    >>> REPORTE PUBLICADO <<< + el cuerpo corregido para editarlo
-docs/15-feedback-triage.md  el feedback externo al reporte, ítem por ítem, con veredicto
-forum-attachments/          los adjuntos del hilo, ya armados y listos para subir
-windows-kit/                paquete de captura para Windows (se empaqueta en windows-kit.7z)
-patches/nvidia/             los 3 parches de Project-VR para el 595-open
-patches/monado/             7 parches nuestros (companion, controllers, WMR_CAMERAS)
-patches/hello_xr-player/    3 parches: el player 360/VR180 completo
-scripts/bootstrap-lab.sh    instalación automatizada del lab
-scripts/jack-in.sh          levanta el pipeline VR (AJUSTAR las salidas de video)
-scripts/play360.sh          reproduce 360/VR180/plano en el casco
-scripts/get360.sh           baja video VR de YouTube (necesita el cliente android_vr)
-scripts/solo-hmd-test.sh    test con el casco como ÚNICO display (restaura con trap EXIT)
-scripts/check-lease.sh      ¿el compositor Wayland ofrece el conector del casco? (sin Monado)
-scripts/xref.py             xrefs de strings en binarios PE, sólo con binutils
-scripts/edid-tool.py        decodifica el EDID del casco y genera variantes (bpc, checksum)
-scripts/jack-in-wayland.sh  levanta el pipeline VR por DRM lease (Wayland; necesita GNOME)
-scripts/drmprops.c          lee non-desktop/modos del conector directo del kernel
-scripts/capture-hid.sh      captura el HID del companion por modo (usbmon, necesita root)
-scripts/analyze-hid.py      diffea capturas HID: usbmon (Linux) y TSV de tshark (Windows)
+docs/00-hardware-usb.md     USB topology, the SuperSpeed/USB2 split, procedures
+docs/01-bringup-monado.md   runtime build and startup
+docs/02-player-360.md       the 360/VR180 player (v3): projections, pipeline, measurement
+docs/03-controllers.md      controller status (3DoF, upstream driver limitation)
+docs/04-lab-90hz.md         >>> YOUR SCRIPT <<<
+docs/05-resolve.md          DaVinci Resolve (another rig goal, unrelated to this)
+docs/06-known-issues.md     what's ruled out, with evidence
+docs/07-windows-hid-capture.md  ARCHIVED: the mode command doesn't exist (see ch. 09)
+docs/08-passthrough-limits.md  passthrough idea + limits by brand (not started)
+docs/09-oasis-driver-re.md  what Windows sends to the panel, read from the Oasis driver
+docs/10-resources.md         source index: HP driver, FCC, chips, installed base
+docs/11-linux-hmd-landscape.md  is it just NVIDIA? other headsets, DK2, and where to publish
+docs/12-g2-protocol.md     >>> PROTOCOL REFERENCE <<< everything we know about the headset
+docs/13-bug-6bpc.md         >>> THE BUG <<< NVIDIA clamps the G2 to 6 bits per color
+docs/14-nvidia-report.md    >>> PUBLISHED REPORT <<< + the corrected body ready to edit in
+docs/15-feedback-triage.md  external feedback on the report, item by item, with verdict
+forum-attachments/          the thread's attachments, already assembled and ready to upload
+windows-kit/                Windows capture package (packaged into windows-kit.7z)
+patches/nvidia/             the 3 Project-VR patches for 595-open
+patches/monado/             7 of our patches (companion, controllers, WMR_CAMERAS)
+patches/hello_xr-player/    3 patches: the full 360/VR180 player
+scripts/bootstrap-lab.sh    automated lab install
+scripts/jack-in.sh          brings up the VR pipeline (ADJUST the video outputs)
+scripts/play360.sh          plays 360/VR180/flat content on the headset
+scripts/get360.sh           downloads VR video from YouTube (needs the android_vr client)
+scripts/solo-hmd-test.sh    test with the headset as the ONLY display (restores via trap EXIT)
+scripts/check-lease.sh      does the Wayland compositor offer the headset's connector? (no Monado)
+scripts/xref.py             string xrefs in PE binaries, using only binutils
+scripts/edid-tool.py        decodes the headset's EDID and generates variants (bpc, checksum)
+scripts/jack-in-wayland.sh  brings up the VR pipeline via DRM lease (Wayland; needs GNOME)
+scripts/drmprops.c          reads non-desktop/modes straight from the kernel connector
+scripts/capture-hid.sh      captures the companion's HID per mode (usbmon, needs root)
+scripts/analyze-hid.py      diffs HID captures: usbmon (Linux) and tshark TSV (Windows)
 ```
 
-Los árboles de código no vienen en el bundle: `bootstrap-lab.sh` los clona de upstream en
-los SHA exactos contra los que los parches fueron generados, y aplica los parches. Así el
-bundle pesa kilobytes y se ve exactamente qué es nuestro.
+The code trees don't come in the bundle: `bootstrap-lab.sh` clones them from upstream at
+the exact SHAs the patches were generated against, and applies the patches. That way the
+bundle weighs kilobytes and it's exactly clear what's ours.
 
-## Cómo trabaja este usuario
+## How this user works
 
-- Habla español. Contestale en español.
-- Es técnico y quiere el porqué, no sólo el qué. Las mediciones le importan más que las
-  opiniones — si vas a afirmar algo, medilo.
-- **Corregí el rumbo cuando la evidencia lo contradiga.** En este proyecto ya hubo tres
-  conclusiones dadas por buenas que resultaron falsas (el cable, la fuente, el audio
-  "bloqueado por hardware"). Cada una costó semanas. Si algo no cierra, decilo.
-- No declares nada verificado sin que él lo haya visto. Ya pasó que se dio por bueno un
-  render que nunca se había mirado.
+- He speaks Spanish. Reply to him in Spanish.
+- He's technical and wants the why, not just the what. Measurements matter more to him than
+  opinions — if you're going to claim something, measure it.
+- **Correct course when the evidence contradicts it.** In this project there have already
+  been three conclusions accepted as good that turned out false (the cable, the power
+  supply, the "hardware-blocked" audio). Each one cost weeks. If something doesn't add up,
+  say so.
+- Don't declare anything verified without him having seen it. It's already happened that a
+  render was accepted as good that had never actually been looked at.
 
-## Si el 90 Hz funciona
+## If 90 Hz works
 
-Registrar en `docs/04-lab-90hz.md`: qué modo anduvo (`XRT_COMPOSITOR_DESIRED_MODE`),
-estabilidad a 15+ minutos, y re-correr el smoke test de video del cap. 02 (el path
-NVDEC/cuvid debería andar igual en 595, pero hay que verificarlo explícitamente).
+Record in `docs/04-lab-90hz.md`: which mode worked (`XRT_COMPOSITOR_DESIRED_MODE`),
+stability at 15+ minutes, and re-run the video smoke test from chapter 02 (the
+NVDEC/cuvid path should work the same on 595, but it needs to be verified explicitly).
 
-Recién ahí se planifica la instalación definitiva. El criterio de corte acordado con el
-usuario es **"el casco a la par de Windows o mejor"**.
+Only then is the final install planned. The cutoff criterion agreed with the
+user is **"the headset on par with Windows or better"**.

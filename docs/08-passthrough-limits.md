@@ -1,99 +1,104 @@
-# 08 — Passthrough y límites de juego (idea, no empezado)
+# 08 — Passthrough and play-area limits (idea, not started)
 
-**Estado: anotado el 2026-08-04. Nada implementado.** No tocar hasta cerrar el 90Hz (cap. 04).
+**Status: noted on 2026-08-04. Nothing implemented.** Don't touch until 90Hz is closed out (ch. 04).
 
-## La idea
+## The idea
 
-Dos cosas relacionadas, pedidas por el usuario:
+Two related things, requested by the user:
 
-1. **Passthrough**: tomar el video de las cámaras del casco y reproyectarlo adentro, como el
-   modo del Quest donde ves el ambiente para no chocarte mientras arranca un juego, o cuando
-   te acercás a una pared.
-2. **Límites**: que el sistema sepa dónde están las paredes. La idea propuesta fue **leer
-   marcas** puestas en el ambiente.
+1. **Passthrough**: take the video feed from the headset's cameras and reproject it inside,
+   like the Quest's mode where you see the surroundings so you don't bump into things while
+   a game is starting up, or when you get close to a wall.
+2. **Boundaries**: have the system know where the walls are. The idea proposed was to **read
+   markers** placed in the environment.
 
-## Por qué acá es plausible
+## Why this is plausible here
 
-Buena parte del andamiaje ya está en el rig:
+A good part of the scaffolding is already in the rig:
 
-- El G2 tiene **4 cámaras** de tracking, y el driver WMR de Monado ya las levanta
-  (`WMR_CAMERAS=1`; hoy corremos con `0` porque se midió que apagarlas no cambia el 90Hz,
-  cap. 06).
-- Monado ya parsea la **calibración del casco** que viene en su firmware — la usa para el
-  tracking. Los intrínsecos/extrínsecos de las cámaras salen de ahí, no hay que calibrar a
-  mano.
-- Ya tenemos un **player propio** (`hello_xr` parcheado, cap. 02) con pipeline de texturas y
-  proyecciones, que es más de la mitad del trabajo de mostrar algo dentro del casco.
+- The G2 has **4 tracking cameras**, and Monado's WMR driver already brings them up
+  (`WMR_CAMERAS=1`; today we run with `0` because we measured that turning them off
+  doesn't change the 90Hz, ch. 06).
+- Monado already parses the **headset calibration** stored in its firmware — it uses it
+  for tracking. The cameras' intrinsics/extrinsics come from there, no need to calibrate
+  by hand.
+- We already have our **own player** (patched `hello_xr`, ch. 02) with a texture and
+  projection pipeline, which is more than half the work of displaying anything inside the
+  headset.
 
-## Expectativa realista de las cámaras
+## Realistic expectations for the cameras
 
-Antes de entusiasmarse, esto no va a verse como el Quest 3:
+Before getting excited, this isn't going to look like the Quest 3:
 
-- Las cámaras del G2 son **monocromáticas**, para tracking, no a color. **El passthrough va
-  a ser en blanco y negro.** No hay forma de sacarle color a un sensor que no lo capta.
-- Son de **gran angular / ojo de pez**, y están separadas más que los ojos y apuntando hacia
-  afuera. Reproyectar eso a la posición real de cada ojo no es pegar dos imágenes: hay
-  distorsión y paralaje que corregir.
-- Resolución y framerate: **verificar antes de diseñar nada.** El plan más rápido es
-  levantar Monado con `WMR_CAMERAS=1` y mirar qué formato y qué fps reporta. Si las cámaras
-  van a 30 fps y el panel a 90, el passthrough va a ir a saltos y hay que decidir si se
-  interpola o se acepta.
+- The G2's cameras are **monochrome**, for tracking, not color. **Passthrough is going to
+  be black and white.** There's no way to get color out of a sensor that doesn't capture
+  it.
+- They're **wide-angle / fisheye**, spaced farther apart than the eyes, and pointing
+  outward. Reprojecting that to each eye's actual position isn't just pasting two images
+  together: there's distortion and parallax to correct.
+- Resolution and frame rate: **verify before designing anything.** The fastest plan is to
+  bring up Monado with `WMR_CAMERAS=1` and see what format and fps it reports. If the
+  cameras run at 30 fps and the panel at 90, passthrough will be juddery and we'll need to
+  decide whether to interpolate or accept it.
 
-Para el propósito real —**no chocarte**— nada de esto es descalificante. B/N, con algo de
-distorsión y a 30 fps, alcanza perfectamente para ver dónde está la mesa.
+For the actual purpose —**not bumping into things**— none of this is disqualifying. B/W,
+with some distortion, at 30 fps, is perfectly enough to see where the table is.
 
-## Caminos, en orden de dificultad
+## Paths, in order of difficulty
 
-### v0 — Ver las cámaras, sin reproyectar (no depende de nada pendiente)
+### v0 — See the cameras, without reprojecting (doesn't depend on anything pending)
 
-Mostrar el stream crudo en una capa plana dentro del casco, tipo "ventana flotante". Feo pero
-útil, y sirve para medir qué dan las cámaras de verdad. **Es lo único de esta lista que se
-puede hacer hoy**, porque no necesita 6DoF ni corrección de paralaje.
+Show the raw stream on a flat layer inside the headset, like a "floating window". Ugly but
+useful, and it lets us measure what the cameras actually deliver. **This is the only item
+on this list that can be done today**, because it doesn't need 6DoF or parallax
+correction.
 
-### v1 — Passthrough estéreo reproyectado
+### v1 — Reprojected stereo passthrough
 
-Las dos frontales → un ojo cada una, con undistort y reproyección usando la calibración del
-firmware. Sin información de profundidad hay que asumir un plano a distancia fija: los
-objetos a esa distancia se ven bien, los cercanos "nadan". Es lo que hacían los passthrough
-de primera generación y es aceptable para orientarse.
+The two front cameras → one per eye, with undistort and reprojection using the firmware
+calibration. Without depth information, we have to assume a plane at a fixed distance:
+objects at that distance look correct, closer ones "swim". This is what first-generation
+passthrough did and it's acceptable for orienting yourself.
 
-### v2 — Límites por marcadores
+### v2 — Boundaries via markers
 
-**El camino más realista para lo que pediste, y por lejos el más barato.** Marcadores
-fiduciales (ArUco / AprilTag) impresos y pegados en las paredes: se detectan muy bien con
-cámaras B/N de baja resolución, dan pose completa (posición + orientación) por marcador, y
-la detección es código maduro y liviano. Con tres o cuatro marcadores por pared, definís el
-volumen jugable sin SLAM denso.
+**The most realistic path for what you asked for, and by far the cheapest.** Fiducial
+markers (ArUco / AprilTag) printed and stuck on the walls: they're detected very well
+with low-resolution B/W cameras, they give full pose (position + orientation) per marker,
+and detection is mature, lightweight code. With three or four markers per wall, you
+define the play volume without dense SLAM.
 
-La alternativa "sin marcas" —reconstruir el ambiente y detectar planos— necesita SLAM denso y
-es otro proyecto entero. **Tu instinto de usar marcas es el atajo correcto.**
+The "no markers" alternative —reconstructing the environment and detecting planes— needs
+dense SLAM and is an entirely separate project. **Your instinct to use markers is the
+right shortcut.**
 
-## Idea parqueada (2026-08-06): un frontend/shell propio dentro del casco
+## Parked idea (2026-08-06): a custom frontend/shell inside the headset
 
-Pedido del usuario, referencia Johnny Mnemonic: un "sistema operativo" o shell 3D dentro del
-visor — navegar un directorio y abrir videos desde ahí, en vez de lanzar `play360.sh` a mano
-desde una terminal. **Sin investigar todavía** qué existe ya para Linux/Wayland/OpenXR de lo
-que agarrarse (compositores VR embebidos, shells Wayland para XR, cosas tipo lo que ya
-encontramos hoy investigando players — `xr-video-player`, etc. — pero para un file browser en
-vez de un solo video). Retomar como su propia sesión de research antes de diseñar nada.
+User request, Johnny Mnemonic reference: an "operating system" or 3D shell inside the
+headset — browse a directory and open videos from there, instead of launching
+`play360.sh` by hand from a terminal. **Not researched yet**: what already exists for
+Linux/Wayland/OpenXR to build on (embedded VR compositors, Wayland shells for XR, things
+like what we already found today researching players — `xr-video-player`, etc. — but for
+a file browser instead of a single video). Take this up as its own research session before
+designing anything.
 
-## La dependencia que hay que mirar de frente
+## The dependency we need to face head-on
 
-**v1 y v2 necesitan 6DoF, y el 6DoF hoy no funciona.** Basalt diverge (cap. 03 y 06) y todo
-el trabajo de 360/video se hace en modo `3dof`. Sin posición de la cabeza no podés reproyectar
-correctamente ni saber a qué distancia estás de una pared.
+**v1 and v2 need 6DoF, and 6DoF doesn't work today.** Basalt diverges (ch. 03 and 06) and
+all the 360/video work is done in `3dof` mode. Without head position you can't reproject
+correctly or know how far you are from a wall.
 
-O sea que el orden real es: **90Hz → 6DoF estable → passthrough reproyectado**. La v0 se
-puede colar antes, y de hecho conviene, porque contesta barato las preguntas de formato,
-resolución y latencia que hacen falta para diseñar el resto.
+So the real order is: **90Hz → stable 6DoF → reprojected passthrough**. v0 can be
+slipped in earlier, and it's actually worth doing, because it cheaply answers the
+format, resolution, and latency questions needed to design the rest.
 
-## Primer paso concreto cuando se retome
+## Concrete first step when this is resumed
 
 ```bash
-# Levantar con cámaras y ver qué reportan de verdad (formato, resolución, fps)
+# Bring up with cameras and see what they actually report (format, resolution, fps)
 cd ~/vr && WMR_CAMERAS=1 XRT_COMPOSITOR_LOG=debug ./jack-in.sh 3dof
 grep -iE "camera|stream|format|fps" ~/vr/jack-in.log
 ```
 
-Anotar acá lo que salga. Todo el diseño de arriba depende de esos números, y hoy son
-suposiciones.
+Note the results here. All the design above depends on those numbers, and today they're
+just assumptions.

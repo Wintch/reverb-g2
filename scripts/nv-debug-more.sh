@@ -1,22 +1,22 @@
 #!/bin/bash
-# A debug=1, nvidia-modeset sólo loguea attach/detach y no dice nada de link rate, lane
-# count ni DSC. Este script barre valores más altos del parámetro y reporta cuál produce
-# más información, para después capturar con el mejor.
+# At debug=1, nvidia-modeset only logs attach/detach and says nothing about link rate,
+# lane count, or DSC. This script sweeps higher values of the parameter and reports which
+# one produces the most information, so it can be captured with the best one afterward.
 #
 #   sudo ./scripts/nv-debug-more.sh
 #
-# Seguro: el parámetro se escribe EN CALIENTE (es -rw-------) y se restaura con trap EXIT.
-# No recarga módulos ni toca la sesión gráfica.
+# Safe: the parameter is written LIVE (it's -rw-------) and restored via trap EXIT.
+# It does not reload modules or touch the graphical session.
 
 set -u
-[ "$(id -u)" -eq 0 ] || { echo "necesita root: sudo $0" >&2; exit 1; }
+[ "$(id -u)" -eq 0 ] || { echo "needs root: sudo $0" >&2; exit 1; }
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 USER_NAME="${HMD_USER:-${SUDO_USER:-}}"
 [ -z "$USER_NAME" ] && USER_NAME="$(logname 2>/dev/null || true)"
 [ -z "$USER_NAME" ] && USER_NAME="$(stat -c %U "$REPO")"
 UID_N=$(id -u "$USER_NAME")
-echo "usuario de la sesion: $USER_NAME"
+echo "session user: $USER_NAME"
 
 DBG=/sys/module/nvidia_modeset/parameters/debug
 PREV=$(cat "$DBG")
@@ -32,14 +32,14 @@ cleanup() {
 trap cleanup EXIT
 
 BIN=$(ls -t "$REPO"/nv-report-*/build/hmd-vk 2>/dev/null | head -1)
-[ -x "$BIN" ] || { echo "no encuentro hmd-vk compilado; corre collect-nv.sh primero" >&2; exit 1; }
+[ -x "$BIN" ] || { echo "can't find compiled hmd-vk; run collect-nv.sh first" >&2; exit 1; }
 echo "repro: $BIN"
 
-# El modo 0 es 2880x1440@90: el que falla y el que menos ancho de banda pide.
+# Mode 0 is 2880x1440@90: the one that fails and requires the least bandwidth.
 try_level() {
     local lvl="$1"
     if ! echo "$lvl" > "$DBG" 2>/dev/null; then
-        echo "  debug=$lvl : RECHAZADO por el modulo"
+        echo "  debug=$lvl : REJECTED by the module"
         return
     fi
     local got
@@ -57,23 +57,23 @@ try_level() {
     kill "$D" 2>/dev/null
     local n
     n=$(grep -c "nvidia" "$OUT/lvl$lvl.txt" 2>/dev/null || echo 0)
-    echo "  debug=$lvl (quedo en $got) : $n lineas de nvidia"
+    echo "  debug=$lvl (stayed at $got) : $n nvidia lines"
 }
 
 echo
-echo "=== barriendo niveles de verbosidad (modo 0 = 2880x1440@90, el que falla) ==="
+echo "=== sweeping verbosity levels (mode 0 = 2880x1440@90, the one that fails) ==="
 for lvl in 1 2 3 4 5 7 15 31 255; do
     try_level "$lvl"
 done
 
 echo
-echo "=== el mas verboso encontrado ==="
+echo "=== most verbose one found ==="
 BEST=$(for f in "$OUT"/lvl*.txt; do echo "$(grep -c nvidia "$f" 2>/dev/null || echo 0) $f"; done | sort -rn | head -1)
 echo "  $BEST"
 BESTF=${BEST#* }
 echo
-echo "=== muestra de lo que loguea ==="
+echo "=== sample of what it logs ==="
 grep "nvidia" "$BESTF" 2>/dev/null | tail -40
 
 echo
-echo "artefactos en: $OUT"
+echo "artifacts in: $OUT"

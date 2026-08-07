@@ -66,7 +66,7 @@ done
 shift $((OPTIND - 1))
 
 if [ $# -lt 1 ]; then
-	echo "usage: $0 [-l] [-s INICIO-FIN] [-m ALTURA_MAX] [-k] [-n] <URL>" >&2
+	echo "usage: $0 [-l] [-s START-END] [-m MAX_HEIGHT] [-k] [-n] <URL>" >&2
 	exit 1
 fi
 URL="$1"
@@ -75,39 +75,39 @@ URL="$1"
 # refuses cookies, the normal client takes cookies but only ever sees the flat version.
 if [ "$NOVR" = "1" ]; then
 	CLIENT_ARGS=(--cookies-from-browser "$BROWSER")
-	CLIENT_NAME="normal (con cookies, solo versión plana)"
+	CLIENT_NAME="normal (with cookies, flat version only)"
 else
 	CLIENT_ARGS=(--extractor-args "youtube:player_client=android_vr")
-	CLIENT_NAME="android_vr (streams VR reales, sin cookies)"
+	CLIENT_NAME="android_vr (real VR streams, no cookies)"
 fi
 
 command -v deno >/dev/null || {
-	echo "deno no está en el PATH. Sin un runtime de JS, YouTube devuelve solo storyboards." >&2
-	echo "Bajalo con:" >&2
+	echo "deno is not on PATH. Without a JS runtime, YouTube returns only storyboards." >&2
+	echo "Get it with:" >&2
 	echo "  curl -fsSL -o /tmp/deno.zip https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip" >&2
 	echo "  unzip -o /tmp/deno.zip -d ~/.local/bin && chmod +x ~/.local/bin/deno" >&2
 	exit 1
 }
-"$YTDLP" --version >/dev/null 2>&1 || { echo "no encuentro yt-dlp en $YTDLP" >&2; exit 1; }
+"$YTDLP" --version >/dev/null 2>&1 || { echo "cannot find yt-dlp at $YTDLP" >&2; exit 1; }
 
 mkdir -p "$OUTDIR"
 
 if [ "$LIST" = "1" ]; then
-	echo "Cliente: $CLIENT_NAME"
-	echo "(en la última columna, '2160s60' = estéreo, '2160p60' = plano/mono)"
+	echo "Client: $CLIENT_NAME"
+	echo "(in the last column, '2160s60' = stereo, '2160p60' = flat/mono)"
 	"$YTDLP" "${CLIENT_ARGS[@]}" -F "$URL" 2>&1 | grep -viE "^\[debug\]|Extracting cookies|Extracted [0-9]"
 	exit 0
 fi
 
 AVAIL_KB=$(df -Pk "$OUTDIR" | awk 'NR==2{print $4}')
 if [ "$AVAIL_KB" -lt 3145728 ]; then
-	echo "Aviso: quedan menos de 3 GB libres en $OUTDIR. Un 8K completo puede no entrar." >&2
+	echo "Warning: less than 3 GB free in $OUTDIR. A full 8K download may not fit." >&2
 fi
 
 SECTION_ARGS=()
 [ -n "$SECTION" ] && SECTION_ARGS=(--download-sections "*${SECTION}")
 
-echo "Bajando (hasta ${MAXH}p) - cliente $CLIENT_NAME"
+echo "Downloading (up to ${MAXH}p) - client $CLIENT_NAME"
 SRC_TMPL="$OUTDIR/%(title).60s [%(id)s].src.%(ext)s"
 # Progress goes to stderr so that stdout carries ONLY the downloaded file's path - this runs
 # inside $(...) and anything else it prints ends up concatenated into the filename.
@@ -126,12 +126,12 @@ if { [ -z "$SRC" ] || [ ! -f "$SRC" ]; } && [ "$NOVR" = "0" ]; then
 	# android_vr came up empty - typically an age-restricted video, which it cannot open
 	# because it refuses cookies. Retry with the cookie-capable client, accepting the flat
 	# version rather than failing outright.
-	echo "El cliente VR no devolvió nada; reintentando con el cliente normal (solo versión plana)..." >&2
+	echo "The VR client returned nothing; retrying with the normal client (flat version only)..." >&2
 	SRC=$(download --cookies-from-browser "$BROWSER")
 fi
 rm -f /tmp/get360.$$.log
 if [ -z "$SRC" ] || [ ! -f "$SRC" ]; then
-	echo "No se descargó nada. Si dice 'Only images are available', revisá los tres puntos del encabezado." >&2
+	echo "Nothing was downloaded. If it says 'Only images are available', check the three points in the header." >&2
 	exit 1
 fi
 
@@ -147,8 +147,8 @@ PIXFMT=$(probe pix_fmt)
 TRC=$(probe color_transfer)
 FPS=$(ffprobe -v error -select_streams v:0 -show_entries stream=avg_frame_rate -of default=nw=1:nk=1 "$SRC" | head -1)
 [ "$TRC" = "unknown" ] && TRC=""
-case "$W" in ''|*[!0-9]*) echo "ffprobe no devolvió un ancho usable para '$SRC'" >&2; exit 1 ;; esac
-echo "Origen: ${W}x${H} $CODEC $PIXFMT ${TRC:-sdr} @ ${FPS} fps"
+case "$W" in ''|*[!0-9]*) echo "ffprobe did not return a usable width for '$SRC'" >&2; exit 1 ;; esac
+echo "Source: ${W}x${H} $CODEC $PIXFMT ${TRC:-sdr} @ ${FPS} fps"
 
 # Anything 8-bit that NVDEC can decode is left exactly as it is - the player picks a
 # hardware-capable decoder itself and gets the NV12 surface straight into GPU memory. That
@@ -167,12 +167,12 @@ esac
 
 if [ "$NEEDS_CONV" = "0" ]; then
 	FINAL="${SRC%.src.*}.mp4"
-	mv -n "$SRC" "$FINAL" && echo "Listo (no hizo falta convertir): $FINAL"
+	mv -n "$SRC" "$FINAL" && echo "Done (no conversion needed): $FINAL"
 	exit 0
 fi
 
 FINAL="${SRC%.src.*}.mp4"
-echo "Convirtiendo a HEVC 8 bits SDR (esto tarda: ~20 min para 8K de 50s)..."
+echo "Converting to 8-bit SDR HEVC (this takes a while: ~20 min for a 50s 8K clip)..."
 
 # Tone-map only when the source actually carries an HDR transfer. HLG (arib-std-b67) is
 # watchable as-is on an SDR display by design, but mapping it properly still looks better.
@@ -209,19 +209,19 @@ if ffmpeg -y -hide_banner -loglevel warning "${HWIN[@]}" -i "$SRC" \
 	-c:v hevc_nvenc -preset p5 -b:v "$BR" -rc vbr "$FINAL"; then
 	:
 else
-	echo "Falló con decodificación por GPU, reintentando todo por software..."
+	echo "Failed with GPU decoding, retrying everything in software..."
 	ffmpeg -y -hide_banner -loglevel warning -i "$SRC" \
 		-vf "${TONEMAP}format=yuv420p" \
 		-c:v hevc_nvenc -preset p5 -b:v "$BR" -rc vbr "$FINAL" || exit 1
 fi
 
 [ "$KEEP" = "1" ] || rm -f "$SRC"
-echo "Listo: $FINAL"
+echo "Done: $FINAL"
 ffprobe -v error -show_entries stream=width,height,codec_name,pix_fmt -show_entries format=duration \
 	-of default=nw=1 "$FINAL"
 echo
-echo "Para verlo:"
-echo "  HELLO_XR_VIDEO360='$FINAL' ./jack-in.sh 3dof   # si el stack no está levantado"
+echo "To watch it:"
+echo "  HELLO_XR_VIDEO360='$FINAL' ./jack-in.sh 3dof   # if the stack isn't up yet"
 echo "  sleep 180 | XR_RUNTIME_JSON=\$HOME/Documents/linux_vr_base/monado/build/openxr_monado-dev.json \\"
 echo "    IPC_IGNORE_VERSION=1 HELLO_XR_VIDEO360='$FINAL' \\"
 echo "    \$HOME/Documents/linux_vr_base/OpenXR-SDK-Source/build/src/tests/hello_xr/hello_xr --graphics Vulkan2"

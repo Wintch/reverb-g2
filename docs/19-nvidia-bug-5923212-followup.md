@@ -1,133 +1,132 @@
-# 19 — Seguimiento para el hilo del bug 5923212 (60Hz-only en NVIDIA)
+# 19 — Follow-up for the 5923212 bug thread (60Hz-only on NVIDIA)
 
-## Update (2026-08-06): el parche SI funciona — causa exacta encontrada, no es misterio
+## Update (2026-08-06): the patch DOES work — exact cause found, no mystery
 
-**Causa exacta, verificada línea por línea contra `docs/16-lab-vblank.md`, no una lista de
-sospechosos:** nadie había vuelto a probar los modos **nativos del EDID, sin ningún override
-cargado**, con el parche del bpc activo — hasta hoy.
+**Exact cause, verified line by line against `docs/16-lab-vblank.md`, not a list of
+suspects:** nobody had retested the **EDID-native modes, with no override
+loaded**, with the bpc patch active — until today.
 
-La cadena completa:
+The full chain:
 
-1. **`T002` (2026-08-04, 23:30)** — primera vez que se prueba `2880x1440@90` con `hmd-vk`
-   (DRM-lease, el mismo mecanismo de siempre). Falla ("hp prendido, pantalla apagada"). **El
-   bug del bpc se encuentra recién al día siguiente**, 2026-08-05 — o sea que `T002` corrió
-   sin que el parche existiera todavía.
-2. Esa falla se convierte en supuesto de trabajo: *"2880x1440 nunca mostró nada, a ningún
-   refresh, en toda la historia del proyecto"* — citado así, textual, en varios puntos de
-   `docs/16`.
-3. **El factorial extenso que sí corrió con el parche activo** (confirmado por PREFLIGHT:
-   `595.71.05`, `parche 0004 presente`, `Notify Attach Begin` en **24 bpp**) — `A4K`, `B4K`,
-   `90long`, `bisect1`, `80hz`, `CTRL4K` — **nunca usó los modos nativos tal cual los declara
-   el EDID**. Todos usaron timings sintéticos inyectados vía `nvidia_modeset.config_file`
-   (`vblank=240` en vez del `116` real del descriptor nativo #1, `vtotal=1954` en vez del
-   `1598` real, etc.), para aislar vblank como variable independiente — ésa era la pregunta
-   que se estaba investigando en ese momento, antes de saber que el bpc era la causa real.
-4. En una de esas sesiones (`docs/16`, línea 320, **posterior** al parche, con `hmd-vk list`
-   mostrando el modo `[0] 2880x1440@89.999` disponible), lo anotan explícitamente como
-   **"(nativo, bloque base, ya sabido FALLA)"** — citando a `T002` — y pasan a probar otro
-   modo sin volver a intentarlo.
-5. **Hoy, por primera vez desde que el parche existe, se corrió el modo nativo real sin
-   ningún override** (`hmd-vk native 0`, EDID intacto, confirmado sin `nvidia_modeset.config_file`
-   cargado vía `journalctl`/`/sys/module/nvidia_modeset/parameters/config_file`) — y prendió.
-   Lo mismo con el modo supersampleado nativo (`hmd-vk native 1`, descriptor #1 sin modificar,
-   vblank=116 real, nunca antes probado puro tampoco).
+1. **`T002` (2026-08-04, 23:30)** — first time `2880x1440@90` is tested with `hmd-vk`
+   (DRM-lease, the usual mechanism). Fails ("hp on, screen off"). **The
+   bpc bug isn't found until the next day**, 2026-08-05 — meaning `T002` ran
+   before the patch even existed.
+2. That failure becomes a working assumption: *"2880x1440 never showed anything, at any
+   refresh rate, in the entire history of the project"* — quoted verbatim like that in
+   several places in `docs/16`.
+3. **The extensive factorial that did run with the patch active** (confirmed by PREFLIGHT:
+   `595.71.05`, `patch 0004 present`, `Notify Attach Begin` at **24 bpp**) — `A4K`, `B4K`,
+   `90long`, `bisect1`, `80hz`, `CTRL4K` — **never used the native modes exactly as the EDID
+   declares them**. All of them used synthetic timings injected via `nvidia_modeset.config_file`
+   (`vblank=240` instead of the real `116` from native descriptor #1, `vtotal=1954` instead
+   of the real `1598`, etc.), to isolate vblank as an independent variable — that was the
+   question being investigated at the time, before knowing that bpc was the real cause.
+4. In one of those sessions (`docs/16`, line 320, **after** the patch, with `hmd-vk list`
+   showing mode `[0] 2880x1440@89.999` as available), it's explicitly noted as
+   **"(native, base block, already known to FAIL)"** — citing `T002` — and they move on to
+   testing another mode without retrying it.
+5. **Today, for the first time since the patch has existed, the real native mode was run
+   with no override at all** (`hmd-vk native 0`, EDID untouched, confirmed with no
+   `nvidia_modeset.config_file` loaded via `journalctl`/`/sys/module/nvidia_modeset/parameters/config_file`)
+   — and it lit up. Same result with the native supersampled mode (`hmd-vk native 1`,
+   descriptor #1 unmodified, real vblank=116, also never before tested in its plain form).
 
-**No hace falta invocar Wayland-vs-X11, DRM-lease-vs-Direct-Mode, ni la reinstalación del
-driver como causa.** Esas cosas fueron incidentales a cómo se probó hoy, no la explicación.
-La explicación completa y suficiente es: el parche arregla el bug, y la vieja conclusión
-"90Hz nativo falla" nunca se reevaluó después de que el parche existiera — quedó citada de
-memoria, no vuelta a medir.
+**There's no need to invoke Wayland-vs-X11, DRM-lease-vs-Direct-Mode, or the driver
+reinstall as the cause.** Those things were incidental to how today's test was run, not the
+explanation. The complete and sufficient explanation is: the patch fixes the bug, and the
+old conclusion "native 90Hz fails" was never reevaluated after the patch existed — it kept
+getting cited from memory, never remeasured.
 
-**Lo que sigue sin explicar, y por qué esto no está "cerrado" del todo:** el panel sigue
-pareciendo parpadear como si estuviera a ~60Hz, a pesar de que el HID del casco, el timing
-del compositor (11.111ms, exacto) y la API confirman los tres que corre genuinamente a 90Hz.
-Persiste igual con un patrón sintético, con video real, **y en el modo nativo también** (así
-que tampoco es "modo equivocado" — se probó explícitamente el mismo timing que usa Windows,
-confirmado por CRU, y sigue parpadeando). Sin cámara de alta velocidad (120fps+) no hay forma
-de medir el strobe físico del backlight desde acá — ver la sección de "flicker lead" en
-`linuxlab-kit/NEXT-STEP.md` para la hipótesis actual (duty-cycle del backlight, autoajustado
-por firmware según el timing detectado, sin comando de host).
+**What's still unexplained, and why this isn't fully "closed":** the panel still appears to
+flicker as if it were running at ~60Hz, even though the headset's HID, the compositor's
+timing (11.111ms, exact), and the API all three confirm it genuinely runs at 90Hz. It
+persists the same with a synthetic pattern, with real video, **and in the native mode too**
+(so it isn't a "wrong mode" issue either — the exact same timing Windows uses was explicitly
+tested, confirmed via CRU, and it still flickers). Without a high-speed camera (120fps+)
+there's no way to measure the physical backlight strobe from here — see the "flicker lead"
+section in `linuxlab-kit/NEXT-STEP.md` for the current hypothesis (backlight duty cycle,
+auto-adjusted by firmware based on the detected timing, with no host command).
 
-**Posteado en 379240** (2026-08-06, confirmado vía fetch directo — post #3 del hilo):
+**Posted on 379240** (2026-08-06, confirmed via direct fetch — post #3 of the thread):
 <https://forums.developer.nvidia.com/t/hp-reverb-g2-clamped-to-6-bpc-because-its-edid-leaves-color-depth-undefined-root-cause-found-two-line-patch-but-90-hz-still-fails-to-light/379240/3>.
-Copias sueltas de los dos drafts (para pegar sin tener que buscarlas en este archivo) en
-`forum-attachments/nvidia-post-1-bpc-thread-379240.txt` y
+Loose copies of the two drafts (to paste without having to look them up in this file) are in
+`forum-attachments/nvidia-post-1-bpc-thread-379240.txt` and
 `forum-attachments/nvidia-post-2-original-thread-337744.txt`.
 
-**Falta postear en 337744** (el hilo original de 5923212, la respuesta corta que dirige acá)
-— sigue pendiente, draft abajo.
+**Still need to post on 337744** (the original 5923212 thread, the short reply that points
+here) — still pending, draft below.
 
-**Repo público (2026-08-06):** confirmado con la API de GitHub (`private: false`) que
-`github.com/Wintch/reverb-g2` es genuinamente público — a partir de ahora referenciarlo en
-los posts, invitando a la comunidad (alguien puede tener un dato sobre el backlight que
-falta). Draft de edición para agregar el link al post ya publicado en
-`forum-attachments/nvidia-post-3-edit-add-repo-link.txt` (es una EDICIÓN al post #3
-existente, no un post nuevo). El draft de 337744 (todavía sin postear) ya incluye el link
-de entrada.
+**Public repo (2026-08-06):** confirmed via the GitHub API (`private: false`) that
+`github.com/Wintch/reverb-g2` is genuinely public — from now on reference it in the posts,
+inviting the community in (someone might have a piece of missing backlight data). Edit draft
+to add the link to the already-published post is in
+`forum-attachments/nvidia-post-3-edit-add-repo-link.txt` (it's an EDIT to the existing post
+#3, not a new post). The 337744 draft (still not posted) already includes the entry link.
 
-**Dato nuevo grande (2026-08-06): en Windows, el parpadeo pasa exactamente al revés que en
-Linux.** El usuario confirma: en Windows, **60Hz parpadea y 90Hz NO** — lo opuesto exacto de
-lo que medimos hoy en Linux (donde 90Hz sí parpadea). Esto es evidencia mucho más fuerte que
-lo ya posteado: descarta de plano que sea un defecto físico del panel/casco (si lo fuera,
-parpadearía igual en ambos SO) y confirma que es un comportamiento real, ligado al modo,
-específico de cómo Linux negocia el link — no algo que se pueda explicar por hardware dañado.
-Vale la pena agregarlo al hilo, es más contundente que el "no sé por qué parpadea" actual.
+**Big new data point (2026-08-06): on Windows, the flicker happens exactly the opposite way
+from Linux.** The user confirms: on Windows, **60Hz flickers and 90Hz does NOT** — the exact
+opposite of what we measured today on Linux (where 90Hz does flicker). This is much stronger
+evidence than what's already posted: it flatly rules out a physical panel/headset defect (if
+it were, it would flicker the same way on both OSes) and confirms it's a real, mode-linked
+behavior specific to how Linux negotiates the link — not something explainable by damaged
+hardware. Worth adding to the thread, it's more conclusive than the current "I don't know why
+it flickers."
 
-## RESUELTO: el parpadeo a 90Hz ya no se reproduce (2026-08-06, tarde — T026-T029)
+## RESOLVED: the 90Hz flicker no longer reproduces (2026-08-06, afternoon — T026-T029)
 
-**Resultado, con blanco sólido estático (`HMD_VK_SOLID=1`, agregado hoy a `hmd-vk`) y
-veredicto físico del usuario mirando el panel:**
+**Result, with a static solid white pattern (`HMD_VK_SOLID=1`, added to `hmd-vk` today) and
+the user's physical verdict looking at the panel:**
 
-| Modo | Veredicto |
+| Mode | Verdict |
 |---|---|
-| 2880x1440@90 nativo | **limpio** ("perfecta") |
-| 4320x2160@90 | **limpio** ("perfecto") — también inmediatamente después de una sesión a 60 (no depende del orden) |
-| 4320x2160@60 | **parpadea** ("parpadea") |
+| 2880x1440@90 native | **clean** ("perfect") |
+| 4320x2160@90 | **clean** ("perfect") — also immediately after a 60Hz session (order-independent) |
+| 4320x2160@60 | **flickers** ("flickers") |
 
-Es decir: **Linux ahora se comporta EXACTAMENTE igual que Windows** (60 parpadea, 90
-limpio — el "dato nuevo grande" de arriba). La anomalía reportable desapareció; el parpadeo
-a 60Hz es comportamiento de fábrica del backlight a una frecuencia no nativa del panel, no
-un problema de Linux ni del driver.
+In other words: **Linux now behaves EXACTLY like Windows** (60 flickers, 90 clean — the
+"big new data point" above). The reportable anomaly is gone; the 60Hz flicker is factory
+backlight behavior at a non-native panel frequency, not a Linux or driver problem.
 
-**Corrección metodológica que invalida evidencia propia:** de las tres confirmaciones
-previas del "parpadeo a 90Hz", dos (T020 y T023) usaron el test de colores de `hmd-vk`, que
-**alterna el color CADA FRAME** — a 90fps es un estrobo de ~30Hz por construcción. Esas dos
-observaciones eran el test parpadeando, no el panel. Solo T021 (video real vía Monado) era
-una observación válida — y esa hoy no se reproduce (video a 90 limpio, confirmado por el
-usuario con contenido real antes de esta tanda).
+**Methodological correction that invalidates our own evidence:** of the three previous
+confirmations of "90Hz flicker," two (T020 and T023) used `hmd-vk`'s color test, which
+**alternates color EVERY FRAME** — at 90fps that's a ~30Hz strobe by construction. Those two
+observations were the test flickering, not the panel. Only T021 (real video via Monado) was
+a valid observation — and that one doesn't reproduce today (video at 90 clean, confirmed by
+the user with real content before this batch).
 
-**Qué cambió entre T021 (parpadeaba) y hoy (limpio):** del lado del driver, NADA — mismo
-595.71.05-open, mismo parche bpc, verificados en ambos estados. Lo que sí pasó en el medio:
-un reboot completo y varios ciclos de desenchufar/reconectar el USB del casco (el cable
-marginal documentado en `docs/06`). Hipótesis más plausible (etiquetada como hipótesis, no
-probada — sin acceso AUX no hay forma de probarla): estado del backlight enganchado a una
-config de timing vieja, limpiado por el power-cycle; el firmware del casco maneja el duty
-del backlight según el timing detectado (strings del driver de Windows:
-`left duty %d, right duty %d, frame timing %d`, ver `docs/09`).
+**What changed between T021 (flickering) and today (clean):** on the driver side, NOTHING —
+same 595.71.05-open, same bpc patch, verified in both states. What did happen in between: a
+full reboot and several unplug/reconnect cycles of the headset's USB (the marginal cable
+documented in `docs/06`). Most plausible hypothesis (labeled as a hypothesis, not proven —
+with no AUX access there's no way to prove it): backlight state stuck on an old timing
+config, cleared by the power cycle; the headset firmware manages backlight duty cycle based
+on the detected timing (strings from the Windows driver:
+`left duty %d, right duty %d, frame timing %d`, see `docs/09`).
 
-**Acción de foro: HECHA (2026-08-06, tarde).** Los dos posts publicados fueron EDITADOS
-por el usuario con los bloques "EDIT (same day...)" (sin auto-respuesta). Los textos
-exactos quedaron en `forum-attachments/nvidia-post-1-bpc-thread-379240.txt` y
-`forum-attachments/nvidia-post-2-original-thread-337744.txt`. Con esto el registro público
-queda correcto: 90Hz funcionando y limpio con el parche bpc; único issue de driver vigente
-en los hilos = el default de bpc ante EDID sin profundidad declarada.
+**Forum action: DONE (2026-08-06, afternoon).** Both published posts were EDITED by the
+user with "EDIT (same day...)" blocks (no auto-reply). The exact texts are in
+`forum-attachments/nvidia-post-1-bpc-thread-379240.txt` and
+`forum-attachments/nvidia-post-2-original-thread-337744.txt`. With this the public record is
+correct: 90Hz working and clean with the bpc patch; the only driver issue still standing in
+the threads = the bpc default when the EDID leaves color depth undeclared.
 
-**Herramientas de software agotadas, confirmado (2026-08-06):** se probó
-`/sys/kernel/debug/dri/*/DP-1/dpcd` (el debugfs genérico de DRM para volcar registros DPCD) —
-**no existe ese archivo para este conector**, sólo `edid_override`, `force` (ya descartados
-en `docs/16`), `output_bpc` y `vrr_range`. Confirma lo que ya se sospechaba: NVIDIA no expone
-DPCD/AUX por los helpers genéricos de DRM para este conector. También se descartó la captura
-USB como vía — AUX/DPCD de DisplayPort no es un protocolo USB, corre por el propio cable DP,
-así que una captura USB (como la que ya se hizo) **nunca podía verlo**, sin importar cuánto
-se mirara. **Sin un analizador de protocolo DisplayPort real (hardware dedicado, no
-disponible acá), no queda ninguna herramienta de software para inspeccionar esto.**
+**Software tooling exhausted, confirmed (2026-08-06):** tried
+`/sys/kernel/debug/dri/*/DP-1/dpcd` (DRM's generic debugfs for dumping DPCD registers) —
+**that file doesn't exist for this connector**, only `edid_override`, `force` (already ruled
+out in `docs/16`), `output_bpc`, and `vrr_range`. Confirms what was already suspected: NVIDIA
+doesn't expose DPCD/AUX through DRM's generic helpers for this connector. USB capture was
+also ruled out as a path — DisplayPort's AUX/DPCD isn't a USB protocol, it runs over the DP
+cable itself, so a USB capture (like the one already done) **could never see it**, no matter
+how much you looked. **Without a real DisplayPort protocol analyzer (dedicated hardware, not
+available here), there's no software tool left to inspect this.**
 
-**Cuidado con las fotos personales sin trackear** (`photo_51613...jpg`,
-`docs/Screenshot_20260806_064623.png`) que siguen sueltas en el working directory — el repo
-siendo público de verdad ahora hace que un `git add` descuidado las exponga. Revisar antes
-de cualquier `git add -A`/`git add .` en este repo.
+**Watch out for untracked personal photos** (`photo_51613...jpg`,
+`docs/Screenshot_20260806_064623.png`) still sitting loose in the working directory — with
+the repo now genuinely public, a careless `git add` would expose them. Check before any
+`git add -A`/`git add .` in this repo.
 
-### Draft para 379240 (el hilo del bpc — el más relevante, reply al post original) — YA POSTEADO
+### Draft for 379240 (the bpc thread — the most relevant one, reply to the original post) — ALREADY POSTED
 
 ```
 Update: the patch works — 90 Hz now lights up the panel with a real image.
@@ -165,7 +164,7 @@ DisplayPort link itself.
 Happy to share the exact steps/config if useful to anyone else hitting this.
 ```
 
-### Draft para 337744 (el hilo original del bug 5923212 — reply corto, dirige al otro hilo)
+### Draft for 337744 (the original 5923212 bug thread — short reply, points to the other thread)
 
 ```
 Update on my factorial results above: they're superseded — 90 Hz does light up now, and I
@@ -192,51 +191,51 @@ standing.
 ---
 
 
-Hilo: https://forums.developer.nvidia.com/t/reverb-g2-unable-to-drive-more-than-60hz-mode-on-nvidia/337744
+Thread: https://forums.developer.nvidia.com/t/reverb-g2-unable-to-drive-more-than-60hz-mode-on-nvidia/337744
 
-Estado al 2026-08-05: NVIDIA (`abchauhan`) confirmó reproducción y abrió el bug interno
-**5923212** el 2026-03-20, preguntando si alguna versión vieja del driver andaba. Sin
-respuesta de NVIDIA desde entonces. Último post de la comunidad: `MiaPerec`, 2026-07-19,
-mismo síntoma en 610.43.02.
+Status as of 2026-08-05: NVIDIA (`abchauhan`) confirmed the reproduction and opened internal
+bug **5923212** on 2026-03-20, asking whether any older driver version worked. No response
+from NVIDIA since. Last community post: `MiaPerec`, 2026-07-19, same symptom on 610.43.02.
 
-**Lo que este seguimiento suma que el hilo no tiene todavía:**
+**What this follow-up adds that the thread doesn't have yet:**
 
-1. El chip puente identificado por nombre (`ANX7530`, leído del string de versión del
-   firmware del propio casco) y su datasheet, que declara el techo como **"4K x 2K x 60Hz"**
-   explícitamente — no es sólo una cuenta de ancho de banda.
-2. Un factorial completo que separa refresh, vblank y pixel clock como variables
-   independientes, con verificación física en cada celda (no sólo "la API dice éxito").
-3. El dato de que el HID del propio casco confirma, byte a byte, que el timing pedido llega
-   perfecto al link incluso en los casos que fallan — descarta "el modo nunca llegó" como
-   explicación.
+1. The bridge chip identified by name (`ANX7530`, read from the headset's own firmware
+   version string) and its datasheet, which explicitly states the ceiling as **"4K x 2K x
+   60Hz"** — not just a bandwidth calculation.
+2. A complete factorial that separates refresh rate, vblank, and pixel clock as independent
+   variables, with physical verification at every cell (not just "the API reports success").
+3. The fact that the headset's own HID confirms, byte for byte, that the requested timing
+   reaches the link perfectly even in the cases that fail — ruling out "the mode never
+   arrived" as an explanation.
 
-Está en inglés porque es para el foro. Copialo tal cual o editalo antes de postear — **no
-lo posteo yo**, no tengo tus credenciales del foro y postear ahí es una acción pública que
-te corresponde a vos decidir cuándo y cómo.
+It's in English because it's meant for the forum. Copy it as-is or edit it before posting —
+**I'm not posting it**, I don't have your forum credentials and posting there is a public
+action that's your call to decide when and how.
 
 ---
 
-## Update (2026-08-06): el contenido de abajo se posteó, pero en el hilo equivocado
+## Update (2026-08-06): the content below got posted, but in the wrong thread
 
-El borrador de más abajo se terminó posteando como respuesta en el **hilo del bpc (379240)**,
-no acá (337744) — confirmado con fetch directo a los dos hilos: 379240 tiene el post de hoy
-00:53am con este mismo contenido; 337744 sigue sin nada nuevo desde `MiaPerec` el 2026-07-19.
-Puede haber sido a propósito (es tu hilo, tenés más contexto ahí) o cruce de pestañas — no lo
-sé, no lo asumo.
+The draft further below ended up getting posted as a reply in the **bpc thread (379240)**,
+not here (337744) — confirmed with a direct fetch of both threads: 379240 has today's
+00:53am post with this same content; 337744 still has nothing new since `MiaPerec` on
+2026-07-19. It might have been intentional (it's your thread, you have more context there)
+or a tab mix-up — I don't know, I'm not assuming either way.
 
-Decisión: postear **también** acá, adaptado como cross-post corto que dirige a `abchauhan`
-al resultado completo, en vez de duplicar la tabla entera. Draft abajo, mismo trato que el de
-arriba: **no lo posteo yo**, es texto listo para copiar/pegar o editar.
+Decision: post **here too**, adapted as a short cross-post that points `abchauhan` to the
+full result, instead of duplicating the entire table. Draft below, same treatment as above:
+**I'm not posting it**, it's text ready to copy/paste or edit.
 
-**Posteado 2026-08-06, 10:00am**, como post #14 del hilo 337744:
+**Posted 2026-08-06, 10:00am**, as post #14 of thread 337744:
 <https://forums.developer.nvidia.com/t/reverb-g2-unable-to-drive-more-than-60hz-mode-on-nvidia/337744/14>.
-Entró como post normal al final del hilo, **no** como reply threadeado al post #10 de
-`abchauhan` (sin indicador "in reply to"). Si no responde en un tiempo razonable, considerar
-editar el post para agregarle `@abchauhan` al arranque — en Discourse eso sí dispara
-notificación directa. Sin respuesta de NVIDIA todavía en ninguno de los dos hilos (chequeado
-el mismo día, a los pocos minutos de postear — es esperable que no haya nada aún).
+It went in as a normal post at the end of the thread, **not** as a threaded reply to
+`abchauhan`'s post #10 (no "in reply to" indicator). If there's no response within a
+reasonable time, consider editing the post to add `@abchauhan` at the start — on Discourse
+that does trigger a direct notification. No response from NVIDIA yet on either thread
+(checked the same day, a few minutes after posting — it's expected that there'd be nothing
+yet).
 
-### Draft para 337744 (cross-post, corto)
+### Draft for 337744 (cross-post, short)
 
 **Reply to `abchauhan`'s bug 5923212:**
 
@@ -260,7 +259,7 @@ Any update on bug 5923212 from your side? It's been quiet since March.
 
 ---
 
-## Borrador del post
+## Post draft
 
 **Summary:** Ran a full 2×2×N factorial isolating refresh rate, vertical blanking, and
 pixel clock as independent variables on real hardware (physical verification each time,
@@ -359,81 +358,81 @@ any OS.
 
 ---
 
-## Chequeo local (2026-08-05, sin reboot): bits de stereo/3D en el EDID — nada
+## Local check (2026-08-05, no reboot): stereo/3D bits in the EDID — nothing
 
-El datasheet del ANX7530 lista "Horizontal left/right line splitting" y "3D stereo modes"
-como features del receptor DisplayPort — hipótesis: quizás Windows activa un modo de
-stream dividido (un stream liviano por ojo, en vez de uno combinado de 4320 de ancho) vía
-algún bit de stereo en el EDID que nuestros clones no están preservando.
+The ANX7530 datasheet lists "Horizontal left/right line splitting" and "3D stereo modes" as
+DisplayPort receiver features — hypothesis: maybe Windows enables a split-stream mode (a
+lightweight stream per eye, instead of one combined 4320-wide stream) via some stereo bit in
+the EDID that our clones aren't preserving.
 
-Se decodificó a mano el `byte 17` del único DTD del bloque base y el `byte 3` de los dos
-descriptores DisplayID Type I nativos:
+`byte 17` of the base block's only DTD and `byte 3` of the two native DisplayID Type I
+descriptors were decoded by hand:
 
-- Bloque base (2880x1440@90, nativo, falla): byte17=`0x1e`, bits de stereo (0 y 6-5) todos
-  en 0 — sin stereo declarado.
-- DisplayID descriptor #1 (4320x2160@90, nativo, falla): byte3=`0x88` — `preferred=1`,
-  bits de stereo (6-5) en `00`, resto idéntico al #2 salvo ese bit.
-- DisplayID descriptor #2 (4320x2160@60, nativo, ANDA): byte3=`0x08` — `preferred=0`,
-  mismos bits de stereo en `00`.
+- Base block (2880x1440@90, native, fails): byte17=`0x1e`, stereo bits (0 and 6-5) all
+  0 — no stereo declared.
+- DisplayID descriptor #1 (4320x2160@90, native, fails): byte3=`0x88` — `preferred=1`,
+  stereo bits (6-5) at `00`, otherwise identical to #2 except for that bit.
+- DisplayID descriptor #2 (4320x2160@60, native, WORKS): byte3=`0x08` — `preferred=0`,
+  same stereo bits at `00`.
 
-**Ningún descriptor nativo declara stereo, y el único bit que distingue al que anda del que
-falla es `preferred`.** Si el split dual-stream existe, no se activa por un flag visible en
-el EDID — que ya venimos preservando sin tocar en todos los clones. Esto no descarta la
-hipótesis del dual-stream, pero si es real, el mecanismo que la dispara vive fuera del EDID
-(DPCD, AUX, o un comando propietario), consistente con todo lo demás que este documento ya
-señala como "por debajo del EDID".
+**No native descriptor declares stereo, and the only bit that distinguishes the working one
+from the failing one is `preferred`.** If the dual-stream split exists, it isn't triggered by
+a visible flag in the EDID — which we've already been preserving untouched across all clones.
+This doesn't rule out the dual-stream hypothesis, but if it's real, the mechanism that
+triggers it lives outside the EDID (DPCD, AUX, or a proprietary command), consistent with
+everything else this document already points to as "below the EDID."
 
-## Búsqueda del driver original de Windows Mixed Reality (2026-08-05): no es lo que hace falta
+## Search for the original Windows Mixed Reality driver (2026-08-05): not what's needed
 
-Se buscó el driver/runtime original de Microsoft (previo a la remoción de WMR) para ver si
-tenía la lógica de panel que Oasis no tiene. Resultado: los candidatos encontrados
-(`microsoft.com/.../id=56265`, el zip de archive.org) son el driver de **sensores/IMU**
-(`HololensSensors`, tracking), no el pipeline de video — no mencionan el ANX7530, DisplayPort
-ni 90 Hz. El *Feature-on-Demand* del shell holográfico (`Microsoft-Windows-Holographic-
-Desktop-FOD-Package`, ~1.5 GB) sí está listado en el mismo archive.org, sin inspeccionar
-todavía.
+Looked for Microsoft's original driver/runtime (from before WMR's removal) to see if it had
+the panel logic that Oasis lacks. Result: the candidates found (`microsoft.com/.../id=56265`,
+the archive.org zip) are the **sensor/IMU** driver (`HololensSensors`, tracking), not the
+video pipeline — they don't mention the ANX7530, DisplayPort, or 90 Hz. The holographic
+shell's *Feature-on-Demand* (`Microsoft-Windows-Holographic-Desktop-FOD-Package`, ~1.5 GB) is
+listed on the same archive.org, not inspected yet.
 
-**Pero conseguirlo probablemente no cierra nada de esto igual.** El propio `driver_oasis.dll`
-— el driver que efectivamente logra 90 Hz en Windows, ya desensamblado en el cap. 09 — **no
-toca timing de video en absoluto**: sólo habla HID/USB para tracking y manda `Display
-Enable`. Si el único componente verificado que logra 90 Hz no negocia el modo de video, esa
-negociación corre entera por el **driver NVIDIA de Windows estándar**, no por ningún
-componente de Microsoft o HP. Ni el FOD holográfico ni el portal original van a explicar el
-mecanismo real — el misterio vive adentro del driver NVIDIA de Windows, que no tenemos forma
-de inspeccionar sin ingeniería inversa de ese binario o una captura DPCD/AUX real durante la
-transición 60→90 en una máquina Windows con el hardware físico (caro, y ya estaba anotado
-como tal en el historial del proyecto).
+**But getting it probably wouldn't close any of this anyway.** `driver_oasis.dll` itself —
+the driver that actually achieves 90 Hz on Windows, already disassembled in chapter 09 —
+**doesn't touch video timing at all**: it only speaks HID/USB for tracking and sends
+`Display Enable`. If the only verified component that achieves 90 Hz doesn't negotiate the
+video mode, that negotiation happens entirely through the **standard Windows NVIDIA driver**,
+not through any Microsoft or HP component. Neither the holographic FOD nor the original
+portal is going to explain the real mechanism — the mystery lives inside the Windows NVIDIA
+driver, which we have no way to inspect without reverse-engineering that binary or a real
+DPCD/AUX capture during the 60→90 transition on a Windows machine with the physical hardware
+(expensive, and already noted as such in the project's history).
 
-Dato adicional encontrado: hay reportes de "black screen at 90Hz" con el Portal original de
-Microsoft mismo, en AMD y en NVIDIA — el 90 Hz del G2 parece frágil incluso en la plataforma
-de referencia, no un problema exclusivo de este lab o de Linux.
+Additional data point found: there are "black screen at 90Hz" reports with Microsoft's own
+original Mixed Reality Portal, on both AMD and NVIDIA — the G2's 90 Hz seems fragile even on
+the reference platform, not an issue exclusive to this lab or to Linux.
 
-## Update (2026-08-05, noche): capturas reales en Windows — sin pixel clock especial, sin comando USB extra
+## Update (2026-08-05, night): real captures on Windows — no special pixel clock, no extra USB command
 
-Con acceso real a una máquina Windows con el mismo casco, se leyó el timing ACTIVO con CRU
-(Custom Resolution Utility) mientras el 90Hz andaba: `2880x1440 @ 89.999 Hz (428.58 MHz)`,
-`htotal=2980 vtotal=1598`. **Es exactamente el DTD del bloque base del EDID, sin modificar un
-bit** — mismo pixel clock, mismos totales. Windows no usa ningún timing especial ni fuera de
-banda para este modo: es el que el propio EDID publica.
+With real access to a Windows machine driving the same headset, the ACTIVE timing was read
+with CRU (Custom Resolution Utility) while 90Hz was working: `2880x1440 @ 89.999 Hz
+(428.58 MHz)`, `htotal=2980 vtotal=1598`. **It's exactly the EDID base block's DTD, without a
+single bit modified** — same pixel clock, same totals. Windows isn't using any special or
+out-of-band timing for this mode: it's exactly what the EDID itself publishes.
 
-Esto cambia el marco de la pregunta abierta más arriba (¿hay un pixel clock "especial"
-cacheado en el driver de Windows?): no lo hay, al menos no en el sentido de un valor mágico
-distinto del EDID. Windows usa igual de "sin trucos" el modo de 60Hz (709.15 MHz,
-DisplayID descriptor #2) y el de 90Hz (428.58 MHz, DTD del bloque base) — los dos, EDID puro.
-Lo que separa a uno de otro no es el pixel clock en sí, es específicamente cruzar el umbral
-de refresh, consistente con lo que ya decía el factorial de este mismo hilo.
+This reframes the open question above (is there a "special" pixel clock cached somewhere in
+the Windows driver?): there isn't, at least not in the sense of a magic value that differs
+from the EDID. Windows drives both the 60Hz mode (709.15 MHz, DisplayID descriptor #2) and
+the 90Hz mode (428.58 MHz, base block DTD) equally "as-is" — both, straight from the EDID.
+What separates one from the other isn't the pixel clock itself, it's specifically crossing
+the refresh-rate threshold, consistent with what the factorial in this same thread already
+showed.
 
-También se capturó por USB (Wireshark + USBPcap) el momento exacto de un cambio de refresh
-EN VIVO en Windows (60→90Hz y 90→60Hz, sin desconectar el casco). **No aparece ningún comando
-HID adicional en la transición** — sólo el reporte de estado de siempre (`DEVICE_STATUS`,
-33 bytes) actualizando refresh/htotal/vtotal, idéntico en forma al que ya se ve en régimen
-estable. Esto descarta también una secuencia de activación oculta por USB específica de
-Windows.
+The exact moment of a LIVE refresh-rate change on Windows was also captured over USB
+(Wireshark + USBPcap) (60→90Hz and 90→60Hz, without disconnecting the headset). **No
+additional HID command appears during the transition** — only the usual status report
+(`DEVICE_STATUS`, 33 bytes) updating refresh/htotal/vtotal, identical in shape to what's
+already seen in steady state. This also rules out a hidden, Windows-specific USB activation
+sequence.
 
-Con esto, del lado de las herramientas de usuario en Windows (Wireshark/USBPcap, CRU,
-HWiNFO64, GPU-Z, el propio panel de NVIDIA) no queda nada más para mirar: ni EDID especial,
-ni comando USB oculto, ni DSC visible (el Reverb G2 ni siquiera aparece como display
-seleccionable en el panel de NVIDIA ni en Configuración de Windows, al estar en modo
-directo/HMD). Lo que sigue siendo invisible desde acá es exactamente lo que se preguntaba
-arriba: qué pasa en el link training de DisplayPort (DPCD/AUX) o adentro del firmware GSP
-cerrado — ninguna herramienta de usuario llega ahí en ningún SO.
+With this, on the Windows user-tooling side (Wireshark/USBPcap, CRU, HWiNFO64, GPU-Z,
+NVIDIA's own control panel) there's nothing left to check: no special EDID, no hidden USB
+command, no visible DSC (the Reverb G2 doesn't even show up as a selectable display in the
+NVIDIA panel or in Windows Settings while in direct/HMD mode). What's still invisible from
+here is exactly what was asked above: what happens during DisplayPort link training
+(DPCD/AUX) or inside the closed GSP firmware — no user-space tool reaches either of those on
+any OS.

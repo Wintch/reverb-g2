@@ -156,7 +156,7 @@ What would actually move this forward now:
 If you have (or can donate) an **HP Omnicept** — same headset, plus Tobii eye-tracking —
 that matters too: Monado already treats it as a Reverb G2 at the USB level, so a 90 Hz
 result there would show whether this is a G2 problem in general or specific to our unit.
-See [`docs/10-resources.md`](docs/10-resources.md#el-omnicept-mismo-casco-por-dentro-un-sensor-de-más).
+See [`docs/10-resources.md`](docs/10-resources.md#the-omnicept-the-same-headset-inside-with-an-extra-sensor).
 
 Everything in this repo is written in English. Measurements beat opinions: if you assert
 something, say how you measured it.

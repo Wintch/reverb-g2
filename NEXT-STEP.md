@@ -1,58 +1,58 @@
 # Next step
 
-## LEER PRIMERO — estado al 2026-08-06, madrugada
+## READ FIRST — status as of 2026-08-06, early morning
 
-Escrito desde el sistema everyday con el SSD del lab montado read-write en `/mnt/lab`, antes
-de que el usuario reinicie a la instalación del lab para probar físicamente. **Esto es lo que
-hay que hacer al volver — el resto del archivo, más abajo, es historial del 90Hz, no leer
-primero.**
+Written from the everyday system with the lab SSD mounted read-write at `/mnt/lab`, before
+the user reboots into the lab install to test physically. **This is what needs to be done
+when back — the rest of the file, further below, is 90Hz history, do not read
+first.**
 
-Repo ya público (`github.com/Wintch/reverb-g2`), update de anoche posteado en el hilo de
-NVIDIA (379240), y las 4 MRs de Monado abiertas contra upstream (`monado/monado` #2967,
-#2968, #2969, #2971) — nada de eso necesita al lab, ya está resuelto.
+Repo already public (`github.com/Wintch/reverb-g2`), last night's update posted on the
+NVIDIA thread (379240), and the 4 Monado MRs opened against upstream (`monado/monado` #2967,
+#2968, #2969, #2971) — none of that needs the lab, it's already resolved.
 
-**Lo que sí necesita al lab, en orden:**
+**What does need the lab, in order:**
 
-1. **Controllers** (los 4 patches de input/conexión ya están en `patches/monado/0001-0008`,
-   aplicados vía `bootstrap-lab.sh sources`; también ya están subidos a upstream como MR, ver
-   arriba, pero eso no cambia nada localmente):
+1. **Controllers** (the 4 input/connection patches are already in `patches/monado/0001-0008`,
+   applied via `bootstrap-lab.sh sources`; also already uploaded upstream as an MR, see
+   above, but that doesn't change anything locally):
    ```bash
-   ./jack-in.sh 3dof     # prender los controllers antes o después, ya no importa
+   ./jack-in.sh 3dof     # turn on the controllers before or after, no longer matters
    grep -E "left:|right:" ~/Documents/reverb-g2/jack-in.log
-   # debe decir: left: HP Reverb G2 Left Controller / right: HP Reverb G2 Right Controller
+   # should say: left: HP Reverb G2 Left Controller / right: HP Reverb G2 Right Controller
    ```
-   Diagnóstico en vivo (sticks, batería, IMU por controller): `XRT_DEBUG_GUI=1` antes de
-   arrancar el servicio, mirar los paneles de cada controller. Sticks quietos deben leer
-   exactamente (0,0) — si drifean, algo no cargó bien el patch de deadzone. Test de estrés:
-   10 ciclos de arranque con los controllers prendidos, deben conectar 10/10 (ver `docs/03`).
+   Live diagnostics (sticks, battery, IMU per controller): `XRT_DEBUG_GUI=1` before
+   starting the service, look at each controller's panels. Sticks at rest should read
+   exactly (0,0) — if they drift, the deadzone patch didn't load correctly. Stress test:
+   10 boot cycles with the controllers on, should connect 10/10 (see `docs/03`).
 
 2. **Player / VR180:**
    ```bash
-   ./play360.sh ~/Documents/reverb-g2/photo360/vr180_berlin_8k60.mp4   # 8K60 estéreo, el bueno
-   ./play360.sh ~/Documents/reverb-g2/playlist_test/                   # feature de playlist, nunca probado interactivo
+   ./play360.sh ~/Documents/reverb-g2/photo360/vr180_berlin_8k60.mp4   # 8K60 stereo, the good one
+   ./play360.sh ~/Documents/reverb-g2/playlist_test/                   # playlist feature, never tested interactively
    ```
-   Con el casco puesto: confirmar imagen estéreo real (no aplanada), sin starves a 8K60, y que
-   las teclas de transporte (espacio pausa, `[`/`]` velocidad, `n` siguiente, `q` salir)
-   respondan. Si el terminal queda mudo después: `stty sane`.
+   With the headset on: confirm real stereo image (not flattened), no starves at 8K60, and that
+   the transport keys (space pauses, `[`/`]` speed, `n` next, `q` quit)
+   respond. If the terminal goes mute afterward: `stty sane`.
 
-3. **NO instrumentar el reset del hub USB2 todavía** — investigado por código (sin hardware)
-   2026-08-06: el autosuspend ya está descartado (regla `71-usb-no-autosuspend.rules` cubre
-   `04b4` desde el bootstrap), y la hipótesis de keepalive mal manejado tampoco se sostiene
-   leyendo `wmr_hmd.c` (poll no bloqueante, sin writes periódicos). Si en 1-2 hace falta
-   retomarlo: agregar logging con timestamps a `control_read_packets`/
-   `hololens_sensors_read_packets` y correr bajo carga hasta que resetee — es la única forma
-   de ver qué pasa justo antes, ese dato no existe todavía. Detalle en `docs/06-known-issues.md`.
+3. **Do NOT instrument the USB2 hub reset yet** — investigated by code review (no hardware)
+   on 2026-08-06: autosuspend is already ruled out (rule `71-usb-no-autosuspend.rules` covers
+   `04b4` from the bootstrap), and the mishandled-keepalive hypothesis doesn't hold up either
+   after reading `wmr_hmd.c` (non-blocking poll, no periodic writes). If it needs to be
+   picked up again in 1-2: add timestamped logging to `control_read_packets`/
+   `hololens_sensors_read_packets` and run under load until it resets — that's the only way
+   to see what happens right before, that data doesn't exist yet. Detail in `docs/06-known-issues.md`.
 
-4. **Constellation tracking (6DoF de controllers) — en pausa a propósito.** Hay un merge de
-   prueba ya hecho (rama descartable, ya borrada) contra `gitlab.freedesktop.org/thaytan/monado`
-   rama `dev-constellation-controller-tracking`: 8 conflictos, todos mecánicos (CMake +
-   reconciliar la lista de hand-tracking devices), ninguno toca los archivos de nuestros 4
-   patches. **No retomar todavía** — esperando que los reviewers de Monado respondan algo en
-   las 4 MRs antes de terminar ese merge, para no reescribir código que puede cambiar por
-   feedback. Ver `docs/03-controllers.md`, sección "Tracking posicional (6DoF)".
+4. **Constellation tracking (controller 6DoF) — paused on purpose.** There's a trial merge
+   already done (throwaway branch, already deleted) against `gitlab.freedesktop.org/thaytan/monado`
+   branch `dev-constellation-controller-tracking`: 8 conflicts, all mechanical (CMake +
+   reconciling the hand-tracking device list), none touching the files from our 4
+   patches. **Do not resume yet** — waiting for the Monado reviewers to respond something on
+   the 4 MRs before finishing that merge, to avoid rewriting code that might change based on
+   feedback. See `docs/03-controllers.md`, section "Positional tracking (6DoF)".
 
-Nada de esto es urgente — el usuario pidió pacing explícito ("lo acomodamos con tiempo"). El
-único motivo del reboot ahora es que tiene el casco físicamente en frente y ganas de probar.
+None of this is urgent — the user explicitly asked for pacing ("we'll fit it in over time"). The
+only reason for the reboot now is that the headset is physically in front of them and there's a wish to test it.
 
 ---
 
@@ -64,265 +64,265 @@ Same physical machine, two separate Debian 13 installs on separate disks (see
 unplugged to switch between them, just reboot and pick the lab SSD at the boot menu, log in
 as `iam`.
 
-## EN CURSO (2026-08-05, noche): el factorial corrió — CTRL falla, y apunta a la resolución, no al vblank
+## IN PROGRESS (2026-08-05, night): the factorial ran — CTRL fails, and points to resolution, not vblank
 
-**La vía de carga (opción 2, `nvidia_modeset.config_file` con la clave `DP-0`) quedó
-confirmada de punta a punta**: reboot hecho, `dmesg` sin warning, `/sys/class/drm/card0-DP-1/edid`
-byte-idéntico a `g2-vblank-test.edid`, y DRM pasó de ver 3 modos a 6. Detalle completo y la
-cadena de código que explica el off-by-one `DP-0`/`DP-1` está más abajo en este archivo
-("Lo anterior de esta misma sesión"), sin tocar.
+**The loading path (option 2, `nvidia_modeset.config_file` with the `DP-0` key) is
+confirmed end to end**: reboot done, `dmesg` with no warning, `/sys/class/drm/card0-DP-1/edid`
+byte-identical to `g2-vblank-test.edid`, and DRM went from seeing 3 modes to 6. Full detail and the
+code chain that explains the `DP-0`/`DP-1` off-by-one is further below in this file
+("Earlier this same session"), untouched.
 
-**Se corrió el factorial completo: CTRL → B → A. Los tres fallan** (logo HP, sin video),
-con el casco puesto. Pero con un dato nuevo que la tabla de `docs/16` no anticipaba: el HID
-del casco (`DEVICE_STATUS`) confirma, en los tres casos, un timing **byte a byte idéntico**
-al inyectado (htotal/vtotal/refresh/bpc exactos) — así que el override llegó perfecto hasta
-el link físico. Eso descarta "el override no llegó" como explicación de la falla.
+**The full factorial ran: CTRL → B → A. All three fail** (HP logo, no video),
+with the headset on. But with a new data point that the `docs/16` table didn't anticipate: the headset's
+HID (`DEVICE_STATUS`) confirms, in all three cases, a **byte-for-byte identical** timing
+to what was injected (exact htotal/vtotal/refresh/bpc) — so the override arrived perfectly all the way to
+the physical link. That rules out "the override didn't arrive" as an explanation for the failure.
 
-**Lo que queda como explicación más probable: los tres modos inyectados son 2880x1440, y
-esa resolución nunca mostró nada en toda la historia del proyecto**, a ningún refresh
-(el modo nativo 2880x1440@90 ya fallaba de antes). El único caso que alguna vez funcionó es
-4320x2160@60. La resolución explica el 100% de los resultados sin necesitar invocar el
-vblank ni el refresh — lo cual **no cierra la hipótesis del vblank, la deja sin probar
-todavía**: hay que repetir el factorial inyectando en los descriptores DisplayID Type I
-(4320x2160) en vez del bloque base, como ya preveía `docs/16` ("Si hace falta repetirlo a
-4320x2160"). El decoder de esos descriptores ya existe y está validado byte a byte contra el
-EDID real; falta escribir el encoder (`inject-did`) — la capa de bytes está documentada en
-esa misma sección con los offsets exactos.
+**What remains as the most likely explanation: the three injected modes are 2880x1440, and
+that resolution never showed anything in the entire history of the project**, at any refresh
+(the native 2880x1440@90 mode was already failing before). The only case that ever worked is
+4320x2160@60. The resolution explains 100% of the results without needing to invoke
+vblank or refresh — which **doesn't close the vblank hypothesis, it leaves it untested
+for now**: the factorial needs to be repeated injecting into the DisplayID Type I descriptors
+(4320x2160) instead of the base block, as `docs/16` already anticipated ("If it needs to be
+repeated at 4320x2160"). The decoder for those descriptors already exists and is validated byte by byte against the
+real EDID; the encoder (`inject-did`) still needs to be written — the byte layer is documented in
+that same section with the exact offsets.
 
-**Detalle completo, con las tablas de HID y la anomalía sin explicar (byte 1 de A, ver
-abajo), en `docs/16-lab-vblank.md`, sección "Corrido (2026-08-05): CTRL falla".**
+**Full detail, with the HID tables and the unexplained anomaly (byte 1 of A, see
+below), in `docs/16-lab-vblank.md`, section "Run (2026-08-05): CTRL fails".**
 
-**`inject-did` ya está escrito, probado y usado.** Encoder simétrico de `decode_did_type1`
-en `scripts/edid-tool.py`, con round-trip verificado por el decoder completo y los dos
-checksums (sección DisplayID + bloque de extensión) correctos. Ya generó los tres EDID de
-la segunda ronda: `experiments/vblank/g2-vblank-4k-{ctrl,b,a}.edid`, cada uno con el
-descriptor #1 (el que fallaba a 90 Hz) reemplazado por `CTRL4K`/`B4K`/`A4K` y el
-descriptor #2 (@60, el que anda) intacto como control. Detalle y por qué `B4K` usa vblank
-240 y no 514 (ancho de banda a 4320 de ancho) en `docs/16`, sección "Segunda ronda".
+**`inject-did` is now written, tested, and in use.** Symmetric encoder to `decode_did_type1`
+in `scripts/edid-tool.py`, with a round-trip verified by the full decoder and both
+checksums (DisplayID section + extension block) correct. It already generated the three EDIDs for
+the second round: `experiments/vblank/g2-vblank-4k-{ctrl,b,a}.edid`, each with
+descriptor #1 (the one that was failing at 90 Hz) replaced by `CTRL4K`/`B4K`/`A4K` and
+descriptor #2 (@60, the one that works) intact as a control. Detail and why `B4K` uses vblank
+240 and not 514 (bandwidth at a width of 4320) in `docs/16`, section "Second round".
 
-**`CTRL4K` corrido y confirmado (T012): ANDA.** Colores alternando (azul/blanco/verde) con
-el casco puesto, HID confirma 60Hz exacto y el bit de backlight prendido. El descriptor #1
-no es la causa del fallo — clonar ahí un timing sano funciona igual que en su posición
-original. Detalle en `docs/16`, sección "`CTRL4K` corrido". Se armó
-`scripts/verify-override.sh` (corre como root, junta dmesg + detect + md5 en un solo
-`sudo`) para no pedir la contraseña comando por comando en cada ronda.
+**`CTRL4K` run and confirmed (T012): WORKS.** Colors alternating (blue/white/green) with
+the headset on, HID confirms exact 60Hz and the backlight bit on. Descriptor #1
+is not the cause of the failure — cloning a healthy timing there works the same as in its
+original position. Detail in `docs/16`, section "`CTRL4K` run". Put together
+`scripts/verify-override.sh` (runs as root, bundles dmesg + detect + md5 into a single
+`sudo`) to avoid asking for the password command by command in each round.
 
-**`B4K` corrido y confirmado (T013): FALLA.** Sólo logo de HP, casco puesto. Mismo
-descriptor #1 que acababa de probarse sano con `CTRL4K` a 60 Hz — ahora a 90 Hz con vblank
-corto (240) no engancha. Dato nuevo sin explicar todavía: el HID (`panel-status.py`) ni
-siquiera llegó a reportar 90 Hz — se quedó mostrando el último estado conocido (60, de
-`CTRL4K`) y el companion re-enumeró sin más mensajes. Distinto de la ronda anterior, donde
-el HID sí confirmaba el timing inyectado byte a byte pese a fallar visualmente. Detalle
-completo en `docs/16`, sección "`B4K` corrido".
+**`B4K` run and confirmed (T013): FAILS.** Only the HP logo, headset on. Same
+descriptor #1 that had just tested healthy with `CTRL4K` at 60 Hz — now at 90 Hz with a short
+vblank (240) it doesn't lock. New data point still unexplained: the HID (`panel-status.py`) didn't
+even get to report 90 Hz — it stayed showing the last known state (60, from
+`CTRL4K`) and the companion re-enumerated with no further messages. Different from the previous
+round, where the HID did confirm the injected timing byte for byte despite failing visually. Full
+detail in `docs/16`, section "`B4K` run".
 
-**`A4K` corrido y confirmado (T014): FALLA también — esto cierra el factorial 2x2.**
-`CTRL4K` (60Hz, vblank514) anda; `A4K` (60Hz, vblank116) y `B4K` (90Hz, vblank240) fallan
-los dos. **No es el refresh — es el vblank corto**, y tampoco es ancho de banda: `A4K` corre
-a apenas 603.6 MHz, muy por debajo del techo HBR3, y falla exactamente igual que `B4K` a
-954.72 MHz. El límite real es una duración mínima de blanking vertical, no bits/segundo.
-Detalle completo en `docs/16`, sección "`A4K` corrido — y esto cierra el factorial".
+**`A4K` run and confirmed (T014): FAILS too — this closes the 2x2 factorial.**
+`CTRL4K` (60Hz, vblank514) works; `A4K` (60Hz, vblank116) and `B4K` (90Hz, vblank240) both
+fail. **It's not the refresh — it's the short vblank**, and it's not bandwidth either: `A4K` runs
+at only 603.6 MHz, well below the HBR3 ceiling, and fails exactly the same as `B4K` at
+954.72 MHz. The real limit is a minimum vertical blanking duration, not bits/second.
+Full detail in `docs/16`, section "`A4K` run — and this closes the factorial".
 
-**Esto reabre 90 Hz como alcanzable.** Si el mínimo de vblank que hace falta es compatible
-con 90 Hz dentro de HBR3, no hace falta bajar el refresh. Ya se generó el candidato más
-directo: `experiments/vblank/g2-vblank-4k-90long.edid` — 4320x2160@90 con el mismo vblank
-514 que sí anda a 60 Hz (`./scripts/edid-tool.py inject-did ... 514@90:1`). Pixel clock
-1063.72 MHz → 25.53 Gbps @24bpp, dentro del techo HBR3 (25.92, ~1.5% de margen). El `.conf`
-ya apunta ahí.
+**This reopens 90 Hz as achievable.** If the minimum vblank needed is compatible
+with 90 Hz within HBR3, there's no need to lower the refresh. The most direct candidate has
+already been generated: `experiments/vblank/g2-vblank-4k-90long.edid` — 4320x2160@90 with the same
+vblank 514 that does work at 60 Hz (`./scripts/edid-tool.py inject-did ... 514@90:1`). Pixel clock
+1063.72 MHz → 25.53 Gbps @24bpp, within the HBR3 ceiling (25.92, ~1.5% margin). The `.conf`
+already points there.
 
-**`90long` corrido y confirmado (T015): FALLA.** Sólo logo HP, casco puesto. Esta vez el HID
-sí confirmó 90Hz y timing exacto (a diferencia de `B4K`, que se había quedado en el estado
-viejo) — así que el modo llegó completo y aun así no engancha. Los cuatro resultados hasta
-acá (`A4K` 0.849ms FALLA, `B4K` 1.111ms FALLA, `90long` 2.136ms FALLA, `CTRL4K` 3.204ms
-ANDA) ordenan limpio por **tiempo de blanking vertical en ms**
-(`vblank/((vact+vblank)·rate)`), no por líneas — `90long` y `CTRL4K` tienen el mismo número
-de líneas (514) y sólo el refresh distinto ya alcanza para que uno falle y el otro no.
-Detalle y la tabla completa en `docs/16`, sección "`90long` corrido".
+**`90long` run and confirmed (T015): FAILS.** Only HP logo, headset on. This time the HID
+did confirm 90Hz and exact timing (unlike `B4K`, which had stayed at the old
+state) — so the mode arrived complete and still doesn't lock. The four results so far
+(`A4K` 0.849ms FAILS, `B4K` 1.111ms FAILS, `90long` 2.136ms FAILS, `CTRL4K` 3.204ms
+WORKS) sort cleanly by **vertical blanking time in ms**
+(`vblank/((vact+vblank)·rate)`), not by lines — `90long` and `CTRL4K` have the same number
+of lines (514) and just the different refresh alone is enough for one to fail and the other not.
+Detail and the full table in `docs/16`, section "`90long` run".
 
-**Esto es un problema serio para 90 Hz:** el techo de HBR3 limita el vblank a ~555 líneas a
-90 Hz, o sea **~2.27 ms como máximo posible** — por debajo de los 3.204 ms que ya sabemos
-que andan. Si el umbral real de tiempo está más cerca de 3.2 que de 2.27, 90 Hz puede ser
-sencillamente imposible dentro de HBR3, sin importar el vblank.
+**This is a serious problem for 90 Hz:** the HBR3 ceiling limits vblank to ~555 lines at
+90 Hz, i.e. **~2.27 ms as the maximum possible** — below the 3.204 ms already known
+to work. If the real time threshold is closer to 3.2 than to 2.27, 90 Hz may be
+simply impossible within HBR3, regardless of vblank.
 
-Antes de gastar otro reboot cerca del límite de banda a 90 Hz, se armó un candidato para
-acotar el umbral real **a 60 Hz** (sin presión de bandwidth):
-`experiments/vblank/g2-vblank-4k-bisect1.edid` — vblank=340 líneas a 60Hz, el mismo 2.27 ms
-que sería el máximo posible a 90 Hz. El `.conf` ya apunta ahí.
+Before spending another reboot near the bandwidth limit at 90 Hz, a candidate was put together to
+bound the real threshold **at 60 Hz** (without bandwidth pressure):
+`experiments/vblank/g2-vblank-4k-bisect1.edid` — vblank=340 lines at 60Hz, the same 2.27 ms
+that would be the maximum possible at 90 Hz. The `.conf` already points there.
 
-**`bisect1` corrido y confirmado (T016): FALLA.** Sólo logo HP, HID confirma timing exacto
-(60Hz, vtotal 2500) entregado perfecto. vblank=340@60Hz da 2.27ms — el mismo tiempo que
-sería el máximo posible a 90Hz dentro de HBR3 — y falla. **Esto descarta 90 Hz como
-alcanzable dentro de este enlace DisplayPort HBR3**, sin importar qué vblank se use: el
-umbral real de tiempo está por encima de 2.27ms, y el techo de banda a 90Hz no permite
-superar ese valor bajo ninguna combinación.
+**`bisect1` run and confirmed (T016): FAILS.** Only HP logo, HID confirms exact timing
+(60Hz, vtotal 2500) delivered perfectly. vblank=340@60Hz gives 2.27ms — the same time that
+would be the maximum possible at 90Hz within HBR3 — and it fails. **This rules out 90 Hz as
+achievable within this HBR3 DisplayPort link**, regardless of what vblank is used: the
+real time threshold is above 2.27ms, and the bandwidth ceiling at 90Hz doesn't allow
+exceeding that value under any combination.
 
-**Decisión con el usuario (2026-08-05): en vez de seguir bisectando el umbral exacto a
-60Hz, ir directo a un refresh intermedio con margen real.** A 80Hz el techo de banda
-permite hasta 3.66ms (vs los 3.204ms conocidos que andan) — mucho más margen que a 90Hz.
-Se generó `experiments/vblank/g2-vblank-4k-80hz.edid`: vblank=775 líneas a 80Hz, 1037.82
-MHz, 3.301ms, 24.91 de 25.92 Gbps (~4% de margen, no al límite como los intentos a 90Hz). El
-`.conf` ya apunta ahí. **Esto redefine el objetivo**: `CLAUDE.md` asume que "la única cura"
-del parpadeo es 90Hz, pero eso nunca se probó a un refresh intermedio — si 80Hz reduce o
-elimina el parpadeo perceptible, cambia el criterio de éxito. Detalle en `docs/16`, sección
-"`bisect1` corrido".
+**Decision with the user (2026-08-05): instead of continuing to bisect the exact threshold at
+60Hz, go straight to an intermediate refresh with real margin.** At 80Hz the bandwidth ceiling
+allows up to 3.66ms (vs the known-working 3.204ms) — much more margin than at 90Hz.
+`experiments/vblank/g2-vblank-4k-80hz.edid` was generated: vblank=775 lines at 80Hz, 1037.82
+MHz, 3.301ms, 24.91 of 25.92 Gbps (~4% margin, not at the limit like the 90Hz attempts). The
+`.conf` already points there. **This redefines the goal**: `CLAUDE.md` assumes that "the only cure"
+for the flicker is 90Hz, but that was never tested at an intermediate refresh — if 80Hz reduces or
+eliminates the perceptible flicker, the success criterion changes. Detail in `docs/16`, section
+"`bisect1` run".
 
-**`80hz` corrido y confirmado (T017): FALLA.** Sin imagen, sólo logo. HID confirmó refresh
-80 exacto y timing exacto entregado. **Esto refuta la hipótesis del umbral de tiempo de
-vblank**: `80hz` tiene 3.301 ms de blanking — más que los 3.204 ms de `CTRL4K`, que sí
-anda — y aun así falla. El patrón que sí sobrevive a los 7 puntos: el único pixel clock que
-alguna vez mostró imagen es **≈709.15 MHz** (el nativo 4320x2160@60 y su clon `CTRL4K`);
-todo lo demás falló, sin importar bandwidth, vblank en líneas o en tiempo. Detalle completo
-y la tabla en `docs/16`, sección "`80hz` corrido".
+**`80hz` run and confirmed (T017): FAILS.** No image, only logo. HID confirmed exact
+refresh of 80 and exact timing delivered. **This refutes the vblank time threshold
+hypothesis**: `80hz` has 3.301 ms of blanking — more than the 3.204 ms of `CTRL4K`, which
+does work — and still fails. The pattern that does survive across the 7 data points: the only pixel clock that
+ever showed an image is **≈709.15 MHz** (the native 4320x2160@60 and its clone `CTRL4K`);
+everything else failed, regardless of bandwidth, vblank in lines or in time. Full detail
+and the table in `docs/16`, section "`80hz` run".
 
-**Pivot grande (2026-08-05, noche):** en vez de seguir bisectando a ciegas, se investigó el
-hardware. El usuario acercó el datasheet real del puente **ANX7530** (Product Brief oficial
-de Analogix, AA-004263-PB-7 — no versionado acá, tiene aviso de copyright; ver `docs/10`
-para el link público): declara el techo de link en **HBR2.5 (6.75 Gbps/lane,
-no HBR3)** y una línea de spec explícita — **"DisplayPort Receiver Input Bandwidth supports
-up to 4K x 2K x 60Hz"** — que es un techo de refresh declarado por el fabricante, no sólo
-una cuenta de bandwidth. Coincide con que `2880x1440@90` (bandwidth total MENOR que el
-4320x2160@60 que anda) también falló siempre.
+**Major pivot (2026-08-05, night):** instead of continuing to bisect blindly, the
+hardware was investigated. The user brought the real datasheet for the **ANX7530** bridge (official
+Analogix Product Brief, AA-004263-PB-7 — not versioned here, it carries a copyright notice; see `docs/10`
+for the public link): it states the link ceiling as **HBR2.5 (6.75 Gbps/lane,
+not HBR3)** and an explicit spec line — **"DisplayPort Receiver Input Bandwidth supports
+up to 4K x 2K x 60Hz"** — which is a refresh ceiling declared by the manufacturer, not just
+a bandwidth calculation. This matches the fact that `2880x1440@90` (total bandwidth LOWER than the
+working 4320x2160@60) also always failed.
 
-Un research aparte confirmó que esto **ya es un bug reconocido por NVIDIA**: hilo
-`forums.developer.nvidia.com/t/.../337744`, bug interno **5923212**, reproducido en
-RTX 2070S/3090/5070Ti/A5000 en drivers 590–610.43.02, siempre la misma firma (60Hz anda,
-90Hz no, incluso a menor resolución). Sin respuesta de NVIDIA desde 2026-03-20.
+A separate research effort confirmed that this **is already a bug acknowledged by NVIDIA**: thread
+`forums.developer.nvidia.com/t/.../337744`, internal bug **5923212**, reproduced on
+RTX 2070S/3090/5070Ti/A5000 across drivers 590–610.43.02, always the same signature (60Hz works,
+90Hz doesn't, even at lower resolution). No response from NVIDIA since 2026-03-20.
 
-**Decisión con el usuario: sumar esta evidencia al hilo de NVIDIA en vez de seguir con más
-EDIDs a ciegas.** Borrador completo del post (en inglés, listo para copiar/pegar o editar)
-en `docs/19-nvidia-bug-5923212-followup.md` — incluye la tabla de los 7 puntos del
-factorial, la identificación del chip (nueva para ese hilo, nadie lo había nombrado ahí
-todavía) y la pregunta abierta para quien tenga visibilidad de DPCD/MSA o del driver de
-Windows. **No lo posteé yo** — necesita la cuenta del usuario en el foro.
+**Decision with the user: add this evidence to the NVIDIA thread instead of continuing with more
+blind EDIDs.** Full draft of the post (in English, ready to copy/paste or edit)
+at `docs/19-nvidia-bug-5923212-followup.md` — includes the table of the 7 factorial data
+points, the chip identification (new to that thread, nobody had named it there
+yet) and the open question for anyone with visibility into DPCD/MSA or the Windows
+driver. **I did not post it** — it needs the user's forum account.
 
-**Pendiente de decidir después de postear:** si sigue el camino empírico (queda listo
-`edid-tool.py` extendido con `HBP:VBLANK@RATE` para separar pixel-clock-exacto de
-refresh/vblank, sin usar todavía) o si se espera respuesta de NVIDIA antes de seguir
-gastando reboots.
+**Still to decide after posting:** whether to continue down the empirical path (the
+`edid-tool.py` extension with `HBP:VBLANK@RATE` to separate exact-pixel-clock from
+refresh/vblank is ready, not used yet) or whether to wait for a response from NVIDIA before
+spending more reboots.
 
 ---
 
-### Instrucciones originales para el reboot de `80hz` (ya ejecutado, dejadas por historial)
+### Original instructions for the `80hz` reboot (already executed, kept for the record)
 
-**FALTA EL REBOOT que carga `g2-vblank-4k-80hz.edid`.** Al volver:
+**STILL NEED THE REBOOT that loads `g2-vblank-4k-80hz.edid`.** Upon return:
 
-1. `sudo ./scripts/verify-override.sh` — confirma carga (dmesg + md5).
-2. PREFLIGHT completo (`docs/16`, arriba de todo), incluyendo `Notify Attach Begin` (root) —
-   debería decir `pclk 1037820000 raster 4420x2935 24 bpp`.
-3. `hmd-vk list` — `[1]` debería reportar `80.000 Hz` (distinto de `[2]` a 60.000, esta vez
-   sin ambigüedad de índice).
-4. Presentar `[1]` con `hmd-vk native 1`, casco puesto, HID (`panel-status.py`) en paralelo,
-   `testlog.py` para anotar.
-5. **Si `80hz` ANDA:** además de "¿hay imagen?", preguntar específicamente **si el
-   parpadeo mejoró o desapareció** respecto de 60Hz — es la pregunta que en realidad
-   importa ahora que 90Hz está descartado. Si el parpadeo sigue igual pese a andar la
-   imagen, el objetivo del lab necesita replantearse desde cero (¿el strobe del backlight
-   está atado específicamente a 90Hz por firmware, no a "cualquier refresh alto"?).
-   **Si `80hz` FALLA:** el umbral de vblank/tiempo es más alto de lo estimado; volver a
-   bisectar (a 60Hz, sin presión de banda) entre 340 (falla) y 514 (anda) para acotarlo
-   antes de probar otro refresh intermedio.
+1. `sudo ./scripts/verify-override.sh` — confirms loading (dmesg + md5).
+2. Full PREFLIGHT (`docs/16`, at the very top), including `Notify Attach Begin` (root) —
+   should say `pclk 1037820000 raster 4420x2935 24 bpp`.
+3. `hmd-vk list` — `[1]` should report `80.000 Hz` (different from `[2]` at 60.000, this time
+   with no index ambiguity).
+4. Present `[1]` with `hmd-vk native 1`, headset on, HID (`panel-status.py`) in parallel,
+   `testlog.py` to log it.
+5. **If `80hz` WORKS:** besides "is there an image?", ask specifically **whether the
+   flicker improved or disappeared** compared to 60Hz — that's the question that actually
+   matters now that 90Hz is ruled out. If the flicker stays the same despite the
+   image working, the lab's goal needs to be rethought from scratch (is the backlight strobe
+   tied specifically to 90Hz by firmware, not to "any high refresh"?).
+   **If `80hz` FAILS:** the vblank/time threshold is higher than estimated; go back to
+   bisecting (at 60Hz, without bandwidth pressure) between 340 (fails) and 514 (works) to bound it
+   before trying another intermediate refresh.
 
-### Lo anterior de esta misma sesión: la clave era `DP-0`, no `DP-1`
+### Earlier this same session: the key was `DP-0`, not `DP-1`
 
-Reboot hecho. `dmesg` confirmó `nvidia-modeset: Successfully read
-/home/iam/Documents/reverb-g2/experiments/vblank/nvkms-override-candidates.conf` — sin
-warning, la sintaxis con corchetes de la sección anterior (abajo, sin tocar) era correcta.
-Pero el EDID de `/sys/class/drm/card0-DP-1/edid` seguía siendo el `hmd.edid` original.
+Reboot done. `dmesg` confirmed `nvidia-modeset: Successfully read
+/home/iam/Documents/reverb-g2/experiments/vblank/nvkms-override-candidates.conf` — no
+warning, the bracket syntax from the previous section (below, untouched) was correct.
+But the EDID at `/sys/class/drm/card0-DP-1/edid` was still the original `hmd.edid`.
 
-Se probó primero la hipótesis de timing (que faltaba un `detect()` fresco desde que cargó
-el override) leyendo `cat /sys/class/drm/card0-DP-1/status` — eso SÍ dispara
-`connector->funcs->detect()` real (confirmado en `nvidia-drm-connector.c:274-283`, el
-callback `.force`/`.detect` cae los dos en `__nv_drm_connector_detect_internal`). Se
-recorrió a mano toda la cadena de código para confirmar que el plumbing existe de punta a
-punta: `nvDpyGetDynamicData` (`nvkms-dpy.c:3088`) → `GetEdidOverride` (`nvkms-dpy.c:195`,
-la usa `nvDpyReadAndParseEdidEvo` con prioridad sobre `ReadEdidFromDP`) → de vuelta en
-`nvkms-kapi.c:1544` el EDID overrideado sí se copia a `params->edid` porque el flag
-`overrideEdid` que compara ahí es el de DRM (`connector->override_edid`, el de la opción 1,
-en `FALSE`) — no el interno de NVKMS → `nvidia-drm-connector.c:136` copia ese EDID a
-`nv_connector->edid` → línea 301 llama `nv_drm_connector_update_edid_property`. Todo el
-camino existe y debería funcionar. Pero el status leyó `connected` con el EDID viejo de
-todos modos.
+The timing hypothesis was tested first (that a fresh `detect()` was missing since the
+override loaded) by reading `cat /sys/class/drm/card0-DP-1/status` — that DOES trigger a real
+`connector->funcs->detect()` (confirmed in `nvidia-drm-connector.c:274-283`, both the
+`.force`/`.detect` callback fall into `__nv_drm_connector_detect_internal`). The entire
+code chain was walked through by hand to confirm the plumbing exists end to
+end: `nvDpyGetDynamicData` (`nvkms-dpy.c:3088`) → `GetEdidOverride` (`nvkms-dpy.c:195`,
+which uses `nvDpyReadAndParseEdidEvo` with priority over `ReadEdidFromDP`) → back in
+`nvkms-kapi.c:1544` the overridden EDID does get copied to `params->edid` because the
+`overrideEdid` flag compared there is the DRM one (`connector->override_edid`, the one from
+option 1, at `FALSE`) — not NVKMS's internal one → `nvidia-drm-connector.c:136` copies that EDID to
+`nv_connector->edid` → line 301 calls `nv_drm_connector_update_edid_property`. The entire
+path exists and should work. But status read `connected` with the old EDID
+regardless.
 
-**La causa real: un off-by-one entre NVKMS y DRM en la numeración de conectores.**
-`nvkms-rm.c:880` — `AllocConnectorDispDataRec allocConnectorDispData = { };` — confirma que
-`typeIndices` arranca en 0. El primer conector DP tiene `typeIndex = 0`, así que su nombre
-interno en NVKMS es **`DP-0`**. DRM, en cambio, numera desde 1 (por eso el listado real de
-`/sys/class/drm/` es `card0-DP-1`, `card0-DP-2` — nunca aparece un `DP-0`). Mismo conector
-físico, dos nombres distintos según la capa. `DPY_OVERRIDE_MATCHES`
-(`nvkms-dpy-override.c:37-39`, `nvDpyEvoGetOverride` línea 210) compara la clave del
-`.conf` contra el nombre **interno** de NVKMS (`pConnectorEvo->name`), no contra el de DRM
-— así que la clave `DP-1` nunca hizo match. El archivo se leyó sin error porque el parser
-no valida que el nombre de display corresponda a un conector real; sólo lo guarda en la
-tabla de overrides a la espera de que algún conector algún día se llame así.
+**The real cause: an off-by-one between NVKMS and DRM in connector numbering.**
+`nvkms-rm.c:880` — `AllocConnectorDispDataRec allocConnectorDispData = { };` — confirms that
+`typeIndices` starts at 0. The first DP connector has `typeIndex = 0`, so its
+internal name in NVKMS is **`DP-0`**. DRM, on the other hand, numbers from 1 (which is why the
+actual listing in `/sys/class/drm/` is `card0-DP-1`, `card0-DP-2` — a `DP-0` never
+appears). Same physical connector, two different names depending on the layer. `DPY_OVERRIDE_MATCHES`
+(`nvkms-dpy-override.c:37-39`, `nvDpyEvoGetOverride` line 210) compares the `.conf`
+key against NVKMS's **internal** name (`pConnectorEvo->name`), not against DRM's
+— so the `DP-1` key never matched. The file was read without error because the parser
+doesn't validate that the display name corresponds to a real connector; it just stores it in
+the override table waiting for some connector to someday be named that.
 
-`experiments/vblank/nvkms-override-candidates.conf` ya tiene la clave corregida:
+`experiments/vblank/nvkms-override-candidates.conf` already has the corrected key:
 `override.[0000:05:00.0].DP-0 = .../g2-vblank-test.edid`.
 
-**Falta el reboot que prueba la corrección.** Al volver:
+**Still need the reboot that tests the fix.** Upon return:
 ```
 sudo dmesg -T | grep -iE 'nvkms|override|Error in|Syntax error|Successfully read'
-cat /sys/class/drm/card0-DP-1/status          # dispara un detect() fresco
+cat /sys/class/drm/card0-DP-1/status          # triggers a fresh detect()
 sudo cat /sys/class/drm/card0-DP-1/edid | md5sum
-md5sum experiments/vblank/g2-vblank-test.edid  # deberían coincidir
+md5sum experiments/vblank/g2-vblank-test.edid  # should match
 ```
-Si coinciden, el override quedó cargado — seguir con el factorial de `docs/16`. Si NO
-coinciden pero tampoco hay warning en dmesg, el problema puede estar en el número de PCI
-function (`0000:05:00.0` vs `.1`, la GPU tiene dos functions — VGA en `.0`, audio en `.1`;
-ya está bien puesta la `.0`) o en que el `debug=1` no está realmente habilitando el log
-`nvEvoLogDebug` de `nvDpyEvoGetOverride` línea 212 — revisar si aparece
-`NVDpyOverrideRec found: DP-0` en dmesg, que confirmaría el match sin ambigüedad.
+If they match, the override loaded successfully — continue with the `docs/16` factorial. If they do NOT
+match but there's also no warning in dmesg, the problem may be in the PCI
+function number (`0000:05:00.0` vs `.1`, the GPU has two functions — VGA on `.0`, audio on `.1`;
+`.0` is already set correctly) or in the `debug=1` not actually enabling the
+`nvEvoLogDebug` log from `nvDpyEvoGetOverride` line 212 — check whether
+`NVDpyOverrideRec found: DP-0` appears in dmesg, which would confirm the match unambiguously.
 
-### Lo anterior de esta misma sesión (histórico, sin tocar)
+### Earlier this same session (historical, untouched)
 
-Opción 1 (`debugfs edid_override`) quedó descartada con evidencia — ver `docs/16`, sección
-bajo el PENDIENTE. El driver NVIDIA no pasa por el helper genérico de DRM para el EDID de
-este conector; lo lee por su propio canal, y el override queda ignorado.
+Option 1 (`debugfs edid_override`) was ruled out with evidence — see `docs/16`, section
+under "PENDING". The NVIDIA driver does not go through the generic DRM helper for this
+connector's EDID; it reads it through its own channel, and the override is ignored.
 
-Se pasó a la opción 2 (`nvidia_modeset.config_file`). El primer intento (RE por disassembly,
-sin fuente) falló: `dmesg` dio un solo warning —
-`Syntax error in override entry: Unknown GPU designator: 0000:05:00` — y `nvKmsReadConf`
-aborta el archivo entero en el primer error, así que ni los otros dos candidatos se llegaron
-a probar.
+Moved on to option 2 (`nvidia_modeset.config_file`). The first attempt (RE via disassembly,
+no source) failed: `dmesg` gave a single warning —
+`Syntax error in override entry: Unknown GPU designator: 0000:05:00` — and `nvKmsReadConf`
+aborts the entire file on the first error, so even the other two candidates never got
+tested.
 
-**Se encontró algo mejor que RE: `/usr/src/nvidia-595.71.05/src/nvidia-modeset/src/nvkms-conf.c`
-es fuente real (parte abierta del 595, MIT).** Ahí está la gramática exacta, sin
-reconstruirla a ciegas:
+**Found something better than RE: `/usr/src/nvidia-595.71.05/src/nvidia-modeset/src/nvkms-conf.c`
+is real source (open part of 595, MIT).** The exact grammar is right there, no need to
+reconstruct it blind:
 
-- La clave separa `keyhead` (`override`) de `keytail` en el PRIMER `.` — todo lo demás va
-  entero a `Subparser_override`. Ese parser sólo activa el branch de dirección PCI cuando
-  `key[0] == '['` (`nvkms-conf.c:126`). **Los corchetes son obligatorios**, no notación
-  opcional — sin ellos busca el primer `.` suelto, que cae en medio de la dirección PCI, y
-  tira justo el error que vimos.
-- Formato real: `override.[<dominio>:<bus>.<slot>.<función>].<nombre-dpy> = <valor>`
-  (los `:` y `.` dentro de los corchetes son los delimitadores hex de 4 campos, igual que
+- The key splits `keyhead` (`override`) from `keytail` at the FIRST `.` — everything else goes
+  whole to `Subparser_override`. That parser only activates the PCI address branch when
+  `key[0] == '['` (`nvkms-conf.c:126`). **The brackets are mandatory**, not optional
+  notation — without them it looks for the first loose `.`, which falls in the middle of the PCI
+  address, and throws exactly the error we saw.
+- Real format: `override.[<domain>:<bus>.<slot>.<function>].<dpy-name> = <value>`
+  (the `:` and `.` inside the brackets are the 4-field hex delimiters, same as
   `lspci`/DRM: `0000:05:00.0`).
-- Valor: ruta absoluta sin comillas ni `<angulos>` — el branch de archivo sólo se activa si
-  `value[0]=='/'` tras pelar comillas; los `<angulos>` del primer intento NO se pelan, quedan
-  como parte literal del valor (por eso ese candidato tampoco habría andado aunque la clave
-  estuviera bien).
+- Value: absolute path with no quotes or `<angle brackets>` — the file branch only activates if
+  `value[0]=='/'` after stripping quotes; the `<angle brackets>` from the first attempt are NOT
+  stripped, they remain as a literal part of the value (which is why that candidate wouldn't have
+  worked either even if the key had been correct).
 
-`experiments/vblank/nvkms-override-candidates.conf` ya tiene la línea corregida:
+`experiments/vblank/nvkms-override-candidates.conf` already has the corrected line:
 `override.[0000:05:00.0].DP-1 = .../g2-vblank-test.edid`.
 
-**El nombre de display `DP-1` se confirmó por lectura de código, no por suposición:**
-`nvkms-rm.c:616-623` arma `pConnectorEvo->name` como `"%s-%u"` con un contador `typeIndex`
-por tipo (0-based, orden de enumeración de RM). `nvidia-drm-connector.c:562` llama
-`drm_connector_init()` sin `type_id` explícito, así que DRM asigna el suyo incrementando en
-el mismo orden en que NVKMS ya enumeró — mismo contador, misma lista física, mismo orden →
-el `DP-1` de DRM (`card0-DP-1`, donde el `edid_override` de la opción 1 ya había confirmado
-que cuelga el casco) y el `DP-1` interno de NVKMS son el mismo conector. No hace falta
-cambiar el nombre.
+**The `DP-1` display name was confirmed by reading the code, not by assumption:**
+`nvkms-rm.c:616-623` builds `pConnectorEvo->name` as `"%s-%u"` with a `typeIndex` counter
+per type (0-based, RM enumeration order). `nvidia-drm-connector.c:562` calls
+`drm_connector_init()` without an explicit `type_id`, so DRM assigns its own incrementing in
+the same order NVKMS already enumerated — same counter, same physical list, same order →
+DRM's `DP-1` (`card0-DP-1`, where option 1's `edid_override` had already confirmed
+the headset hangs off) and NVKMS's internal `DP-1` are the same connector. No need to
+change the name.
 
-`/etc/modprobe.d/99-nvkms-override-test.conf` (`config_file=... debug=1`) sigue apuntando al
-mismo `.conf`, así que sólo hace falta que el módulo lo vuelva a leer — es de sólo lectura en
-caliente, sólo se lee una vez al cargar el módulo.
+`/etc/modprobe.d/99-nvkms-override-test.conf` (`config_file=... debug=1`) still points to the
+same `.conf`, so all that's needed is for the module to read it again — it's read-only at
+runtime, only read once when the module loads.
 
-**Falta disparar el reboot.** Al volver, primero:
+**Still need to trigger the reboot.** Upon return, first:
 ```
 sudo dmesg -T | grep -iE 'nvkms|override|Error in|Syntax error|Successfully read'
 ```
-Si esta vez no hay warning (o dice `Successfully read...`), el override quedó cargado.
-Recién ahí verificar físicamente: `/sys/class/drm/card0-DP-1/edid` debería leer
-`g2-vblank-test.edid` en vez de `hmd.edid`, y seguir con el factorial de `docs/16`.
+If this time there's no warning (or it says `Successfully read...`), the override loaded
+successfully. Only then verify physically: `/sys/class/drm/card0-DP-1/edid` should read as
+`g2-vblank-test.edid` instead of `hmd.edid`, and continue with the `docs/16` factorial.
 
 ---
 
@@ -338,7 +338,7 @@ Recién ahí verificar físicamente: `/sys/class/drm/card0-DP-1/edid` debería l
 
 ## Track 1 — vblank experiment: what to do first
 
-**Before running PREFLIGHT, read the "PENDIENTE" block near the top of
+**Before running PREFLIGHT, read the "PENDING" block near the top of
 `docs/16-lab-vblank.md`.** While documenting this session I found and fixed a real error in
 that doc: it claimed the EDID-override loading mechanism was "already proven in this lab".
 It is not. The 6 bpc bug was closed with a *driver source patch* (0004), which sidestepped
@@ -411,118 +411,118 @@ SLA. Check for a notification email, or ask to have it checked.
 
 ---
 
-## Idea a pensar (2026-08-05, parqueada): sudo acotado + autoarranque de la sesión
+## Idea to think about (2026-08-05, parked): scoped sudo + session auto-start
 
-Surgió mientras se corría el factorial del vblank: el ciclo reboot → "volví" → PREFLIGHT →
-presentar → mirar con el casco tiene fricción real de copy-paste en los pasos que necesitan
-sudo (ya causó un glitch de expansión de historial de bash al pegar la salida). Se acordó
-pedir un `sudoers.d` acotado con `NOPASSWD` sólo para los comandos de sólo-lectura
-(`verify-override.sh`, `dmesg`, el `cat` del EDID de sysfs, `modinfo`) — sin sudo en blanco
-y sin automatizar el `reboot` en sí, porque la verificación es física: el usuario tiene que
-estar presente apenas vuelve la máquina de todos modos, así que automatizar el reboot no
-ahorra tiempo real, y esta es una sola máquina física sin recuperación remota si algo cuelga
-el boot. Después de eso, el usuario propuso ir un paso más allá: que la sesión de Claude
-Code arranque sola al bootear la máquina, para poder interactuar apenas vuelve sin el paso
-de "volví". **Quedó explícitamente pendiente de pensar, no decidido ni implementado** —
-retomarlo después de correr `g2-vblank-4k-90long.edid`. Detalle completo en memoria
-(`idea_agent_autostart_lab.md`, tipo `project`).
+Came up while running the vblank factorial: the reboot → "I'm back" → PREFLIGHT →
+present → look with the headset cycle has real copy-paste friction in the steps that need
+sudo (already caused a bash history-expansion glitch when pasting output). Agreed to
+request a scoped `sudoers.d` with `NOPASSWD` only for the read-only commands
+(`verify-override.sh`, `dmesg`, the sysfs EDID `cat`, `modinfo`) — no blanket sudo
+and no automating the `reboot` itself, because verification is physical: the user has to
+be present as soon as the machine comes back anyway, so automating the reboot doesn't
+save real time, and this is a single physical machine with no remote recovery if the boot
+hangs. After that, the user proposed going one step further: having the Claude
+Code session auto-start when the machine boots, to be able to interact as soon as it's back without the
+"I'm back" step. **This was explicitly left pending to think about, not decided or implemented** —
+pick it back up after running `g2-vblank-4k-90long.edid`. Full detail in memory
+(`idea_agent_autostart_lab.md`, type `project`).
 
-## Pendiente adicional (2026-08-05): perfil de power de la GPU
+## Additional pending item (2026-08-05): GPU power profile
 
-Hipótesis del usuario, todavía sin correr: en Windows siempre se recomienda forzar el panel
-de NVIDIA a **"Prefer Maximum Performance"** para VR — dejarlo en el default ("Adaptive",
-reloj dinámico) puede causar problemas. En Linux el 595-open también arranca en PowerMizer
-adaptativo por default. Si el firmware GSP cerrado que decide el enganche a 90Hz (ver
-`docs/13-bug-6bpc.md`) es sensible al estado de reloj en el momento del modeset, un
-downclock en el momento equivocado podría explicar por qué el panel no llega a sincronizar.
+User hypothesis, not yet tested: on Windows it's always recommended to force the NVIDIA
+panel to **"Prefer Maximum Performance"** for VR — leaving it at the default ("Adaptive",
+dynamic clock) can cause problems. On Linux, the 595-open also boots into adaptive PowerMizer
+by default. If the closed GSP firmware that decides the 90Hz lock (see
+`docs/13-bug-6bpc.md`) is sensitive to the clock state at the moment of the modeset, a
+downclock at the wrong moment could explain why the panel fails to sync.
 
-No se investigó todavía. Cuando se retome: revisar con `nvidia-smi -q -d PERFORMANCE` o
-`nvidia-settings` el P-state real durante el intento de modeset a 90Hz, y probar forzando
-máximo rendimiento (`nvidia-settings -a '[gpu:0]/GPUPowerMizerMode=1'` o el mecanismo
-equivalente en el 595-open) antes de correr el experimento del vblank o en paralelo con él.
+Not investigated yet. When resumed: check the real P-state during the 90Hz modeset
+attempt with `nvidia-smi -q -d PERFORMANCE` or `nvidia-settings`, and try forcing
+maximum performance (`nvidia-settings -a '[gpu:0]/GPUPowerMizerMode=1'` or the
+equivalent mechanism on the 595-open) before running the vblank experiment or in parallel with it.
 
-## Pendiente (2026-08-06): power management integral — sleep del sistema + proximity sensor del casco
+## Pending (2026-08-06): comprehensive power management — system sleep + headset proximity sensor
 
-Surgió al costado, mientras corría un transcoding en background: la suspensión automática
-del sistema (sleep) cortó el proceso. Se retomó esa vez con un inhibidor de sleep puntual,
-pero queda como investigación más amplia sin resolver — darle al usuario control real sobre
-el ahorro de energía de esta máquina sin que corte trabajo de fondo por accidente, y evaluar
-si conviene o no tener sleep automático habilitado, y bajo qué condiciones.
+Came up on the side, while a background transcode was running: automatic system
+suspend (sleep) killed the process. It was worked around that time with a one-off sleep
+inhibitor, but remains as a broader unresolved investigation — giving the user real control over
+this machine's power saving so it doesn't kill background work by accident, and evaluating
+whether or not automatic sleep should be enabled, and under what conditions.
 
-Dos frentes relacionados, ninguno investigado todavía:
+Two related fronts, neither investigated yet:
 
-1. **RESUELTO (2026-08-06, noche).** Sleep del sistema (systemd) cortaba procesos de fondo
-   — causa raíz: no es `logind` por su cuenta (`IdleAction` sin setear en
-   `/etc/systemd/logind.conf` ni drop-ins, default `ignore`), es **PowerDevil (KDE Plasma)**
-   pidiendo la suspensión por D-Bus tras su propio timer de inactividad, corriendo con el
-   default compilado porque no existía `~/.config/powerdevilrc`. Confirmado en journal: dos
-   ciclos suspend→resume el mismo día (`16:09:04` y `16:51:48`). El inhibidor puntual
-   (`systemd-inhibit ... sleep:idle` en modo `block`, usado por `stereo3d-pack`) ya lo
-   bloqueaba correctamente, pero como workaround por-job, no como fix. **Fix permanente
-   aplicado:** `AutoSuspendIdleTimeoutSec=-1` en `[AC][SuspendAndShutdown]` de
-   `~/.config/powerdevilrc` (creado desde cero, no existía) — desactiva el disparo por
-   inactividad en el perfil "Conectado a la corriente", sin tocar `AutoSuspendAction`. Toma
-   efecto en el próximo arranque de esta instalación; no había sesión de Plasma corriendo acá
-   para recargar en caliente. El inhibidor manual de `stereo3d-pack` sigue sirviendo igual
-   para jobs puntuales, pero ya no depende de acordarse de usarlo.
-2. **Detector de proximidad/cara del G2 nunca se hizo andar.** El WMR stack expone (en
-   Windows) un sensor de proximidad IR que dispara standby automático al sacarse el casco —
-   no confirmado todavía si Monado lo lee o lo ignora en este driver. Si se puede leer,
-   permitiría pausar el player y bajar consumo (GPU/panel) automáticamente al sacarse el
-   casco, sin depender de que el usuario se acuerde de un comando manual.
+1. **RESOLVED (2026-08-06, night).** System sleep (systemd) was killing background processes
+   — root cause: it's not `logind` on its own (`IdleAction` unset in
+   `/etc/systemd/logind.conf` or any drop-ins, default `ignore`), it's **PowerDevil (KDE Plasma)**
+   requesting the suspend over D-Bus after its own idle timer, running with the
+   compiled-in default because `~/.config/powerdevilrc` didn't exist. Confirmed in the journal: two
+   suspend→resume cycles the same day (`16:09:04` and `16:51:48`). The one-off inhibitor
+   (`systemd-inhibit ... sleep:idle` in `block` mode, used by `stereo3d-pack`) was already
+   blocking it correctly, but as a per-job workaround, not as a fix. **Permanent fix
+   applied:** `AutoSuspendIdleTimeoutSec=-1` in `[AC][SuspendAndShutdown]` of
+   `~/.config/powerdevilrc` (created from scratch, didn't exist) — disables the idle-triggered
+   suspend in the "Plugged in" profile, without touching `AutoSuspendAction`. Takes
+   effect on this install's next boot; there was no Plasma session running here
+   to hot-reload. The manual `stereo3d-pack` inhibitor still works the same way
+   for one-off jobs, but no longer depends on remembering to use it.
+2. **The G2's proximity/face detector was never gotten working.** The WMR stack exposes (on
+   Windows) an IR proximity sensor that triggers automatic standby when the headset is
+   taken off — not yet confirmed whether Monado reads it or ignores it in this driver. If it can be
+   read, it would allow pausing the player and lowering consumption (GPU/panel) automatically when the
+   headset comes off, without depending on the user remembering a manual command.
 
-Objetivo: que este tipo de comportamiento (ahorro de energía, standby automático) quede bajo
-control explícito del usuario en vez de andar "a medias" por default. Ninguno de los dos
-frentes se investigó todavía — queda anotado para retomar.
+Goal: for this kind of behavior (power saving, automatic standby) to be under
+explicit user control instead of running "half-baked" by default. Neither of the two
+fronts has been investigated yet — noted for follow-up.
 
-## Pendiente (2026-08-06): repurposear `test-powermizer-90hz.sh` — eficiencia real (power limit vs. regulador automático)
+## Pending (2026-08-06): repurpose `test-powermizer-90hz.sh` — real efficiency (power limit vs. automatic regulator)
 
-**Decisión: se mantiene el script, no se borra** — se repurposea. Su propósito original (¿el
-90Hz handshake falla por un downclock de PowerMizer en mal momento?) quedó obsoleto cuando se
-encontró la causa real del bloqueo de 90Hz (clamp a 6bpc, patch 0004). Pero el patrón que ya
-tiene (forzar `GPUPowerMizerMode` con `nvidia-settings`, medir, restaurar al salir) sirve como
-punto de partida para una pregunta distinta y más general.
+**Decision: the script is kept, not deleted** — it gets repurposed. Its original purpose (does
+the 90Hz handshake fail due to a badly-timed PowerMizer downclock?) became obsolete once the
+real cause of the 90Hz block was found (6bpc clamp, patch 0004). But the pattern it already
+has (force `GPUPowerMizerMode` via `nvidia-settings`, measure, restore on exit) serves as a
+starting point for a different and more general question.
 
-**El fenómeno que motiva esto:** el usuario reporta, medido más de una vez en Windows, que
-limitar el consumo de la placa en Watts (power limit) puede lograr los MISMOS fps que el
-regulador automático (boost/PowerMizer adaptativo) pero con menor consumo — el regulador
-automático no encuentra ese punto eficiente por sí solo. Causa desconocida, sin confirmar
-todavía — hipótesis de trabajo: el algoritmo de boost persigue el P-state más alto disponible
-bajo demanda, sin optimizar consumo una vez que el fps real ya está limitado por otra cosa
-(vsync/compositor), no por el throughput bruto de la GPU. Objetivo: reproducir y cuantificar
-esto en Linux, y decidir el mejor power limit para este equipo.
+**The phenomenon motivating this:** the user reports, measured more than once on Windows, that
+capping the card's power draw in Watts (power limit) can achieve the SAME fps as the
+automatic regulator (boost/adaptive PowerMizer) but with lower consumption — the automatic
+regulator doesn't find that efficient point on its own. Cause unknown, not yet confirmed —
+working hypothesis: the boost algorithm chases the highest P-state available on demand,
+without optimizing consumption once the real fps is already capped by something else
+(vsync/compositor), not by the GPU's raw throughput. Goal: reproduce and quantify
+this on Linux, and decide the best power limit for this machine.
 
-**Confirmado en este equipo (2026-08-06), RTX 3060 Ti / driver 595.71.05-open, vía
-`nvidia-smi -q -d POWER`:** el power limit sí es controlable acá — rango 100W-250W,
-default/actual 240W (`nvidia-smi --query-gpu=power.draw,power.limit,power.min_limit,power.max_limit
---format=csv`). A diferencia del script viejo, esto **no necesita X11**: `nvidia-smi -pl
-<watts>` funciona igual en Wayland — el requisito de X11 del script original era sólo porque
-usaba `nvidia-settings` para tocar `GPUPowerMizerMode`, no por el power limit en sí.
+**Confirmed on this machine (2026-08-06), RTX 3060 Ti / driver 595.71.05-open, via
+`nvidia-smi -q -d POWER`:** the power limit is indeed controllable here — range 100W-250W,
+default/current 240W (`nvidia-smi --query-gpu=power.draw,power.limit,power.min_limit,power.max_limit
+--format=csv`). Unlike the old script, this **does not need X11**: `nvidia-smi -pl
+<watts>` works the same on Wayland — the original script's X11 requirement was only because
+it used `nvidia-settings` to touch `GPUPowerMizerMode`, not because of the power limit itself.
 
-**Dos piezas necesarias antes de medir en serio, según el usuario:**
-1. **fps/latencia** — ya resuelto, ya existen las herramientas (HID `DEVICE_STATUS`, frame
-   timing del compositor, `hmd-vk`).
-2. **Poder cargar el stack de forma controlada, para que el fps baje un poco del máximo** —
-   NO existe todavía. Sin esto, si el stack ya está limitado por vsync (techo = refresh del
-   panel), la GPU nunca llega a estar sujeta a su propio techo de throughput y no se puede
-   medir el trade-off potencia/rendimiento real. Falta decidir cómo generar esa carga
-   ajustable — candidatos sin explorar: subir la resolución de supersampling del compositor,
-   agregar un multiplicador de carga sintética al shader del player, o correr un segundo
-   proceso GPU-bound en paralelo (otro `hmd-vk`/`vkcube`) para robar ciclos de forma medible.
+**Two pieces needed before measuring seriously, per the user:**
+1. **fps/latency** — already solved, the tools already exist (HID `DEVICE_STATUS`, compositor
+   frame timing, `hmd-vk`).
+2. **Being able to load the stack in a controlled way, so fps drops a bit below max** —
+   does NOT exist yet. Without this, if the stack is already capped by vsync (ceiling = panel
+   refresh), the GPU never gets to be constrained by its own throughput ceiling and the
+   real power/performance trade-off can't be measured. Still need to decide how to generate that
+   adjustable load — unexplored candidates: raising the compositor's supersampling resolution,
+   adding a synthetic load multiplier to the player's shader, or running a second
+   GPU-bound process in parallel (another `hmd-vk`/`vkcube`) to steal cycles in a measurable way.
 
-**Método planeado una vez estén las dos piezas:**
-- Barrer `nvidia-smi -pl <watts>` en un rango (ej. 100 a 240W en pasos de 20W).
-- En cada punto, correr la carga controlada (#2) y registrar fps/frame-time real +
-  `nvidia-smi --query-gpu=power.draw` real (no el average del log, el instantáneo bajo carga
-  estable).
-- Encontrar el power limit más bajo que sostiene el mismo fps techo que el regulador
-  automático sin capping — el "punto eficiente" que el usuario ya identificó
-  cualitativamente en Windows.
-- Comparar contra el regulador automático al mismo fps target, para cuantificar la brecha.
+**Method planned once both pieces are in place:**
+- Sweep `nvidia-smi -pl <watts>` over a range (e.g. 100 to 240W in 20W steps).
+- At each point, run the controlled load (#2) and log real fps/frame-time +
+  real `nvidia-smi --query-gpu=power.draw` (not the log average, the instantaneous reading under
+  steady load).
+- Find the lowest power limit that sustains the same fps ceiling as the automatic
+  regulator without capping — the "efficient point" the user already identified
+  qualitatively on Windows.
+- Compare against the automatic regulator at the same fps target, to quantify the gap.
 
-**No arrancado todavía** — el usuario lo dejó explícitamente para retomar después. No tocar
-`test-powermizer-90hz.sh` hasta ese momento (sigue como estaba, X11-only, referencia de
-patrón únicamente).
+**Not started yet** — the user explicitly left it to resume later. Do not touch
+`test-powermizer-90hz.sh` until then (it stays as it was, X11-only, pattern
+reference only).
 
 ---
 

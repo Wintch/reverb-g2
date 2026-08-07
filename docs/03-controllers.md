@@ -1,174 +1,176 @@
-# 03 — Controllers WMR del G2: estado real, fixes y roadmap
+# 03 — G2 WMR Controllers: current status, fixes, and roadmap
 
-## Cómo hablan los controllers
+## How the controllers communicate
 
-Los controllers del G2 NO hablan Bluetooth con la PC: están apareados de fábrica con el
-radio interno del casco, y sus paquetes viajan **tunelizados por el mismo stream HID** que
-lleva el IMU del casco, los timestamps de cámara y el status (`wmr_hmd_controller.c`).
-Consecuencia clave: durante la lectura de firmware/calibración de un controller, todo lo
-demás comparte el canal — y ahí vivía la fragilidad.
+The G2 controllers do NOT talk Bluetooth to the PC: they are factory-paired with the
+headset's internal radio, and their packets travel **tunneled through the same HID stream**
+that carries the headset's IMU, camera timestamps, and status (`wmr_hmd_controller.c`).
+Key consequence: during firmware/calibration reads for a controller, everything else shares
+the channel — and that's where the fragility lived.
 
-No hay que apareanar nada en Linux. Encenderlos y listo (y con nuestros parches, ya no
-importa si se encienden después de arrancar monado-service — ver abajo).
+No pairing needed on Linux. Just turn them on (and with our patches, it no longer
+matters if they're turned on after monado-service starts — see below).
 
-## Qué estaba roto (upstream, verificado leyendo el código el 2026-08-04)
+## What was broken (upstream, verified by reading the code on 2026-08-04)
 
-**Conexión:**
-- Un solo timeout de 250ms por comando de firmware, sin ningún retry en ningún nivel.
-  Un reply perdido (frecuentísimo en un canal compartido) = controller NULL **toda la sesión**.
-- El pedido de status de controllers se mandaba UNA vez al arrancar. Controller apagado en
-  ese instante = invisible para siempre.
-- Espera SIN timeout del primer status: un reply perdido colgaba el arranque entero
-  (upstream lo tenía marcado con @todo).
-- Sleep incondicional de 10ms por chunk hacía durar segundos la lectura de calibración —
-  agrandando la ventana de fallo.
-- En el transporte BT directo (otros cascos WMR): un error de lectura transitorio mataba
-  el thread para siempre con el dispositivo aún registrado (controller mudo).
+**Connection:**
+- A single 250ms timeout per firmware command, with no retry at any level.
+  A lost reply (very frequent on a shared channel) = controller NULL **for the entire session**.
+- The controller status request was sent ONCE at startup. A controller powered off at
+  that moment = invisible forever.
+- Wait WITHOUT timeout for the first status: a lost reply would hang the entire startup
+  (upstream had it marked with @todo).
+- Unconditional 10ms sleep per chunk made the calibration read take seconds —
+  widening the failure window.
+- On the direct BT transport (other WMR headsets): a transient read error would kill
+  the thread permanently while the device remained registered (mute controller).
 
-**Inputs (bugs de driver, ni siquiera de transporte):**
-- Stick sin clamp en el extremo negativo (-1.0005, viola OpenXR) y sin deadzone → drift.
-- El click de grip recibía el valor analógico: cualquier presión leve = click.
-- **Háptica muerta por partida doble**: nombre de output que los bindings no referencian
-  + `set_output` jamás implementado.
-- Timestamps de input siempre 0 (rompe `lastChangeTime` de OpenXR).
-- Typos: labels x/y cruzados en el GUI de debug, loop `inputs[0]` en vez de `inputs[i]`.
+**Inputs (driver bugs, not even transport-related):**
+- Stick with no clamp on the negative end (-1.0005, violates OpenXR) and no deadzone → drift.
+- The grip click received the analog value: any light pressure = click.
+- **Haptics dead for a double reason**: an output name that the bindings never reference
+  + `set_output` never implemented.
+- Input timestamps always 0 (breaks OpenXR's `lastChangeTime`).
+- Typos: x/y labels swapped in the debug GUI, loop using `inputs[0]` instead of `inputs[i]`.
 
-## Qué arreglamos (patches/monado/0001-0008; renumerados 2026-08-05 al partirlos en 4 MRs para upstream, ver docs/18)
+## What we fixed (patches/monado/0001-0008; renumbered 2026-08-05 when splitting them into 4 upstream MRs, see docs/18)
 
-| Patch | Qué hace |
+| Patch | What it does |
 |---|---|
-| 0003 | Inputs: clamp+deadzone de sticks, squeeze_click correcto, nombre háptico, timestamps, typos |
-| 0004 | Retry 3x con backoff en lecturas de firmware + pacing 10ms→1ms + fix de leak |
-| 0005 | Re-request de status cada 5s mientras falte un controller + espera de arranque acotada (3s) |
-| 0006 | Thread BT directo tolera errores transitorios (se rinde tras 10 seguidos) |
-| 0007 | `wmr_controller_hp.c`: falta el remap nativo a `microsoft/motion_controller` (ver abajo) |
+| 0003 | Inputs: stick clamp+deadzone, correct squeeze_click, haptic name, timestamps, typos |
+| 0004 | 3x retry with backoff on firmware reads + pacing 10ms→1ms + leak fix |
+| 0005 | Status re-request every 5s while a controller is missing + bounded startup wait (3s) |
+| 0006 | Direct BT thread tolerates transient errors (gives up after 10 in a row) |
+| 0007 | `wmr_controller_hp.c`: missing native remap to `microsoft/motion_controller` (see below) |
 
-### 0007 — el perfil nativo `microsoft/motion_controller` nunca bindeaba nada (2026-08-06)
+### 0007 — the native `microsoft/motion_controller` profile never bound anything (2026-08-06)
 
-Encontrado al verificar el seek por thumbstick del player (`docs/02-player-360.md`): el
-stick no hacía nada. `wmr_controller_hp.c` (el driver específico de HP, no el genérico
-WMR) se identifica como `XRT_DEVICE_HP_REVERB_G2_CONTROLLER` y nombra sus inputs
-`XRT_INPUT_G2_CONTROLLER_*` — pero sólo trae tablas de remap (`binding_profiles[]`) para
-los perfiles `XRT_DEVICE_TOUCH_CONTROLLER` y `XRT_DEVICE_SIMPLE_CONTROLLER`. Le falta la
-del perfil nativo `XRT_DEVICE_WMR_CONTROLLER` (el que corresponde a
-`/interaction_profiles/microsoft/motion_controller`, lo que hello_xr y la mayoría de apps
-piden para hardware WMR).
+Found while verifying the player's thumbstick seek (`docs/02-player-360.md`): the
+stick did nothing. `wmr_controller_hp.c` (the HP-specific driver, not the generic
+WMR one) identifies itself as `XRT_DEVICE_HP_REVERB_G2_CONTROLLER` and names its inputs
+`XRT_INPUT_G2_CONTROLLER_*` — but it only ships remap tables (`binding_profiles[]`) for
+the `XRT_DEVICE_TOUCH_CONTROLLER` and `XRT_DEVICE_SIMPLE_CONTROLLER` profiles. It's missing
+the one for the native `XRT_DEVICE_WMR_CONTROLLER` profile (the one corresponding to
+`/interaction_profiles/microsoft/motion_controller`, what hello_xr and most apps
+request for WMR hardware).
 
-`oxr_input.c:get_binding()` sólo resuelve un binding si el nombre del dispositivo matchea
-el del perfil directo, **o** si hay una tabla de remap para ese perfil — sin ninguna de las
-dos cosas, descarta el binding en silencio (`profile->xname != xdev->name && xbp == NULL`).
-Consecuencia: en hardware G2 real, **ningún binding bajo `microsoft/motion_controller`
-resolvía nunca** — no sólo el thumbstick nuevo, también grip/squeeze/quit de ese perfil.
+`oxr_input.c:get_binding()` only resolves a binding if the device name matches
+the direct profile's, **or** if there's a remap table for that profile — with neither of
+these two conditions, it silently discards the binding (`profile->xname != xdev->name && xbp == NULL`).
+Consequence: on real G2 hardware, **no binding under `microsoft/motion_controller`
+ever resolved** — not just the new thumbstick, but also grip/squeeze/quit for that profile.
 
-**Segunda vuelta (mismo día, verificado contra
-`oxr_interaction_profile_array.c:134-172`):** el parche de arriba es correcto pero NO
-alcanzaba para hello_xr, porque la selección de perfil activo recorre
-`xdev->binding_profiles[]` **en orden** y se queda con el primer perfil que la app haya
-sugerido. La entrada [0] del driver es el remap a Oculus Touch (el G2 tiene X/Y/A/B, que
-el perfil WMR no puede expresar), así que hello_xr — que sugiere bindings para Touch —
-siempre recibe el perfil `oculus/touch_controller`, nunca el WMR. Eso era también lo que
-enmascaraba el bug: pose/grab/quit andaban vía Touch. El parche 0011 vale para apps que
-sólo sugieren el perfil WMR (el caso común en apps de la era WMR); para nuestro player el
-fix real fue espejar los bindings del player (seek/pausa/recentrar) en el bloque
-`oculus/touch_controller` de hello_xr. Ojo con dos detalles del perfil Touch: `menu` existe
-sólo en la mano izquierda (sugerirlo para la derecha hace fallar TODO el
-`xrSuggestInteractionProfileBindings`), y `squeeze` sólo tiene componente `value` (float) —
-una acción booleana atada ahí es legal, Monado le aplica umbral 0.7
+**Second pass (same day, verified against
+`oxr_interaction_profile_array.c:134-172`):** the patch above is correct but was NOT
+enough for hello_xr, because active-profile selection walks
+`xdev->binding_profiles[]` **in order** and settles on the first profile the app has
+suggested. Entry [0] of the driver is the remap to Oculus Touch (the G2 has X/Y/A/B, which
+the WMR profile can't express), so hello_xr — which suggests bindings for Touch —
+always gets the `oculus/touch_controller` profile, never WMR. That was also what was
+masking the bug: pose/grab/quit worked via Touch. Patch 0011 is valid for apps that
+only suggest the WMR profile (the common case for WMR-era apps); for our player the
+real fix was to mirror the player's bindings (seek/pause/recenter) into the
+`oculus/touch_controller` block of hello_xr. Watch out for two details of the Touch profile:
+`menu` only exists on the left hand (suggesting it for the right makes the ENTIRE
+`xrSuggestInteractionProfileBindings` fail), and `squeeze` only has a `value` (float)
+component — a boolean action bound there is legal, Monado applies a 0.7 threshold to it
 (`oxr_input_transform.c:323-326`).
 
-El player ahora además imprime al conectar los mandos el perfil activo por mano
-(`Active profile /user/hand/...`) y las fuentes de cada acción — ante cualquier input
-muerto, mirar eso primero.
+The player now also prints, when the controllers connect, the active profile per hand
+(`Active profile /user/hand/...`) and the source of each action — for any dead input,
+check that first.
 
-Fix Monado: agregada `wmr_inputs[]`/`wmr_outputs[]` + entrada en `binding_profiles[]` para
-`XRT_DEVICE_WMR_CONTROLLER`, mismo patrón que las tablas touch/simple ya existentes
-(exportado como `patches/monado/0011`).
+Monado fix: added `wmr_inputs[]`/`wmr_outputs[]` + an entry in `binding_profiles[]` for
+`XRT_DEVICE_WMR_CONTROLLER`, same pattern as the existing touch/simple tables
+(exported as `patches/monado/0011`).
 
-Efecto neto esperado: los controllers conectan siempre (aunque un fw-read falle, se
-reintenta; aunque estén apagados al arrancar, aparecen al encenderlos), los sticks quedan
-centrados sin drift, y el grip se comporta.
+Expected net effect: controllers always connect (even if a fw-read fails, it retries;
+even if they're off at startup, they show up when turned on), sticks stay centered
+without drift, and grip behaves correctly.
 
-## Cómo verificar
+## How to verify
 
 ```bash
-./jack-in.sh 3dof     # controllers encendidos antes O después, ya no importa
+./jack-in.sh 3dof     # controllers on before OR after, no longer matters
 grep -E "left:|right:" ~/Documents/linux_vr_base/jack-in.log
-# debe decir: left: HP Reverb G2 Left Controller / right: HP Reverb G2 Right Controller
+# should say: left: HP Reverb G2 Left Controller / right: HP Reverb G2 Right Controller
 
-# GUI de debug con paneles por controller (sticks en vivo, batería, IMU):
-XRT_DEBUG_GUI=1 en el servicio; ver panel "WMR HMD" y los de cada controller.
+# debug GUI with per-controller panels (live sticks, battery, IMU):
+XRT_DEBUG_GUI=1 on the service; see the "WMR HMD" panel and each controller's panel.
 ```
 
-Test de estrés de conexión: 10 ciclos de arranque del servicio con controllers encendidos
-→ deben conectar 10/10 (antes: ~50%). Sticks quietos deben leer exactamente (0,0).
+Connection stress test: 10 service startup cycles with controllers powered on
+→ must connect 10/10 (before: ~50%). Stationary sticks must read exactly (0,0).
 
-## Lo que sigue faltando (con el porqué)
+## What's still missing (and why)
 
-1. **Vibración**: el output ya resuelve, pero el comando de wire para el motor no está
-   documentado en ningún lado del árbol de Monado y no vamos a inventar bytes contra un
-   firmware. Fuentes posibles: capturas USB en Windows (usbpcap) o el árbol de thaytan.
-2. **Tracking posicional (6DoF)**: el driver WMR es orientation-only por código
-   (`position_tracking = false`, posición hardcodeada). PERO la infraestructura de
-   **constellation tracking** (tracking óptico por LEDs) ya existe upstream, se compila en
-   nuestro build (`libconstellation.a`), la cámara del casco ya separa los frames de
-   controller (frametype 0x2 — hoy mueren en un debug sink), y la geometría de LEDs ya se
-   parsea de la calibración del propio controller y se descarta. Falta cablearlo: modelo de
-   oclusión del ring, mosaico de cámara móvil, y alineación temporal cámara/IMU. Hay dos
-   drivers de referencia en el árbol (rift, pssense) y un fork que lo tiene andando para
-   WMR (thaytan `dev-constellation-controller-tracking`, base del trabajo de Project-VR).
-   Es EL gran paso siguiente después del 90Hz.
-3. El refactor de fondo del fw-read (state machine en el dispatch en vez de robar el
-   stream) — upstream ya lo pide en un @todo; nuestros retries lo hacen innecesario en la
-   práctica, pero es la solución elegante para proponer en un MR.
+1. **Vibration**: the output now resolves, but the wire command for the motor isn't
+   documented anywhere in the Monado tree and we're not going to invent bytes against a
+   firmware. Possible sources: USB captures on Windows (usbpcap) or thaytan's tree.
+2. **Positional tracking (6DoF)**: the WMR driver is orientation-only by code
+   (`position_tracking = false`, hardcoded position). BUT the **constellation tracking**
+   infrastructure (optical LED-based tracking) already exists upstream, compiles in
+   our build (`libconstellation.a`), the headset camera already separates controller
+   frames (frametype 0x2 — today they die in a debug sink), and the LED geometry is
+   already parsed from the controller's own calibration and discarded. What's missing is
+   wiring it up: ring occlusion model, moving-camera mosaic, and camera/IMU temporal
+   alignment. There are two reference drivers in the tree (rift, pssense) and a fork that
+   has it working for WMR (thaytan `dev-constellation-controller-tracking`, the base for
+   Project-VR's work). This is THE big next step after 90Hz.
+3. The deep refactor of fw-read (a state machine in the dispatch instead of stealing the
+   stream) — upstream already requests this in an @todo; our retries make it unnecessary in
+   practice, but it's the elegant solution to propose in an MR.
 
-## Vinculación / pairing (investigado 2026-08-06)
+## Pairing (investigated 2026-08-06)
 
-Origen: los controllers tienen un botón chico oculto dentro del compartimento de pilas.
-Apretado, los desvincula del casco. La pregunta era si hace falta una herramienta en Linux
-para volver a vincularlos, y qué protocolo habla.
+Origin: the controllers have a small button hidden inside the battery compartment.
+Pressing it unpairs them from the headset. The question was whether a tool is needed on
+Linux to re-pair them, and what protocol it speaks.
 
-**Conclusión, con evidencia (no es una hipótesis):**
+**Conclusion, with evidence (not a hypothesis):**
 
-- El estado de vinculación se consulta con un comando HID normal al mismo dispositivo
-  Hololens Sensors (045e:0659) que ya usa Monado — no hay Bluetooth de por medio en ningún
-  lado (ni del host: este equipo no tiene hardware BT, `systemctl is-active bluetooth` →
-  inactive, y no importa). Protocolo leído directo de `wmr_hmd.c`/`wmr_protocol.h` de
-  Monado: reporte `0x16` con subtipo `0x17` (`WMR_MS_HOLOLENS_MSG_CONTROLLER_STATUS`) pide
-  estado; la respuesta llega como reporte `0x17`, un paquete por controller, con
-  `UNPAIRED` / `OFFLINE` / `ONLINE` (más VID/PID si está vinculado).
-- **No existe ningún comando de "vincular" propietario que mandar por USB.** Se examinó
-  `unlock_wmr.exe` (la "Procedure to unlock headset and controllers for Oasis" que
-  referencia la wiki de Oasis, ver abajo) con el mismo método binutils de
-  `docs/09-oasis-driver-re.md`: su único call site de `HidD_SetFeature`/`HidP_SetUsageValue`
-  manda exactamente el mismo comando "Display Enable" (Usage Page 0x03 / Usage 0x21) que ya
-  manda Monado — nada nuevo. El resto de sus imports relevantes son `SetupDiGetClassDevsW` /
-  `CM_Get_Device_Interface_ListW` (enumeración de dispositivos PnP) con un loop de polling
-  de ~6s (`Timeout pairing %s motion controller` si no aparece a tiempo) — es una UI que
-  espera a que el controller aparezca, no algo que dispara la vinculación.
-- **El handshake de vinculación pasa enteramente por el radio interno del casco**,
-  disparado por el botón físico del controller: mantenerlo apretado hasta que el LED
-  empiece a pulsar lento entra en modo descubrimiento, y el casco lo resuelve en firmware,
-  sin que el host mande nada especial. Procedimiento documentado en la wiki de Oasis
-  (`Pairing-Motion-Controllers`): encender el controller (Windows button), abrir el
-  compartimento de pilas, mantener el botón chico hasta el pulso lento.
+- Pairing status is queried with a normal HID command to the same Hololens Sensors
+  device (045e:0659) that Monado already uses — there's no Bluetooth involved anywhere
+  (not even from the host: this machine has no BT hardware, `systemctl is-active bluetooth`
+  → inactive, and it doesn't matter). Protocol read directly from Monado's
+  `wmr_hmd.c`/`wmr_protocol.h`: report `0x16` with subtype `0x17`
+  (`WMR_MS_HOLOLENS_MSG_CONTROLLER_STATUS`) requests status; the response arrives as
+  report `0x17`, one packet per controller, with `UNPAIRED` / `OFFLINE` / `ONLINE`
+  (plus VID/PID if paired).
+- **There's no proprietary "pair" command to send over USB.** `unlock_wmr.exe` (the
+  "Procedure to unlock headset and controllers for Oasis" referenced by the Oasis wiki,
+  see below) was examined with the same binutils method from `docs/09-oasis-driver-re.md`:
+  its only `HidD_SetFeature`/`HidP_SetUsageValue` call site sends exactly the same
+  "Display Enable" command (Usage Page 0x03 / Usage 0x21) that Monado already sends —
+  nothing new. The rest of its relevant imports are `SetupDiGetClassDevsW` /
+  `CM_Get_Device_Interface_ListW` (PnP device enumeration) with a ~6s polling loop
+  (`Timeout pairing %s motion controller` if it doesn't show up in time) — it's a UI that
+  waits for the controller to appear, not something that triggers pairing.
+- **The pairing handshake happens entirely through the headset's internal radio**,
+  triggered by the controller's physical button: holding it down until the LED
+  starts pulsing slowly enters discovery mode, and the headset resolves it in firmware,
+  without the host sending anything special. Procedure documented in the Oasis wiki
+  (`Pairing-Motion-Controllers`): turn on the controller (Windows button), open the
+  battery compartment, hold the small button until the slow pulse.
 
-**Consecuencia práctica:** no hace falta escribir un "linkeador" — el procedimiento es
-puramente físico y no depende del SO. Lo único que faltaba del lado Linux era poder
-*verificar* el estado antes/después, que es lo que hace el chequeador de abajo. Si se
-prueba el botón oculto alguna vez, correr el chequeador antes y después debería mostrar el
-cambio `UNPAIRED → OFFLINE/ONLINE` sin que haga falta ningún otro software.
+**Practical consequence:** there's no need to write a "linker/pairer" — the procedure
+is purely physical and OS-independent. The only thing missing on the Linux side was the
+ability to *verify* the state before/after, which is what the checker below does. If the
+hidden button is ever tested, running the checker before and after should show the
+`UNPAIRED → OFFLINE/ONLINE` transition without needing any other software.
 
-### Chequeador de vinculación
+### Pairing checker
 
 ```bash
-./scripts/controller-pair-check.py [segundos]   # default 6s
+./scripts/controller-pair-check.py [seconds]   # default 6s
 ```
 
-Manda el pedido de estado (reporte `0x16`/subtipo `0x17`) directo al Hololens Sensors y
-decodifica la respuesta por controller. Funciona con o sin `monado-service` corriendo (el
-hidraw se puede abrir más de una vez en paralelo). Probado 2026-08-06 con ambos joysticks
-apagados: reportó correctamente `vinculado, offline` con el VID:PID real del controller
-(045e:066a) para izquierda y derecha — confirma que el protocolo leído es el correcto.
+Sends the status request (report `0x16`/subtype `0x17`) directly to the Hololens
+Sensors device and decodes the response per controller. Works with or without
+`monado-service` running (the hidraw can be opened more than once in parallel). Tested
+2026-08-06 with both joysticks off: correctly reported `vinculado, offline` with the
+controller's real VID:PID (045e:066a) for both left and right — confirms the protocol
+read is correct.
 
-Fuente de la investigación: `docs/09-oasis-driver-re.md` (mismo método de disassembly,
-aplicado a `unlock_wmr.exe` en vez de a `driver_oasis.dll`/`HololensSensors.dll`).
+Source of the investigation: `docs/09-oasis-driver-re.md` (same disassembly method,
+applied to `unlock_wmr.exe` instead of `driver_oasis.dll`/`HololensSensors.dll`).

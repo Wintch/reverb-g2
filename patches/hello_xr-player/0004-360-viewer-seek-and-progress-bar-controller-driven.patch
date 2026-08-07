@@ -252,7 +252,7 @@ index 5de17e1..74f1ae6 100644
  
  const char* HelpLine() {
 -    return "  Teclas: [espacio] pausa   [ ] velocidad   1 normal   n siguiente   q salir";
-+    return "  Teclas: [espacio] pausa   [ ] velocidad   1 normal   h/l -10s/+10s   n siguiente   q salir";
++    return "  Keys: [space] pause   [ ] speed   1 normal   h/l -10s/+10s   n next   q quit";
  }
  
  }  // namespace PlayerControl

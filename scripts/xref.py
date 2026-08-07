@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Ubica strings en un PE y busca quien los referencia en el desensamblado de objdump.
+"""Locates strings in a PE and finds who references them in the objdump disassembly.
 
-objdump imprime los lea rip-relativos ya resueltos, con la VA destino en el operando,
-asi que alcanza con matchear la VA en texto. Sin capstone ni pefile.
+objdump prints rip-relative leas already resolved, with the target VA in the operand,
+so it's enough to match the VA in text. No capstone or pefile.
 """
 import re, subprocess, sys
 
 DLL, ASM = sys.argv[1], sys.argv[2]
 NEEDLES = sys.argv[3:]
 
-# secciones: (fileoff, vma, size) leidas de objdump -h
+# sections: (fileoff, vma, size) read from objdump -h
 secs = []
 for line in subprocess.run(["objdump","-h",DLL],capture_output=True,text=True).stdout.splitlines():
     m = re.match(r"\s*\d+\s+(\S+)\s+([0-9a-f]+)\s+([0-9a-f]+)\s+[0-9a-f]+\s+([0-9a-f]+)", line)
@@ -22,7 +22,7 @@ def off2va(off):
             return vma + (off - fo)
     return None
 
-# strings con offset de archivo
+# strings with file offset
 out = subprocess.run(["strings","-t","x","-n","4",DLL],capture_output=True,text=True).stdout
 hits = {}
 for line in out.splitlines():
@@ -34,10 +34,10 @@ for line in out.splitlines():
             if va: hits[va] = text
 
 if not hits:
-    print("  (ningun string matcheo)"); sys.exit(0)
+    print("  (no string matched)"); sys.exit(0)
 
 asm = open(ASM, errors="replace").read().splitlines()
-# indice: linea -> funcion contenedora
+# index: line -> containing function
 func, funcs = "?", []
 for i,l in enumerate(asm):
     m = re.match(r"^([0-9a-f]+) <(.+)>:", l)
@@ -48,6 +48,6 @@ for va, text in sorted(hits.items()):
     pat = f"{va:x}"
     refs = [(i,asm[i]) for i,l in enumerate(asm) if pat in l and ("lea" in l or "mov" in l)]
     print(f"\n=== 0x{va:x}  {text!r}")
-    if not refs: print("   (sin xrefs directas)")
+    if not refs: print("   (no direct xrefs)")
     for i,l in refs[:6]:
         print(f"   {funcs[i]:<30} | {l.strip()}")

@@ -1,96 +1,97 @@
-# 07 — Capturar la secuencia HID de 90Hz en Windows
+# 07 — Capturing the 90Hz HID sequence on Windows
 
-> ## ⚠ ARCHIVADO (2026-08-04, 21:00) — NO hace falta hacer esto
+> ## ⚠ ARCHIVED (2026-08-04, 21:00) — NO NEED TO DO THIS
 >
-> Este capítulo existía para averiguar qué comando HID le pide el modo de 90Hz al casco.
-> **Ese comando no existe.** Se desensambló el driver Oasis —el que corre el G2 a 90Hz
-> en Windows hablándole al casco directo— y su único comando de panel es *Display Enable*
-> (Usage Page `0x03`, Usage `0x21`), que es exactamente el `{0x04,0x01}` que Monado ya manda.
+> This chapter existed to find out what HID command requests 90Hz mode from the headset.
+> **That command doesn't exist.** The Oasis driver — the one that runs the G2 at 90Hz
+> on Windows by talking to the headset directly — was disassembled, and its only panel
+> command is *Display Enable* (Usage Page `0x03`, Usage `0x21`), which is exactly the
+> `{0x04,0x01}` that Monado already sends.
 >
-> Evidencia y método en **`docs/09-oasis-driver-re.md`**. Descarte en el cap. 06.
+> Evidence and method in **`docs/09-oasis-driver-re.md`**. Ruled out in chapter 06.
 >
-> Se conserva el procedimiento porque la técnica (usbmon + tshark + `analyze-hid.py`) sigue
-> sirviendo para otras preguntas — por ejemplo los resets del hub USB2 bajo carga.
+> The procedure is kept because the technique (usbmon + tshark + `analyze-hid.py`) is still
+> useful for other questions — for example the USB2 hub resets under load.
 
-**Este documento se sigue solo, sin agente.** En Windows no hay Claude al lado: la idea es
-que salgas de acá con dos archivos y vuelvas a Linux a analizarlos.
+**This document is followed solo, without an agent.** There's no Claude alongside you on
+Windows: the idea is that you come out of this with two files and go back to Linux to
+analyze them.
 
-## Por qué
+## Why
 
-El cap. 04 dejó medido que los parches del 595-open **no** arreglan el 90Hz, y el código de
-Monado muestra por qué puede no ser culpa de NVIDIA: `wmr_hmd_activate_reverb()`
-(`wmr_hmd.c:767`) manda **siempre la misma secuencia HID**, corra el panel a 60 o a 90. El
-"parche 90Hz" de Monado (`wmr_hmd.c:1992`) sólo setea `nominal_frame_interval_ns`, que es un
-número para el pacing — no toca el panel.
+Chapter 04 measured that the 595-open patches **don't** fix the 90Hz issue, and Monado's
+code shows why it might not be NVIDIA's fault: `wmr_hmd_activate_reverb()`
+(`wmr_hmd.c:767`) **always sends the same HID sequence**, whether the panel runs at 60 or
+90. Monado's "90Hz patch" (`wmr_hmd.c:1992`) only sets `nominal_frame_interval_ns`, which is
+a number for pacing — it doesn't touch the panel.
 
-Hipótesis: **al casco nunca se le pide cambiar el panel a 90Hz.** Windows sí lo hace, y el
-mismo casco corre 90Hz horas ahí. Queremos ver ese comando.
+Hypothesis: **the headset is never asked to switch the panel to 90Hz.** Windows does do
+this, and the same headset runs 90Hz there for hours. We want to see that command.
 
-## El experimento, y por qué así
+## The experiment, and why this way
 
-Lo tentador es capturar Windows y comparar contra Monado. Es un diff sucio: difieren en el
-stack entero y hay que separar señal de ruido a mano.
+The tempting approach is to capture Windows and compare it against Monado. That's a dirty
+diff: the entire stack differs, and you have to separate signal from noise by hand.
 
-**Mejor: capturar Windows a 60Hz y Windows a 90Hz.** Misma máquina, mismo casco, mismo
-driver, mismo cable — la única variable es el refresh. Lo que aparezca en la captura de 90 y
-no en la de 60 es, literalmente, el comando que falta.
+**Better: capture Windows at 60Hz and Windows at 90Hz.** Same machine, same headset, same
+driver, same cable — the only variable is the refresh rate. Whatever shows up in the 90Hz
+capture and not in the 60Hz one is, literally, the missing command.
 
-Si tu Windows no ofrece la opción de 60Hz, ver "Plan B" al final.
+If your Windows doesn't offer the 60Hz option, see "Plan B" at the end.
 
-## Qué se captura
+## What gets captured
 
-Sólo el **companion `03f0:0580`** (HP, Inc QHMD A85V). Es el `hid_control_dev` de Monado:
-por ahí van la activación y el `screen_enable`.
+Only the **companion `03f0:0580`** (HP, Inc QHMD A85V). It's Monado's `hid_control_dev`:
+activation and `screen_enable` go through it.
 
-**No captures el `045e:0659` (HoloLens Sensors)**: escupe IMU a alta frecuencia y ahoga el
-archivo. Tampoco las cámaras.
+**Don't capture the `045e:0659` (HoloLens Sensors)**: it spews IMU data at high frequency
+and drowns the file. Not the cameras either.
 
-## Preparación (una vez)
+## Preparation (one time)
 
-1. Instalar **Wireshark** (https://www.wireshark.org/download.html).
-2. Durante la instalación, **tildar el componente `USBPcap`**. No viene por defecto.
-3. **Reiniciar** — USBPcap instala un filter driver y no funciona hasta el reboot.
+1. Install **Wireshark** (https://www.wireshark.org/download.html).
+2. During installation, **check the `USBPcap` component**. It isn't included by default.
+3. **Reboot** — USBPcap installs a filter driver and doesn't work until you reboot.
 
-## Captura
+## Capture
 
-Repetir entero para cada refresh. El truco importante está en el paso 3.
+Repeat the whole thing for each refresh rate. The important trick is in step 3.
 
-1. En **Configuración de Windows → Realidad mixta → Pantalla del visor**, fijar la
-   frecuencia de actualización. Buscá algo tipo *"Experience options"* / *"Opciones de
-   experiencia"* / *"Frecuencia de actualización"*, con valores **60 Hz / 90 Hz /
-   Automático**. Poné el valor **explícito**, nunca "Automático" — necesitamos saber cuál
-   estaba activo.
-2. Cerrar el Portal de Realidad Mixta y **desenchufar el casco del USB**.
-3. Abrir Wireshark, elegir la interfaz **USBPcap** del root hub donde va el casco, y
-   **arrancar la captura ANTES de enchufarlo**. Esto es lo que hace fácil todo lo demás:
-   vas a ver la enumeración completa (que te revela el device address del companion) *y*
-   la secuencia de activación, en el mismo archivo.
-4. Enchufar el casco. Abrir el Portal y **esperar a que el panel encienda de verdad**
-   (mirá adentro: tiene que haber imagen, no el logo de HP).
-5. Dejar correr ~15 s más y **parar la captura**.
-6. Guardar como `windows-90hz.pcapng` (o `windows-60hz.pcapng`).
+1. In **Windows Settings → Mixed reality → Headset display**, set the refresh rate. Look
+   for something like *"Experience options"* / *"Opciones de experiencia"* / *"Frecuencia de
+   actualización"*, with values **60 Hz / 90 Hz / Automatic**. Set an **explicit** value,
+   never "Automatic" — we need to know which one was active.
+2. Close Mixed Reality Portal and **unplug the headset's USB**.
+3. Open Wireshark, choose the **USBPcap** interface for the root hub the headset connects
+   to, and **start the capture BEFORE plugging it in**. This is what makes everything else
+   easy: you'll see the full enumeration (which reveals the companion's device address) *and*
+   the activation sequence, in the same file.
+4. Plug in the headset. Open the Portal and **wait for the panel to actually turn on**
+   (look inside: there has to be an image, not the HP logo).
+5. Let it run for ~15 more seconds and **stop the capture**.
+6. Save as `windows-90hz.pcapng` (or `windows-60hz.pcapng`).
 
-Repetir con el otro refresh.
+Repeat with the other refresh rate.
 
-### Encontrar el device address del companion
+### Finding the companion's device address
 
-En Wireshark, filtro:
+In Wireshark, filter:
 
 ```
 usb.idVendor == 0x03f0 && usb.idProduct == 0x0580
 ```
 
-Eso matchea la respuesta del descriptor durante la enumeración. En esa fila, mirá la
-columna **Source/Destination**: el número tipo `3.7.0` es `bus.device.endpoint`. Anotá el
-**device** (`7` en el ejemplo). Si el filtro no da nada, buscá `usb.descriptor_type == 1`
-y recorré los descriptores hasta encontrar el de HP.
+That matches the descriptor response during enumeration. In that row, look at the
+**Source/Destination** column: the number like `3.7.0` is `bus.device.endpoint`. Note down
+the **device** (`7` in the example). If the filter returns nothing, look for
+`usb.descriptor_type == 1` and go through the descriptors until you find HP's.
 
-### Exportar a texto
+### Exporting to text
 
-El analizador de Linux lee TSV, así no hay que parsear pcapng. Desde `cmd` o PowerShell
-(ajustá `N` al device address que anotaste):
+The Linux analyzer reads TSV, so there's no need to parse pcapng. From `cmd` or PowerShell
+(adjust `N` to the device address you noted down):
 
-**El orden de los campos importa**: el analizador los espera exactamente así.
+**The field order matters**: the analyzer expects them exactly like this.
 
 ```
 "C:\Program Files\Wireshark\tshark.exe" -r windows-90hz.pcapng ^
@@ -100,66 +101,67 @@ El analizador de Linux lee TSV, así no hay que parsear pcapng. Desde `cmd` o Po
    -e usb.capdata > windows-90hz.tsv
 ```
 
-Los tres campos del medio (`bmRequestType`, `bRequest`, `wValue`) son los que permiten
-distinguir un `SET_REPORT` real de un descriptor cualquiera. Sin ellos el análisis es
-basura: se probó, y el bus está lleno de tráfico que *parece* reportes HID y no lo es.
+The three middle fields (`bmRequestType`, `bRequest`, `wValue`) are what let you
+distinguish a real `SET_REPORT` from just any descriptor. Without them the analysis is
+garbage: this was tested, and the bus is full of traffic that *looks like* HID reports but
+isn't.
 
-Idem para 60. **Verificá que los `.tsv` no estén vacíos** antes de dar por terminada la
-sesión de Windows — si están vacíos, el device address está mal.
+Same for 60. **Verify that the `.tsv` files aren't empty** before considering the Windows
+session done — if they're empty, the device address is wrong.
 
-### Prueba de que la captura sirve
+### Proof that the capture is good
 
-Buscá en el `.tsv` una fila con `bRequest = 0x09` y `wValue = 0x0350`: es el `SET_REPORT`
-Feature del report `0x50`, el primer comando de la activación. **Si no está, la captura no
-agarró el arranque del casco** — casi siempre porque empezaste a capturar después de
-enchufarlo. Repetila.
+Look in the `.tsv` for a row with `bRequest = 0x09` and `wValue = 0x0350`: it's the
+Feature `SET_REPORT` for report `0x50`, the first command of the activation sequence. **If
+it's not there, the capture didn't catch the headset's startup** — almost always because you
+started capturing after plugging it in. Redo it.
 
-## Qué traer de vuelta
+## What to bring back
 
-Copiar a algún lado accesible desde Linux (pendrive, partición compartida, la nube):
+Copy to somewhere accessible from Linux (USB drive, shared partition, the cloud):
 
-- `windows-90hz.pcapng` y `windows-60hz.pcapng` (los originales, por si hay que re-filtrar)
-- `windows-90hz.tsv` y `windows-60hz.tsv` (lo que se analiza)
-- Anotado a mano: **qué opción de refresh estaba puesta en cada una**, y **qué viste dentro
-  del casco** en cada corrida.
+- `windows-90hz.pcapng` and `windows-60hz.pcapng` (the originals, in case you need to
+  re-filter)
+- `windows-90hz.tsv` and `windows-60hz.tsv` (what gets analyzed)
+- Noted by hand: **which refresh option was set for each one**, and **what you saw inside
+  the headset** in each run.
 
-## De vuelta en Linux
+## Back on Linux
 
 ```bash
 cd ~/Documents/reverb-g2
 
-# El diff que importa: A=60Hz, B=90Hz. Lo que salga en "EN B PERO NO EN A" es la respuesta.
+# The diff that matters: A=60Hz, B=90Hz. Whatever shows up in "IN B BUT NOT IN A" is the answer.
 ./scripts/analyze-hid.py diff windows-60hz.tsv windows-90hz.tsv
 
-# Y contra lo que manda Monado (capturado con scripts/capture-hid.sh):
+# And against what Monado sends (captured with scripts/capture-hid.sh):
 ./scripts/analyze-hid.py diff ~/vr/hid-mode0.txt windows-90hz.tsv
 ```
 
-El script normaliza las dos capturas a la misma forma (dirección, report ID, payload),
-ignora timestamps y padding, y marca como `[DESCONOCIDO]` todo report ID que Monado no
-mande hoy. **Un report ID desconocido que sólo aparece en la captura de 90Hz es el
-candidato.**
+The script normalizes both captures to the same shape (direction, report ID, payload),
+ignores timestamps and padding, and flags as `[UNKNOWN]` any report ID that Monado doesn't
+send today. **An unknown report ID that only appears in the 90Hz capture is the candidate.**
 
-## Plan B: si Windows no ofrece elegir 60Hz
+## Plan B: if Windows doesn't offer a 60Hz option
 
-Capturar sólo 90Hz y diffear contra Monado:
+Capture only 90Hz and diff against Monado:
 
 ```bash
 ./scripts/analyze-hid.py diff ~/vr/hid-mode0.txt windows-90hz.tsv
 ```
 
-Es más ruidoso — van a aparecer diferencias que no tienen nada que ver con el refresh
-(orden de enumeración, telemetría, polling). Sirve igual: lo que se busca es un **report ID
-que Monado no manda nunca**, y eso destaca aunque haya ruido alrededor.
+It's noisier — differences will show up that have nothing to do with the refresh rate
+(enumeration order, telemetry, polling). It still works: what you're looking for is a
+**report ID that Monado never sends**, and that stands out even with noise around it.
 
-## Cómo se cierra esto
+## How this gets closed out
 
-Si aparece el comando, el camino es un parche al driver WMR de Monado que lo mande cuando
-el modo pedido es de 90Hz. Eso sería un parche nuestro en `patches/monado/`, y —
-importante — **movería la causa raíz del proyecto de NVIDIA a Monado**, que es lo contrario
-de lo que se venía asumiendo (ver la corrección en el cap. 06).
+If the command shows up, the path forward is a patch to Monado's WMR driver that sends it
+when the requested mode is 90Hz. That would be one of our patches in `patches/monado/`, and
+— importantly — **it would move the project's root cause from NVIDIA to Monado**, which is
+the opposite of what had been assumed so far (see the correction in chapter 06).
 
-Si **no** aparece ningún comando extra — si Windows manda exactamente lo mismo a 60 y a 90 —
-entonces la hipótesis está muerta, el modo se negocia por DisplayPort, y hay que volver al
-lado del driver de video. Anotarlo igual: un descarte medido vale tanto como un hallazgo, y
-este proyecto ya perdió semanas por no anotarlos.
+If **no** extra command shows up — if Windows sends exactly the same thing at 60 and at
+90 — then the hypothesis is dead, the mode is negotiated over DisplayPort, and we have to go
+back to the video driver side. Write it down either way: a measured rule-out is worth as
+much as a finding, and this project has already lost weeks from not writing them down.

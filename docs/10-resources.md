@@ -1,11 +1,11 @@
-# 10 — Recursos: todo lo que explica cómo funciona este equipo
+# 10 — Resources: everything that explains how this rig works
 
-Índice de fuentes para entender el G2 a bajo nivel. Lo que ya se leyó está marcado; lo que
-no, queda como pendiente explícito para no volver a buscarlo desde cero.
+Index of sources for understanding the G2 at a low level. What's already been read is marked; what
+hasn't is left as an explicit pending item so we don't have to search for it again from scratch.
 
-## En este disco, ahora mismo (lo más valioso)
+## On this disk, right now (the most valuable stuff)
 
-Las NTFS del rig se montan read-only sin bootear Windows:
+The rig's NTFS partitions get mounted read-only without booting Windows:
 
 ```bash
 sudo mount -t ntfs-3g -o ro,noatime /dev/nvme0n1p4 /mnt/win4
@@ -13,235 +13,239 @@ sudo mount -t ntfs-3g -o ro,noatime /dev/nvme0n1p4 /mnt/win4
 
 ### Oasis Driver — `/mnt/win4/SteamLibrary/steamapps/common/Oasis Driver for Windows Mixed Reality/`
 
-**El recurso más importante que tenemos.** Driver standalone de **Matthieu Bucchianeri**
-(`mbucchia`), publicado gratis en Steam el 2025-08-29 tras la remoción de WMR: le habla al
-casco directo por HID/USB, sin pasar por el runtime WMR de Windows. Es *el* driver que corre
-el G2 a 90 Hz.
+**The most important resource we have.** A standalone driver by **Matthieu Bucchianeri**
+(`mbucchia`), released for free on Steam on 2025-08-29 following the removal of WMR: it talks to
+the headset directly over HID/USB, without going through the Windows WMR runtime. It's *the*
+driver that runs the G2 at 90 Hz.
 
-- [Página de Steam](https://store.steampowered.com/app/3824490/Oasis_Driver_for_Windows_Mixed_Reality/)
-- [Repo y wiki](https://github.com/mbucchia/Oasis-Driver-for-Windows-Mixed-Reality)
+- [Steam page](https://store.steampowered.com/app/3824490/Oasis_Driver_for_Windows_Mixed_Reality/)
+- [Repo and wiki](https://github.com/mbucchia/Oasis-Driver-for-Windows-Mixed-Reality)
 
-**Sólo soporta NVIDIA.** Es la asimetría inversa a la nuestra: en Windows el camino que anda
-es el de NVIDIA; en Linux el único reporte creíble de 90 Hz es con AMD (issue #332 de Monado).
-Por qué, no lo sabemos.
+**Only supports NVIDIA.** It's the inverse asymmetry to ours: on Windows the path that works is
+NVIDIA's; on Linux the only credible 90 Hz report is with AMD (Monado issue #332). Why, we don't
+know.
 
-| archivo | qué es | estado |
+| file | what it is | status |
 |---|---|---|
-| `bin/win64/driver_oasis.dll` | driver SteamVR (importa `HID.DLL` directo) | **leído** (cap. 09) |
-| `bin/win64/HololensSensors.dll` | sensores + panel en userspace; trae strings del **firmware** | leído parcial |
-| `bin/win64/MRUSBHost.dll` | capa USB/HID cruda (`MrUsbDevice_SendHidCommand`, `CrystalKey*`) | exports leídos |
-| `bin/win64/MROEMFwHost.dll` | firmware OEM (`OemFwDevice_ReadDeviceInfo/WriteFirmware`) | **sin mirar** |
-| `unlock/unlock_wmr.exe` (611 KB) | herramienta de "unlock" | **sin mirar** |
-| `bin/win64/client_utility.exe` | utilidad cliente (el driver la lanza) | **sin mirar** |
-| `tracing/DriverTracing.wprp` + `Capture-ETL.bat` | perfil de tracing ETW del driver | **sin mirar** |
-| `bin/win64/PassthroughSource.dll` | passthrough de cámaras | **sin mirar** — relevante para cap. 08 |
-| `bin/win64/CalibrationAPI.dll` | calibración de cámaras/pantallas | sin mirar |
+| `bin/win64/driver_oasis.dll` | SteamVR driver (imports `HID.DLL` directly) | **read** (ch. 09) |
+| `bin/win64/HololensSensors.dll` | sensors + panel in userspace; contains **firmware** strings | partially read |
+| `bin/win64/MRUSBHost.dll` | raw USB/HID layer (`MrUsbDevice_SendHidCommand`, `CrystalKey*`) | exports read |
+| `bin/win64/MROEMFwHost.dll` | OEM firmware (`OemFwDevice_ReadDeviceInfo/WriteFirmware`) | **not yet looked at** |
+| `unlock/unlock_wmr.exe` (611 KB) | "unlock" tool | **not yet looked at** |
+| `bin/win64/client_utility.exe` | client utility (launched by the driver) | **not yet looked at** |
+| `tracing/DriverTracing.wprp` + `Capture-ETL.bat` | the driver's ETW tracing profile | **not yet looked at** |
+| `bin/win64/PassthroughSource.dll` | camera passthrough | **not yet looked at** — relevant to ch. 08 |
+| `bin/win64/CalibrationAPI.dll` | camera/display calibration | not yet looked at |
 
-El `DriverTracing.wprp` es interesante: define los proveedores ETW del driver, o sea que
-nombra sus subsistemas internos. Es un índice gratis de cómo está organizado.
+The `DriverTracing.wprp` is interesting: it defines the driver's ETW providers, meaning it names
+its internal subsystems. It's a free index of how it's organized.
 
-`driver_oasis.dll` usa **Microsoft Detours** (secciones `.detourc`/`.detourd`): hookea alguna
-API. No se investigó cuál.
+`driver_oasis.dll` uses **Microsoft Detours** (`.detourc`/`.detourd` sections): it hooks some API.
+Which one wasn't investigated.
 
-### Driver de Microsoft — `/mnt/win5/.../MixedRealityVRDriver/`
+### Microsoft's driver — `/mnt/win5/.../MixedRealityVRDriver/`
 
-El puente de SteamVR al runtime WMR del SO. **Sirve menos**: delega en Windows, no toca el
-USB. Útil sólo para comparar.
+The bridge from SteamVR to the OS's WMR runtime. **Less useful**: it delegates to Windows, doesn't
+touch USB. Useful only for comparison.
 
-## Contexto de Windows 11 (dicho por el usuario)
+## Windows 11 context (as told by the user)
 
-- **Windows 11 ya no trae soporte WMR.** Microsoft lo removió; hace falta el **driver
-  intermedio** — que es justamente el Oasis de arriba. Con eso el casco "anduvo re
-  bien" a 90 Hz.
-- **El driver original de WMR debería seguir estando en la Microsoft Store.** Vale bajarlo:
-  es la otra mitad de la historia (el que Microsoft discontinuó) y puede tener la lógica de
-  panel que Oasis no tiene.
-- **`fpsVR`** (app de Steam, está instalada en `/mnt/win4/.../fpsVR/`) mide performance de
-  cada cosa dentro de SteamVR: frametimes, GPU/CPU, reproyección. **Es complejo hacerla andar
-  bien**, pero una vez andando es el instrumento de medición que a Linux le falta.
-  Bloqueada por lo mismo que todo SteamVR acá (ver cap. 06).
+- **Windows 11 no longer ships WMR support.** Microsoft removed it; an **intermediate driver** is
+  needed — which is exactly the Oasis driver above. With that, the headset "worked really well"
+  at 90 Hz.
+- **The original WMR driver should still be on the Microsoft Store.** Worth downloading: it's the
+  other half of the story (the one Microsoft discontinued) and it may have panel logic that Oasis
+  doesn't.
+- **`fpsVR`** (a Steam app, installed at `/mnt/win4/.../fpsVR/`) measures the performance of
+  everything inside SteamVR: frametimes, GPU/CPU, reprojection. **It's tricky to get it working
+  properly**, but once it's running it's the measurement instrument that Linux lacks. Blocked by
+  the same thing as all SteamVR here (see ch. 06).
 
-## Herramientas propias de este repo
+## This repo's own tools
 
-| script | para qué |
+| script | what for |
 |---|---|
-| `scripts/hmd-modeset.c` | modeset arbitrario sobre el casco vía DRM lease, sin Monado |
-| `scripts/panel.py` | enciende/apaga el panel por HID, sin Monado |
-| `scripts/drmprops.c` | lee `non-desktop` y modos del conector desde el kernel |
-| `scripts/check-lease.sh` | ¿el compositor ofrece el conector para arrendar? |
-| `scripts/xref.py` | xrefs de strings en binarios PE, sólo con binutils |
-| `scripts/capture-hid.sh` + `analyze-hid.py` | captura y diff de HID por usbmon |
+| `scripts/hmd-modeset.c` | arbitrary modeset on the headset via DRM lease, without Monado |
+| `scripts/panel.py` | turns the panel on/off via HID, without Monado |
+| `scripts/drmprops.c` | reads `non-desktop` and connector modes from the kernel |
+| `scripts/check-lease.sh` | does the compositor offer the connector for leasing? |
+| `scripts/xref.py` | string xrefs in PE binaries, using only binutils |
+| `scripts/capture-hid.sh` + `analyze-hid.py` | HID capture and diff via usbmon |
 
-## El producto
+## The product
 
-- [HP Reverb G2 — página de HP](https://www.hp.com/gb-en/tech-takes/gaming/review/hp-reverb-g2-review.html)
-  — especificaciones y presentación oficiales. Discontinuado; útil como referencia de lo que
-  el fabricante declara (2160x2160 por ojo, 90 Hz, ópticas Valve, audio Valve).
+- [HP Reverb G2 — HP's page](https://www.hp.com/gb-en/tech-takes/gaming/review/hp-reverb-g2-review.html)
+  — official specs and presentation. Discontinued; useful as a reference for what the manufacturer
+  states (2160x2160 per eye, 90 Hz, Valve optics, Valve audio).
 
-## Upstream y comunidad
+## Upstream and community
 
-- **[Project-VR](https://github.com/AshishKumar4/Project-VR)** — de donde salieron los 3
-  parches al 595-open. Reporta el G2 a `4320x2160@90` en RTX 4080. Usa GNOME 50 / mutter
-  **parcheado**, SteamVR, su fork de WMR dentro de `vrserver`, y su orquestador `g2ctl`.
+- **[Project-VR](https://github.com/AshishKumar4/Project-VR)** — where the 3 patches to 595-open
+  came from. Reports the G2 at `4320x2160@90` on an RTX 4080. Uses GNOME 50 / mutter **patched**,
+  SteamVR, its own WMR fork inside `vrserver`, and its `g2ctl` orchestrator.
 - **Monado** — `src/xrt/drivers/wmr/`. `wmr_hmd.c:767` `wmr_hmd_activate_reverb()`,
-  `wmr_hmd.c:846` `wmr_hmd_screen_enable_reverb()`. El driver WMR salió de reverse
-  engineering de OpenHMD.
-- **OpenHMD** — origen del "hack" `{0x50,0x01}` que Monado cargo-cultea para el G1.
-- Hilos de NVIDIA:
-  - [Reverb G2 no pasa de 60Hz](https://forums.developer.nvidia.com/t/reverb-g2-unable-to-drive-more-than-60hz-mode-on-nvidia/337744) — bug **5923212**, confirmado por NVIDIA, sigue abierto en 610.43.02 (jul-2026).
-  - [DRM lease imposible en cualquier display server](https://forums.developer.nvidia.com/t/nvidia-proprietary-non-open-modules-completely-unable-to-acquire-a-drm-lease-on-any-display-server-all-known-nvidia-drivers-any-hardware/341244) — **ya no aplica a nosotros**: con mutter el lease funciona (cap. 04).
-- **HID Usage Tables**, página `0x03` "VR Controls": usage `0x20` Stereo Enable, `0x21`
-  **Display Enable**. Es el comando que usan tanto HP como Monado.
+  `wmr_hmd.c:846` `wmr_hmd_screen_enable_reverb()`. The WMR driver came out of reverse
+  engineering OpenHMD.
+- **OpenHMD** — origin of the `{0x50,0x01}` "hack" that Monado cargo-cults for the G1.
+- NVIDIA threads:
+  - [Reverb G2 won't go past 60Hz](https://forums.developer.nvidia.com/t/reverb-g2-unable-to-drive-more-than-60hz-mode-on-nvidia/337744) — bug **5923212**, confirmed by NVIDIA, still open as of 610.43.02 (Jul 2026).
+  - [DRM lease impossible on any display server](https://forums.developer.nvidia.com/t/nvidia-proprietary-non-open-modules-completely-unable-to-acquire-a-drm-lease-on-any-display-server-all-known-nvidia-drivers-any-hardware/341244) — **no longer applies to us**: with mutter the lease works (ch. 04).
+- **HID Usage Tables**, page `0x03` "VR Controls": usage `0x20` Stereo Enable, `0x21`
+  **Display Enable**. It's the command used by both HP and Monado.
 
-## Hardware del casco (medido / leído del firmware)
+## Headset hardware (measured / read from firmware)
 
-- **Puente de display: Analogix `ANX7530`** (DP -> MIPI DSI, especificado para VR hasta
-  120 Hz), más un `ANX7688`. Confirmado por el string de versiones del firmware:
-  `STM:..;DFU:..;ANX7688:..;ANX7530:..`. Hay además un **STM32** y una ruta **DFU**
-  (`bridge_fw_check_update`, `bridge_fw_switch_bank`, `QCI_FEATURE_ERASE_FLASH`,
-  `QCI_FEATURE_DFU_NEW`, `SMARTBRIDGE_UNINITIALISED`): el firmware del puente es
-  actualizable, en bancos.
-- **El Lattice CrossLink `LIF-MD6000-6CSFBGA81` NO es el puente de video**, es el agregador
-  de cámaras. Se lo señaló como sospechoso principal y era un error: su datasheet no menciona
-  DisplayPort, y en el teardown del WMR de Acer el mismo chip cumple ese rol mientras el
-  puente real es un ANX7530.
-- Paneles: dos, con control de backlight por PWM (`panel_backlight_duty`,
+- **Display bridge: Analogix `ANX7530`** (DP -> MIPI DSI, rated for VR up to 120 Hz), plus an
+  `ANX7688`. Confirmed by the firmware's version string: `STM:..;DFU:..;ANX7688:..;ANX7530:..`.
+  There's also an **STM32** and a **DFU** path (`bridge_fw_check_update`,
+  `bridge_fw_switch_bank`, `QCI_FEATURE_ERASE_FLASH`, `QCI_FEATURE_DFU_NEW`,
+  `SMARTBRIDGE_UNINITIALISED`): the bridge firmware is field-updatable, in banks.
+- **The Lattice CrossLink `LIF-MD6000-6CSFBGA81` is NOT the video bridge** — it's the camera
+  aggregator. It was flagged as the prime suspect and that was a mistake: its datasheet doesn't
+  mention DisplayPort, and in the Acer WMR teardown the same chip fills that role while the real
+  bridge is an ANX7530.
+- Panels: two, with PWM backlight control (`panel_backlight_duty`,
   `[%s] left duty %d, right duty %d, frame timing %d, panel ID %d`).
-- Cámaras: 4x **OV7251** 640x480 mono 8 bits (framebuffer 2560x480). El firmware avisa
-  `OV7251SetFrameRate: 90hz requested but not USB3.0SS` — ese 90 Hz es de las cámaras.
-- Modos del EDID (leídos del kernel, confirmados por `hmd-modeset list`):
+- Cameras: 4x **OV7251** 640x480 mono 8-bit (2560x480 framebuffer). The firmware logs
+  `OV7251SetFrameRate: 90hz requested but not USB3.0SS` — that 90 Hz refers to the cameras.
+- EDID modes (read from the kernel, confirmed via `hmd-modeset list`):
 
-  | idx | modo | pixel clock | htotal x vtotal |
+  | idx | mode | pixel clock | htotal x vtotal |
   |---|---|---|---|
   | 0 | 4320x2160@90 | 905150 kHz | 4420 x 2276 |
   | 1 | 2880x1440@90 | 428580 kHz | 2980 x 1598 |
   | 2 | 4320x2160@60 | 709150 kHz | 4420 x 2674 |
 
-- USB: 5 dispositivos (cap. 00). El companion es `03f0:0580` (Quanta QHMD A85V).
-  **Medido hoy: el screen-off por HID puede hacerlo RE-ENUMERAR** y cambiar de nodo hidraw.
+- USB: 5 devices (ch. 00). The companion is `03f0:0580` (Quanta QHMD A85V).
+  **Measured today: HID screen-off can make it RE-ENUMERATE** and change hidraw node.
 
-## Datos del usuario (2026-08-04), sin verificar todavía
+## Data from the user (2026-08-04), not yet verified
 
-- **El USB3 tenía que colgar de un puerto conectado al CPU, no al chipset.** Costó hacerlo
-  andar incluso estando soportado. Encaja con el cap. 00 y explica por qué el diagnóstico del
-  puerto fue tan trabajoso.
-- **HAGS** (Hardware Accelerated GPU Scheduling) **activado hacía que en Windows fuera a pocos
-  frames.** Es un dato técnico, no una anécdota: HAGS cambia quién programa el trabajo de la
-  GPU y toca la ruta de presentación. Que un cambio de scheduler degrade al G2 sugiere que
-  este casco es sensible al timing de entrega de frames más que un display común. Pista viva.
-- En Windows 11 el soporte WMR duró hasta hace poco y recién ahora lo cortaron; de ahí salen
-  los drivers "hack" de Steam (el Oasis es justamente ese). **Verificado (2026-08-05)**:
-  Microsoft anunció la deprecación en diciembre de 2023 y removió WMR en **Windows 11 24H2**,
-  con lo cual el G2 dejó de funcionar incluso vía SteamVR. Quien siga en Windows necesita
-  quedarse en 23H2 o instalar Oasis.
-- El usuario ofrece hacer capturas en Windows si hacen falta. Hoy no hacen falta (cap. 07
-  archivado), pero si se necesita ver cómo negocia el link, hay que preparárselo bien.
+- **The USB3 connection had to hang off a port wired to the CPU, not the chipset.** It was hard to
+  get working even when supported. This matches ch. 00 and explains why the port diagnosis was so
+  laborious.
+- **HAGS** (Hardware Accelerated GPU Scheduling) **enabled caused low framerates on Windows.**
+  This is a technical data point, not an anecdote: HAGS changes who schedules GPU work and touches
+  the presentation path. The fact that a scheduler change degrades the G2 suggests this headset is
+  more sensitive to frame delivery timing than an ordinary display. Live lead.
+- On Windows 11, WMR support lasted until recently and was only just cut; that's where the "hack"
+  drivers on Steam come from (Oasis being exactly that). **Verified (2026-08-05)**: Microsoft
+  announced the deprecation in December 2023 and removed WMR in **Windows 11 24H2**, at which
+  point the G2 stopped working even via SteamVR. Anyone staying on Windows needs to remain on
+  23H2 or install Oasis.
+- The user offered to make captures on Windows if needed. Not needed today (ch. 07 archived), but
+  if we ever need to see how the link negotiation happens, it should be set up properly for them.
 
-## Objetivo declarado del proyecto
+## Project's stated goal
 
-Sacar un **driver universal + kit de cosas básicas** para que el G2 siga siendo útil en Linux
-y la gente pueda desarrollar encima. El casco es barato hoy, tiene buena calidad óptica, y
-Microsoft y HP lo abandonaron: hay miles funcionando y nadie lo recicló bien.
+Ship a **universal driver + basic toolkit** so the G2 stays useful on Linux and people can build
+on top of it. The headset is cheap today, has good optical quality, and Microsoft and HP
+abandoned it: there are thousands out there working and nobody has properly repurposed them.
 
-## Lo que falta conseguir
+## What's still needed
 
-1. ~~**Datasheet del Analogix ANX7530.**~~ **Conseguido (2026-08-05):** el Product Brief
-   oficial (AA-004263-PB-7, Analogix, may-2018), alojado por el propio fabricante en
+1. ~~**Analogix ANX7530 datasheet.**~~ **Obtained (2026-08-05):** the official Product Brief
+   (AA-004263-PB-7, Analogix, May 2018), hosted by the manufacturer itself at
    [analogix.com](https://www.analogix.com/en/system/files/AA-004263-PB-7-ANX7530_Product_Brief.pdf)
-   — no se versiona el PDF acá (tiene aviso de copyright de reproducción, mismo criterio que
-   los PDF de FCC más abajo). Es sólo el brief de
-   marketing (2 páginas, sin mapa de registros), pero confirma dos cosas por fuente
-   primaria: el link de DisplayPort tope es **HBR2.5 (6.75 Gbps/lane), no HBR3**, y hay una
-   línea de spec explícita — **"DisplayPort Receiver Input Bandwidth supports up to 4K x 2K
-   x 60Hz"** — que declara el techo de refresh, no sólo de bandwidth. Detalle y cómo esto se
-   cruza con el factorial de `docs/16` en `docs/19-nvidia-bug-5923212-followup.md`. Sigue
-   pendiente el datasheet técnico completo (con registros/PLL) si en algún momento hace
-   falta ir más profundo — Analogix normalmente lo entrega bajo NDA, no está público.
-2. ~~**Driver WMR original de la Microsoft Store**~~ **Investigado (2026-08-05): no es lo
-   que hace falta.** El `id=56265` y el zip de archive.org resultaron ser el mismo
-   contenido: `HololensSensors_*.zip` (4.7–6.9 MB), el driver de **sensores/IMU**
-   (`HID\VID_045E`, tracking), no el pipeline de display — no menciona ANX7530, DisplayPort
-   ni 90Hz porque no es ese componente. El listado de archive.org sí trae por separado los
-   `.cab` de `Microsoft-Windows-Holographic-Desktop-FOD-Package` (~1.5 GB c/u, Win10/11
-   varias builds) — el Feature-on-Demand real del shell holográfico — sin extraer todavía;
-   se puede listar con `cabextract -l` sin bajar el paquete entero, pendiente si hace falta.
-   **Más importante: esto probablemente no cierra nada.** El propio Oasis (cap. 09, ya
-   desensamblado) no toca timing de video en absoluto — sólo HID/USB para tracking y
-   `Display Enable`. Si el driver que SÍ logra 90 Hz no toca el modo de video, la
-   negociación de refresh corre entera por el driver NVIDIA de Windows (estándar del SO), no
-   por ningún componente de Microsoft/HP — así que ni el FOD ni el portal original van a
-   explicar el mecanismo. Detalle en `docs/19-nvidia-bug-5923212-followup.md`. También se
-   encontraron reportes de "black screen at 90Hz" con el Portal original de Microsoft en AMD
-   y NVIDIA — el 90 Hz del G2 parece frágil incluso en la plataforma de referencia, no
-   exclusivo de este lab.
+   — not versioned in-repo (it carries a reproduction copyright notice, same policy as
+   the FCC PDFs below). It's only the marketing brief
+   (2 pages, no register map), but it confirms two things from a primary source: the DisplayPort
+   link cap is **HBR2.5 (6.75 Gbps/lane), not HBR3**, and there's an explicit spec line —
+   **"DisplayPort Receiver Input Bandwidth supports up to 4K x 2K x 60Hz"** — stating the refresh
+   ceiling, not just bandwidth. Detail on how this intersects with the `docs/16` factorial in
+   `docs/19-nvidia-bug-5923212-followup.md`. The full technical datasheet (with registers/PLL) is
+   still pending, if we ever need to go deeper — Analogix normally provides it under NDA, it isn't
+   public.
+2. ~~**Original WMR driver from the Microsoft Store**~~ **Investigated (2026-08-05): not what's
+   needed.** `id=56265` and the archive.org zip turned out to be the same
+   content: `HololensSensors_*.zip` (4.7–6.9 MB), the driver for
+   **sensors/IMU** (`HID\VID_045E`, tracking), not the display pipeline — it doesn't mention
+   ANX7530, DisplayPort, or 90Hz because that isn't this component. The archive.org listing
+   separately has the `.cab` files for
+   `Microsoft-Windows-Holographic-Desktop-FOD-Package` (~1.5 GB each, various Win10/11
+   builds) — the actual Feature-on-Demand for the holographic shell — not extracted yet;
+   it can be listed with `cabextract -l` without downloading the full package, pending if needed.
+   **More importantly: this probably doesn't close anything.** Oasis itself (ch. 09, already
+   disassembled) doesn't touch video timing at all — only HID/USB for tracking and
+   `Display Enable`. If the driver that DOES achieve 90 Hz doesn't touch the video mode, the
+   refresh negotiation happens entirely inside Windows's NVIDIA driver (a stock OS component), not
+   any Microsoft/HP component — so neither the FOD nor the original portal will
+   explain the mechanism. Detail in `docs/19-nvidia-bug-5923212-followup.md`. Also
+   found reports of "black screen at 90Hz" with the original Microsoft Portal on AMD
+   and NVIDIA — the G2's 90 Hz seems fragile even on the reference platform, not
+   exclusive to this lab.
 3. `unlock_wmr.exe`, `MROEMFwHost.dll`, `client_utility.exe`, `DriverTracing.wprp`.
-4. Un **dump del firmware** del casco, si `MROEMFwHost` deja leerlo
+4. A **firmware dump** of the headset, if `MROEMFwHost` allows reading it
    (`OemFwDevice_ReadDeviceInfo`).
 
-## Expedientes FCC: qué hay y qué no (verificado 2026-08-05)
+## FCC filings: what's there and what isn't (verified 2026-08-05)
 
-Grantee **Quanta Computer Inc**, código **HFS**. Los expedientes son públicos:
-[HFS-A85Q](https://fccid.io/HFS-A85Q) (G2) y [HFS-A85R](https://fccid.io/HFS-A85R)
-(Omnicept). No los guardamos acá — bajálos de ahí y procesálos con `scripts/pdf2md.py`,
-que convierte el PDF a markdown y extrae las imágenes sin dependencias.
+Grantee **Quanta Computer Inc**, code **HFS**. The filings are public:
+[HFS-A85Q](https://fccid.io/HFS-A85Q) (G2) and [HFS-A85R](https://fccid.io/HFS-A85R)
+(Omnicept). We don't store them here — download them from there and process them with
+`scripts/pdf2md.py`, which converts the PDF to markdown and extracts the images with no
+dependencies.
 
-| documento | A85Q (G2) | A85R (Omnicept) | estado |
+| document | A85Q (G2) | A85R (Omnicept) | status |
 |---|---|---|---|
-| **Internal photos** | 512 KB | 1 MB | **disponible** — las fotos de PCB |
-| Sketch for Reference | 150 KB | 181 KB | disponible |
-| External Photos | 578 KB | 682 KB | disponible |
-| Test Setup Photos | 443 KB | 600 KB | disponible |
-| Test Report | 2.1 MB | 3 MB (x2) | disponible |
-| User Manual | 4.9 MB | 3.3 MB | disponible |
-| **Block Diagram** | 140 KB | 69 KB | **CONFIDENCIAL, sólo metadata** |
-| **Schematics** | 789 KB | 1.1 MB | **CONFIDENCIAL, sólo metadata** |
+| **Internal photos** | 512 KB | 1 MB | **available** — the PCB photos |
+| Sketch for Reference | 150 KB | 181 KB | available |
+| External Photos | 578 KB | 682 KB | available |
+| Test Setup Photos | 443 KB | 600 KB | available |
+| Test Report | 2.1 MB | 3 MB (x2) | available |
+| User Manual | 4.9 MB | 3.3 MB | available |
+| **Block Diagram** | 140 KB | 69 KB | **CONFIDENTIAL, metadata only** |
+| **Schematics** | 789 KB | 1.1 MB | **CONFIDENTIAL, metadata only** |
 
-**Los esquemáticos y el diagrama de bloques del G2 existen y están presentados ante la FCC,
-pero Quanta pidió confidencialidad de largo plazo — no son públicos.** Era el premio mayor y
-no está al alcance. Las fotos internas sí, y de ahí salen los part numbers.
+**The G2's schematics and block diagram exist and were filed with the FCC, but Quanta requested
+long-term confidentiality — they aren't public.** That was the big prize, and it's out of reach.
+The internal photos, though, are, and that's where the part numbers come from.
 
-Datos administrativos útiles: fecha de concesión 2020-06-05 (A85Q) y 2020-09-30 (A85R),
-laboratorio SGS Taiwan, TCB Telefication B.V., modelo declarado `A85Q`/`A85R`, banda
-2402-2480 MHz (Bluetooth de los controllers), potencia 0.015 W.
+Useful administrative data: grant date 2020-06-05 (A85Q) and 2020-09-30 (A85R),
+test lab SGS Taiwan, TCB Telefication B.V., declared model `A85Q`/`A85R`, band
+2402-2480 MHz (controllers' Bluetooth), power 0.015 W.
 
-### Fotos internas de la FCC: analizadas, y NO dan part numbers (2026-08-05)
+### FCC internal photos: analyzed, and they do NOT give up part numbers (2026-08-05)
 
-Bajadas de fccid.io y procesadas con `scripts/pdf2md.py` (78 imágenes extraídas de los dos
-expedientes; los PDFs no están en el repo).
-**Las páginas están escaneadas a ~130 DPI**: la placa del G2, de ~100 mm, ocupa unos 680
-píxeles, o sea ~7 px/mm. Una serigrafía de chip mide menos que eso. Se amplió hasta 10× y el
-integrado principal es un cuadrado negro sin texto.
+Downloaded from fccid.io and processed with `scripts/pdf2md.py` (78 images extracted from the two
+filings; the PDFs are not in the repo).
+**The pages are scanned at ~130 DPI**: the G2 board, at ~100 mm, spans about
+680 pixels, i.e. ~7 px/mm. A chip's silkscreen marking is smaller than that. It was zoomed up to
+10x and the main IC is a black square with no visible text.
 
-Lo que sí se obtuvo:
+What was obtained:
 
-- **Serigrafías legibles en la placa del G2 (`A85Q`)**: `MCU Download` — cabezal de
-  programación, presumiblemente del STM32 — y **`DES JTAG`** junto a un conector. `DES` es muy
-  probablemente *deserializer*, o sea el chip de video: **hay un JTAG accesible al puente**.
-  Dato guardado por si algún día hace falta hablarle directo.
-- **El `A85R` es el Omnicept**, y sus fotos son de la placa de **eye-tracking de Tobii** (el
-  logo se lee perfecto). Es otro SKU y otra placa: no sirve para la cadena de video.
-- Placa principal del G2: ~100 mm de ancho.
+- **Readable silkscreen markings on the G2 board (`A85Q`)**: `MCU Download` — a
+  programming header, presumably for the STM32 — and **`DES JTAG`** next to a
+  connector. `DES` is most likely *deserializer*, i.e. the video chip: **there's a JTAG header
+  accessible on the bridge**. Data kept on file in case we ever need to talk to it directly.
+- **The `A85R` is the Omnicept**, and its photos are of the **Tobii** eye-tracking
+  board (the logo reads perfectly). It's a different SKU and a different board: not useful for the
+  video chain.
+- G2 main board: ~100 mm wide.
 
-**Por qué no vale la pena insistir.** Esta línea existía cuando creíamos que el fallo estaba
-en el casco. El A/B de la RX 7800 XT (issue #332 de Monado) muestra que **el mismo casco, con
-el mismo puente y los mismos paneles, llega a 90 Hz con AMD**. El hardware del casco está
-exonerado, y el part number exacto del driver de backlight ya no cambia ninguna decisión.
+**Why it's not worth pursuing further.** This line of investigation existed back when we thought
+the fault was in the headset. The RX 7800 XT A/B test (Monado issue #332) shows that **the
+same headset, with the same bridge and the same panels, reaches 90 Hz with AMD**. The
+headset's hardware is exonerated, and the exact part number of the backlight driver no longer
+changes any decision.
 
-Si alguna vez hiciera falta, el camino no es la FCC —su resolución es la que es— sino un
-teardown de la comunidad con fotos macro, o abrir el casco. Ninguno vale el riesgo hoy.
+If it's ever needed, the way forward isn't the FCC — its resolution is what it is —
+but a community teardown with macro photos, or opening up the headset. Neither is worth the risk
+today.
 
-### El Omnicept: mismo casco por dentro, un sensor de más
+### The Omnicept: the same headset inside, with an extra sensor
 
-El **HP Omnicept** (SKU `VR3000-0XX`, expediente FCC `HFS-A85R`) es un G2 con eye-tracking
-de Tobii agregado. Mismo puente, mismos paneles, mismo protocolo WMR — Monado ya reconoce su
-PID USB (`0x0680`) y lo mapea al mismo `WMR_HEADSET_REVERB_G2` que usamos (verificado en
-`origin/main`, `wmr_prober.c`). **Lo que aprendamos acá sobre 90 Hz debería aplicarle
-directo**, sin trabajo extra: es el mismo camino de display.
+The **HP Omnicept** (SKU `VR3000-0XX`, FCC filing `HFS-A85R`) is a G2 with eye-tracking
+by Tobii added. Same bridge, same panels, same WMR protocol — Monado already recognizes its
+USB PID (`0x0680`) and maps it to the same `WMR_HEADSET_REVERB_G2` we use (verified in
+`origin/main`, `wmr_prober.c`). **Whatever we learn here about 90 Hz should apply to it
+directly**, with no extra work: it's the same display path.
 
-El eye-tracking en sí es otra historia — no hay driver Tobii en ningún lado de Monado, ni
-ningún prior art abierto del que partir (a diferencia de WMR, que salió de años de reverse
-engineering sobre OpenHMD). No lo estamos persiguiendo: no tenemos el hardware.
+The eye-tracking itself is another story — there's no Tobii driver anywhere in Monado, nor
+any open prior art to build from (unlike WMR, which came out of years of reverse
+engineering on OpenHMD). We're not pursuing it: we don't have the hardware.
 
-**Si tenés un Omnicept, o te sobra uno para donar a esta investigación**, avisá — correr
-`docs/16-lab-vblank.md` en uno confirmaría si el hallazgo del 90 Hz es del casco en general
-o algo específico de nuestra unidad.
+**If you have an Omnicept, or have a spare one to donate to this investigation**, let us
+know — running `docs/16-lab-vblank.md` on one would confirm whether the 90 Hz finding applies
+to the headset in general or is specific to our unit.

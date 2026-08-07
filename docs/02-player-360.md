@@ -1,7 +1,7 @@
-# 02 — Player 360 (fotos y video con NVDEC)
+# 02 — Player 360 (photos and video with NVDEC)
 
-El player es `hello_xr` (OpenXR-SDK-Source, branch local `g2-360-viewer`) modificado para
-renderizar un skybox equirectangular. El parche completo vive en
+The player is `hello_xr` (OpenXR-SDK-Source, local branch `g2-360-viewer`) modified to
+render an equirectangular skybox. The full patch lives in
 `patches/hello_xr-player/`. Base: OpenXR SDK 1.1.62.
 
 ## Build
@@ -12,216 +12,217 @@ cmake -B build -GNinja -DBUILD_TESTS=ON -DBUILD_API_LAYERS=OFF -DBUILD_CONFORMAN
 ninja -C build hello_xr
 ```
 
-(`hello_xr` vive bajo `src/tests/`, por eso `BUILD_TESTS=ON`. Necesita `libavcodec-dev
-libavformat-dev libavutil-dev libswscale-dev` para el path de video — si faltan, compila
-igual pero solo con fotos.)
+(`hello_xr` lives under `src/tests/`, hence `BUILD_TESTS=ON`. It needs `libavcodec-dev
+libavformat-dev libavutil-dev libswscale-dev` for the video path — if missing, it still
+builds but with photos only.)
 
-## Uso
+## Usage
 
 ```bash
-# 1. Levantar el pipeline VR (ver 01-bringup-monado.md)
-./jack-in.sh 3dof     # 3dof = orientación sola, lo ideal para 360/VR180
+# 1. Bring up the VR pipeline (see 01-bringup-monado.md)
+./jack-in.sh 3dof     # 3dof = orientation only, ideal for 360/VR180
 
-# 2. Todo pasa por el wrapper:
-./play360.sh video.mp4                 # un archivo, en loop
-./play360.sh photo360/                 # directorio = playlist, ordenada por nombre
-./play360.sh -s foto_equirect.jpg      # foto
-./play360.sh -t 60 video.mp4           # límite de tiempo
-./play360.sh -p 180 -e sbs video.mp4   # forzar proyección/estéreo si la detección falla
-./play360.sh -w 47 video.mp4           # ancho de la pantalla virtual en grados (modo flat)
+# 2. Everything goes through the wrapper:
+./play360.sh video.mp4                 # a single file, looping
+./play360.sh photo360/                 # directory = playlist, sorted by name
+./play360.sh -s foto_equirect.jpg      # photo
+./play360.sh -t 60 video.mp4           # time limit
+./play360.sh -p 180 -e sbs video.mp4   # force projection/stereo if detection fails
+./play360.sh -w 47 video.mp4           # virtual screen width in degrees (flat mode)
 ```
 
-`play360.sh` autodetecta dónde viven los árboles igual que `jack-in.sh` (`~/Documents/linux_vr_base`
-o `~/vr`, y `VR_BASE=` lo fuerza). Hasta el 2026-08-04 lo tenía hardcodeado al sistema principal y
-en el lab moría con "falta compilar hello_xr" sin más explicación.
+`play360.sh` autodetects where the trees live just like `jack-in.sh` (`~/Documents/linux_vr_base`
+or `~/vr`, and `VR_BASE=` forces it). Until 2026-08-04 it had this hardcoded to the main system and
+on the lab machine it died with "hello_xr not built" with no further explanation.
 
-Corrido desde una **terminal real** (no piped ni backgrounded), hay teclas de transporte:
-`espacio` pausa, `[`/`]` velocidad (0.125x–4x), `1` normal, `h`/`l` seek -10s/+10s,
-`enter` recentra, `n` siguiente, `q` salir. Si un corte sucio deja la terminal muda:
-`stty sane`. En un pipe no hay teclas y el run termina en el EOF de stdin, como siempre.
+When run from a **real terminal** (not piped or backgrounded), there are transport keys:
+`space` pauses, `[`/`]` speed (0.125x–4x), `1` normal, `h`/`l` seek -10s/+10s,
+`enter` recenters, `n` next, `q` quit. If a dirty disconnect leaves the terminal mute:
+`stty sane`. In a pipe there are no keys and the run ends at stdin's EOF, as always.
 
-### Seek + barra de progreso (2026-08-06)
+### Seek + progress bar (2026-08-06)
 
-Agregado porque con el casco puesto no hay forma de llegar al teclado. Dos vías, mismo
-resultado (`PlayerControl::QueueSeek`, `patches/hello_xr-player/0004-*.patch`):
+Added because with the headset on there's no way to reach the keyboard. Two paths, same
+result (`PlayerControl::QueueSeek`, `patches/hello_xr-player/0004-*.patch`):
 
-- **Teclado** (para probar desde el escritorio, sin casco): `h` = -10s, `l` = +10s.
-- **Controller WMR**: empujar el stick izquierdo o derecho hacia un lado (>0.7 de
-  deflexión) hace el mismo salto. Con histéresis (tiene que volver a <0.3 antes de poder
-  disparar de nuevo) para que mantenerlo empujado no dispare un salto por frame.
+- **Keyboard** (for testing from the desktop, without the headset): `h` = -10s, `l` = +10s.
+- **WMR controller**: pushing the left or right stick to one side (>0.7 deflection)
+  triggers the same jump. With hysteresis (it has to return to <0.3 before it can
+  fire again) so that holding it pushed doesn't fire a jump every frame.
 
-El seek es absoluto sobre `av_seek_frame`, corre en el thread de decode (nunca desde el
-thread de render/input directamente — `AVFormatContext` no es seguro para eso), y clampea a
-`[0, duración]`. La barra de progreso es una tira angosta en la parte de abajo de la
-pantalla, dibujada directo en espacio de pantalla dentro del mismo shader del skybox (sin
-pase ni pipeline nuevo — reusa los slots `mode.y`/`mode.z` del push-constant existente, que
-no se usaban). Aparece solo ~3s después del último toque a pausa/velocidad/seek, después se
-esconde sola.
+The seek is absolute over `av_seek_frame`, runs on the decode thread (never directly from
+the render/input thread — `AVFormatContext` isn't safe for that), and clamps to
+`[0, duration]`. The progress bar is a narrow strip at the bottom of the
+screen, drawn directly in screen space inside the same skybox shader (no
+new pass or pipeline — it reuses the `mode.y`/`mode.z` slots of the existing push-constant,
+which were unused). It only appears ~3s after the last touch to pause/speed/seek, then
+hides itself.
 
-**Probado por el agente:** seek por teclado (avanzar, retroceder, clamp en 0 sin crashear,
-sin romper pausa/velocidad existentes) — vía un pty falso armado con Python, ya que
-`play360.sh` sin terminal real no manda teclas. **Verificado con el casco puesto
-(2026-08-06):** stick, gatillo y menú del mando izquierdo funcionando.
+**Tested by the agent:** keyboard seek (forward, backward, clamp at 0 without crashing,
+without breaking existing pause/speed) — via a fake pty rigged with Python, since
+`play360.sh` without a real terminal doesn't send keys. **Verified with the headset on
+(2026-08-06):** left controller stick, trigger, and menu working.
 
-### Controles completos de mando + temas (2026-08-06, `0005-*.patch`)
+### Full controller controls + themes (2026-08-06, `0005-*.patch`)
 
-Ojo, primero: los mandos del G2 usan el perfil **`oculus/touch_controller`**, no el WMR —
-ver `docs/03-controllers.md` ("Segunda vuelta") para el porqué; cualquier binding nuevo va
-en ESE bloque de `openxr_program.cpp` o queda muerto.
+Heads up, first: the G2 controllers use the **`oculus/touch_controller`** profile, not WMR —
+see `docs/03-controllers.md` ("Second pass") for why; any new binding goes
+in THAT block of `openxr_program.cpp` or it's dead on arrival.
 
-- **Gatillo** (cualquier mano): pausa/reanudar, con histéresis 0.7/0.3 como el stick.
-- **Grip apretado fuerte** (cualquier mano; es analógico, umbral 0.7 del runtime) o
-  `enter`: **recentrar** — la dirección donde estás mirando pasa a ser "adelante". Solo
-  yaw; pitch/roll siguen al casco de verdad.
-- **Menú (tres rayas), solo mando izquierdo** — en el perfil Touch el menú derecho no
-  existe: **mantener ~1.5s para salir**, con una barra roja arriba que se va llenando;
-  soltar antes cancela. Un toque corto ya no sale (antes salía de una, demasiado fácil de
-  tocar sin querer).
-- **`HELLO_XR_THEME`**: `daylight` (default) pinta gris claro el espacio vacío fuera del
-  contenido; `night` lo deja negro como antes. Existe porque el negro total fuera del frame
-  se confundía con "se murió el tracking". El shader ahora hace `discard` fuera del
-  contenido en vez de pintar negro, así que el clear color de la app por fin se ve.
-- Al conectar mandos, el player imprime `Active profile /user/hand/...` y las fuentes de
-  cada acción — ante un botón muerto, mirar eso primero.
+- **Trigger** (either hand): pause/resume, with 0.7/0.3 hysteresis like the stick.
+- **Grip squeezed hard** (either hand; it's analog, runtime threshold 0.7) or
+  `enter`: **recenter** — the direction you're looking becomes "forward". Only
+  yaw; pitch/roll still follow the actual headset.
+- **Menu (three lines), left controller only** — on the Touch profile the right menu
+  button doesn't exist: **hold ~1.5s to exit**, with a red bar at the top filling up;
+  releasing early cancels. A short tap no longer exits (before it exited on one tap, too
+  easy to trigger by accident).
+- **`HELLO_XR_THEME`**: `daylight` (default) paints the empty space outside the
+  content light gray; `night` leaves it black as before. It exists because total black
+  outside the frame was mistaken for "tracking died". The shader now does `discard` outside
+  the content instead of painting black, so the app's clear color is finally visible.
+- When controllers connect, the player prints `Active profile /user/hand/...` and the
+  sources for each action — for a dead button, check that first.
 
-## Proyecciones y estéreo (v3)
+## Projections and stereo (v3)
 
-El player entiende tres proyecciones — **360 equirect, VR180 half-equirect, plano**
-(pantalla virtual) — cada una mono o estéreo **side-by-side / over-under**. El split de
-ojo se aplica en el shader después del mapeo esférico, así que ambos ojos salen del mismo
-frame decodificado (una sola subida por frame).
+The player understands three projections — **360 equirect, VR180 half-equirect, flat**
+(virtual screen) — each mono or stereo **side-by-side / over-under**. The eye
+split is applied in the shader after the spherical mapping, so both eyes come from the same
+decoded frame (a single upload per frame).
 
-La detección importa porque los layouts son ambiguos por dimensiones: un 2:1 es 360 mono
-**o** VR180 SBS, y equivocarse se ve "plausible pero raro", no roto. Orden de resolución:
+Detection matters because the layouts are ambiguous by dimensions alone: a 2:1 could be
+360 mono **or** VR180 SBS, and getting it wrong looks "plausible but odd", not broken.
+Resolution order:
 
-1. Overrides: `HELLO_XR_PROJECTION` (360|180|flat) y `HELLO_XR_STEREO` (mono|sbs|tb)
-2. Metadata del contenedor (boxes MP4 `sv3d`/`st3d` — las cámaras VR180 y YouTube las escriben)
-3. Convenciones de nombre de archivo (vr180, sbs, _tb, 360…)
-4. Aspect ratio como último recurso
+1. Overrides: `HELLO_XR_PROJECTION` (360|180|flat) and `HELLO_XR_STEREO` (mono|sbs|tb)
+2. Container metadata (MP4 boxes `sv3d`/`st3d` — VR180 cameras and YouTube write these)
+3. Filename conventions (vr180, sbs, _tb, 360…)
+4. Aspect ratio as last resort
 
-Lo que decidió se imprime SIEMPRE antes de dibujar (con el casco puesto no hay otra forma
-de saberlo):
+Whatever it decided is ALWAYS printed before drawing (with the headset on there's no other
+way to know):
 
 ```
-  MODO: VR180 3D (side-by-side)
-  Archivo: 7680x4096  ->  3840x4096 por ojo  |  59.94 fps  |  av1
+  MODE: VR180 3D (side-by-side)
+  File: 7680x4096  ->  3840x4096 per eye  |  59.94 fps  |  av1
 ```
 
-**VR180 3D verificado en el casco 2026-08-04** ("el efecto es muy bueno en 3d").
+**VR180 3D verified in the headset 2026-08-04** ("the 3D effect is really good").
 
-### YouTube esconde los streams VR
+### YouTube hides the VR streams
 
-Mismo URL, distinto contenido: el cliente normal recibe un render plano monoscópico
-(3136x1764 en el ejemplo medido) y el cliente `android_vr` los streams reales
-(7680x4096 estéreo "mesh"). `get360.sh` pide `android_vr` primero; en el listado `-l`,
-`2160s60` = estéreo, `2160p60` = plano. Contra: `android_vr` no acepta cookies, así que
-age-restricted ⇒ solo versión plana (fallback automático).
+Same URL, different content: the normal client gets a flat monoscopic render
+(3136x1764 in the measured example) and the `android_vr` client gets the real streams
+(7680x4096 stereo "mesh"). `get360.sh` requests `android_vr` first; in the `-l` listing,
+`2160s60` = stereo, `2160p60` = flat. Downside: `android_vr` doesn't accept cookies, so
+age-restricted ⇒ flat version only (automatic fallback).
 
-## Contenido propio: 2D → 3D con `stereo3d-pack` (2026-08-04)
+## Own content: 2D → 3D with `stereo3d-pack` (2026-08-04)
 
-`~/Documents/stereo3d-pack` convierte video monocular común en estéreo (Depth Anything V2 +
-DIBR, en GPU, ~3,5 fps a 1080x1920). Es la otra fuente de contenido estéreo de este equipo además
-de YouTube, y sirve para cualquier video plano que el usuario tenga. Su puente hacia acá es
-`stereo3d-pack/tools/ver-en-casco.sh`, que llama a `play360.sh` con los flags correctos.
+`~/Documents/stereo3d-pack` converts ordinary monocular video into stereo (Depth Anything V2 +
+DIBR, on GPU, ~3.5 fps at 1080x1920). It's the other source of stereo content for this setup besides
+YouTube, and works for any flat video the user has. Its bridge over here is
+`stereo3d-pack/tools/ver-en-casco.sh`, which calls `play360.sh` with the correct flags.
 
-**Lo importante para este lado**: sus salidas destapan un agujero de la cadena de detección.
+**The important part on this side**: its outputs expose a hole in the detection chain.
 
-| salida | qué es | qué detecta el player |
+| output | what it is | what the player detects |
 |---|---|---|
-| `--format vr180` + metadata | 3840x1920 equirect, `st3d`=2 + `sv3d/equi` bounds 0,25 | VR180 3D ✅ por metadata |
-| `--format vr180` sin metadata | 3840x1920 | VR180 3D ✅ por nombre + aspect |
-| `--format sbs` | 2160x1920, o sea 1080x1920 por ojo | **VR180 3D ❌** — debería ser PLANO 3D |
+| `--format vr180` + metadata | 3840x1920 equirect, `st3d`=2 + `sv3d/equi` bounds 0.25 | VR180 3D ✅ by metadata |
+| `--format vr180` without metadata | 3840x1920 | VR180 3D ✅ by name + aspect |
+| `--format sbs` | 2160x1920, i.e. 1080x1920 per eye | **VR180 3D ❌** — should be FLAT 3D |
 
-El caso malo: no hay señal de contenedor que diga "plano", el nombre solo aporta el `sbs`, y el
-aspect por ojo (0,56) cae en la rama `HalfEquirect180` de `ResolvePanoLayout`. El video plano
-termina envuelto sobre una semiesfera: se ve raro, no roto. Hay que pasar `-p flat -e sbs`.
+The bad case: there's no container signal saying "flat", the filename only contributes the `sbs`,
+and the per-eye aspect (0.56) falls into the `HalfEquirect180` branch of `ResolvePanoLayout`. The
+flat video ends up wrapped onto a hemisphere: it looks odd, not broken. You have to pass `-p flat -e sbs`.
 
-Arreglarlo de verdad querría un cuarto criterio en `projection360.cpp` (por ejemplo: si el
-contenedor declaró estéreo pero **no** declaró proyección, un aspect por ojo "de video normal" es
-más probablemente plano que VR180). **No se tocó el player**: el árbol estaba congelado por el test
-de 90 Hz cuando esto se preparó, y de todos modos conviene mirar primero adentro del casco antes de
-cambiar heurísticas de detección. Queda anotado.
+Fixing it properly would need a fourth criterion in `projection360.cpp` (for example: if the
+container declared stereo but **did not** declare projection, a "normal video" per-eye aspect is
+more likely flat than VR180). **The player wasn't touched**: the tree was frozen for the 90 Hz test
+when this was prepared, and either way it's better to look inside the headset first before
+changing detection heuristics. Noted for later.
 
-Contra la intuición, **para material que nació plano conviene mirar el `sbs`, no el VR180**: la
-proyección a 180°x180° con `--vr-fov 65` deja el contenido ocupando 694x1036 de un lienzo de
-1920x1920 por ojo — 19% de los píxeles, el resto negro. El `sbs` va a resolución nativa sobre la
-pantalla virtual. El VR180 es para subir a YouTube o para visores que solo entienden esferas.
+Counter-intuitively, **for material that was born flat, `sbs` is the better choice, not VR180**:
+the 180°x180° projection with `--vr-fov 65` leaves the content occupying 694x1036 of a
+1920x1920 canvas per eye — 19% of the pixels, the rest black. `sbs` goes at native resolution on
+the virtual screen. VR180 is for uploading to YouTube or for headsets that only understand spheres.
 
-Y un detalle que vale para todo el modo flat, no solo para esto: **`HELLO_XR_SCREEN_FOV` escala el
-3D**. La disparidad de un SBS es una fracción del ancho de imagen, así que la disparidad angular
-≈ esa fracción × el ancho aparente en grados. Pantalla más grande = más profundidad y más fatiga,
-sin tocar el archivo. Para vertical 9:16 además hay que bajarlo: con los 70° por defecto la
-pantalla queda de más de 100° de alto, más que el FOV del casco (el envoltorio calcula 47°).
+And a detail that applies to the whole flat mode, not just this: **`HELLO_XR_SCREEN_FOV` scales
+the 3D**. An SBS disparity is a fraction of the image width, so the angular disparity
+≈ that fraction × the apparent width in degrees. A bigger screen = more depth and more fatigue,
+without touching the file. For vertical 9:16 it also needs to be lowered: with the default 70°
+the screen ends up more than 100° tall, more than the headset's FOV (the wrapper computes 47°).
 
-## Variables de entorno
+## Environment variables
 
-| Variable | Efecto |
+| Variable | Effect |
 |---|---|
-| `HELLO_XR_PHOTO360=/ruta.jpg` | foto equirectangular (JPG/PNG) |
-| `HELLO_XR_VIDEO360=/ruta` | video O directorio (playlist); H.264/HEVC/AV1/VP9 |
-| `HELLO_XR_PROJECTION=360\|180\|flat` | fuerza la proyección |
-| `HELLO_XR_STEREO=mono\|sbs\|tb` | fuerza el empaquetado estéreo |
-| `HELLO_XR_PANO_FOV=AxB` | arco del frame 180 en grados (default 180x180) |
-| `HELLO_XR_SCREEN_FOV=N` | ancho aparente de la pantalla virtual en modo flat (default 70°, flag `-w`) |
-| `HELLO_XR_VIDEO_HW=0` | fuerza decode por software |
-| `HELLO_XR_VIDEO_DIRECT=0` | desactiva NVDEC→staging directo (para A/B) |
-| `HELLO_XR_VIDEO_STATS=1` | stats de decode y de upload por separado |
-| `HELLO_XR_POSE_STATS=1` | fps + delta de rotación entre frames |
-| `HELLO_XR_FIXED_POSE=1` | ignora tracking — diagnóstico |
+| `HELLO_XR_PHOTO360=/path.jpg` | equirectangular photo (JPG/PNG) |
+| `HELLO_XR_VIDEO360=/path` | video OR directory (playlist); H.264/HEVC/AV1/VP9 |
+| `HELLO_XR_PROJECTION=360\|180\|flat` | forces the projection |
+| `HELLO_XR_STEREO=mono\|sbs\|tb` | forces the stereo packing |
+| `HELLO_XR_PANO_FOV=AxB` | 180 frame arc in degrees (default 180x180) |
+| `HELLO_XR_SCREEN_FOV=N` | apparent width of the virtual screen in flat mode (default 70°, flag `-w`) |
+| `HELLO_XR_VIDEO_HW=0` | forces software decode |
+| `HELLO_XR_VIDEO_DIRECT=0` | disables direct NVDEC→staging (for A/B) |
+| `HELLO_XR_VIDEO_STATS=1` | separate decode and upload stats |
+| `HELLO_XR_POSE_STATS=1` | fps + rotation delta between frames |
+| `HELLO_XR_FIXED_POSE=1` | ignores tracking — diagnostic |
 
-## Cómo funciona el video (v3, zero-memcpy)
+## How the video works (v3, zero-memcpy)
 
 ```
-archivo → libavformat → NVDEC (decoder elegido a mano: ffmpeg default para AV1 es
-        libdav1d, ¡que NO tiene hwaccel! — fix medido: 25→59 fps en 8K60)
-        → av_hwframe_transfer_data DIRECTO al staging buffer mapeado de Vulkan
-          (ring de 8 buffers; el hilo de render ya no copia NADA)
-        → vkCmdCopyBufferToImage → texturas Y (R8) + CbCr (R8G8)
-        → pass GPU YUV→RGB (matriz 601/709 + rango según stream)
-        → nivel 0 del skybox (sRGB) → mip chain (cap 6) → shader del skybox
-          (proyección + split de ojo por push constants)
+file → libavformat → NVDEC (decoder chosen by hand: ffmpeg's default for AV1 is
+        libdav1d, which does NOT have hwaccel! — measured fix: 25→59 fps at 8K60)
+        → av_hwframe_transfer_data DIRECT to the mapped Vulkan staging buffer
+          (ring of 8 buffers; the render thread no longer copies ANYTHING)
+        → vkCmdCopyBufferToImage → Y (R8) + CbCr (R8G8) textures
+        → GPU YUV→RGB pass (601/709 matrix + range per stream)
+        → skybox level 0 (sRGB) → mip chain (capped at 6) → skybox shader
+          (projection + eye split via push constants)
 ```
 
-Historia de la optimización (8K, medido):
+Optimization history (8K, measured):
 
-| versión | upload | hilo de render |
+| version | upload | render thread |
 |---|---|---|
-| v2: decode→RAM propia, memcpy al staging | 19 fps | 14.5 ms |
-| v3: NVDEC→staging directo | 30 fps (tope del archivo HEVC) | 8.2 ms |
-| v3 + fix decoder AV1 (8K60) | ~48 fps | 6.5 ms |
+| v2: decode→own RAM, memcpy to staging | 19 fps | 14.5 ms |
+| v3: NVDEC→staging direct | 30 fps (HEVC file cap) | 8.2 ms |
+| v3 + AV1 decoder fix (8K60) | ~48 fps | 6.5 ms |
 | v3 + ring 5→8 buffers | **60.0 fps, 0 starves** | 6.3 ms |
 
-El ring pasó de 5 a 8 porque el jitter del decode (keyframes) vaciaba un colchón de 3
-frames: el renderer no encontraba frame nuevo en ~25% de los vsyncs aunque el decode
-promediara 59 fps. +126 MB de RAM a 8K, nada a 4K.
+The ring went from 5 to 8 because decode jitter (keyframes) was draining a 3-frame
+buffer: the renderer found no new frame in ~25% of vsyncs even though decode
+averaged 59 fps. +126 MB of RAM at 8K, none at 4K.
 
-Decisiones que siguen vigentes de v2: sin swscale (YUV→RGB en GPU), textura sRGB con
-escritura por vista UNORM (MUTABLE_FORMAT, gamma exactamente una vez), 10-bit se baja a
-8 en el thread de decode.
+Decisions carried over from v2 that still hold: no swscale (YUV→RGB on GPU), sRGB texture with
+UNORM per-view write (MUTABLE_FORMAT, gamma applied exactly once), 10-bit gets downconverted to
+8-bit in the decode thread.
 
-**Playlist**: cada pista destruye y recrea toda la cadena (staging, planos, pass de
-conversión, skybox) porque la siguiente puede tener otra resolución/proyección. El hitch
-entre pistas es un vkDeviceWaitIdle + realloc — solo ocurre entre videos.
+**Playlist**: each track destroys and recreates the whole chain (staging, planes, conversion
+pass, skybox) because the next one may have a different resolution/projection. The hitch
+between tracks is a vkDeviceWaitIdle + realloc — it only happens between videos.
 
-## Verificación
+## Verification
 
-Con el casco puesto y `HELLO_XR_VIDEO_STATS=1`:
-- "video upload: X frames/s" debe igualar el fps del archivo, y "renderer starves" ≈ 0.
-- "video decode:" debe decir `NVDEC direct-to-staging` (si dice `+ copy`, el transfer
-  directo falló y se degradó solo — funcional pero más lento).
-- El banner `MODO:` debe coincidir con lo que el contenido ES.
-- Visual 360: sin banda en la costura trasera. VR180: negro detrás de los hombros, no
-  imagen repetida. 3D: profundidad real (si se ve doble, el split de ojo está mal).
+With the headset on and `HELLO_XR_VIDEO_STATS=1`:
+- "video upload: X frames/s" should match the file's fps, and "renderer starves" ≈ 0.
+- "video decode:" should say `NVDEC direct-to-staging` (if it says `+ copy`, the direct
+  transfer failed and it degraded on its own — functional but slower).
+- The `MODE:` banner should match what the content actually IS.
+- Visual 360: no band at the rear seam. VR180: black behind the shoulders, not
+  repeated image. 3D: real depth (if it looks doubled, the eye split is wrong).
 
-## Pendiente / roadmap
+## Pending / roadmap
 
-- Probar las teclas de transporte en vivo (implementadas 2026-08-04, sin test interactivo).
-- Mirar en el casco el material de `stereo3d-pack` (preparado 2026-08-04, nunca visto adentro del
-  visor): `sbs` vs `vr180`, y calibrar la profundidad con `-w`.
-- Cuarto criterio de detección para el SBS plano sin metadata (ver la sección de `stereo3d-pack`).
-  Después del test de 90 Hz: hoy el árbol del player está congelado.
-- Audio del video (mudo hoy; decode→PipeWire + A/V sync).
-- Zero-copy real CUDA↔Vulkan (importar la superficie NVDEC como imagen Vulkan, cero PCIe).
-  Hoy innecesario: ya estamos a tasa completa. Es LA optimización si 90Hz+8K pide más.
-- Proyección "mesh" de YouTube: nuestro half-equirect es una aproximación; si se nota
-  estiramiento en los bordes, ajustar con `HELLO_XR_PANO_FOV` o implementar el mesh real.
+- Test the transport keys live (implemented 2026-08-04, no interactive test yet).
+- Watch the `stereo3d-pack` material in the headset (prepared 2026-08-04, never seen inside the
+  visor): `sbs` vs `vr180`, and calibrate depth with `-w`.
+- Fourth detection criterion for flat SBS without metadata (see the `stereo3d-pack` section).
+  After the 90 Hz test: the player tree is frozen today.
+- Video audio (silent today; decode→PipeWire + A/V sync).
+- Real zero-copy CUDA↔Vulkan (import the NVDEC surface as a Vulkan image, zero PCIe).
+  Unnecessary today: we're already at full rate. This is THE optimization if 90Hz+8K demands more.
+- YouTube "mesh" projection: our half-equirect is an approximation; if stretching is
+  noticeable at the edges, adjust with `HELLO_XR_PANO_FOV` or implement the real mesh.

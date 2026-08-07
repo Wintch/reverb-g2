@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Convierte un PDF a markdown y saca sus imagenes. Sin dependencias.
+"""Converts a PDF to markdown and extracts its images. No dependencies.
 
-Hecho para los expedientes de la FCC: son PDFs escaneados, o sea imagenes sin capa de
-texto. Extraer "el texto" no alcanza — hay que sacar las IMAGENES para poder mirarlas.
+Made for FCC filings: they're scanned PDFs, i.e. images with no text layer.
+Extracting "the text" isn't enough — you need to pull out the IMAGES to actually look at them.
 
-  ./pdf2md.py archivo.pdf [directorio-de-salida]
+  ./pdf2md.py file.pdf [output-directory]
 
-Produce:
-  <salida>/<nombre>.md        texto extraido (vacio si es puro escaneo) + inventario
-  <salida>/<nombre>-NNN.jpg   cada imagen embebida, en orden
+Produces:
+  <output>/<name>.md        extracted text (empty if it's a pure scan) + inventory
+  <output>/<name>-NNN.jpg   each embedded image, in order
 
-Formatos de imagen que saca directo: DCTDecode (JPEG) y JPXDecode (JPEG2000), porque el
-stream ya ES el archivo. Los CCITTFax y los bitmaps crudos se reportan pero no se
-convierten: para eso haria falta un decodificador, y los escaneos de la FCC suelen ser JPEG.
+Image formats extracted directly: DCTDecode (JPEG) and JPXDecode (JPEG2000), because the
+stream already IS the file. CCITTFax and raw bitmaps are reported but not
+converted: that would need a decoder, and FCC scans are usually JPEG.
 """
 import os
 import re
@@ -24,7 +24,7 @@ STR_IN = re.compile(rb"\((?:[^()\\]|\\.)*\)")
 
 
 def png_encode(w, h, channels, raw):
-    """Arma un PNG a mano desde pixeles crudos. Sin PIL: el sistema no la tiene."""
+    """Builds a PNG by hand from raw pixels. No PIL: the system doesn't have it."""
     import struct
     color = {1: 0, 3: 2, 4: 6}.get(channels)
     if color is None:
@@ -32,7 +32,7 @@ def png_encode(w, h, channels, raw):
     stride = w * channels
     if len(raw) < stride * h:
         return None
-    # PNG exige un byte de filtro por fila (0 = sin filtro)
+    # PNG requires one filter byte per row (0 = no filter)
     body = b"".join(b"\x00" + raw[y * stride:(y + 1) * stride] for y in range(h))
 
     def chunk(tag, data):
@@ -46,7 +46,7 @@ def png_encode(w, h, channels, raw):
 
 
 def img_geometry(d):
-    """Saca ancho, alto, bits y canales del diccionario del XObject."""
+    """Extracts width, height, bits, and channels from the XObject dictionary."""
     def num(key):
         m = re.search(rb"/" + key + rb"\s+(\d+)", d)
         return int(m.group(1)) if m else None
@@ -71,7 +71,7 @@ def unescape(s):
 
 
 def objects(data):
-    """Devuelve (dict_crudo, contenido_del_stream) por cada objeto con stream."""
+    """Returns (raw_dict, stream_content) for each object with a stream."""
     out = []
     for m in re.finditer(rb"stream\r?\n", data):
         start = m.end()
@@ -107,7 +107,7 @@ def main():
             except zlib.error:
                 continue
             if b"/Image" in d or b"/Subtype /Image" in d:
-                # Imagen cruda comprimida con Flate: la reconstruimos como PNG a mano.
+                # Raw image compressed with Flate: reconstruct it as a PNG by hand.
                 w, h, bpc, ch = img_geometry(d)
                 png = png_encode(w, h, ch, dec) if (w and h and ch and bpc == 8) else None
                 if png:
@@ -127,28 +127,28 @@ def main():
     for i, (ext, raw) in enumerate(images, 1):
         p = os.path.join(outdir, f"{name}-{i:03d}.{ext}")
         open(p, "wb").write(raw)
-        print(f"    imagen -> {p}  ({len(raw)/1024:.0f} KB)")
+        print(f"    image -> {p}  ({len(raw)/1024:.0f} KB)")
 
-    md = [f"# {name}", "", f"Origen: `{path}`", ""]
+    md = [f"# {name}", "", f"Source: `{path}`", ""]
     if texts:
-        md += ["## Texto extraido", ""] + texts + [""]
+        md += ["## Extracted text", ""] + texts + [""]
     else:
-        md += ["## Texto extraido", "",
-               "**(ninguno: el PDF no tiene capa de texto, es un escaneo)**", ""]
-    md += ["## Inventario", "",
-           f"- imagenes extraidas: **{len(images)}**",
-           f"- objetos de imagen no convertidos: {len(otros)}", ""]
+        md += ["## Extracted text", "",
+               "**(none: the PDF has no text layer, it's a scan)**", ""]
+    md += ["## Inventory", "",
+           f"- images extracted: **{len(images)}**",
+           f"- unconverted image objects: {len(otros)}", ""]
     for kind, size, head in otros[:10]:
         md.append(f"  - `{kind}` {size} bytes — `{head.decode('latin-1', 'replace')[:120]}`")
     if not texts and not images:
-        md += ["", "> No salio nada. Puede ser un PDF con xref comprimido (object streams).",
-               "> En ese caso conviene abrirlo con un visor y sacar captura de pantalla."]
+        md += ["", "> Nothing came out. This could be a PDF with a compressed xref (object streams).",
+               "> In that case it's best to open it in a viewer and take a screenshot."]
 
     mdp = os.path.join(outdir, f"{name}.md")
     open(mdp, "w").write("\n".join(md))
     print(f"    markdown -> {mdp}")
-    print(f"    resumen: {len(texts)} bloques de texto, {len(images)} imagenes, "
-          f"{len(otros)} objetos sin convertir")
+    print(f"    summary: {len(texts)} text blocks, {len(images)} images, "
+          f"{len(otros)} unconverted objects")
 
 
 main()

@@ -1,10 +1,10 @@
-# Issue para github.com/AshishKumar4/Project-VR
+# Issue for github.com/AshishKumar4/Project-VR
 
-HOW TO POST: New issue en https://github.com/AshishKumar4/Project-VR/issues
-(si el repo no tiene issues habilitados, alternativa: mencionarlo en el hilo 337744 del
-foro de NVIDIA, que es suyo — pero el issue es el canal directo).
+HOW TO POST: New issue at https://github.com/AshishKumar4/Project-VR/issues
+(if the repo doesn't have issues enabled, alternative: mention it in thread 337744 on the
+NVIDIA forum, which is theirs — but the issue is the direct channel).
 
-TITLE (pegar tal cual):
+TITLE (paste as-is):
 
 Your NVIDIA series validated on Ampere (RTX 3060 Ti, Debian 13) — plus a 4th patch it needed there: NVKMS 6 bpc clamp
 

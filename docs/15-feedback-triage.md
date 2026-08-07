@@ -1,31 +1,31 @@
-# 15 — Triage del feedback al reporte de NVIDIA (2026-08-05)
+# 15 — Triage of Feedback on the NVIDIA Report (2026-08-05)
 
-Hilo publicado:
+Thread published:
 <https://forums.developer.nvidia.com/t/hp-reverb-g2-clamped-to-6-bpc-because-its-edid-leaves-color-depth-undefined-root-cause-found-two-line-patch-but-90-hz-still-fails-to-light/379240>
-(al momento de este triage: sin respuestas todavía).
+(at the time of this triage: no replies yet).
 
-Feedback recibido: seis ítems ordenados "por rendimiento", más una sugerencia de canal.
-Abajo, cada uno contrastado contra lo que ya está medido en este repo.
+Feedback received: six items ranked "by expected return," plus one channel suggestion.
+Below, each one is checked against what's already been measured in this repo.
 
 ---
 
-## Resumen del triage
+## Triage summary
 
-| # | ítem del feedback | veredicto |
+| # | feedback item | verdict |
 |---|---|---|
-| 1 | Aplicar parches de Project-VR sobre el de bpc y bisecar | **Ya hecho.** Los tres están aplicados desde antes. Y la premisa ("funciona en Ada") nunca se verificó |
-| 2 | Capturar HID de Windows en la transición 60→90 | **Parcialmente cerrado por desensamblado, pero es el único que queda abierto de verdad.** La crítica al byte 18 es correcta; no toca el desensamblado |
-| 3 | Leer DPCD en los tres modos | **Cerrado a medias, y la parte que falta es cara.** El color space ya lo cierra el propio EDID |
-| 4 | Barrer refresh con modelines custom (61/72/75/80) | **El mejor experimento de la lista, y no está corrido.** Pero no son cinco minutos: hace falta un override de EDID |
-| 5 | Parsear el DisplayID a mano y comparar el modeline | **Hecho hoy. Negativo — y de paso encontró un error en el reporte publicado** |
-| 6 | Adjuntar `nvidia-bug-report.log.gz` y EDID crudo | **Correcto, hacer ya** |
-| — | Abrir issue en `NVIDIA/open-gpu-kernel-modules` | **Correcto, hacer ya** |
+| 1 | Apply Project-VR patches on top of the bpc one and bisect | **Already done.** All three have been applied all along. And the premise ("works on Ada") was never verified |
+| 2 | Capture Windows HID during the 60→90 transition | **Partially closed via disassembly, but it's the only one that's genuinely still open.** The critique of byte 18 is correct; it doesn't touch the disassembly |
+| 3 | Read DPCD in all three modes | **Half closed, and the missing part is expensive.** The EDID itself already settles the color space |
+| 4 | Sweep refresh rate with custom modelines (61/72/75/80) | **The best experiment on the list, and it hasn't been run.** But it's not five minutes: it needs an EDID override |
+| 5 | Parse the DisplayID by hand and compare the modeline | **Done today. Negative — and along the way found an error in the published report** |
+| 6 | Attach `nvidia-bug-report.log.gz` and raw EDID | **Correct, do it now** |
+| — | Open an issue on `NVIDIA/open-gpu-kernel-modules` | **Correct, do it now** |
 
 ---
 
-## 1 — Los parches de Project-VR ya están aplicados. No hay nada que bisecar
+## 1 — The Project-VR patches are already applied. There's nothing to bisect
 
-`dkms.conf` del árbol instalado:
+`dkms.conf` from the installed tree:
 
 ```
 PATCH[0]="0001-nvkms-VESA-DisplayID-DSC-VSDB-spec-correctness-fixes.patch"
@@ -33,111 +33,111 @@ PATCH[1]="0002-nvkms-nvidia-drm-enable-Wayland-DRM-lease-of-VR-HMDs.patch"
 PATCH[2]="0003-dp-force-maximum-link-config-for-the-HP-Reverb-G2-ED.patch"
 ```
 
-y el `0004` (bpc) está aplicado directo sobre `/usr/src/nvidia-595.71.05` (ver la nota de
-reproducibilidad de `docs/13`). O sea: **el resultado actual — parpadeo blanco a 90 Hz — ya
-es el stack completo de Project-VR más el parche de bpc, corriendo en GA104.** No es que
-falte combinarlos.
+and `0004` (bpc) is applied directly on top of `/usr/src/nvidia-595.71.05` (see the
+reproducibility note in `docs/13`). In other words: **the current result — white flicker at 90 Hz — is
+already the full Project-VR stack plus the bpc patch, running on GA104.** It's not a matter of
+still needing to combine them.
 
-La segunda mitad de la premisa también falla: "que funcione en Ampere también es dato
-publicable" asume que funciona en Ada. **No hay caso positivo verificado.** Ver
-`docs/06`, sección "CUIDADO: Project-VR NO es un caso positivo verificado": su evidencia de
-90 Hz es una sesión Vulkan/OpenXR exitosa con sus logs — exactamente la clase de evidencia
-que este proyecto demostró nueve veces que es compatible con el panel muerto.
+The second half of the premise also fails: "that it also works on Ampere is publishable
+data" assumes it works on Ada. **There is no verified positive case.** See
+`docs/06`, section "CAUTION: Project-VR is NOT a verified positive case": its evidence of
+90 Hz is a successful Vulkan/OpenXR session with its logs — exactly the kind of evidence
+that this project has shown nine times over to be compatible with a dead panel.
 
-**Lo publicable acá es el negativo**, y sí vale la pena publicarlo: los tres parches al open
-kernel module, más el de bpc, sobre GA104 → 90 Hz sigue fallando.
+**What's publishable here is the negative result**, and it is worth publishing: the three patches to the open
+kernel module, plus the bpc one, on GA104 → 90 Hz still fails.
 
-## 2 — El HID de Windows: la crítica es válida, pero apunta a la evidencia equivocada
+## 2 — The Windows HID: the critique is valid, but it points at the wrong evidence
 
-El reviewer dice: "tu byte 18 idéntico es de un report de status (IN) — no dice nada sobre
-los reports OUT/feature que Windows manda". **Eso es correcto** sobre el byte 18. Pero la
-hipótesis no se cerró con el byte 18: se cerró desensamblando el driver Oasis
-(`docs/09`), y ese desensamblado es *exactamente* un inventario de reports OUT/feature:
+The reviewer says: "your identical byte 18 is from a status report (IN) — it says nothing about
+the OUT/feature reports Windows sends". **That's correct** about byte 18. But the
+hypothesis wasn't closed with byte 18: it was closed by disassembling the Oasis driver
+(`docs/09`), and that disassembly is *exactly* an inventory of OUT/feature reports:
 
-- `driver_oasis.dll` tiene **un solo** call site de `HidD_SetFeature` en todo el binario:
-  Usage Page `0x03` / Usage `0x21` = Display Enable. Nada más.
-- `HololensSensors.dll` hace lo mismo escrito distinto.
-- Los otros cuatro `HidP_SetUsageValue` son Usage Page `0x0E` (Haptics) = rumble de
-  controllers.
-- `MROEMFwHost.dll` es sólo el actualizador de firmware; `client_utility.exe` es de Steam.
+- `driver_oasis.dll` has **a single** call site for `HidD_SetFeature` in the entire binary:
+  Usage Page `0x03` / Usage `0x21` = Display Enable. Nothing else.
+- `HololensSensors.dll` does the same thing written differently.
+- The other four `HidP_SetUsageValue` calls are Usage Page `0x0E` (Haptics) = controller
+  rumble.
+- `MROEMFwHost.dll` is just the firmware updater; `client_utility.exe` belongs to Steam.
 
-**Dónde el reviewer igual tiene razón:** un desensamblado acota lo que ese binario *puede*
-mandar, no lo que pasa por el bus. Quedan dos huecos reales:
+**Where the reviewer is still right:** a disassembly bounds what that binary *can*
+send, not what actually goes over the bus. Two real gaps remain:
 
-1. `driver_oasis.dll` usa **Microsoft Detours** (secciones `.detourc`/`.detourd`) y nunca se
-   miró qué hookea.
-2. El runtime WMR del SO es otro componente, y `unlock_wmr.exe` toca estado de display por
-   `Windows.Devices.Display.Core` — no por HID, pero es superficie no cubierta.
+1. `driver_oasis.dll` uses **Microsoft Detours** (sections `.detourc`/`.detourd`) and what
+   it hooks was never examined.
+2. The OS's WMR runtime is a separate component, and `unlock_wmr.exe` touches display state through
+   `Windows.Devices.Display.Core` — not via HID, but it's uncovered surface area.
 
-Una captura de bus resuelve las dos de una y no depende de NVIDIA. El kit ya está armado
-(`windows-kit/capture.bat` + `scripts/parse-usbpcap.py` + `scripts/analyze-hid.py`), el
-disco de Windows está en la máquina. Cuesta un boot. **Es el único de la lista que puede
-resolver el problema sin NVIDIA, así que va primero entre los abiertos** — no porque la
-hipótesis esté viva, sino porque convierte "leímos el driver y no había nada" en "miramos el
-cable y no pasó nada".
+A bus capture resolves both gaps at once and doesn't depend on NVIDIA. The kit is already set up
+(`windows-kit/capture.bat` + `scripts/parse-usbpcap.py` + `scripts/analyze-hid.py`), the
+Windows disk is in the machine. It costs one boot. **It's the only item on the list that can
+resolve the problem without NVIDIA, so it goes first among the open ones** — not because the
+hypothesis is still alive, but because it turns "we read the driver and there was nothing" into "we watched
+the wire and nothing happened".
 
-## 3 — DPCD: la mitad ya está contestada, y la otra mitad es cara
+## 3 — DPCD: half is already answered, and the other half is expensive
 
-Ya cerrado, con dos evidencias independientes:
+Already closed, with two independent pieces of evidence:
 
-- **Color space**: el bloque CTA-861 del casco (extensión 1) tiene **byte 3 = `0x00`** — sin
-  YCbCr 4:4:4, sin YCbCr 4:2:2. El sink no anuncia YCbCr en absoluto, así que el enlace es
-  RGB obligatoriamente en los tres modos. No hay variable de color space que pueda diferir.
-  Esto reemplaza la "afirmación floja" con un dato duro sacado del EDID en 30 segundos.
-- **DSC**: cero menciones de DSC/compresión en `dmesg` con `nvidia_modeset.debug=1` en los
-  tres modos (`docs/13`), más la cuenta de ancho de banda que ya lo descartaba dos veces.
+- **Color space**: the headset's CTA-861 block (extension 1) has **byte 3 = `0x00`** — no
+  YCbCr 4:4:4, no YCbCr 4:2:2. The sink doesn't advertise YCbCr at all, so the link is
+  necessarily RGB in all three modes. There's no color space variable that could differ.
+  This replaces the "loose claim" with a hard fact pulled from the EDID in 30 seconds.
+- **DSC**: zero mentions of DSC/compression in `dmesg` with `nvidia_modeset.debug=1` across the
+  three modes (`docs/13`), plus the bandwidth math that already ruled it out twice over.
 
-Lo que **no** está: link rate y lane count entrenados leídos del DPCD, y `DSC_ENABLE` (0x160)
-leído del sink en vez de inferido del log. Y el costo es alto: `nvidia-drm` no expone DPCD por
-debugfs (no hay equivalente de `i915_dpcd` ni de `dp_dpcd_address` de amdgpu), así que habría
-que escribir un cliente RM contra `/dev/nvidiactl` usando `NV0073_CTRL_CMD_DP_AUXCH_CTRL`.
-Es medio día largo para confirmar algo que el log y el EDID ya sugieren. **Prioridad baja.**
+What's **not** there: the trained link rate and lane count read from the DPCD, and `DSC_ENABLE` (0x160)
+read from the sink instead of inferred from the log. And the cost is high: `nvidia-drm` doesn't expose DPCD via
+debugfs (there's no equivalent of `i915_dpcd` or amdgpu's `dp_dpcd_address`), so it would take
+writing an RM client against `/dev/nvidiactl` using `NV0073_CTRL_CMD_DP_AUXCH_CTRL`.
+That's a long half-day to confirm something the log and the EDID already suggest. **Low priority.**
 
-## 4 — El barrido de refresh: el mejor experimento de la lista, y hay una vía para hacerlo
+## 4 — The refresh sweep: the best experiment on the list, and there's a way to do it
 
-La lógica del reviewer es la correcta: si falla a 61 Hz, no es una historia de timing de alta
-frecuencia sino de parsing/selección de modos, y eso cambia todo el diagnóstico.
+The reviewer's logic is correct: if it fails at 61 Hz, this isn't a high-frequency timing
+story but one of mode parsing/selection, and that changes the whole diagnosis.
 
-**Pero no son cinco minutos**, por una razón ya medida (`docs/09`): NVIDIA en Linux **rechaza
-todo timing que no esté en el EDID** — `vkCreateDisplayModeKHR` y `drmModeSetCrtc` fallan.
-Así que el barrido exige un **override de EDID**, y ahí es donde estaba trabado (`docs/13`,
-"otras vías para forzar el bpc"): `drm.edid_firmware` no lo respeta `nvidia-drm`, el
-`edid_override` de debugfs no se sabe si NVKMS lo lee, y la sintaxis de
-`nvidia_modeset.config_file` no está documentada.
+**But it's not five minutes**, for a reason already measured (`docs/09`): NVIDIA on Linux **rejects
+any timing that isn't in the EDID** — `vkCreateDisplayModeKHR` and `drmModeSetCrtc` fail.
+So the sweep requires an **EDID override**, and that's where things got stuck (`docs/13`,
+"other ways to force bpc"): `nvidia-drm` doesn't honor `drm.edid_firmware`, it's unknown
+whether NVKMS reads the debugfs `edid_override`, and the syntax for
+`nvidia_modeset.config_file` isn't documented.
 
-**La vía que quedó descartada por el motivo equivocado: `Option "CustomEDID"` de xorg.conf.**
-Se descartó con "sólo X11, y nosotros vamos por Wayland" — o sea por conveniencia, no por
-técnica. Y el path X11 Direct-Mode **funciona** en este rig (fue el original; el control de
-60 Hz da imagen perfecta por ahí). Para *este* experimento se puede volver a X11 a propósito.
+**The path that was ruled out for the wrong reason: xorg.conf's `Option "CustomEDID"`.**
+It was ruled out with "X11 only, and we're going with Wayland" — that is, for convenience, not for
+technical reasons. And the X11 Direct-Mode path **works** on this rig (it was the original; the
+60 Hz control gives a perfect image through it). For *this* experiment, going back to X11 on purpose is fine.
 
-Receta concreta:
+Concrete recipe:
 
-1. Partir de `hmd.edid` (384 bytes) y agregar DTDs de 61/72/75/80 Hz manteniendo H total y
-   porches, variando sólo el V blanking (el mismo eje que ya usa el EDID real entre sus modos
-   de 60 y 90).
-2. Corregir checksums de bloque.
-3. `Option "CustomEDID" "DP-0:/ruta/g2-sweep.bin"` y correr `hmd-vk` en cada modo, con
-   verificación física.
+1. Start from `hmd.edid` (384 bytes) and add DTDs for 61/72/75/80 Hz, keeping H total and
+   porches unchanged, varying only V blanking (the same axis the real EDID already uses between its
+   60 and 90 Hz modes).
+2. Fix block checksums.
+3. `Option "CustomEDID" "DP-0:/path/g2-sweep.bin"` and run `hmd-vk` in each mode, with
+   physical verification.
 
-Bonus: la misma vía sirve para un EDID con el byte `0x14` en `0xA0` (8 bpc declarado), que
-**reproduce el arreglo del bpc sin parchear el driver**. Eso le baja muchísimo el costo a
-NVIDIA para reproducir el bug, y conviene ofrecérselo en el hilo.
+Bonus: the same approach works for an EDID with byte `0x14` set to `0xA0` (8 bpc declared), which
+**reproduces the bpc fix without patching the driver**. That drastically lowers the cost for
+NVIDIA to reproduce the bug, and it's worth offering it in the thread.
 
-## 5 — Hecho hoy. Negativo, y encontró un error en el reporte publicado
+## 5 — Done today. Negative, and it found an error in the published report
 
-Se decodificó el EDID crudo a mano, byte por byte, y se comparó contra lo que programa nvkms.
+The raw EDID was decoded by hand, byte by byte, and compared against what nvkms programs.
 
-### El error: no es DisplayID 2.0, es DisplayID 1.2
+### The error: it's not DisplayID 2.0, it's DisplayID 1.2
 
-Bloque 2 del EDID: `70 12 79 00 00 03 00 28 ...`
+EDID block 2: `70 12 79 00 00 03 00 28 ...`
 
-- `0x70` = tag de extensión DisplayID.
-- **`0x12` = versión 1, revisión 2.** DisplayID **1.2**, no 2.0.
-- El bloque de datos es tag `0x03`, longitud `0x28` = 40 bytes = **dos descriptores Type I
-  Detailed Timing de 20 bytes** (el tag `0x03` es Type VII recién en DisplayID 2.0; de ahí
-  salió la confusión).
+- `0x70` = DisplayID extension tag.
+- **`0x12` = version 1, revision 2.** DisplayID **1.2**, not 2.0.
+- The data block is tag `0x03`, length `0x28` = 40 bytes = **two 20-byte Type I
+  Detailed Timing descriptors** (tag `0x03` only becomes Type VII in DisplayID 2.0; that's
+  where the confusion came from).
 
-Y esto **importa**, porque `nvt_edid.c:1101` bifurca por versión:
+And this **matters**, because `nvt_edid.c:1101` branches on version:
 
 ```c
 case NVT_EDID_EXTENSION_DISPLAYID:
@@ -147,74 +147,74 @@ case NVT_EDID_EXTENSION_DISPLAYID:
         getDisplayIdEDIDExtInfo(...);
 ```
 
-`0x12 & 0xF0 = 0x10` → el G2 va por el parser **DisplayID 1.3**. Y en todo el árbol,
-`input.u.digital.bpc` se escribe en **exactamente dos lugares**:
+`0x12 & 0xF0 = 0x10` → the G2 goes through the **DisplayID 1.3** parser. And across the entire tree,
+`input.u.digital.bpc` is written in **exactly two places**:
 
 ```
-nvt_edid.c:914-932                 <- el switch del bloque base (default: bpc = 0)
-nvt_edidext_displayid20.c:314      <- Display Parameters de DisplayID 2.x
+nvt_edid.c:914-932                 <- the base block switch (default: bpc = 0)
+nvt_edidext_displayid20.c:314      <- Display Parameters for DisplayID 2.x
 ```
 
-El parser 1.3 **no lo toca nunca**.
+The 1.3 parser **never touches it**.
 
-**El reporte publicado dice "its DisplayID 2.0 extension carries only a Type VII timing
-block, no Display Parameters block, so nothing overrides this".** La conclusión es correcta
-pero el razonamiento no, y la versión correcta es *más fuerte*: no es que a este DisplayID le
-falte el bloque 0x21 — es que **para cualquier sink con extensión DisplayID 1.x el único
-sitio de override es inalcanzable por construcción**. O sea que el clamp a 6 bpc es
-*inevitable* para todo sink DisplayPort que deje la profundidad sin declarar en el bloque
-base y no traiga DisplayID 2.x con Display Parameters. Hay que corregirlo en el hilo: un
-ingeniero de NVIDIA lo va a ver, y corregido el argumento generaliza mejor.
+**The published report says "its DisplayID 2.0 extension carries only a Type VII timing
+block, no Display Parameters block, so nothing overrides this".** The conclusion is correct
+but the reasoning isn't, and the correct version is *stronger*: it's not that this DisplayID is
+missing the 0x21 block — it's that **for any sink with a DisplayID 1.x extension, the only
+override site is unreachable by construction**. In other words, the clamp to 6 bpc is
+*inevitable* for every DisplayPort sink that leaves depth undeclared in the base block
+and doesn't carry DisplayID 2.x with Display Parameters. This needs to be corrected in the thread: an
+NVIDIA engineer will see it, and once fixed the argument generalizes better.
 
-### Los modelines: coinciden exactamente. Segunda causa raíz, no hay
+### The modelines: they match exactly. No second root cause
 
-| fuente | pclk | H act/front/sync/back | V act/front/sync/back | refresh |
+| source | pclk | H act/front/sync/back | V act/front/sync/back | refresh |
 |---|---|---|---|---|
 | DisplayID desc #1 (preferred) | 905.40 MHz | 4320 / 50 / 4 / 46 | 2160 / 16 / 2 / 98 | 90.00 Hz |
 | DisplayID desc #2 | 709.15 MHz | 4320 / 50 / 4 / 46 | 2160 / 14 / 2 / 498 | 60.00 Hz |
-| DTD del bloque base | 428.58 MHz | 2880 / 50 / 4 / 46 | 1440 / 18 / 2 / 138 | 90.00 Hz |
+| Base block DTD | 428.58 MHz | 2880 / 50 / 4 / 46 | 1440 / 18 / 2 / 138 | 90.00 Hz |
 
-Los tres, con polaridad `+H +V` (byte 17 del DTD = `0x1e`; bit 15 de los campos de front
-porch en los descriptores DisplayID). **Coinciden byte a byte con lo que reporta
-`drmModeGetConnector`** (`docs/13`) y con el raster del log (`raster 2980 x 1598`,
+All three, with `+H +V` polarity (DTD byte 17 = `0x1e`; bit 15 of the front
+porch fields in the DisplayID descriptors). **They match byte for byte what
+`drmModeGetConnector` reports** (`docs/13`) and the log's raster (`raster 2980 x 1598`,
 `pclk 428580000`).
 
-Así que el driver programa exactamente el timing que el casco declara. Lo que **queda**
-abierto de este ítem es sólo la mitad que necesita Windows: comparar contra el modeline que
-programa Windows. Sale gratis junto con la captura del ítem 2.
+So the driver programs exactly the timing the headset declares. What **remains**
+open on this item is only the Windows-side half: comparing against the modeline that
+Windows programs. It comes for free alongside the item 2 capture.
 
-## 6 y canal — adjuntos armados, listos para subir
+## 6 and channel — attachments assembled, ready to upload
 
-Todo en `forum-attachments/`:
+Everything is in `forum-attachments/`:
 
-| archivo | tamaño | qué es |
+| file | size | what it is |
 |---|---|---|
-| `g2-edid.zip` | 2.4 KB | EDID crudo + copia con 8 bpc + decode anotado + README |
-| `nvidia-bug-report.log.gz` | 545 KB | capturado con el parche puesto (renombrado al nombre que espera NVIDIA) |
-| `0004-nvkms-no-6bpc-clamp.patch.txt` | 2.8 KB | el parche, con `.txt` porque el foro no acepta `.patch` |
+| `g2-edid.zip` | 2.4 KB | raw EDID + copy with 8 bpc + annotated decode + README |
+| `nvidia-bug-report.log.gz` | 545 KB | captured with the patch applied (renamed to the filename NVIDIA expects) |
+| `0004-nvkms-no-6bpc-clamp.patch.txt` | 2.8 KB | the patch, with `.txt` because the forum doesn't accept `.patch` |
 
-Los `.bin` van dentro del `.zip` porque Discourse rechaza esa extensión suelta.
+The `.bin` files go inside the `.zip` because Discourse rejects that extension on its own.
 
-**Ojo con el bug report:** lleva hostname, logs de kernel y rutas del usuario. Es lo normal en
-ese foro, pero conviene saberlo antes de subirlo.
+**Heads up on the bug report:** it carries the hostname, kernel logs, and user paths. That's normal for
+that forum, but it's worth knowing before uploading it.
 
-El EDID de repro (`g2-edid-8bpc-repro.bin`) sale de `scripts/edid-tool.py set-bpc`: byte 0x14
-`0x80`→`0xA0` y checksum `0xE8`→`0xC8`, dos bytes y nada más. Le permite a NVIDIA reproducir
-la mitad del bpc **sin compilar el driver**, y es la misma vía que necesita el barrido del
-ítem 4.
+The repro EDID (`g2-edid-8bpc-repro.bin`) comes from `scripts/edid-tool.py set-bpc`: byte 0x14
+`0x80`→`0xA0` and checksum `0xE8`→`0xC8`, two bytes and nothing else. It lets NVIDIA reproduce
+the bpc half **without building the driver**, and it's the same approach the item 4 sweep
+needs.
 
-Y abrir el issue en `NVIDIA/open-gpu-kernel-modules`: `nvkms-dpy.c` y `nvt_edid.c` viven ahí,
-y el issue lo mira ingeniería directo. Texto listo en `docs/14`.
+And open the issue on `NVIDIA/open-gpu-kernel-modules`: `nvkms-dpy.c` and `nvt_edid.c` live there,
+and the issue gets seen by engineering directly. Text ready in `docs/14`.
 
 ---
 
-## Orden propuesto
+## Proposed order
 
-1. **Editar el post original** (no responder) con la corrección del DisplayID —que lo
-   fortalece—, los tres negativos nuevos y los adjuntos. Texto completo listo para pegar en
-   `docs/14`. Después abrir el issue en GitHub y linkearlo desde el post.
-2. **Barrido de refresh por `CustomEDID` en X11** (61/72/75/80 Hz). Es el que más discrimina
-   y no depende de nadie. Sale del mismo trabajo el EDID de repro sin parche para NVIDIA.
-3. **Captura USBPcap en Windows** de la transición 60→90, y de paso el modeline que programa
-   Windows. Un boot, kit ya armado.
-4. DPCD por RM control call. Sólo si 2 y 3 no dan nada.
+1. **Edit the original post** (not reply) with the DisplayID correction —which strengthens it—,
+   the three new negative results, and the attachments. Full text ready to paste, in
+   `docs/14`. Then open the issue on GitHub and link it from the post.
+2. **Refresh sweep via `CustomEDID` on X11** (61/72/75/80 Hz). It's the most discriminating
+   one and doesn't depend on anyone else. The unpatched repro EDID for NVIDIA comes out of the same work.
+3. **USBPcap capture on Windows** of the 60→90 transition, and along the way the modeline that
+   Windows programs. One boot, kit already set up.
+4. DPCD via RM control call. Only if 2 and 3 turn up nothing.

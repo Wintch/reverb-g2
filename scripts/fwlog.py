@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Lee el LOG DE FIRMWARE del casco en texto plano, por HID.
+"""Reads the headset's FIRMWARE LOG in plain text, over HID.
 
-El G2 emite mensajes `0x03 DEBUG` de 509 bytes por la interfaz HoloLens Sensors, con el log
-interno de su firmware en ASCII. Ejemplos capturados:
+The G2 emits 509-byte `0x03 DEBUG` messages over the HoloLens Sensors interface, with the
+internal log of its firmware in ASCII. Captured examples:
 
     RequestImuDisable forSpi=0
     ImuDisable Req=0 Spi=0
@@ -11,15 +11,15 @@ interno de su firmware en ASCII. Ejemplos capturados:
     ERROR: CommandSet st 0, cmd 0, reqCmd 23
     ICM start status=0
 
-Formato de cada entrada dentro del paquete:
-    magic "Dlo+" | 4 bytes (timestamp) | 2 bytes (secuencia) | 1 byte (nivel?) | texto ASCII
-Un paquete puede traer VARIAS entradas concatenadas, rellenadas con ceros.
+Format of each entry within the packet:
+    magic "Dlo+" | 4 bytes (timestamp) | 2 bytes (sequence) | 1 byte (level?) | ASCII text
+A packet can carry SEVERAL entries concatenated, padded with zeros.
 
-IMPORTANTE: el canal esta MUDO hasta que alguien hace la secuencia de configuracion del
-casco. Nuestro `hmd-vk` no la hace; `monado-service` si. O sea que para capturar hay que
-levantar Monado (o replicar su secuencia 0x0b -> 0x06 -> 0x04 -> 0x08).
+IMPORTANT: the channel is SILENT until someone performs the headset's configuration
+sequence. Our `hmd-vk` doesn't do it; `monado-service` does. So to capture anything you
+need to bring Monado up (or replicate its 0x0b -> 0x06 -> 0x04 -> 0x08 sequence).
 
-  ./fwlog.py [segundos]
+  ./fwlog.py [seconds]
 """
 import glob, os, re, select, sys, time
 
@@ -42,7 +42,7 @@ def find(vp):
 
 
 def entries(buf):
-    """Devuelve (seq, texto) por cada entrada dentro del paquete."""
+    """Returns (seq, text) for each entry within the packet."""
     out = []
     for m in re.finditer(re.escape(MAGIC), buf):
         p = m.end()
@@ -62,9 +62,9 @@ def main():
     secs = float(sys.argv[1]) if len(sys.argv) > 1 else 60
     p = find(SENSORS)
     if not p:
-        sys.exit("no encuentro el HoloLens Sensors 045e:0659")
+        sys.exit("can't find the HoloLens Sensors 045e:0659")
     fd = os.open(p, os.O_RDONLY | os.O_NONBLOCK)
-    print(f"  escuchando {p} durante {secs:.0f}s (necesita Monado corriendo para que hable)")
+    print(f"  listening on {p} for {secs:.0f}s (needs Monado running for it to talk)")
 
     t0 = time.time()
     seen = set()
@@ -87,7 +87,7 @@ def main():
                 mark = "  !!" if ("ERROR" in txt or "err" in txt.lower() or
                                   "fail" in txt.lower()) else "    "
                 print(f"{mark}[{time.time()-t0:6.2f}s] seq={seq:<6} {txt}")
-    print(f"\n  {n} entradas de log del firmware")
+    print(f"\n  {n} firmware log entries")
 
 
 main()

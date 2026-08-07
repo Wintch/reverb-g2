@@ -1,5 +1,5 @@
-# Estados de panel medidos en LINUX (2026-08-04). Referencia para el diff.
-# formato: modo | mensaje DEVICE_STATUS 0x05 completo (33 bytes)
+# Panel states measured on LINUX (2026-08-04). Reference for the diff.
+# format: mode | complete DEVICE_STATUS 0x05 message (33 bytes)
  05 00 01 01 00 3c 00 00 00 05 2c 1e 02 00 00 00 00 00 06 44 11 72 0a 00 ff ff ff ff ff ff ff ff 02
  05 00 01 01 00 3c 00 00 00 05 2c 1e 02 00 77 00
  05 00 01 01 00 3c 00 00 00 05 2c 1e 02 00 77 00 00 00 06 44 11 72 0a 01 00 80 00 80 ff ff ff ff 02

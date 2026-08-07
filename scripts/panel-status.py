@@ -1,28 +1,28 @@
 #!/usr/bin/env python3
-"""Escucha lo que el CASCO dice sobre su propio panel, por HID.
+"""Listens to what the HEADSET says about its own panel, over HID.
 
-El companion (03f0:0580) manda un mensaje DEVICE_STATUS (0x05) cuando cambia el estado de
-pantalla. Del comentario de Monado en wmr_hmd.c (control_read_packets):
+The companion (03f0:0580) sends a DEVICE_STATUS (0x05) message when the screen
+state changes. From the Monado comment in wmr_hmd.c (control_read_packets):
 
     On Reverb G1 this message is received twice after having sent an 'enable screen' command.
     The first one is received promptly. The second one is received a few seconds later once
     the HMD screen backlight VISIBLY POWERS ON.
-      1er mensaje: 05 00 01 01 00 00 00 00 00 00 00
-      2do mensaje: 05 01 01 01 01 00 00 00 00 00 00
+      1st message: 05 00 01 01 00 00 00 00 00 00 00
+      2nd message: 05 01 01 01 01 00 00 00 00 00 00
 
-O sea que el hardware nos avisa cuando el panel realmente prendió. Es la unica instrumentacion
-del lado del SINK que tenemos: todo lo demas (Vulkan, el log de NVIDIA) reporta exito con el
-panel muerto.
+In other words, the hardware tells us when the panel actually turned on. It's the only
+SINK-side instrumentation we have: everything else (Vulkan, the NVIDIA log) reports
+success with a dead panel.
 
-Idea del experimento: capturar esto mientras se pide 60Hz (engancha) y mientras se pide 90Hz
-(no engancha), y diffear. Si los bytes difieren, el casco nos esta diciendo donde se rompe.
+Experiment idea: capture this while requesting 60Hz (locks) and while requesting 90Hz
+(does not lock), and diff them. If the bytes differ, the headset is telling us where it breaks.
 
-  ./panel-status.py [segundos]
+  ./panel-status.py [seconds]
 
-Mensajes conocidos (wmr_protocol.h):
-  0x01 IPD_VALUE     byte1 = sensor de proximidad, bytes2-3 = IPD
-  0x02 UNKNOWN_02    visto junto a eventos de proximidad en el G1
-  0x05 DEVICE_STATUS estado del dispositivo / pantalla   <-- el que importa
+Known messages (wmr_protocol.h):
+  0x01 IPD_VALUE     byte1 = proximity sensor, bytes2-3 = IPD
+  0x02 UNKNOWN_02    seen alongside proximity events on the G1
+  0x05 DEVICE_STATUS device/screen status   <-- the one that matters
 """
 import glob, os, select, sys, time
 
@@ -48,9 +48,9 @@ def main():
     secs = float(sys.argv[1]) if len(sys.argv) > 1 else 60
     dev = find_companion()
     if not dev:
-        sys.exit("no encuentro el companion 03f0:0580")
-    print(f"  escuchando {dev} durante {secs:.0f}s")
-    print(f"  (el companion puede RE-ENUMERAR con el screen-off; si desaparece, se reabre)")
+        sys.exit("can't find companion 03f0:0580")
+    print(f"  listening on {dev} for {secs:.0f}s")
+    print(f"  (the companion may RE-ENUMERATE on screen-off; if it disappears, it's reopened)")
 
     t0 = time.time()
     fd = None
@@ -73,20 +73,20 @@ def main():
             except OSError:
                 os.close(fd)
                 fd = None
-                print(f"  [{time.time()-t0:6.2f}s] -- el companion se fue, reabriendo --")
+                print(f"  [{time.time()-t0:6.2f}s] -- companion went away, reopening --")
                 break
             if not b:
                 continue
             n += 1
             rid = b[0]
-            # El mensaje tiene 33 bytes. Imprimirlo ENTERO: los bytes de la segunda mitad
-            # tambien cambian entre modos y truncar a 16 tiraba la mitad del dato.
+            # The message is 33 bytes. Print it in FULL: the second-half bytes
+            # also change between modes and truncating to 16 dropped half the data.
             print(f"  [{time.time()-t0:6.2f}s] 0x{rid:02x} {NAMES.get(rid,'?'):<14} "
                   f"len={len(b):<3} {b.hex(' ')}")
-    print(f"\n  total: {n} mensajes del companion")
+    print(f"\n  total: {n} messages from the companion")
     if n == 0:
-        print("  (ninguno -- el companion solo habla cuando cambia algo: hay que "
-              "activar/apagar el panel mientras esto escucha)")
+        print("  (none -- the companion only speaks when something changes: you need to "
+              "turn the panel on/off while this is listening)")
 
 
 main()

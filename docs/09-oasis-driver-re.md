@@ -1,97 +1,97 @@
-# 09 — Qué le manda Windows al panel del G2 (leído del driver Oasis)
+# 09 — What Windows sends to the G2 panel (read from the Oasis driver)
 
-**Resultado en una línea: el driver Oasis, que corre el G2 a 90 Hz en Windows NO le manda al
-casco ningún comando de modo. El único comando de panel que existe es "encender pantalla",
-y Monado ya lo manda.**
+**Bottom line: the Oasis driver, which runs the G2 at 90 Hz on Windows, does NOT send the
+headset any mode command. The only panel command that exists is "enable display",
+and Monado already sends it.**
 
-Esto cierra, con el binario en la mano, la hipótesis que el proyecto arrastró dos capítulos:
-*"a nadie le está diciendo al casco que vaya a 90 Hz"*.
+This closes, binary in hand, the hypothesis the project had been carrying for two chapters:
+*"nobody is telling the headset to go to 90 Hz"*.
 
-## De dónde salió
+## Where this came from
 
-En el disco de Windows del rig, sin bootear Windows, montando las NTFS read-only:
+On the rig's Windows disk, without booting Windows, mounting the NTFS partitions read-only:
 
 ```bash
 sudo mount -t ntfs-3g -o ro,noatime /dev/nvme0n1p4 /mnt/win4
 ```
 
-Hay **dos** drivers de WMR instalados por Steam, y la diferencia importa:
+There are **two** WMR drivers installed by Steam, and the difference matters:
 
-| | qué es | sirve para esto |
+| | what it is | useful for this |
 |---|---|---|
-| `MixedRealityVRDriver` (Microsoft) | puente de SteamVR al runtime WMR del SO | **no** — delega, no toca el USB |
-| `Oasis Driver for Windows Mixed Reality` (mbucchia) | driver standalone, habla con el casco **directo** | **sí** |
+| `MixedRealityVRDriver` (Microsoft) | bridges SteamVR to the OS's WMR runtime | **no** — delegates, doesn't touch USB |
+| `Oasis Driver for Windows Mixed Reality` (mbucchia) | standalone driver, talks to the headset **directly** | **yes** |
 
-El de mbucchia es el bueno. Su manifiesto se ata al Hololens Sensors por VID:PID, o sea al mismo
-device que usa Monado:
+The mbucchia one is the one that matters. Its manifest binds to the Hololens Sensors by VID:PID, i.e. the same
+device Monado uses:
 
 ```json
 { "name": "oasis", "hmd_presence": [ "045E.0659" ] }
 ```
 
-Binarios relevantes, en `bin/win64/`:
+Relevant binaries, in `bin/win64/`:
 
 ```
-driver_oasis.dll        el driver SteamVR (importa HID.DLL directo)
-HololensSensors.dll     sensores + panel, en userspace (importa HID.DLL directo)
-MRUSBHost.dll           capa USB/HID cruda
-MROEMFwHost.dll         firmware OEM
-unlock/unlock_wmr.exe   examinado 2026-08-06, ver abajo
+driver_oasis.dll        the SteamVR driver (imports HID.DLL directly)
+HololensSensors.dll     sensors + panel, in userspace (imports HID.DLL directly)
+MRUSBHost.dll           raw USB/HID layer
+MROEMFwHost.dll         OEM firmware
+unlock/unlock_wmr.exe   examined 2026-08-06, see below
 ```
 
-La ruta de build quedó embebida: `D:\a\WMR-Standalone-Oasis-Driver\...\driver_oasis\HmdDriver.cpp`
-— es un build de GitHub Actions, así que existe un repo con ese nombre. No se buscó.
+The build path was left embedded: `D:\a\WMR-Standalone-Oasis-Driver\...\driver_oasis\HmdDriver.cpp`
+— it's a GitHub Actions build, so a repo with that name exists. Not searched for.
 
-## Método (sin ghidra ni radare2, sólo binutils)
+## Method (no ghidra or radare2, just binutils)
 
-1. `strings` para ubicar los candidatos.
-2. `objdump -h` para las secciones, y convertir offset de archivo → VA.
-3. `objdump -d` y buscar la VA del string en el desensamblado: objdump ya resuelve los
-   `lea` rip-relativos, así que las xrefs se encuentran por texto.
-4. Para las llamadas a API importada: `objdump -p` da la RVA del thunk en la IAT, y se
-   busca `call *0x...(%rip)  # 0x<thunk>` en el desensamblado.
+1. `strings` to locate candidates.
+2. `objdump -h` for the sections, and convert file offset → VA.
+3. `objdump -d` and search for the string's VA in the disassembly: objdump already resolves
+   rip-relative `lea` instructions, so xrefs can be found by text search.
+4. For calls to imported APIs: `objdump -p` gives the thunk's RVA in the IAT, and you
+   search for `call *0x...(%rip)  # 0x<thunk>` in the disassembly.
 
-El script está en el repo del lab como `scripts/xref.py` (uso:
+The script is in the lab repo as `scripts/xref.py` (usage:
 `xref.py <dll> <asm> <substring>...`).
 
-## Lo que se encontró
+## What was found
 
-### El único comando de panel: Display Enable
+### The only panel command: Display Enable
 
-`driver_oasis.dll` tiene **un solo** call site de `HidD_SetFeature` en todo el binario:
+`driver_oasis.dll` has **only one** `HidD_SetFeature` call site in the entire binary:
 
 ```asm
 mov  $0x2,%ecx     ; ReportType = HidP_Feature
 mov  $0x3,%edx     ; UsagePage  = 0x03   (VR Controls)
 xor  %r8d,%r8d     ; LinkCollection = 0
 mov  $0x21,%r9d    ; Usage      = 0x21   (Display Enable)
-mov  %r13d,0x20(%rsp)   ; el valor (0/1)
+mov  %r13d,0x20(%rsp)   ; the value (0/1)
 call *... ; HidP_SetUsageValue
 call *... ; HidD_SetFeature
 ```
 
-`HololensSensors.dll` hace lo mismo, escrito distinto — misma página, mismo usage:
+`HololensSensors.dll` does the same thing, written differently — same page, same usage:
 
 ```asm
 mov  $0x21,%r9d          ; Usage = 0x21
 lea  -0x1e(%r9),%edx     ; UsagePage = 0x21-0x1e = 0x03
 ```
 
-**Usage Page 0x03 / Usage 0x21 = "Display Enable" del HID Usage Table de VR Controls.** Es
-exactamente el `{0x04, 0x01}` de `wmr_hmd_screen_enable_reverb()`. Windows lo expresa por
-usages (deja que el report descriptor decida el report ID); Monado escribe los bytes a mano.
-El efecto sobre el casco es el mismo.
+**Usage Page 0x03 / Usage 0x21 = "Display Enable" from the VR Controls HID Usage Table.** It's
+exactly the `{0x04, 0x01}` from `wmr_hmd_screen_enable_reverb()`. Windows expresses it via
+usages (letting the report descriptor decide the report ID); Monado writes the bytes by hand.
+The effect on the headset is the same.
 
-Diferencia de estilo, no de contenido: el driver arma el reporte con `HidP_SetUsageValue` y
-saca el report ID del `HIDP_VALUE_CAPS` (`movzbl 0x2(%rax)` = campo `ReportID`), en vez de
-hardcodearlo.
+Difference of style, not content: the driver builds the report with `HidP_SetUsageValue` and
+pulls the report ID from `HIDP_VALUE_CAPS` (`movzbl 0x2(%rax)` = `ReportID` field), instead of
+hardcoding it.
 
-### No hay comando de refresh rate. Se buscó y no está.
+### There is no refresh-rate command. It was searched for and isn't there.
 
-Dos falsos positivos que conviene dejar anotados para que nadie los vuelva a perseguir:
+Two false positives worth documenting so nobody chases them again:
 
-**`HmdDriver_SetFrameRate` es de las cámaras, no del panel.** Es un método RPC (el driver
-usa ZMQ + jsoncpp) y sus parámetros lo delatan:
+**`HmdDriver_SetFrameRate` belongs to the cameras, not the panel.** It's an RPC method (the driver
+uses ZMQ + jsoncpp) and its parameters give it away:
 
 ```
 HmdDriver_SetFrameRate
@@ -99,25 +99,25 @@ HmdDriver_SetFrameRate
     SensorFrameRate
 ```
 
-ISP = Image Signal Processor. Está en medio del bloque de cámaras
+ISP = Image Signal Processor. It sits in the middle of the camera block
 (`HmdDriver_GetCameraIntrinsics`, `HmdDriver_SetCameraCompatibilityMode`,
-`HmdDriver_StartVideoStream`...). Concuerda con el string de `HololensSensors.dll`:
-`OV7251SetFrameRate: 90hz requested but not USB3.0SS` — el OV7251 es el sensor de las
-cámaras de tracking. **Ese 90 Hz es otro 90 Hz.**
+`HmdDriver_StartVideoStream`...). This matches the string in `HololensSensors.dll`:
+`OV7251SetFrameRate: 90hz requested but not USB3.0SS` — the OV7251 is the tracking cameras'
+sensor. **That 90 Hz is a different 90 Hz.**
 
-**`Detected change of refresh rate %.0f -> %.0f` es contabilidad de SteamVR.** El código que
-lo emite lee la propiedad `0x7d2` (2002 = `Prop_DisplayFrequency_Float`) del contenedor de
-propiedades, la compara con la guardada, y si cambió recorre una tabla interna de modos
-calculando `num/den` para actualizar `0x7d1` (2001 = `Prop_SecondsFromVsyncToPhotons`). No
-sale un byte hacia el casco. `preferredRefreshRate` es la clave de settings de SteamVR que
-lee (está pegada al string `steamvr` en `.rdata`).
+**`Detected change of refresh rate %.0f -> %.0f` is SteamVR bookkeeping.** The code that
+emits it reads property `0x7d2` (2002 = `Prop_DisplayFrequency_Float`) from the property
+container, compares it against the stored value, and if it changed, walks an internal table of
+modes computing `num/den` to update `0x7d1` (2001 = `Prop_SecondsFromVsyncToPhotons`). Not a
+single byte goes out to the headset. `preferredRefreshRate` is the SteamVR settings key it
+reads (it sits next to the string `steamvr` in `.rdata`).
 
-Los otros cuatro `HidP_SetUsageValue` del driver son Usage Page `0x0E` (Haptics), usages
-`0x21`/`0x23`, ReportType Output: rumble de los controllers.
+The other four `HidP_SetUsageValue` calls in the driver are Usage Page `0x0E` (Haptics), usages
+`0x21`/`0x23`, ReportType Output: controller rumble.
 
-### Strings del firmware del casco (para el que siga)
+### Headset firmware strings (for whoever continues this)
 
-`HololensSensors.dll` trae strings de log del firmware, útiles como mapa del hardware:
+`HololensSensors.dll` carries firmware log strings, useful as a hardware map:
 
 ```
 Backlight_PowerOn / Backlight_PowerOff / BacklightState / DisplayPanel
@@ -128,82 +128,82 @@ panel_register_read   panel_backlight_duty   panel_brightness_control   panel_B9
 Part: LIF-MD6000-6CSFBGA81
 ```
 
-`LIF-MD6000` es un **Lattice CrossLink**, el puente MIPI/DP del casco. Que el firmware tenga
-un concepto de `refresh_rate` y `SelectedRefreshRate` no contradice lo de arriba: el panel
-sabe a qué refresh está: simplemente **nadie se lo dice por HID desde el host** — lo deduce
-del timing de video que le llega.
+`LIF-MD6000` is a **Lattice CrossLink**, the headset's MIPI/DP bridge. The fact that the firmware has
+a concept of `refresh_rate` and `SelectedRefreshRate` doesn't contradict the above: the panel
+knows what refresh it's at — it simply **isn't told over HID from the host** — it infers it
+from the video timing it receives.
 
-## Qué se concluye, y qué NO
+## What is concluded, and what is NOT
 
-**Se concluye:** no falta ningún comando propietario. La secuencia HID de Monado es correcta
-y suficiente. El panel adopta el refresh del video que recibe. `docs/07-windows-hid-capture.md`
-queda archivado: ya no hace falta bootear Windows para capturar nada.
+**Concluded:** no proprietary command is missing. Monado's HID sequence is correct
+and sufficient. The panel adopts the refresh rate of the video it receives. `docs/07-windows-hid-capture.md`
+is now archived: there's no longer any need to boot Windows to capture anything.
 
-Es la **segunda** vez que esta hipótesis muere. La primera fue por argumento (Project-VR
-llega a 90 Hz sin comandos propietarios, commit `3e2e7ac`); esta es por evidencia directa.
-Entre las dos hubo un tramo en el que `CLAUDE.md` seguía dando la hipótesis por viva y se la
-volvió a citar como "la única que explica los resultados". Corregido.
+This is the **second** time this hypothesis dies. The first was by argument (Project-VR
+reaches 90 Hz without proprietary commands, commit `3e2e7ac`); this one is by direct evidence.
+Between the two there was a stretch where `CLAUDE.md` still treated the hypothesis as alive and
+cited it again as "the only one that explains the results." Corrected.
 
-**NO se concluye** que el problema sea de NVIDIA por eliminación. Lo que queda abierto es
-qué del enlace de video a 90 Hz no le gusta al casco — ver el análisis de ancho de banda en
-`docs/04-lab-90hz.md`, que también deja mal parada a la teoría de DSC.
+**NOT concluded:** that the problem is NVIDIA's by elimination. What remains open is
+what about the 90 Hz video link the headset doesn't like — see the bandwidth analysis in
+`docs/04-lab-90hz.md`, which also leaves the DSC theory in bad shape.
 
-## Cerrado despues (2026-08-05)
+## Closed afterward (2026-08-05)
 
-- **`unlock_wmr.exe`** resulto ser mucho mas que su nombre: maneja **direct mode y estado de
-  display** (`DirectModeHelper_Ctor`, `DisableDirectMode`, `SetDisplayState`, `Direct Mode: %s`,
-  *"Device does not need manual activation of the display"*), usando
-  `Windows.Devices.Display.Core`. Y trae rutas por fabricante de GPU: `ADL2_Display_*` y
-  `agsSetDisplayMode` para **AMD**. O sea que en Windows una app puede pedir timings
-  arbitrarios; en Linux NVIDIA no lo permite (medido: `vkCreateDisplayModeKHR` y
-  `drmModeSetCrtc` rechazan todo lo que no este en el EDID).
-- **`MROEMFwHost.dll`** es **exclusivamente el actualizador de firmware**: `BeginUpdate`,
-  `CommitBuffer`, `CompleteUpdate`, verificacion de checksum, `WriteData`. Busca los reports
-  por *usage* HID. Su `ReadDeviceInfo` sirve para decidir si hay que actualizar, no para leer
-  estado del panel. **No hay camino ahi para consultar al ANX7530 en runtime.** Anotar que ese
-  binario SI puede escribir firmware al casco: territorio en el que no conviene meterse sin
-  una razon muy buena.
-- **`client_utility.exe`** es un helper de la API de Steam (`STEAMSCREENSHOTS_INTERFACE_VERSION003`)
-  y nada mas.
+- **`unlock_wmr.exe`** turned out to be a lot more than its name suggests: it handles **direct mode and
+  display state** (`DirectModeHelper_Ctor`, `DisableDirectMode`, `SetDisplayState`, `Direct Mode: %s`,
+  *"Device does not need manual activation of the display"*), using
+  `Windows.Devices.Display.Core`. And it carries GPU-vendor-specific paths: `ADL2_Display_*` and
+  `agsSetDisplayMode` for **AMD**. In other words, on Windows an app can request arbitrary
+  timings; on Linux NVIDIA does not allow it (measured: `vkCreateDisplayModeKHR` and
+  `drmModeSetCrtc` reject anything not present in the EDID).
+- **`MROEMFwHost.dll`** is **exclusively the firmware updater**: `BeginUpdate`,
+  `CommitBuffer`, `CompleteUpdate`, checksum verification, `WriteData`. It looks up reports
+  by HID *usage*. Its `ReadDeviceInfo` is used to decide whether an update is needed, not to read
+  panel state. **There is no path there to query the ANX7530 at runtime.** Note that this
+  binary CAN write firmware to the headset: territory not worth getting into without
+  a very good reason.
+- **`client_utility.exe`** is a Steam API helper (`STEAMSCREENSHOTS_INTERFACE_VERSION003`)
+  and nothing else.
 
-Con eso los cuatro binarios del driver Oasis quedan abiertos y sin nada mas que sacar.
+With that, all four Oasis driver binaries have been opened up, with nothing more to extract.
 
-## Suelto, sin mirar
+## Loose ends, not looked at
 
-- `driver_oasis.dll` tiene secciones `.detourc`/`.detourd`: usa Microsoft Detours para
-  hookear APIs. No se investigó qué hookea.
-- Las particiones se montaron read-only en `/mnt/win{3,4,5}`. Desmontar con
+- `driver_oasis.dll` has `.detourc`/`.detourd` sections: it uses Microsoft Detours to
+  hook APIs. What it hooks was not investigated.
+- The partitions were mounted read-only at `/mnt/win{3,4,5}`. Unmount with
   `sudo umount /mnt/win3 /mnt/win4 /mnt/win5`.
 
-## `unlock_wmr.exe`: no manda ningún comando de vinculación (2026-08-06)
+## `unlock_wmr.exe`: doesn't send any pairing command (2026-08-06)
 
-Se retomó este binario buscando específicamente el protocolo de vinculación de
-controllers, a raíz de que un botón oculto en el compartimento de pilas puede desvincular
-un controller del casco (ver `docs/03-controllers.md`, sección "Vinculación / pairing" —
-ahí está la conclusión completa, esto es el detalle técnico de dónde salió).
+This binary was revisited specifically to look for the controller pairing
+protocol, prompted by the fact that a hidden button in the battery compartment can unpair
+a controller from the headset (see `docs/03-controllers.md`, section "Pairing" —
+that's where the full conclusion is, this is the technical detail of where it came from).
 
-Repo original: `github.com/mbucchia/Oasis-Driver-for-Windows-Mixed-Reality` — resultó ser
-sólo un issue tracker con wiki, sin código fuente publicado. La wiki sí tiene una página
-`Pairing-Motion-Controllers` con el procedimiento (físico, botón del controller).
+Original repo: `github.com/mbucchia/Oasis-Driver-for-Windows-Mixed-Reality` — turned out to be
+just an issue tracker with a wiki, no published source code. The wiki does have a page
+`Pairing-Motion-Controllers` with the procedure (physical, controller button).
 
-Imports de `unlock_wmr.exe`: `SETUPAPI.dll` (`SetupDiGetClassDevsW`,
+Imports of `unlock_wmr.exe`: `SETUPAPI.dll` (`SetupDiGetClassDevsW`,
 `SetupDiEnumDeviceInterfaces`, ...), `CFGMGR32.dll` (`CM_Get_Device_Interface_ListW`,
-`CM_Get_Device_Interface_PropertyW`) y `HID.DLL` — nada de Bluetooth (`bthprops`,
-`Windows.Devices.Bluetooth`, WinRT device-pairing APIs no aparecen en ningún lado). Mismo
-método que para Display Enable (`xref.py` sobre un `objdump -d` completo):
+`CM_Get_Device_Interface_PropertyW`) and `HID.DLL` — no Bluetooth at all (`bthprops`,
+`Windows.Devices.Bluetooth`, WinRT device-pairing APIs appear nowhere). Same
+method as for Display Enable (`xref.py` over a complete `objdump -d`):
 
-- Único call site de `HidP_SetUsageValue`/`HidD_SetFeature` en todo el binario: mismos
-  argumentos que ya se documentaron arriba para Display Enable — `UsagePage=0x3`,
-  `Usage=0x21`. **No hay un segundo comando HID distinto para vinculación.**
-- La función que contiene los strings `"Start pairing new %s motion controller"` /
+- Only call site of `HidP_SetUsageValue`/`HidD_SetFeature` in the entire binary: same
+  arguments already documented above for Display Enable — `UsagePage=0x3`,
+  `Usage=0x21`. **There is no second, separate HID command for pairing.**
+- The function containing the strings `"Start pairing new %s motion controller"` /
   `"Unpairing previous %s motion controller"` / `"Timeout pairing %s motion controller"`
-  es un loop de polling con sleeps (`Sleep(100)` x60 ≈ 6s de timeout) que llama a un
-  MessageBox-like (comparando el resultado contra 6/2 = IDYES/IDCANCEL) y strings como
-  `"Found controller device (paired through Headset): %s"` — es la UI esperando a que
-  `SetupDiGetClassDevsW` vea aparecer la interfaz HID del controller, no algo que dispara
-  la vinculación en el casco.
+  is a polling loop with sleeps (`Sleep(100)` x60 ≈ 6s timeout) that calls a
+  MessageBox-like function (comparing the result against 6/2 = IDYES/IDCANCEL) and strings like
+  `"Found controller device (paired through Headset): %s"` — it's the UI waiting for
+  `SetupDiGetClassDevsW` to see the controller's HID interface appear, not something that triggers
+  pairing on the headset.
 
-Conclusión: la vinculación es un handshake de radio interno al casco, disparado
-físicamente (botón del controller), sin comando de host que reproducir. Confirma y cierra
-lo que ya sugería `docs/03-controllers.md` de entrada ("no hay que aparear nada en
-Linux") — ahora con evidencia binaria, no sólo por lectura del driver Monado.
+Conclusion: pairing is a radio handshake internal to the headset, triggered
+physically (controller button), with no host command to replay. This confirms and closes
+what `docs/03-controllers.md` already suggested from the start ("nothing needs to be paired on
+Linux") — now with binary evidence, not just from reading the Monado driver.

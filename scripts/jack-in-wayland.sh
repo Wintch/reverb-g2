@@ -1,24 +1,24 @@
 #!/bin/bash
-# Levanta Monado en una sesion WAYLAND usando DRM lease, en vez del NVIDIA Direct-Mode
-# de X11. Es la via por la que Project-VR reporta el G2 corriendo a 4320x2160@90.
+# Starts Monado in a WAYLAND session using DRM lease, instead of NVIDIA Direct-Mode
+# from X11. This is the path by which Project-VR reports the G2 running at 4320x2160@90.
 #
-#   ./jack-in-wayland.sh [modo]     modo: 0 = 2880x1440@90
-#                                         1 = 4320x2160@90  (el que usa Project-VR)
-#                                         2 = 4320x2160@60  (el unico que anda hoy en X11)
+#   ./jack-in-wayland.sh [mode]     mode: 0 = 2880x1440@90
+#                                         1 = 4320x2160@90  (the one Project-VR uses)
+#                                         2 = 4320x2160@60  (the only one that works today in X11)
 #
-# Por que es MUCHO mas simple que jack-in.sh: en X11 hay que pelearle el display a X
-# (liberar DP-0, ciclar CRTC, restaurar la rotacion del portrait). Con DRM lease el
-# compositor Wayland nunca toma el HMD -- lo ve marcado como non-desktop y lo deja
-# arrendable. No se toca ningun monitor del escritorio.
+# Why this is MUCH simpler than jack-in.sh: in X11 you have to fight X for the display
+# (free DP-0, cycle the CRTC, restore the portrait rotation). With DRM lease the
+# Wayland compositor never takes the HMD -- it sees it marked as non-desktop and leaves it
+# leasable. No desktop monitor is touched.
 
 set -u
 
 MODE="${1:-1}"
-# "3dof" es sintaxis de jack-in.sh, no de este script — y atoi("3dof")=3 pedia un modo
-# inexistente en silencio (paso el 2026-08-06). Aca el argumento es SOLO el indice de modo.
+# "3dof" is jack-in.sh's syntax, not this script's — and atoi("3dof")=3 silently requested a
+# nonexistent mode (happened on 2026-08-06). Here the argument is ONLY the mode index.
 case "$MODE" in
     0|1|2) ;;
-    *) echo "modo invalido: '$MODE' (0 = 2880x1440@90, 1 = 4320x2160@90, 2 = 4320x2160@60)" >&2; exit 1 ;;
+    *) echo "invalid mode: '$MODE' (0 = 2880x1440@90, 1 = 4320x2160@90, 2 = 4320x2160@60)" >&2; exit 1 ;;
 esac
 VR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 [ -d "$HOME/vr/monado" ] && VR="$HOME/vr"
@@ -27,38 +27,38 @@ LOG="$VR/jack-in-wayland.log"
 SOCKET="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/monado_comp_ipc"
 
 if [ "${XDG_SESSION_TYPE:-}" != "wayland" ]; then
-    echo "Esto necesita una sesion WAYLAND (XDG_SESSION_TYPE=${XDG_SESSION_TYPE:-unset})." >&2
-    echo "Cerra sesion y elegi 'GNOME on Wayland' en SDDM." >&2
-    echo "OJO: hay DOS entradas llamadas solo 'GNOME' -- una es Wayland y la otra X11." >&2
-    echo "     KWin no sirve para esto: no ofrece el conector para lease (cap. 04)." >&2
+    echo "This needs a WAYLAND session (XDG_SESSION_TYPE=${XDG_SESSION_TYPE:-unset})." >&2
+    echo "Log out and choose 'GNOME on Wayland' in SDDM." >&2
+    echo "NOTE: there are TWO entries called just 'GNOME' -- one is Wayland and the other is X11." >&2
+    echo "     KWin doesn't work for this: it doesn't offer the connector for lease (chap. 04)." >&2
     exit 1
 fi
 
-[ -x "$SERVICE" ] || { echo "No encuentro monado-service en $SERVICE" >&2; exit 1; }
+[ -x "$SERVICE" ] || { echo "Can't find monado-service at $SERVICE" >&2; exit 1; }
 
-# Los cinco del casco (cap. 00). Si falta el companion, es el puerto USB, no Monado.
+# The headset's five devices (chap. 00). If the companion is missing, it's the USB port, not Monado.
 FOUND=$(lsusb | grep -cE "03f0:0580|045e:0659|04b4:650[46]|0bda:4c15")
-echo "Dispositivos USB del casco: $FOUND/5"
+echo "Headset USB devices: $FOUND/5"
 if [ "$FOUND" -lt 5 ]; then
-    echo "  !! Faltan dispositivos. Revisa el puerto USB antes de seguir (cap. 00)." >&2
+    echo "  !! Devices missing. Check the USB port before continuing (chap. 00)." >&2
     lsusb | grep -E "03f0:0580|045e:0659|04b4:650[46]|0bda:4c15" >&2
 fi
 
-# SIGKILL no limpia el socket, y un socket viejo hace fallar el arranque.
+# SIGKILL doesn't clean up the socket, and a stale socket makes startup fail.
 for p in $(pgrep -f "monado[-]service"); do kill -9 "$p" 2>/dev/null; done
 sleep 2
 rm -f "$SOCKET"
 
-echo "Arrancando Monado (modo $MODE) por DRM lease... log: $LOG"
+echo "Starting Monado (mode $MODE) via DRM lease... log: $LOG"
 
-# WMR_DISPLAY_INIT_SLEEP_SECONDS=2 es load-bearing igual que en X11: el panel se apaga
-# solo a los ~3s si no le llega senal de video, y con el default de 4s Monado despierta
-# cuando ya se apago.
+# WMR_DISPLAY_INIT_SLEEP_SECONDS=2 is load-bearing just like in X11: the panel turns off
+# on its own after ~3s if it doesn't receive a video signal, and with the default 4s Monado wakes up
+# when it has already turned off.
 #
-# XRT_NO_STDIN=1 tambien es obligatorio: sin eso Monado registra stdin en epoll y, lanzado
-# en background, muere con 'epoll_ctl(stdin) failed' -> IPC_MAINLOOP_FAILED_TO_INIT antes
-# de llegar siquiera al compositor. setsid + stdbuf -oL mantienen el log vivo (usar
-# `script` para darle un pty bufferea tanto que las fallas se vuelven ilegibles).
+# XRT_NO_STDIN=1 is also mandatory: without it Monado registers stdin in epoll and, launched
+# in the background, dies with 'epoll_ctl(stdin) failed' -> IPC_MAINLOOP_FAILED_TO_INIT before
+# even reaching the compositor. setsid + stdbuf -oL keep the log alive (using
+# `script` to give it a pty buffers so much that failures become unreadable).
 env XRT_COMPOSITOR_FORCE_WAYLAND_DIRECT=1 \
     XRT_COMPOSITOR_DESIRED_MODE="$MODE" \
     XRT_COMPOSITOR_LOG=debug \
@@ -74,32 +74,32 @@ for _i in $(seq 1 30); do
     sleep 1
 done
 
-# El socket aparece ANTES de que el compositor termine de loguear el backend y el modo,
-# asi que grepear apenas lo vemos sale vacio y parece un fallo. Esperamos al marcador.
+# The socket appears BEFORE the compositor finishes logging the backend and the mode,
+# so grepping as soon as we see it comes back empty and looks like a failure. We wait for the marker.
 for _i in $(seq 1 20); do
     grep -q "found display mode" "$LOG" && break
     sleep 1
 done
 
 echo
-echo "=== backend de compositor elegido ==="
-# ESTO es lo que hay que mirar. El string correcto lo emite compositor_try_window:
-#   "Target backend wayland-direct initialized!"   <- se uso DRM lease, el test vale
-# En X11 decia "Selected NVIDIA Direct-Mode backend!". Si aparece eso, el lease NO se uso.
-# Nada de `| head` aca: head sale 0 siempre y se come el `|| echo` de la rama vacia.
+echo "=== chosen compositor backend ==="
+# THIS is what you need to look at. The correct string is emitted by compositor_try_window:
+#   "Target backend wayland-direct initialized!"   <- DRM lease was used, the test is valid
+# In X11 it said "Selected NVIDIA Direct-Mode backend!". If that appears, the lease was NOT used.
+# No `| head` here: head always exits 0 and swallows the `|| echo` of the empty branch.
 OUT="$(grep -iE "Target backend|Selected .* backend|lease|Found no connectors" "$LOG")"
-[ -n "$OUT" ] && echo "$OUT" || echo "  (nada -- revisa el log entero)"
+[ -n "$OUT" ] && echo "$OUT" || echo "  (nothing -- check the whole log)"
 
 echo
-echo "=== modo de video tomado ==="
+echo "=== video mode taken ==="
 OUT="$(grep -E "found display mode|frame interval" "$LOG" | tail -3)"
-[ -n "$OUT" ] && echo "$OUT" || echo "  (no encontro modo -- el HMD puede no estar arrendable)"
+[ -n "$OUT" ] && echo "$OUT" || echo "  (no mode found -- the HMD may not be leasable)"
 
 echo
 if [ -S "$SOCKET" ]; then
-    echo "Socket listo. Lanza una app OpenXR con:"
+    echo "Socket ready. Launch an OpenXR app with:"
     echo "  XR_RUNTIME_JSON=$VR/monado/build/openxr_monado-dev.json IPC_IGNORE_VERSION=1 <app> --graphics Vulkan2"
 else
-    echo "!! El socket no aparecio. Ultimas lineas del log:" >&2
+    echo "!! Socket didn't appear. Last lines of the log:" >&2
     tail -15 "$LOG" >&2
 fi

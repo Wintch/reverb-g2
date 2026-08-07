@@ -1,145 +1,153 @@
-# 11 — Panorama: ¿es sólo NVIDIA? ¿es sólo el G2?
+# 11 — Landscape: Is It NVIDIA-Only? Is It G2-Only?
 
-**RESUELTO (2026-08-06, tarde): este documento entero quedó superado.** La pregunta que
-motiva todo el análisis de abajo — "¿hace falta un AMD/Intel para saber si esto es de
-NVIDIA?" — ya no aplica: el bug era el clamp de bpc de NVKMS (`patches/nvidia/0004`), se
-confirmó y arregló en esta misma GPU Ampere, sin tocar otro hardware. La conclusión de "el
-test con AMD es el experimento más valioso disponible" (más abajo) **no se llevó a cabo y no
-hizo falta**. Se deja el barrido tal cual, como historial de la investigación — ver
-`docs/19-nvidia-bug-5923212-followup.md` y `docs/21-project-retrospective.md` para el
-estado real.
+**RESOLVED (2026-08-06, afternoon): this entire document is superseded.** The question
+driving all the analysis below — "do we need an AMD/Intel GPU to know whether this is
+NVIDIA's fault?" — no longer applies: the bug was the NVKMS bpc clamp (`patches/nvidia/0004`),
+confirmed and fixed on this same Ampere GPU, without touching any other hardware. The
+conclusion that "testing with AMD is the most valuable experiment available" (further below)
+**was never carried out and wasn't needed**. The survey is left as-is, as a record of the
+investigation — see `docs/19-nvidia-bug-5923212-followup.md` and
+`docs/21-project-retrospective.md` for the actual current status.
 
-Barrido del 2026-08-04. La pregunta era si el fallo de 90Hz es específico de NVIDIA, del
-Reverb G2, o de algo más grande. La respuesta cambia a quién le escribimos.
+Survey from 2026-08-04. The question was whether the 90Hz failure is specific to NVIDIA,
+to the Reverb G2, or to something bigger. The answer changes who we write to.
 
-## Lo que más reordena: NVIDIA tiene TRES firmas de falla distintas
+## The biggest reframe: NVIDIA has THREE distinct failure signatures
 
-No es un bug aislado nuestro. En Linux, con NVIDIA, aparecen tres fallos distintos según el
-panel — cada uno con su número de bug interno, los tres abiertos:
+This isn't an isolated bug of ours. On Linux, with NVIDIA, three distinct failures show up
+depending on the panel — each with its own internal bug number, all three open:
 
-| headset | síntoma | bug NVIDIA |
+| headset | symptom | NVIDIA bug |
 |---|---|---|
-| **WMR / Reverb G1 y G2** | **panel negro / logo de HP, no engancha** | **5923212** |
-| Bigscreen Beyond | corrupción DSC, "fuzzy static" | 4834531 |
-| Valve Index / Vive / Vive Pro | modeset ocurre, pero judder y latencia | 5372097 |
+| **WMR / Reverb G1 and G2** | **black panel / HP logo, never locks** | **5923212** |
+| Bigscreen Beyond | DSC corruption, "fuzzy static" | 4834531 |
+| Valve Index / Vive / Vive Pro | modeset happens, but judder and latency | 5372097 |
 
-Y la misma familia aparece **sin VR de por medio**: un hilo de feb-2026 reporta el problema
-en un monitor de escritorio común (LG C5 OLED) a 144Hz con VRR.
+And the same family shows up **with no VR involved at all**: a Feb-2026 thread reports the
+problem on an ordinary desktop monitor (LG C5 OLED) at 144Hz with VRR.
 
-**Lectura:** el problema de fondo parece ser "NVIDIA + Linux + refresh alto" en general, y el
-G2 simplemente lo expone de la forma más severa — pantalla completamente apagada en vez de
-artefactos o judder. Eso convierte a nuestro caso en **el mejor repro de la familia**, no en
-una queja de nicho.
+**Takeaway:** the underlying problem looks like "NVIDIA + Linux + high refresh" in
+general, and the G2 simply exposes it in the most severe form — a fully blanked screen
+instead of artifacts or judder. That makes our case **the best repro in the family**, not
+a niche complaint.
 
-## ¿Es sólo NVIDIA? No se sabe, y hay que decirlo así
+## Is It NVIDIA-Only? We Don't Know, and We Should Say So
 
-**No hay un solo reporte humano, con verificación física, de un Reverb G2 a 90Hz en Linux con
-NINGUNA GPU** — ni NVIDIA, ni AMD, ni Intel.
+**There is not a single human report, with physical verification, of a Reverb G2 at 90Hz
+on Linux with ANY GPU** — not NVIDIA, not AMD, not Intel.
 
-- La wiki de LVRA dice que Intel Arc / i915 anda "OK" con el G2, pero **no especifica Hz**.
-  Puede ser 60, igual que nosotros.
-- De AMD con el G2: **zona ciega total**. Nadie reportó que ande ni que falle.
+- The LVRA wiki says Intel Arc / i915 works "OK" with the G2, but **doesn't specify Hz**.
+  It could be 60, same as us.
+- On AMD with the G2: **total blind spot**. Nobody has reported it working or failing.
 
-Eso es *ausencia de evidencia*, no evidencia a favor de AMD/Intel. Cuando escribamos, la
-frase correcta es "nadie lo reportó", nunca "en AMD anda".
+That's *absence of evidence*, not evidence in favor of AMD/Intel. When we write it up,
+the correct phrasing is "nobody has reported it," never "it works on AMD."
 
-**Pero sí hay evidencia indirecta sólida de que amdgpu no prohíbe refresh alto en
-direct-mode:** el Valve Index llega limpio a 90 y 120Hz en AMD (RX 7900 XTX), y el Bigscreen
-Beyond llega a 90Hz en AMD con parches de kernel comunitarios. Ninguno es WMR — el G2 tiene su
-secuencia de activación propia que esos no tienen — así que no cierra la pregunta. Pero deja
-claro que el stack de Linux **puede** hacer refresh alto en direct mode.
+**But there is solid indirect evidence that amdgpu doesn't forbid high refresh in
+direct-mode:** the Valve Index reaches a clean 90 and 120Hz on AMD (RX 7900 XTX), and the
+Bigscreen Beyond reaches 90Hz on AMD with community kernel patches. Neither is WMR — the G2
+has its own activation sequence that those don't — so it doesn't close the question. But it
+does make clear that the Linux stack **can** do high refresh in direct mode.
 
-Por eso el test con una AMD prestada sigue siendo el experimento más valioso disponible.
+That's why testing with a borrowed AMD card remains the most valuable experiment
+available.
 
-## El precedente Oculus / DK2: más débil de lo que esperábamos
+## The Oculus / DK2 Precedent: Weaker Than Expected
 
-El **DK2 sí llegaba a sus 75Hz nativos en Linux** (reportes humanos consistentes de 2015).
-Pero es estructuralmente distinto al G2 en cuatro ejes, y por eso no sirve como precedente:
+The **DK2 did reach its native 75Hz on Linux** (consistent human reports from 2015). But
+it's structurally different from the G2 along four axes, and that's why it doesn't serve as
+a precedent:
 
-1. **DK2 y CV1 son HDMI, no DisplayPort** (investigado 2026-08-05). Esto es el eje más
-   importante de los cuatro, más que los otros tres juntos: HDMI es TMDS de reloj fijo, sin
-   AUX channel ni link training negociado — nunca pasa por la clase de problema que tenemos
-   nosotros (negociación DPCD/bpc/lane count). El G2 no tiene esa salida: el ANX7530 es un
-   puente DisplayPort nativo. La familia Oculus **evitó** este problema en vez de resolverlo.
-2. Modo **extendido de X11**, no direct-mode ni DRM lease.
-3. Panel sin secuencia de activación tipo WMR — cualquier GPU que le tire el modeline lo trata
-   como un monitor más.
-4. NVIDIA propietario ~340–352.x sobre Kepler/Maxwell: **una generación entera antes** del bug
-   que perseguimos (Turing/Ampere/Blackwell) — y antes del split GSP. En esa época la
-   validación de modo vivía en el driver del host, parcheable (de ahí que existiera
-   `Option "ModeValidation" "AllowNonEdidModes"` en xorg.conf, ver abajo). Con el 595-open
-   esa lógica emigró a firmware GSP cerrado — el mismo muro que ya documentó `docs/13`.
+1. **DK2 and CV1 are HDMI, not DisplayPort** (investigated 2026-08-05). This is the most
+   important of the four axes, more than the other three combined: HDMI is fixed-clock TMDS,
+   with no AUX channel or negotiated link training — it never goes through the kind of
+   problem we have (DPCD/bpc/lane-count negotiation). The G2 doesn't have that output: the
+   ANX7530 is a native DisplayPort bridge. The Oculus family **avoided** this problem instead
+   of solving it.
+2. X11 **extended mode**, not direct-mode or a DRM lease.
+3. Panel with no WMR-style activation sequence — any GPU that throws a modeline at it
+   treats it like just another monitor.
+4. Proprietary NVIDIA ~340–352.x on Kepler/Maxwell: **a full generation before** the bug
+   we're chasing (Turing/Ampere/Blackwell) — and before the GSP split. Back then mode
+   validation lived in the host driver, patchable (hence why
+   `Option "ModeValidation" "AllowNonEdidModes"` existed in xorg.conf, see below). With
+   595-open that logic migrated into closed GSP firmware — the same wall `docs/13` already
+   documented.
 
-Además esas fuentes describen el setup como "funciona", sin verificación física rigurosa.
+Also, those sources describe the setup as "works," without rigorous physical verification.
 
-**CV1 (90Hz) y Rift S (80Hz)** —los dos con arquitectura de activación más parecida a WMR—
-tampoco tienen el problema: CV1 también es HDMI 1.3, y lo único "raro" es que no manda
-hotplug hasta que un comando USB lo habilita (resuelto en la capa HDMI/HPD, no en timing DP).
-No tienen ningún reporte limpio de refresh nativo verificado en Linux, **ni tampoco de que
-fallen**. Silencio en ambos sentidos. El soporte Linux de toda la familia post-DK2 es 100%
-comunitario: Oculus pausó su SDK de Linux en mayo de 2015 y nunca lo retomó.
+**CV1 (90Hz) and Rift S (80Hz)** — the two with an activation architecture closest to
+WMR — also don't have the problem: CV1 is also HDMI 1.3, and the only "odd" thing is that it
+doesn't send a hotplug until a USB command enables it (resolved at the HDMI/HPD layer, not in
+DP timing). Neither has a single clean, verified report of native refresh on Linux, **nor of
+failing either**. Silence in both directions. Linux support for the whole post-DK2 family is
+100% community-driven: Oculus paused its Linux SDK in May 2015 and never picked it back up.
 
-**HTC Vive / Vive Pro:** el Vive original (2016) también es HDMI. DisplayPort recién entra
-con el Vive Pro (2018), y para el Vive Pro 2 (2021) HTC trabajó con AMD/NVIDIA para soportar
-**DSC** — no se encontró ningún caso documentado de MST real (streams independientes por ojo)
-en ningún HMD de esta generación, ni Rift ni Vive. La feature "horizontal line splitting" del
-ANX7530 (ver `docs/19`) parece genérica del chip, sin precedente de uso para destrabar
-refresh — queda como hipótesis de prioridad baja.
+**HTC Vive / Vive Pro:** the original Vive (2016) is also HDMI. DisplayPort only shows up
+starting with the Vive Pro (2018), and for the Vive Pro 2 (2021) HTC worked with AMD/NVIDIA
+to support **DSC** — no documented case of real MST (independent per-eye streams) was found
+in any HMD of this generation, neither Rift nor Vive. The ANX7530's "horizontal line
+splitting" feature (see `docs/19`) looks like a generic chip capability, with no precedent of
+being used to unlock refresh — it remains a low-priority hypothesis.
 
-**Conclusión honesta: la familia Oculus no aporta precedente de que NVIDIA+Linux logre
-refresh alto en un HMD con negociación DisplayPort real.** El patrón 2014-2018 fue evitar el
-problema (HDMI) en vez de resolverlo, y el único truco de esa época que sí aplicaría hoy
-(`AllowNonEdidModes`, bypass de la validación de modo contra el EDID) apunta a una capa que
-en el 595-open ya no es patcheable por estar en firmware GSP cerrado. Igual es gratis
-probarlo — no cuesta nada y podría sorprender.
+**Honest conclusion: the Oculus family doesn't provide a precedent for NVIDIA+Linux
+achieving high refresh on an HMD with real DisplayPort negotiation.** The 2014-2018 pattern
+was to avoid the problem (HDMI) rather than solve it, and the only trick from that era that
+would still apply today (`AllowNonEdidModes`, bypassing mode validation against the EDID)
+points to a layer that, under 595-open, is no longer patchable because it lives in closed GSP
+firmware. Still, it's free to try — costs nothing and might surprise us.
 
-## Panorama de HMDs en Linux hoy
+## HMD Landscape on Linux Today
 
-| HMD | refresh máx. confirmado | GPU | software |
+| HMD | max confirmed refresh | GPU | software |
 |---|---|---|---|
-| Reverb G1/G2 (WMR) | 60Hz limpio; **90Hz falla** | NVIDIA Turing/Ampere/Blackwell | Monado |
-| Reverb G1/G2 (WMR) | "OK", **Hz sin especificar** | Intel i915 | Monado |
-| Reverb G1/G2 (WMR) | **sin dato** | AMD | — |
-| Valve Index / Vive / Vive Pro | **90 y 120Hz limpio** (144 falla, también en Windows) | AMD RX 7900 XTX | SteamVR-Linux |
-| Valve Index / Vive / Vive Pro | modeset ocurre, pero judder | NVIDIA | Monado / SteamVR |
-| Bigscreen Beyond | 90Hz limpio (con parche de kernel) | AMD | Monado |
-| Bigscreen Beyond | corrupción DSC | NVIDIA | Monado |
-| Oculus DK2 | 75Hz limpio (X11 extendido, driver de 2015) | NVIDIA Kepler/Maxwell | — |
-| Oculus CV1 / Rift S | sin confirmación en ningún sentido | — | OpenHMD / Monado |
-| Pimax P2 (4K/5K/8K) | sin dato de Hz; hay que parchear el EDID a mano | NVIDIA | Monado |
-| Somnium VR1 | no soportado | — | — |
+| Reverb G1/G2 (WMR) | clean 60Hz; **90Hz fails** | NVIDIA Turing/Ampere/Blackwell | Monado |
+| Reverb G1/G2 (WMR) | "OK", **Hz unspecified** | Intel i915 | Monado |
+| Reverb G1/G2 (WMR) | **no data** | AMD | — |
+| Valve Index / Vive / Vive Pro | **clean 90 and 120Hz** (144 fails, also on Windows) | AMD RX 7900 XTX | SteamVR-Linux |
+| Valve Index / Vive / Vive Pro | modeset happens, but judder | NVIDIA | Monado / SteamVR |
+| Bigscreen Beyond | clean 90Hz (with kernel patch) | AMD | Monado |
+| Bigscreen Beyond | DSC corruption | NVIDIA | Monado |
+| Oculus DK2 | clean 75Hz (extended X11, 2015 driver) | NVIDIA Kepler/Maxwell | — |
+| Oculus CV1 / Rift S | unconfirmed in either direction | — | OpenHMD / Monado |
+| Pimax P2 (4K/5K/8K) | no Hz data; EDID must be patched by hand | NVIDIA | Monado |
+| Somnium VR1 | not supported | — | — |
 
-**El único caso limpio de refresh alto en un HMD bajo Linux es con AMD.**
+**The only clean case of high refresh on an HMD under Linux is with AMD.**
 
-## Dónde publicar, en orden
+## Where to Publish, in Order
 
-1. **Hilo de NVIDIA 337744** — `forums.developer.nvidia.com/t/337744`. Tiene staff activo
-   (bug 5923212 confirmado) y **una pregunta suya sin responder**: si hay alguna versión de
-   driver anterior donde no pasara. **Responder ahí, no abrir hilo nuevo.** No hay plantilla
-   oficial; la convención es prefijar `[Bug Report]` y estructurar en secciones.
-   Ojo: nosotros probamos **solamente 595.71.05**. El rango 590–610 sale del hilo, no de
-   nuestras mediciones — no atribuírnoslo.
-2. **Monado** — `gitlab.freedesktop.org/monado/monado`. **Hay que revisar A MANO** si ya existe
-   un issue de "pantalla negra a 90Hz" antes de abrir uno: gitlab.freedesktop.org está detrás
-   de Anubis (anti-bot) y el barrido no pudo leerlo. Es el único proyecto activo al que sumarse:
-   Project-VR es un diario personal sin comunidad, `wumbo_mr` está archivado, y OpenHMD sólo
-   tiene issues de detección/firmware para el G2.
-3. **LVRA / Linux VR Adventures** — wiki + Matrix `#linux-vr-adventures:matrix.org` + Discord.
-   Es el público correcto: converge gente de Monado, SteamVR-Linux y hardware WMR/Vive/Index.
-   Su wiki hoy documenta el límite ("60Hz-only on Nvidia") **sin causa técnica** — ahí es donde
-   nuestra medición de ancho de banda y la verificación física llenan un hueco real.
+1. **NVIDIA thread 337744** — `forums.developer.nvidia.com/t/337744`. Has active staff
+   (bug 5923212 confirmed) and **one of their questions still unanswered**: whether there's
+   an earlier driver version where this didn't happen. **Reply there, don't open a new
+   thread.** There's no official template; the convention is to prefix `[Bug Report]` and
+   structure it in sections.
+   Note: we only tested **595.71.05**. The 590–610 range comes from the thread, not from our
+   own measurements — don't attribute it to us.
+2. **Monado** — `gitlab.freedesktop.org/monado/monado`. **Must check BY HAND** whether a
+   "black screen at 90Hz" issue already exists before opening one: gitlab.freedesktop.org
+   sits behind Anubis (anti-bot) and the survey couldn't read it. It's the only active
+   project worth joining: Project-VR is a personal diary with no community, `wumbo_mr` is
+   archived, and OpenHMD only has detection/firmware issues for the G2.
+3. **LVRA / Linux VR Adventures** — wiki + Matrix `#linux-vr-adventures:matrix.org` +
+   Discord. It's the right audience: it brings together people from Monado, SteamVR-Linux,
+   and WMR/Vive/Index hardware. Its wiki today documents the limit ("60Hz-only on Nvidia")
+   **with no technical cause** — that's where our bandwidth measurement and physical
+   verification fill a real gap.
 
-**Y un aporte propio que no tiene precedente publicado:** la metodología de verificación
-física. Nadie documentó que Vulkan/OpenXR reporta éxito y 90 fps sobre un panel negro, ni el
-protocolo para evitar ese falso positivo. Vale publicarlo en cualquiera de los tres destinos.
+**And a contribution of our own with no published precedent:** the physical verification
+methodology. Nobody has documented that Vulkan/OpenXR reports success and 90 fps over a black
+panel, nor the protocol to avoid that false positive. It's worth publishing in any of the
+three venues.
 
-## Lo que no se pudo averiguar
+## What We Couldn't Determine
 
-- **gitlab.freedesktop.org está detrás de Anubis**: bloqueados los trackers de Monado, AMD
-  (`drm/amd`) e Intel (`drm/i915`, `drm/xe`). Lo poco de Monado que se leyó vino por un proxy
-  indirecto — confianza media, no alta.
-- Si ya existe un issue de Monado de "G2 pantalla negra a 90Hz". **Sin confirmar ni descartar.**
-- Si Intel i915 llega a 90Hz con el G2 o sólo a 60.
-- Si el Bigscreen Beyond anda hoy limpio en NVIDIA 580+-open (el wiki dice "requiere", sin
-  reporte humano posterior).
-- Si el Rift S llega a sus 80Hz nativos verificados.
+- **gitlab.freedesktop.org sits behind Anubis**: the Monado, AMD (`drm/amd`), and Intel
+  (`drm/i915`, `drm/xe`) trackers are blocked. What little of Monado we did read came through
+  an indirect proxy — medium confidence, not high.
+- Whether a Monado issue for "G2 black screen at 90Hz" already exists. **Neither confirmed
+  nor ruled out.**
+- Whether Intel i915 reaches 90Hz with the G2 or only 60.
+- Whether the Bigscreen Beyond runs clean today on NVIDIA 580+-open (the wiki says
+  "requires," with no later human report).
+- Whether the Rift S reaches its verified native 80Hz.

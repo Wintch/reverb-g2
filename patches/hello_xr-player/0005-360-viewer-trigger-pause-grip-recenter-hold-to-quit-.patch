@@ -376,9 +376,9 @@ index 74f1ae6..5009c7d 100644
  
  const char* HelpLine() {
 -    return "  Teclas: [espacio] pausa   [ ] velocidad   1 normal   h/l -10s/+10s   n siguiente   q salir";
-+    return "  Teclas: [espacio] pausa   [ ] velocidad   1 normal   h/l -10s/+10s   enter recentra   "
-+           "n siguiente   q salir "
-+           "(mando WMR: trigger pausa, stick seek, grip recentra, mantener Menu ~1.5s sale)";
++    return "  Keys: [space] pause   [ ] speed   1 normal   h/l -10s/+10s   enter recenter   "
++           "n next   q quit "
++           "(WMR controller: trigger pause, stick seek, grip recenter, hold Menu ~1.5s to quit)";
  }
  
  }  // namespace PlayerControl

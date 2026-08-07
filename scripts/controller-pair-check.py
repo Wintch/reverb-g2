@@ -1,36 +1,36 @@
 #!/usr/bin/env python3
-"""Pregunta al CASCO si tiene los controllers vinculados, por HID directo (sin Monado).
+"""Asks the HEADSET whether it has the controllers paired, via direct HID (without Monado).
 
-Los controllers del G2 no hablan Bluetooth con la PC (ver docs/03-controllers.md): estan
-apareados de fabrica con el radio interno del casco, y su estado de vinculacion se consulta
-mandando un comando al mismo dispositivo Hololens Sensors (045e:0659) que ya usa Monado -
-protocolo leido de wmr_hmd.c / wmr_protocol.h:
+The G2 controllers do not speak Bluetooth to the PC (see docs/03-controllers.md): they are
+paired at the factory with the headset's internal radio, and their pairing state is queried
+by sending a command to the same Hololens Sensors device (045e:0659) that Monado already
+uses - protocol read from wmr_hmd.c / wmr_protocol.h:
 
-  Pedido  (report 0x16, WMR_MS_HOLOLENS_MSG_BT_CONTROL):
-      byte0=0x16  byte1=0x17 (subtipo CONTROLLER_STATUS)  resto en cero, 64 bytes
+  Request (report 0x16, WMR_MS_HOLOLENS_MSG_BT_CONTROL):
+      byte0=0x16  byte1=0x17 (subtype CONTROLLER_STATUS)  rest zeroed, 64 bytes
 
-  Respuesta (report 0x17, WMR_MS_HOLOLENS_MSG_CONTROLLER_STATUS), una por controller:
-      byte0=0x17  byte1=controller_id (0=izq, 1=der)  byte2=pkt_type
-          pkt_type 0x0 UNPAIRED  -> nunca vinculado / se desvinculo (boton oculto de reset)
-          pkt_type 0x1 OFFLINE   -> vinculado, pero apagado o fuera de rango ahora
-          pkt_type 0x2 ONLINE    -> vinculado y respondiendo ahora
-      si OFFLINE/ONLINE, bytes3-4=VID bytes5-6=PID (little-endian)
+  Response (report 0x17, WMR_MS_HOLOLENS_MSG_CONTROLLER_STATUS), one per controller:
+      byte0=0x17  byte1=controller_id (0=left, 1=right)  byte2=pkt_type
+          pkt_type 0x0 UNPAIRED  -> never paired / became unpaired (hidden reset button)
+          pkt_type 0x1 OFFLINE   -> paired, but currently off or out of range
+          pkt_type 0x2 ONLINE    -> paired and currently responding
+      if OFFLINE/ONLINE, bytes3-4=VID bytes5-6=PID (little-endian)
 
-Investigado 2026-08-06 leyendo el driver Monado (fuente autoritativa: el mismo casco). El
-comando de "vincular" (linkear) en cambio NO existe en ningun binario de Windows examinado
-(ver docs/03-controllers.md, seccion "Vinculacion / pairing") - es un handshake de radio
-interno al casco, disparado por el boton fisico del controller, sin comando de host. Este
-script solo CONSULTA estado; no intenta vincular nada.
+Investigated on 2026-08-06 by reading the Monado driver (authoritative source: the headset
+itself). The "pair" command, on the other hand, does NOT exist in any Windows binary examined
+(see docs/03-controllers.md, section "Pairing") - it is an internal radio handshake to the
+headset, triggered by the controller's physical button, with no host command. This script
+only QUERIES state; it does not attempt to pair anything.
 
-  ./controller-pair-check.py [segundos_de_espera]
+  ./controller-pair-check.py [seconds_to_wait]
 
-Funciona con o sin monado-service corriendo (el hidraw permite abrirse mas de una vez).
+Works with or without monado-service running (hidraw allows being opened more than once).
 """
 import glob, os, select, sys, time
 
 HOLOLENS_SENSORS = (0x045E, 0x0659)
-PKT_TYPE = {0x0: "SIN VINCULAR (unpaired)", 0x1: "vinculado, offline", 0x2: "vinculado, online"}
-NAME = {0: "izquierdo", 1: "derecho"}
+PKT_TYPE = {0x0: "UNPAIRED", 0x1: "paired, offline", 0x2: "paired, online"}
+NAME = {0: "left", 1: "right"}
 
 
 def find_hololens_sensors():
@@ -51,24 +51,24 @@ def main():
     secs = float(sys.argv[1]) if len(sys.argv) > 1 else 6.0
     dev = find_hololens_sensors()
     if not dev:
-        sys.exit("no encuentro el Hololens Sensors (045e:0659) - esta el casco prendido y conectado?")
+        sys.exit("cannot find the Hololens Sensors (045e:0659) - is the headset powered on and connected?")
 
     try:
         fd = os.open(dev, os.O_RDWR | os.O_NONBLOCK)
     except PermissionError:
-        sys.exit(f"sin permiso para {dev} - deberia ser rw para el grupo plugdev "
-                  f"(ver scripts/70-wmr-reverb.rules); estas en ese grupo? (groups)")
+        sys.exit(f"no permission for {dev} - it should be rw for the plugdev group "
+                  f"(see scripts/70-wmr-reverb.rules); are you in that group? (groups)")
     except OSError as e:
-        sys.exit(f"no pude abrir {dev}: {e}")
+        sys.exit(f"could not open {dev}: {e}")
 
     cmd = bytes([0x16, 0x17]) + bytes(62)
     try:
         os.write(fd, cmd)
     except OSError as e:
         os.close(fd)
-        sys.exit(f"no pude escribir el pedido de estado en {dev}: {e}")
+        sys.exit(f"could not write the status request to {dev}: {e}")
 
-    print(f"  pedido de estado enviado, escuchando {dev} durante {secs:.0f}s...")
+    print(f"  status request sent, listening on {dev} for {secs:.0f}s...")
     seen = {}
     t0 = time.time()
     while time.time() - t0 < secs and len(seen) < 2:
@@ -91,17 +91,17 @@ def main():
     for cid in (0, 1):
         label = f"  {NAME.get(cid, cid)} (id {cid}): "
         if cid not in seen:
-            print(label + "sin respuesta (no llego ningun paquete 0x17 para este id)")
+            print(label + "no response (no 0x17 packet arrived for this id)")
             continue
         pkt_type, vidpid = seen[cid]
-        desc = PKT_TYPE.get(pkt_type, f"tipo desconocido 0x{pkt_type:02x}")
+        desc = PKT_TYPE.get(pkt_type, f"unknown type 0x{pkt_type:02x}")
         if vidpid:
             desc += f"  (VID 0x{vidpid[0]:04x} PID 0x{vidpid[1]:04x})"
         print(label + desc)
 
     if len(seen) < 2:
-        print("\n  (si falta alguno: el casco solo contesta por el que tiene noticias - "
-              "probá con el controller prendido y cerca)")
+        print("\n  (if one is missing: the headset only reports the ones it has news of - "
+              "try with the controller on and nearby)")
 
 
 main()

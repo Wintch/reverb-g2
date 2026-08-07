@@ -1,21 +1,21 @@
-# 20 — El casco conectado rompe el escritorio KDE (X11), no solo el 90Hz
+# 20 — Headset connected breaks the KDE desktop (X11), not just the 90Hz
 
-**Encontrado el 2026-08-06, sesión con el agente.** Esto es un problema nuevo, distinto del
-bug del bpc (`docs/13`): no es que el panel del casco no encienda a 90Hz, es que **con el
-casco conectado, todo el escritorio Plasma puede volverse inestable**, hasta el punto de
-quedar solo con el wallpaper (sin panel, sin iconos) o con la pantalla de bloqueo rota (solo
-el reloj, sin campo de contraseña).
+**Found on 2026-08-06, session with the agent.** This is a new problem, distinct from the
+bpc bug (`docs/13`): it's not that the headset panel fails to light up at 90Hz, it's that
+**with the headset connected, the entire Plasma desktop can become unstable**, to the point
+of being left with only the wallpaper (no panel, no icons) or with a broken lock screen (only
+the clock, no password field).
 
 ---
 
-## El síntoma
+## The symptom
 
-Arranque limpio (reboot completo, no solo relogin). Sesión KDE Plasma X11 vía SDDM. Todos
-los procesos esperables están corriendo (`Xorg`, `kwin_x11`, `plasmashell`, `kded6`) pero
-**la interfaz nunca se dibuja**: se ve el fondo de pantalla y nada más — sin panel, sin
-iconos de escritorio, sin barra de tareas.
+Clean boot (full reboot, not just relogin). KDE Plasma X11 session via SDDM. All the
+expected processes are running (`Xorg`, `kwin_x11`, `plasmashell`, `kded6`) but **the UI
+never renders**: you see the wallpaper and nothing else — no panel, no desktop icons, no
+taskbar.
 
-`journalctl -b` muestra, repetido en ráfagas de 4-8 líneas cada vez:
+`journalctl -b` shows, repeated in bursts of 4-8 lines each time:
 
 ```
 plasmashell[PID]: QRhiGles2: Context is lost.
@@ -23,151 +23,153 @@ plasmashell[PID]: Graphics device lost, cleaning up scenegraph and releasing RHI
 kwin_x11[PID]: kwin_scene_opengl: Could not delete framebuffer because no context is current
 ```
 
-Sin ningún Xid en dmesg/journalctl -k (o sea: no es un reset de GPU al nivel del kernel; el
-`nvidia.ko` y `nvidia-drm` no ven nada raro). El fallo está en la capa de Qt/RHI/EGL que usa
-`plasmashell` para su scenegraph — se cae y se reconstruye, y mientras se reconstruye no hay
-UI. A veces se recupera después de varios ciclos (queda un escritorio funcional pero con
-notificaciones rotas — ver el binding loop de `DelegatePopup.qml` en el log), a veces queda
-en el loop permanentemente.
+No Xid at all in dmesg/journalctl -k (meaning: it's not a kernel-level GPU reset; the
+`nvidia.ko` and `nvidia-drm` don't see anything unusual). The failure is in the Qt/RHI/EGL
+layer that `plasmashell` uses for its scenegraph — it drops and rebuilds, and while it
+rebuilds there's no UI. Sometimes it recovers after several cycles (leaving a functional
+desktop but with broken notifications — see the `DelegatePopup.qml` binding loop in the log),
+sometimes it stays stuck in the loop permanently.
 
-## La causa raíz identificada: DP-0 (el casco) guardado como monitor de escritorio a 90Hz
+## Identified root cause: DP-0 (the headset) saved as a desktop monitor at 90Hz
 
-`xrandr` mostraba `DP-0 connected primary 2880x1440+0+0` corriendo `2880x1440@90.00` —
-**exactamente el modo nativo del G2** que `docs/13-bug-6bpc.md` documenta como el modo con
-el link DisplayPort inestable (panel que no enciende o parpadea sin color).
+`xrandr` showed `DP-0 connected primary 2880x1440+0+0` running `2880x1440@90.00` —
+**exactly the G2's native mode** that `docs/13-bug-6bpc.md` documents as the mode with
+the unstable DisplayPort link (panel that doesn't power on or flickers without color).
 
-Confirmado con los perfiles guardados de KDE en `~/.local/share/kscreen/`: el `fullname` de
-`DP-0` es literalmente `xrandr-HP Inc.-3958133002` — el EDID del casco. El perfil activo en
-el boot de esta mañana (`b1daa19a6590a34be81df4a5d763a943`, timestamp del boot) lo tenía
-`enabled: true` a 90Hz. Un perfil más viejo (`92b2326774024e554276dd6dba98d565`, de ayer
-19:46) lo tenía `enabled: false` — en algún momento del lab quedó prendido por accidente
-(probablemente al guardar la config de pantallas mientras el casco estaba conectado para
-alguna prueba) y KDE lo siguió arrancando así en cada boot siguiente.
+Confirmed with the saved KDE profiles in `~/.local/share/kscreen/`: the `fullname` of
+`DP-0` is literally `xrandr-HP Inc.-3958133002` — the headset's EDID. The profile active at
+this morning's boot (`b1daa19a6590a34be81df4a5d763a943`, the boot timestamp) had it
+`enabled: true` at 90Hz. An older profile (`92b2326774024e554276dd6dba98d565`, from
+yesterday 19:46) had it `enabled: false` — at some point in the lab it got left on by
+accident (probably while saving the display config with the headset connected for some
+test) and KDE kept booting with that setting on every subsequent boot.
 
-**Con el casco tratado como un monitor de escritorio normal, cualquier hiccup del link DP a
-90Hz (que ya sabemos que es inestable — es el bug central de `docs/13`) se lleva puesto todo
-el compositor**, no solo la salida del casco. Encaja con que el crash-loop empieza apenas
-arranca la sesión: KDE intenta componer sobre las 4 salidas, una de ellas es un link DP
-crónicamente inestable a 90Hz, y `plasmashell`/`kwin` pierden el contexto GL entero.
+**With the headset treated as a normal desktop monitor, any hiccup on the DP link at
+90Hz (which we already know is unstable — it's the central bug of `docs/13`) takes down
+the entire compositor**, not just the headset's output. This is consistent with the
+crash-loop starting as soon as the session starts: KDE tries to compose across all 4
+outputs, one of them is a chronically unstable DP link at 90Hz, and `plasmashell`/`kwin`
+lose the entire GL context.
 
-### El fix aplicado
+### The applied fix
 
 ```bash
 export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
-export XAUTHORITY=/run/sddm/xauth_HAltUI   # o el que corresponda a la sesión activa
+export XAUTHORITY=/run/sddm/xauth_HAltUI   # or whichever corresponds to the active session
 export DISPLAY=:0
 kscreen-doctor output.DP-0.disable
 ```
 
-Esto para la sesión viva. **Persiste solo mientras KDE no vuelva a guardar un perfil con
-DP-0 habilitado** — que es justo lo que causó el problema la primera vez. No hay (todavía)
-un mecanismo a prueba de esto; ver "Qué falta" más abajo.
+This stops it for the live session. **It persists only as long as KDE doesn't save a
+profile with DP-0 enabled again** — which is exactly what caused the problem the first
+time. There is (still) no mechanism to guard against this; see "What's left" below.
 
-Tras el fix, dejaron de aparecer nuevos `Context is lost` durante varios minutos, y
-`plasmashell`/`kwin_x11` quedaron estables en el escritorio normal.
+After the fix, no new `Context is lost` appeared for several minutes, and
+`plasmashell`/`kwin_x11` remained stable on the normal desktop.
 
-## Lo que el fix NO explica: recurrió en la pantalla de bloqueo, con DP-0 ya apagado
+## What the fix does NOT explain: it recurred on the lock screen, with DP-0 already disabled
 
-A las 00:16:39 (más de 6 minutos después de deshabilitar DP-0, y ~2.5 minutos después de que
-arrancara `kscreenlocker_greet` a las 00:14:08) **volvió a aparecer el mismo patrón exacto de
-`QRhiGles2: Context is lost`**, esta vez en el proceso del lock screen. Resultado visible:
-pantalla de bloqueo mostrando solo el reloj, sin el campo de usuario/contraseña. Un intento
-de contraseña a las 00:16:47 falló (`pam_unix(kde:auth): authentication failure`), consistente
-con que el campo no tenía foco o no se estaba dibujando.
+At 00:16:39 (more than 6 minutes after disabling DP-0, and ~2.5 minutes after
+`kscreenlocker_greet` started at 00:14:08) **the exact same `QRhiGles2: Context is lost`
+pattern appeared again**, this time in the lock screen process. Visible result: lock screen
+showing only the clock, with no user/password field. A password attempt at 00:16:47 failed
+(`pam_unix(kde:auth): authentication failure`), consistent with the field having no focus or
+not being rendered.
 
-`journalctl -k` en la ventana 00:13–00:17 no muestra ningún hotplug ni evento de
-reconexión — nada que explique por qué se disparó justo ahí. `kscreen-doctor -o` confirmó que
-DP-0 seguía deshabilitado en ese momento.
+`journalctl -k` in the 00:13–00:17 window shows no hotplug or reconnection event — nothing
+that explains why it triggered right there. `kscreen-doctor -o` confirmed that DP-0 was
+still disabled at that moment.
 
-**Conclusión: DP-0 a 90Hz como monitor de escritorio es UNA causa confirmada del crash, pero
-no la única.** Hay algo más amplio — probablemente un bug conocido de Plasma 6 + NVIDIA
-(driver 550.163.01, el paquete estándar de Debian, **no** el 595-open parcheado del lab, que
-no está cargado — confirmado con `dkms status` y `nvidia-smi`) donde el backend QRhiGles2 de
-Qt Quick pierde el contexto EGL/GLES ante ciertos eventos de recomposición (como que arranque
-el lock screen, que también crea su propia superficie GL). Esto no está resuelto — ver "Qué
-falta".
+**Conclusion: DP-0 at 90Hz as a desktop monitor is ONE confirmed cause of the crash, but
+not the only one.** There's something broader going on — probably a known Plasma 6 + NVIDIA
+bug (driver 550.163.01, the standard Debian package, **not** the lab's patched 595-open,
+which is not loaded — confirmed with `dkms status` and `nvidia-smi`) where Qt Quick's
+QRhiGles2 backend loses the EGL/GLES context on certain recomposition events (such as the
+lock screen starting, which also creates its own GL surface). This is not resolved — see
+"What's left".
 
-## Nota al margen: config de debug del GSP quedó residual
+## Side note: leftover GSP debug config
 
-`/etc/modprobe.d/99-nvidia-gsp-logs.conf` (`NVreg_EnableGpuFirmwareLogs=1`) sigue puesto
-desde la investigación del 2026-08-05 (ver `docs/13`, sección "Habilitando los logs del
-firmware GSP"). Se confirmó ahí mismo que **no hace nada** en este sistema —
-`gsp_log_ga10x.bin` no existe en ningún lado, el driver lo reporta como fallo no-fatal y
-sigue andando normal. No parece relacionado a este bug (no hay mensajes de GSP en los logs
-del crash), pero es config de debug abandonada que ya cumplió su propósito. Candidato a
-borrar con `sudo rm /etc/modprobe.d/99-nvidia-gsp-logs.conf` la próxima vez que se reconstruya
-el módulo, para no arrastrar parámetros de debug sin motivo.
+`/etc/modprobe.d/99-nvidia-gsp-logs.conf` (`NVreg_EnableGpuFirmwareLogs=1`) has been in
+place since the 2026-08-05 investigation (see `docs/13`, section "Enabling GSP firmware
+logs"). It was confirmed there that it **does nothing** on this system —
+`gsp_log_ga10x.bin` doesn't exist anywhere, the driver reports it as a non-fatal failure and
+keeps running normally. It doesn't seem related to this bug (no GSP messages in the crash
+logs), but it's leftover debug config that already served its purpose. Candidate for
+removal with `sudo rm /etc/modprobe.d/99-nvidia-gsp-logs.conf` next time the module is
+rebuilt, to avoid carrying debug parameters around for no reason.
 
-## Qué falta
+## What's left
 
-- [ ] **Evitar que KDE vuelva a guardar/arrancar DP-0 habilitado.** Ideas, sin probar
-      todavía: (a) un script de autostart de Plasma que corra `kscreen-doctor
-      output.DP-0.disable` al iniciar sesión, incondicional; (b) investigar si KDE tiene
-      forma de "recordar siempre deshabilitado" un output por EDID en vez de por
-      geometría/sesión. La opción (a) es la más simple y la que más se parece a lo que ya
-      hace este repo (scripts idempotentes, ver `scripts/`).
-- [ ] **El segundo crash (lock screen, DP-0 ya apagado) queda sin explicar.** Si vuelve a
-      pasar sin el casco conectado en absoluto, es un bug de Plasma/NVIDIA genérico, no
-      específico de este proyecto — buscar en bugs.kde.org por "QRhiGles2 Context is lost"
-      antes de asumir que es otra manifestación del mismo problema del casco.
-- [ ] **Confirmar si pasa igual con el casco físicamente desconectado.** Es la prueba que
-      discrimina entre "es 100% el casco" y "hay un segundo bug independiente". No se hizo
-      todavía porque la sesión quedó bloqueada antes de poder probarlo.
+- [ ] **Prevent KDE from saving/booting with DP-0 enabled again.** Ideas, not tried
+      yet: (a) a Plasma autostart script that unconditionally runs `kscreen-doctor
+      output.DP-0.disable` on session start; (b) investigate whether KDE has a way to
+      "always remember disabled" for an output by EDID instead of by geometry/session.
+      Option (a) is the simplest and the one most in line with what this repo already
+      does (idempotent scripts, see `scripts/`).
+- [ ] **The second crash (lock screen, DP-0 already disabled) remains unexplained.** If
+      it happens again with the headset not connected at all, it's a generic Plasma/NVIDIA
+      bug, not specific to this project — search bugs.kde.org for "QRhiGles2 Context is
+      lost" before assuming it's another manifestation of the same headset problem.
+- [ ] **Confirm whether it happens the same way with the headset physically
+      disconnected.** This is the test that discriminates between "it's 100% the headset"
+      and "there's a second independent bug". Not done yet because the session got stuck
+      before it could be tested.
 
-## Regla práctica para sesiones futuras
+## Practical rule for future sessions
 
-**Si el escritorio KDE se ve raro (solo wallpaper, panel roto, lock screen sin campo de
-contraseña) y el casco está conectado: correr `kscreen-doctor -o` y revisar si `DP-0`
-(o el output con `fullname` que contenga `HP Inc.`) está `enabled` antes de investigar
-cualquier otra cosa.** Es el primer sospechoso y ya se confirmó una vez.
+**If the KDE desktop looks wrong (only wallpaper, broken panel, lock screen with no
+password field) and the headset is connected: run `kscreen-doctor -o` and check whether
+`DP-0` (or the output whose `fullname` contains `HP Inc.`) is `enabled` before investigating
+anything else.** It's the prime suspect and has already been confirmed once.
 
-## Continuación (2026-08-06, misma noche): DP-0 no se puede apagar en caliente, y "arrastra" ventanas
+## Follow-up (2026-08-06, same night): DP-0 can't be turned off live, and it "drags" windows along
 
-Después del reboot sugerido en la sesión anterior, el escritorio volvió (panel e iconos
-normales), pero **DP-0 había vuelto a `enabled` a 90Hz** — confirma la sospecha de "Qué
-falta" de más arriba: el perfil que KDE carga en el boot lo trae prendido de nuevo. No hizo
-falta que nadie lo reconectara a mano; solo con el reboot ya volvió.
+After the reboot suggested in the previous session, the desktop came back (normal panel
+and icons), but **DP-0 had gone back to `enabled` at 90Hz** — confirming the suspicion
+from "What's left" above: the profile KDE loads at boot brings it back on. Nobody needed
+to reconnect it by hand; the reboot alone was enough to bring it back.
 
-Efecto colateral no documentado antes: **como DP-0 ocupa el rectángulo (0,0)-(2880,1440) del
-escritorio virtual, algunas apps nuevas abren su ventana ahí** — literalmente en el panel del
-casco, invisible para el usuario sin ponérselo. Pasó con Telegram, una ventana de Chrome, y
-la vista de escritorio/iconos de esa pantalla.
+Side effect not documented before: **since DP-0 occupies the (0,0)-(2880,1440) rectangle
+of the virtual desktop, some new apps open their window there** — literally on the headset
+panel, invisible to the user without putting it on. This happened with Telegram, a Chrome
+window, and the desktop/icons view for that screen.
 
-### Intento de apagar DP-0 en caliente: falló por las tres vías
+### Attempt to turn off DP-0 live: failed across all three approaches
 
-1. `kscreen-doctor output.DP-0.disable` — el comando devuelve éxito, pero **no aplica**:
-   `kscreen-doctor -o` lo sigue mostrando `enabled` inmediatamente después, y `xrandr`
-   confirma que el modo 90Hz sigue activo (`2880x1440 90.00*+`). Ya había pasado una vez en
-   la sesión anterior (por eso "recurrió" el crash con DP-0 "ya deshabilitado" — probablemente
-   nunca se deshabilitó de verdad a nivel del servidor X, solo a nivel de la config que
-   reporta KWin).
-2. `xrandr --output DP-0 --off` directo (bypaseando KWin/KScreen) — falla con:
+1. `kscreen-doctor output.DP-0.disable` — the command returns success, but **it doesn't
+   take effect**: `kscreen-doctor -o` still shows it as `enabled` immediately afterward, and
+   `xrandr` confirms the 90Hz mode is still active (`2880x1440 90.00*+`). This had already
+   happened once in the previous session (which is why the crash "recurred" with DP-0
+   "already disabled" — it probably was never truly disabled at the X server level, only at
+   the config level that KWin reports).
+2. Direct `xrandr --output DP-0 --off` (bypassing KWin/KScreen) — fails with:
    ```
    xrandr: Configure crtc 0 failed
    X Error of failed request:  BadMatch (invalid parameter attributes)
    Minor opcode of failed request:  7 (RRSetScreenSize)
    ```
-   Mismo error con un comando combinado que reafirma las otras 3 salidas a la vez. El driver
-   NVIDIA rechaza el resize del framebuffer virtual mientras el casco sigue eléctricamente
-   conectado a ese conector.
-3. `nvidia-settings --assign CurrentMetaMode=...` con un MetaMode nuevo que omite DPY-1
-   (=DP-0) por completo, tanto con `DPY-1: NULL` explícito como omitiéndolo — falla con
-   `Attribute not available` en los dos casos, con o sin `--ctrl-display=:0` explícito.
+   Same error with a combined command that reasserts the other 3 outputs at once. The
+   NVIDIA driver rejects the virtual framebuffer resize while the headset remains
+   electrically connected to that connector.
+3. `nvidia-settings --assign CurrentMetaMode=...` with a new MetaMode that omits DPY-1
+   (=DP-0) entirely, both with an explicit `DPY-1: NULL` and by omitting it — fails with
+   `Attribute not available` in both cases, with or without an explicit `--ctrl-display=:0`.
 
-**Conclusión: mientras el casco esté físicamente conectado, no encontramos ninguna forma de
-sacar a DP-0 del escritorio en caliente — ni por KWin/KScreen, ni por RandR crudo, ni por el
-mecanismo nativo de NVIDIA.** Sospecha (sin confirmar): puede ser un `DynamicTwinView`
-efectivamente `off` para esta combinación de salidas, o una restricción del driver 550.163.01
-específica para paneles marcados non-desktop/HMD. **No probado todavía: si desconectar el
-cable DP físicamente (hotplug real) sí permite que X reprobe sin DP-0** — es la prueba más
-obvia para la próxima sesión, y explicaría por qué `DP-1`/`DP-2` (genuinamente desconectados)
-sí muestran `disconnected` limpio en xrandr mientras que DP-0 nunca lo hace por más que se le
-pida apagarse en software.
+**Conclusion: while the headset is physically connected, we found no way to remove DP-0
+from the desktop live — not through KWin/KScreen, not through raw RandR, not through
+NVIDIA's native mechanism.** Suspicion (unconfirmed): it could be a `DynamicTwinView`
+effectively `off` for this combination of outputs, or a restriction specific to driver
+550.163.01 for panels marked non-desktop/HMD. **Not tested yet: whether physically
+unplugging the DP cable (a real hotplug) does allow X to re-probe without DP-0** — this is
+the most obvious test for the next session, and it would explain why `DP-1`/`DP-2`
+(genuinely disconnected) do show a clean `disconnected` in xrandr while DP-0 never does no
+matter how many times it's asked to turn off in software.
 
-### Workaround que sí funcionó: mover las ventanas con un script de KWin, sin tocar la pantalla
+### Workaround that did work: moving windows with a KWin script, without touching the display
 
-En vez de sacar DP-0 del layout, se dejaron las ventanas atrapadas ahí y se las movió a mano
-por scripting de KWin (D-Bus, `org.kde.kwin.Scripting`):
+Instead of removing DP-0 from the layout, the windows trapped there were left in place and
+moved by hand via KWin scripting (D-Bus, `org.kde.kwin.Scripting`):
 
 ```js
 var outs = workspace.screens;
@@ -193,91 +195,94 @@ if (target) {
 print("MOVED:" + JSON.stringify(moved) + " TARGET:" + (target ? target.name : "none"));
 ```
 
-Cargado y corrido así (el `print()` va a `journalctl`, no a stdout):
+Loaded and run like this (the `print()` goes to `journalctl`, not stdout):
 
 ```bash
-qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript /ruta/al/script.js "algún-nombre"
+qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript /path/to/script.js "some-name"
 qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.start
 journalctl -b --since "1 minute ago" | grep 'kwin_scripting\|js:'
 ```
 
-Notas de la API de scripting de KWin 6 (costó tantear esto, dejarlo anotado):
+Notes on the KWin 6 scripting API (this took some trial and error to figure out, writing
+it down):
 
-- `w.output = target` **falla** — `output` es de solo lectura (`Cannot assign to read-only
-  property "output"`). Hay que mover por geometría (`frameGeometry`), no por asignación
-  directa de output.
-- `Qt.rect(...)` **no existe** en este engine (`Qt is not defined`) — hay que pasar un
-  objeto plano `{x, y, width, height}` a `frameGeometry`, no un `QRect` construido a mano.
-- `qdbus6 .../Scripting/<id> .../Script.run` con el path que devuelve `loadScript` **no
-  funciona** (`UnknownObject`) — el flujo correcto es `Scripting.start()` a secas, que corre
-  todos los scripts cargados.
-- `workspace.windowList()` incluye la vista de escritorio/iconos como una "ventana" más
-  (`"Desktop @ QRect(...)"`) — no es un error, es esperable que aparezca en el listado.
+- `w.output = target` **fails** — `output` is read-only (`Cannot assign to read-only
+  property "output"`). You have to move via geometry (`frameGeometry`), not by direct
+  output assignment.
+- `Qt.rect(...)` **doesn't exist** in this engine (`Qt is not defined`) — you have to pass
+  a plain `{x, y, width, height}` object to `frameGeometry`, not a hand-built `QRect`.
+- `qdbus6 .../Scripting/<id> .../Script.run` with the path returned by `loadScript`
+  **doesn't work** (`UnknownObject`) — the correct flow is plain `Scripting.start()`, which
+  runs all loaded scripts.
+- `workspace.windowList()` includes the desktop/icons view as just another "window"
+  (`"Desktop @ QRect(...)"`) — this isn't a bug, it's expected to show up in the listing.
 
-Con esto, Chrome volvió a aparecer. **Falta confirmar si Telegram (y la vista de escritorio
-de DP-0) también quedaron visibles** — no se verificó explícitamente antes de cortar la
-sesión.
+With this, Chrome reappeared. **Still need to confirm whether Telegram (and DP-0's desktop
+view) also became visible** — this wasn't explicitly checked before ending the session.
 
-### Qué retomar mañana
+### What to pick back up tomorrow
 
-- [ ] Probar si desconectar físicamente el DP del casco permite que X reprobe sin DP-0 (y si
-      al reconectarlo después, con la sesión ya arrancada, NO se vuelve a agregar como
-      desktop output — sería la señal de que el problema es sólo al probing inicial de X).
-- [ ] Armar el script de autostart de Plasma (`kscreen-doctor output.DP-0.disable` al
-      iniciar sesión) que quedó pendiente de la sesión anterior — aunque con el hallazgo de
-      hoy (que el disable no aplica de verdad) puede no alcanzar por sí solo; evaluar si
-      conviene en cambio automatizar el script de mover-ventanas como red de seguridad,
-      corriéndolo también al reconectar el casco.
-- [ ] Confirmar visualmente que Telegram y el resto de lo que estaba en DP-0 son visibles
-      ahora en una pantalla real.
-- [ ] Seguía pendiente de la sesión anterior: probar si el crash de `QRhiGles2: Context is
-      lost` recurre con el casco desconectado del todo (para saber si hay un segundo bug de
-      Plasma/NVIDIA genérico, no específico de este proyecto).
+- [ ] Test whether physically disconnecting the headset's DP allows X to re-probe without
+      DP-0 (and whether, after reconnecting it later with the session already running, it
+      does NOT get added back as a desktop output — that would signal the problem is only at
+      X's initial probing).
+- [ ] Put together the Plasma autostart script (`kscreen-doctor output.DP-0.disable` on
+      session start) that was left pending from the previous session — although given
+      today's finding (that the disable doesn't really take effect) it may not be enough on
+      its own; evaluate whether it's better to instead automate the move-windows script as a
+      safety net, also running it when the headset reconnects.
+- [ ] Visually confirm that Telegram and everything else that was on DP-0 are now visible
+      on a real screen.
+- [ ] Still pending from the previous session: test whether the `QRhiGles2: Context is
+      lost` crash recurs with the headset fully disconnected (to find out whether there's a
+      second, generic Plasma/NVIDIA bug not specific to this project).
 
-## Continuación (2026-08-06, sesión posterior con Claude Code): compositor de KWin apagado, hipótesis nueva sin confirmar
+## Follow-up (2026-08-06, later session with Claude Code): KWin compositor disabled, new unconfirmed hypothesis
 
-En una sesión distinta, sin relación aparente con el 90Hz, el usuario pidió arreglar el
-**cursor del mouse invisible** en todo el escritorio (bug separado, no documentado acá antes).
-El fix que terminó funcionando fue forzar `GLPlatformInterface=egl` en `kwinrc`
-(`[Compositing]`) — eso hace que KWin **falle** al iniciar el compositor OpenGL
+In a different session, with no apparent connection to the 90Hz issue, the user asked to
+fix the **invisible mouse cursor** across the whole desktop (a separate bug, not documented
+here before). The fix that ended up working was forcing `GLPlatformInterface=egl` in
+`kwinrc` (`[Compositing]`) — that makes KWin **fail** to start the OpenGL compositor
 (`kwin_scene_opengl: Creating the OpenGL rendering failed: "Invalid QOpenGLContext::
-globalShareContext()"`) y, como en este host `platformRequiresCompositing=false`, sigue
-corriendo **sin compositor** en vez de crashear. Con eso el cursor se ve (lo dibuja Xorg
-directo, ya que `HWCursor false` sigue puesto desde antes).
+globalShareContext()"`) and, since on this host `platformRequiresCompositing=false`, it
+keeps running **without a compositor** instead of crashing. With that, the cursor is
+visible (Xorg draws it directly, since `HWCursor false` has been set since before).
 
-El usuario notó después que el casco aparecía "como una pantalla más" y preguntó si tenía que
-ver con el bug de este documento. **Es una hipótesis razonable, sin confirmar todavía:**
+The user later noticed that the headset appeared "as just another screen" and asked
+whether that was related to the bug in this document. **It's a reasonable hypothesis,
+still unconfirmed:**
 
-- Con el compositor apagado, `DP-0` sigue `enabled`/`connected` a `2880x1440@90` en
-  `kscreen-doctor -o` y `xrandr`, igual que lo documentado arriba — eso no cambió.
-- `kscreen-doctor output.DP-0.disable` se comportó **igual que antes**: KScreen pasó a
-  reportar `disabled`, pero `xrandr` siguió mostrando `2880x1440 90.00 +` como modo activo.
-  Mismo desync ya documentado, no se investigó más porque los caminos alternativos (`xrandr
-  --off`, MetaMode de NVIDIA) ya están descartados arriba y no hace sentido repetirlos.
-- Se chequeó con el mismo mecanismo de scripting de KWin (D-Bus) si había ventanas atrapadas
-  en `DP-0`: **ninguna** en el momento del chequeo.
-- **No se observó ningún `QRhiGles2: Context is lost` en lo que va de esta sesión** con el
-  compositor apagado y `DP-0` activo. Ventana de observación corta, no es concluyente.
+- With the compositor off, `DP-0` remains `enabled`/`connected` at `2880x1440@90` in
+  `kscreen-doctor -o` and `xrandr`, same as documented above — that didn't change.
+- `kscreen-doctor output.DP-0.disable` behaved **the same as before**: KScreen switched to
+  reporting `disabled`, but `xrandr` kept showing `2880x1440 90.00 +` as the active mode.
+  Same desync already documented, not investigated further since the alternative
+  approaches (`xrandr --off`, NVIDIA MetaMode) are already ruled out above and it doesn't
+  make sense to repeat them.
+- Checked with the same KWin scripting mechanism (D-Bus) whether there were windows
+  trapped on `DP-0`: **none** at the time of the check.
+- **No `QRhiGles2: Context is lost` was observed during this session so far** with the
+  compositor off and `DP-0` active. Short observation window, not conclusive.
 
-**Por qué podría ser relevante:** el log de crash original citaba tanto `plasmashell` como
-`kwin_x11` perdiendo el contexto GL. Si el compositor de KWin está completamente apagado, la
-mitad del mecanismo de falla documentado arriba (`kwin_scene_opengl: Could not delete
-framebuffer because no context is current`) no tiene contexto que perder — no existe. **Pero
-`plasmashell` mantiene su propio `QRhiGles2`/RHI independiente del compositor**, así que esto
-NO explica ni descarta el segundo crash (el de la pantalla de bloqueo, con DP-0 ya
-deshabilitado) que quedó sin explicar más arriba.
+**Why this might be relevant:** the original crash log cited both `plasmashell` and
+`kwin_x11` losing the GL context. If the KWin compositor is completely off, half of the
+failure mechanism documented above (`kwin_scene_opengl: Could not delete framebuffer
+because no context is current`) has no context to lose — it doesn't exist. **But
+`plasmashell` maintains its own `QRhiGles2`/RHI independent of the compositor**, so this
+does NOT explain or rule out the second crash (the lock screen one, with DP-0 already
+disabled) that was left unexplained above.
 
-**No verificado, no asumir:** no se dejó el sistema corriendo un tiempo largo con compositor
-apagado + casco conectado para confirmar si el crash-loop reaparece o no. Si en una futura
-sesión el crash NO vuelve a pasar con esta config, es evidencia fuerte de que el compositor de
-KWin (no Plasma/NVIDIA en general) era el mecanismo. Si SÍ vuelve a pasar, confirma que el
-problema vive en otro lado (probablemente `plasmashell`) y que apagar el compositor no
-resuelve nada de fondo, sólo cambió el síntoma visible (cursor sí, pero desktop con casco
-"pegado" como 4ta pantalla).
+**Not verified, don't assume:** the system wasn't left running for a long time with the
+compositor off + headset connected to confirm whether the crash-loop reappears or not. If
+in a future session the crash does NOT happen again with this config, that's strong
+evidence the KWin compositor (not Plasma/NVIDIA in general) was the mechanism. If it DOES
+happen again, that confirms the problem lives elsewhere (probably `plasmashell`) and that
+turning off the compositor doesn't fix anything underlying, it just changed the visible
+symptom (cursor yes, but desktop with the headset "stuck" as a 4th screen).
 
-**Efecto secundario a monitorear:** al no haber compositor, no hay efectos visuales,
-transparencias, ni la lógica de KWin que aparentemente antes hacía menos visible a `DP-0` en
-el escritorio compuesto. Puede ser la explicación de por qué el usuario dice "nunca se vio
-así" — con compositor activo, aunque `DP-0` estuviera técnicamente `enabled`, el rendering
-compuesto podía estar ocultándolo o presentándolo distinto. No confirmado, es la lectura más
-simple de la evidencia disponible ahora.
+**Side effect to monitor:** with no compositor, there are no visual effects, no
+transparency, and none of the KWin logic that apparently used to make `DP-0` less visible
+in the composited desktop. This might explain why the user says "it never looked like this
+before" — with the compositor active, even though `DP-0` was technically `enabled`, the
+composited rendering might have been hiding it or presenting it differently. Not confirmed,
+this is just the simplest reading of the evidence available now.
