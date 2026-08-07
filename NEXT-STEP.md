@@ -1,5 +1,35 @@
 # Next step
 
+> **CORRECTION NEEDED (2026-08-07, from the comms session, mounted the lab SSD read-only to
+> check upstream status) — patch `0012` does not describe a bug in anything pushed
+> upstream; the tracked patch series is fine as-is.**
+>
+> Checked `wmr-hid-resilience` (MR !2967, tip `9f9ff4d16`, confirmed against the live GitLab
+> MR) directly against `patches/monado/0003-...-Bound-the-controller-status-wait...patch`:
+> they are byte-identical, and both already use the correct form —
+> `while (!(wh->have_left_controller_status && wh->have_right_controller_status) && os_monotonic_get_ns() < deadline_ns)`,
+> 10s deadline, `next_request_ns` re-request every second. No AND/OR bug here.
+>
+> `patches/monado/0012`'s "before" hunk shows a **3-second deadline** with a bare
+> `!left && !right` condition and different comment text — that matches *neither* the
+> pristine pre-patch upstream code *nor* the finalized/pushed `0003`. Whatever build was
+> actually running on real hardware for T051/T066 (the SUPERHOT/xrizer session) had
+> **drifted from the tracked patch series** before that test — most likely the 10s deadline
+> got hand-shortened to 3s for faster iteration at some point, and the AND/OR slip happened
+> in that same untracked edit.
+>
+> **Nothing was pushed to !2967 over this** — pushing `0012` as-is wouldn't even apply
+> (context mismatch), and since `!(A && B)` and `(!A || !B)` are logically identical
+> (De Morgan), forcing it through would just rewrite already-correct code.
+>
+> **Next step for whoever picks this up on the lab machine:** rebuild the actual test
+> binary fresh from `patches/monado/0001-0011` (via `bootstrap-lab.sh sources`, no manual
+> edits) and re-run T066's scenario against that clean build. If the 9/9 repro still
+> happens, it's a real bug somewhere else and worth a fresh look; if it doesn't, the
+> earlier finding was an artifact of the drifted live tree and `0012` can be dropped.
+> Also worth a quick audit of the lab's build tree for other hand-edits that never made it
+> into `patches/` — this is the kind of drift that's easy to lose track of mid-session.
+
 > **UPDATE 2026-08-07:** items 2 of the list below (player/VR180 + playlist) are **DONE
 > and verified** — the directory playlist chains videos unattended and real content at
 > 4320x2160@90 through the full player is clean (T041, `docs/22-cable-connector-diagnosis.md`).
