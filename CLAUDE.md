@@ -1,5 +1,66 @@
 # Context for the 90Hz lab agent
 
+> ## IN PROGRESS (2026-08-07, night) — headset panel went fully black; DP-1 won't hotplug; PC reboot pending as next test
+>
+> **Goal at the start of this session:** verify the directory-playlist feature for
+> `hello_xr` (`HELLO_XR_VIDEO360=<dir>`, from patch `0003-360-viewer-directory-playlists...`,
+> already built and merged in `~/vr/OpenXR-SDK-Source` since 2026-08-04) actually plays
+> multiple videos in sequence with the headset on — it had never been tested interactively,
+> only with photos. Built `scripts/playlist-session.sh` (also copied to `~/vr/`, **not yet
+> committed to git**) as a one-shot launcher: brings the stack up, plays a directory, tears
+> down cleanly (real `SIGTERM` to `monado-service` so the panel gets a proper HID
+> screen-off). Test playlist ready at `~/vr/media/playlist-test/` (3 VR180 clips with clean
+> metadata, ~70s total, deliberately avoiding the known `sbs`-without-metadata detection gap
+> from `docs/02`).
+>
+> **Important correction made mid-session, keep it:** the launcher must use
+> `jack-in-wayland.sh`, **not** `jack-in.sh`. `jack-in.sh` (X11/Plasma) has never been
+> retested at 90Hz since the bpc patch, and its own default mode is still hardcoded to
+> `XRT_COMPOSITOR_DESIRED_MODE=2` (60Hz) — a leftover pre-fix workaround, still unfixed.
+> `jack-in-wayland.sh` needs the **"GNOME" entry under the Wayland list** at SDDM
+> specifically — not Plasma X11, not Plasma Wayland (KWin never offers the lease, confirmed
+> live again this session with `check-lease.sh`, 0 connectors under KDE). `hello_xr`/
+> `play360.sh` don't care which one brought Monado up, so this is purely a launcher choice.
+>
+> **Bigger caveat, don't lose it:** the "RESOLVED" 90Hz confirmation right above (T026-T029
+> in `docs/pruebas.jsonl`) was done entirely through `hmd-vk`, a raw Vulkan tool that
+> bypasses Monado/OpenXR/`hello_xr` completely, with solid test colors — not real content.
+> The only time real video went through the actual player (`jack-in-wayland.sh` +
+> `play360.sh`, T021) it still flickered, but that predates the reboot+USB-replug that's
+> believed to have cleared a stuck backlight state. **Nobody has confirmed real content
+> through the full player at 90Hz since the fix** — that's still an open verification, not a
+> settled one, whenever the blocker below gets cleared.
+>
+> **The blocker found while trying to run that test:** `jack-in-wayland.sh` fails every
+> time with `Found no connectors available for direct mode` → `XRT_ERROR_VULKAN`.
+> Root-caused to `/sys/class/drm/card0-DP-1/status` (the headset's own port) staying
+> `disconnected`, `0` EDID bytes — not a compositor/lease-policy issue, GNOME/mutter
+> correctly publishes `wp_drm_lease_device_v1`, there's just no electrical hotplug for it to
+> offer. **Physically confirmed with the user: HP logo and panel both fully black — not
+> even the boot logo**, which is a new/different symptom from the "logo on, panel off" 90Hz
+> failure mode `docs/13` already documents. Ruled out so far (`docs/pruebas.jsonl` T030,
+> T031): USB is fine both times (enumerates clean, activation report sent successfully), a
+> 20s power-cut + replug of the whole cable didn't fix it, a USB-only replug (the T025
+> precedent) didn't fix it either, no leftover EDID `config_file` override, correct driver
+> (`595.71.05`), no `xorg.conf.d` overrides. Kernel logs zero DP/HPD events for `DP-1` this
+> entire boot (inconclusive alone — nvidia-drm may just not log HPD at this verbosity — but
+> consistent with everything else).
+>
+> **Decided next step, in progress as this note is written: a plain PC reboot**, before the
+> more invasive test (physically moving the headset's cable to `DP-2`, which means
+> relocating a desktop monitor, to discriminate cable/dongle vs. GPU port). **If the reboot
+> comes up and this document is being read fresh: check `cat
+> /sys/class/drm/card0-DP-1/status` before anything else.** If it says `connected`, the
+> reboot fixed it — proceed straight to the playlist test above. If still `disconnected`,
+> the cable/port swap is the next thing to try, not more software debugging (that side is
+> exhausted, see the ruled-out list above).
+>
+> **Process note so this doesn't cost time again:** `scripts/check-lease.sh` gives a
+> trustworthy "0 connectors" **only** once the panel has already been woken by a prior
+> Monado run in the same boot — run cold, right after a session switch, it always reads "0
+> connectors" regardless of which compositor, because the connector isn't hotplugged yet.
+> Don't treat a cold `check-lease.sh` run as evidence about KWin vs. GNOME by itself.
+
 > ## RESOLVED (2026-08-06, evening) — 90Hz works clean, no AMD or anything else needed
 >
 > The bpc patch (`patches/nvidia/0004`) was the complete solution. Nobody had gone back to
