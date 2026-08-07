@@ -262,3 +262,94 @@ init, so a failed lease still left a live-but-broken `monado-service` process si
 there (had to be killed by hand once). The script now requires the log to show a real
 video mode taken, not just a live socket, before reporting success; on failure it kills
 the stale service and exits 1 instead of pointing at a broken IPC endpoint.
+
+## T046's "dead power rail" verdict revised -- it skipped step 3 of its own ladder (T047-T049, same day)
+
+**The rev2A escalation above was premature.** Next session, on a completely cold Linux
+boot with **zero reseat performed** -- USB was already 5/5 healthy on its own -- DP-1/2/3
+were still `disconnected`, same dark-panel symptom as T046's end state. Step 3 of the
+diagnostic ladder two sections up (`./scripts/panel.py activate`, "power + activation,
+WITHOUT Monado") had never actually been re-run in T046 after its two successful USB
+reseats -- the elimination chain there went brick -> barrel -> GPU port, skipping straight
+to physical elimination. Running it here (T048) worked immediately: valid HID
+identification data back (no `-1`s), user confirmed **the logo lit**, and `DP-1` went
+straight to `connected` with the healthy 384-byte EDID. T049 then ran the full stack
+(`jack-in-wayland.sh 1` + `play360.sh` on the playlist-test directory) end to end --
+lease granted, `4320x2160@90.00` taken, all 3 clips chained cleanly, NVDEC used where
+applicable, clean `SIGTERM` teardown -- user's words: **"si, todo perfecto."** No cable
+or connector was touched at any point this session.
+
+This matches independent evidence gathered the same morning on Windows (T047): the HP
+logo **always starts dark at cold boot** there too, and only stays lit once SteamVR has
+activated the headset once. Same behavior, both OSes, no reseat involved on either side
+that morning -- which reframes T046's "separate dead power rail, needs the rev2A cable"
+conclusion. Leading theory now: **the G2 never raises its own DP hotplug at cold
+power-on, on any OS or driver; it always needs the WMR activation HID sequence first**,
+and that's simply normal behavior, not a fault. T046 most likely caught Monado's own
+in-flight activation attempt racing an unstable USB2 branch immediately after a reseat,
+not a genuinely separate power-rail failure.
+
+**What this does NOT undo**: the marginal-contact findings elsewhere in this document
+still stand on their own evidence -- the USB2-branch dropouts (T039, T044) and the
+tracking-thread freeze (T045) were never explained by "missing activation," only the
+power-rail piece of T046 is in question. The rev2A cable recommendation is downgraded
+from "the next real step" back to "keep it in mind if the USB2/tracking recurrence gets
+worse" -- not bought yet, not urgently needed. **Practical takeaway: before ever
+concluding "the panel is dead," always run `./scripts/panel.py activate` first and look
+at the visor with your own eyes** -- do not skip step 3 of the ladder, even (especially)
+right after a reseat that was chasing a different symptom.
+
+## Load correlates with disconnect frequency, and audio shares the same marginal
+## contact (T052-T057, same day)
+
+Walk the downgrade right above back partway: a few hours later the USB2 branch was
+caught mid-storm -- cycling on its own every ~6-12s with **nothing running at all** (no
+service, no test loop). 66 reconnects of `usb 3-2` (hub `04b4:6506` + audio `0bda:4c15` +
+companion `03f0:0580`) logged in one 60-minute `journalctl -k` window, denser than any
+single isolated event characterized earlier in this document. The panel.py-activate fix
+above is still real for the cold-boot-dead-panel case, but this storm proves the
+underlying contact is not calm -- **the rev2A cable should be treated as still-open, not
+retired.**
+
+While diagnosing that storm, real audio playback was tested end-to-end for the first
+time in this project (never validated before). Two threads worth keeping:
+
+1. **A false lead, corrected fast**: an initial "it's the off-ear speaker position"
+   theory was wrong and retracted -- the G2 has no proximity sensor near the speakers,
+   only one near the nose bridge (`WMR_CONTROL_MSG_IPD_VALUE`) for wear detection,
+   unrelated to audio. The real mechanism is the storm above: PipeWire creates/destroys
+   the ALSA sink on every USB2 cycle, so a stream that starts or is running mid-cycle can
+   land in a disconnected window and simply produce nothing, with no error anywhere.
+   `./scripts/hmd-audio.sh {mute|unmute|status|set <pct>}` (resolves the sink by name via
+   `wpctl`, survives the renumbering) is now the fast way to control it.
+2. **A crude load-correlation experiment**, one 60s `journalctl`-counted window per
+   condition (small sample, not rigorous, but consistent and monotonic): idle = 1
+   disconnect, a standalone audio tone = 0, a Monado video session alone = 5, video +
+   simultaneous audio together = 8. More concurrent activity on the shared HID/USB2
+   channel tracks with more disconnects -- consistent with the `docs/06` "hub reset
+   scales with panel/HID load" mechanism already on record. Note: `hello_xr`'s video path
+   has no audio decode implemented yet (`docs/02`), so "video+audio" here means a
+   Monado/OpenXR session running concurrently with an unrelated desktop audio stream, not
+   audio muxed from the video file itself.
+
+**Independent confirmation from Windows, from the user, same night**: on this exact
+unit, display and audio failures have historically been anti-correlated there too --
+when the panel wasn't working, audio was fine, and when the panel was active, audio
+would cut out. That is the same "one shared marginal contact, load/contention dependent"
+picture as everything measured on Linux today, on a completely different OS and driver
+stack -- strong evidence this is a physical-layer property of this specific unit's cable
+or connector, not a Linux/Monado-specific bug.
+
+**A concrete, reproducible companion-channel failure, caught with `WMR_LOG=debug`**:
+during this same storm, Monado's own `control_read_packets()` (`wmr_hmd.c`) was
+continuously logging `Error reading from companion (HMD control) device. Call to
+os_hid_read returned -1` -- every poll cycle, for a sustained ~35s window, including
+through a user-performed proximity-sensor cover/uncover gesture that should have
+produced a visible transition. This means the companion's **control** endpoint
+specifically (separate from its being enumerated at all -- `lsusb` still showed 5/5
+throughout) was unreadable start to finish. Proximity/IPD sensor status is therefore
+**untested as working**, not confirmed broken by design -- it simply couldn't be
+reached this session due to the live degradation. Worth a clean retry once/if the branch
+is calm (check with a 60s idle `journalctl -k` count first, per the experiment above --
+low single digits is the current "calm" baseline on this unit, zero is not realistic to
+expect).

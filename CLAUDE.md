@@ -33,6 +33,39 @@
 > controllers on BEFORE starting the service; the 10-boot controller stress test is
 > deferred until the new cable. Details in `docs/22`'s "Recurrence" section.
 >
+> **Update, next morning (T046-T049) — a "dead power rail" turned out to be an unrun
+> diagnostic step, not new hardware failure; the rev2A cable is downgraded again.** A
+> session hours later (T046) found the panel totally dark with zero DP hotplug on any
+> port, and two visor-end reseats fixed the USB2 branch but never budged the panel —
+> escalated at the time to "the rev2A cable is the next real step." The very next
+> session (T047-T049), a **completely cold Linux boot with zero reseat performed** (USB
+> was already 5/5 on its own) reproduced the identical dark panel — and simply running
+> `./scripts/panel.py activate` (step 3 of the `docs/22` ladder, which T046 never re-ran
+> after its reseats) brought it up instantly: logo lit, `DP-1` connected with the healthy
+> 384-byte EDID, and the full stack then played real playlist content cleanly at
+> `4320x2160@90` (user: "si, todo perfecto"). The same morning, Windows independently
+> showed the same pattern (T047): HP logo always starts dark at cold boot, stays lit only
+> after SteamVR activates the headset once — same behavior, both OSes, no reseat involved
+> either time. Current read: **the G2 never raises DP hotplug on its own at cold
+> power-on, on any OS — it always needs the WMR activation sequence first, which is
+> normal, not a fault.** The rev2A cable is back to "keep in mind if USB2/tracking
+> recurrence gets worse," not an active purchase. Doesn't touch the separately-evidenced
+> USB2 dropouts (T039/T044) or the tracking-thread freeze (T045). **Always run
+> `panel.py activate` and look at the visor before declaring the panel dead** — full
+> detail in `docs/22`'s final section.
+>
+> **Same-day update (T052-T053) — walk the downgrade above back partway: caught the USB2
+> branch mid-storm, cycling on its own every ~6-12s with nothing running.** 66
+> reconnects of `usb 3-2` (hub/audio/companion) logged in one 60-minute window via
+> `journalctl -k`, denser than any single isolated event seen before. The
+> panel.py-activate fix is still real and still validated for the cold-boot-dead-panel
+> case, but this storm shows the underlying marginal contact is NOT calm — **treat the
+> rev2A cable as still-open, not retired.** Side effect while diagnosing: real playback
+> audio (never tested before this session) works fine electrically, but a stream can
+> silently produce nothing if it starts during one of these disconnected windows —
+> `./scripts/hmd-audio.sh` added for fast mute access. Full detail in `docs/pruebas.jsonl`
+> T052-T053.
+>
 > **Goal at the start of this session:** verify the directory-playlist feature for
 > `hello_xr` (`HELLO_XR_VIDEO360=<dir>`, from patch `0003-360-viewer-directory-playlists...`,
 > already built and merged in `~/vr/OpenXR-SDK-Source` since 2026-08-04) actually plays
@@ -507,6 +540,54 @@ blocker.
   forever.
 - **Delete `/run/user/1000/monado_comp_ipc` before EVERY startup.** `SIGKILL` doesn't clean
   it up.
+- **`"found display mode"` in the log does NOT prove the real WMR headset was used**
+  (found 2026-08-07, T050). If the `wmr` builder fails to build a head device (e.g. a
+  transient `Did not find HoloLens Sensors' companion device`), Monado silently falls back
+  to its `legacy` builder's **Simulated HMD** — which still leases the already-hotplugged
+  DP connector and still logs `found display mode`, indistinguishable from a real success
+  under a naive grep. Always also check for `Using builder wmr` (not `Using builder
+  legacy`/`Simulated HMD`) before trusting a session.
+- **The right controller can silently lose the startup race and never register — even
+  though it's powered on and pairs fine** (found 2026-08-07, T051). Both controllers
+  share one HID tunnel through the headset (docs/03) and Monado finalizes its device/role
+  list early; if the right controller's config read (`Reading right controller config`)
+  finishes after that list is built, it ends up `right: <none>` for the whole session with
+  no error logged. Reproduced 9/9 times in a row with both controllers on the entire time —
+  this is a left-wins-every-time race, not occasional BT flakiness. Check with
+  `grep -E "left:|right:"` in the log; don't trust the physical LED alone. Not fixed yet —
+  candidate fix is parallel/round-robin controller reads instead of strictly sequential
+  ones in the startup path (`patches/monado`).
+- **`jack-in-wayland.sh` now pre-activates the panel and polls sysfs for DP `connected`
+  itself before ever starting `monado-service`** (added 2026-08-07, T050), instead of
+  relying on Monado's own fixed `WMR_DISPLAY_INIT_SLEEP_SECONDS=2` window — measured
+  activate→hotplug latency is NOT fixed (as fast as ~0.5s clean, as slow as ~6s right
+  after a prior failed attempt), and 2s wasn't always enough. This is what actually fixed
+  the intermittent "Found no connectors available for direct mode" failures that used to
+  look like hardware death.
+- **The USB Audio sink needs a mute-on-demand plan.** The companion's audio device
+  (`0bda:4c15`) becomes the system default output the instant it enumerates, and any
+  already-playing stream (e.g. a browser tab) can jump onto it mid-cycle at whatever
+  volume it was at — startling right next to your ears. `./scripts/hmd-audio.sh
+  {mute|unmute|status|set <pct>}` finds the sink by name via `wpctl` (no ID to
+  memorize, survives PipeWire re-numbering the sink on every USB2 re-enumeration) and is
+  the fast way to kill it.
+- **"No audio" can be the USB2 branch cycling under you, not a real fault — check
+  `journalctl -k` for `usb 3-2` disconnects before debugging PipeWire.** (T052-T053,
+  corrected: an initial "it was the off-ear speaker position" theory was WRONG and
+  retracted — the G2 has no proximity sensor there, only one near the nose bridge for
+  wear detection, `WMR_CONTROL_MSG_IPD_VALUE`, unrelated to audio.) Real mechanism,
+  caught live: the USB2 branch (hub `04b4:6506` + audio `0bda:4c15` + companion
+  `03f0:0580`) can reconnect on its own repeatedly at idle with nothing running — one
+  session logged 66 cycles in 60 minutes, including a dense stretch of one every
+  ~6-12 seconds with the companion transiently missing from `lsusb`. PipeWire
+  creates/destroys the ALSA sink on every cycle, so playback that starts or is already
+  running has a real chance of landing in a disconnected window and simply producing
+  nothing, with no error anywhere. This is denser than the isolated single-event
+  recoveries in T039/T044/T046 — **don't treat the panel.py-activate fix (T048-T050) as
+  proof the underlying marginal contact is calm; this storm suggests otherwise, and the
+  rev2A cable recommendation should be treated as still-open, not retired.** Not yet
+  tested: whether audio glitches mid-playback during a live dropout (vs. just failing to
+  start), the mic path, or what makes the storm start/stop.
 - **`pgrep -f` matches itself** in environments where the shell carries the pattern in its
   cmdline. Use `pgrep -f "monado[-]service"`. A PID that changes on every check is the
   tell.

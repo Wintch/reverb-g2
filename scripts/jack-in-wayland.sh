@@ -49,6 +49,33 @@ for p in $(pgrep -f "monado[-]service"); do kill -9 "$p" 2>/dev/null; done
 sleep 2
 rm -f "$SOCKET"
 
+# Pre-flight the DP hotplug OURSELVES instead of letting Monado race it. Measured
+# 2026-08-07 (T050): time from panel.py activate to the DP connector actually flipping
+# to "connected" is NOT fixed -- 3 clean back-to-back runs measured ~0.5s, but right
+# after an earlier failed attempt it measured ~6s twice, well past the
+# WMR_DISPLAY_INIT_SLEEP_SECONDS=2 window Monado itself waits below -- this is why
+# "Found no connectors available for direct mode" recurs intermittently even with USB
+# fully healthy (04b4:6506, 03f0:0580, 0bda:4c15 all present). Activating and polling
+# sysfs directly here, before Monado ever starts, means Monado only starts once the
+# connector is provably already up -- its own internal activation is still harmless/
+# idempotent on top of this.
+PANEL_PY="$(dirname "${BASH_SOURCE[0]}")/panel.py"
+echo "Activating panel and waiting for DP hotplug..."
+python3 "$PANEL_PY" activate >/dev/null 2>&1
+DP_UP=0
+for _i in $(seq 1 20); do
+    for s in /sys/class/drm/card*-DP-*/status; do
+        [ "$(cat "$s" 2>/dev/null)" = "connected" ] && { DP_UP=1; break 2; }
+    done
+    sleep 0.5
+done
+if [ "$DP_UP" = 1 ]; then
+    echo "  DP connector up."
+else
+    echo "  !! DP never came up after activation (waited 10s) -- starting Monado anyway," >&2
+    echo "     it will report 'Found no connectors available' if this doesn't clear." >&2
+fi
+
 echo "Starting Monado (mode $MODE) via DRM lease... log: $LOG"
 
 # Keep the previous run's log. Truncating on every start destroyed the one log that could
