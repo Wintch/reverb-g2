@@ -1,0 +1,184 @@
+From 7bdb7a768f23da619e9671e8f6547f3e68bd441d Mon Sep 17 00:00:00 2001
+From: iam <iam@iashur.internal>
+Date: Fri, 7 Aug 2026 02:26:24 -0300
+Subject: [PATCH] 360 viewer: frame-by-frame step (arrow keys, < > fallback)
+
+Left/right arrow keys step back/forward exactly one frame, pausing first since the jump
+is too small to see while still playing. Detected as a 3-byte ESC '[' C/D escape sequence
+in main.cpp's key-reading thread, disambiguated from a bare ESC (still quit) via a short
+poll() timeout - a real Escape has nothing following it, an arrow key's remaining bytes
+are already buffered by the time we read the first one. '<'/'>' are bound as a plain-
+keyboard fallback in case a terminal encodes arrows differently.
+
+No new decode-side machinery: PlayerControl::StepFrame() queues a frame count, and
+graphicsplugin_vulkan.cpp turns it into the same Video360::Seek(seconds) call h/l already
+use, just scaled by 1/FrameRate() instead of a fixed 10s.
+
+Compiles clean. NOT yet run live - needs monado-service up to get hello_xr's OpenXR
+instance past init, wasn't brought up this session.
+---
+ src/tests/hello_xr/graphicsplugin_vulkan.cpp |  4 ++
+ src/tests/hello_xr/main.cpp                  | 41 ++++++++++++++++++++
+ src/tests/hello_xr/playercontrol.cpp         | 19 ++++++++-
+ src/tests/hello_xr/playercontrol.h           | 13 +++++++
+ 4 files changed, 76 insertions(+), 1 deletion(-)
+
+diff --git a/src/tests/hello_xr/graphicsplugin_vulkan.cpp b/src/tests/hello_xr/graphicsplugin_vulkan.cpp
+index 80097a6..c3c4fb6 100644
+--- a/src/tests/hello_xr/graphicsplugin_vulkan.cpp
++++ b/src/tests/hello_xr/graphicsplugin_vulkan.cpp
+@@ -1668,6 +1668,10 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+             m_video->SetRate(PlayerControl::Rate());
+             const int seekJump = PlayerControl::TakeSeekRequest();
+             if (seekJump != 0) m_video->Seek((double)seekJump);
++            const int frameStep = PlayerControl::TakeFrameStepRequest();
++            if (frameStep != 0 && m_video->FrameRate() > 0.0) {
++                m_video->Seek(frameStep / m_video->FrameRate());
++            }
+             const bool skip = PlayerControl::TakeNextTrackRequest() && m_playlist.size() > 1;
+             if (skip || (m_playlist.size() > 1 && m_video->Finished())) AdvanceTrack();
+             if (m_videoMode) UpdateVideoTexture();
+diff --git a/src/tests/hello_xr/main.cpp b/src/tests/hello_xr/main.cpp
+index 3749811..d02c04c 100644
+--- a/src/tests/hello_xr/main.cpp
++++ b/src/tests/hello_xr/main.cpp
+@@ -13,6 +13,11 @@
+ 
+ #include <cstdlib>
+ 
++#if defined(XR_OS_LINUX) || defined(XR_OS_APPLE)
++#include <poll.h>
++#include <unistd.h>
++#endif
++
+ #if defined(_WIN32)
+ // Favor the high performance NVIDIA or AMD GPUs
+ extern "C" {
+@@ -310,6 +315,42 @@ int main(int argc, char* argv[]) {
+             Log::Write(Log::Level::Info, PlayerControl::HelpLine());
+             while (!quitKeyPressed) {
+                 const int c = getchar();
++#if defined(XR_OS_LINUX) || defined(XR_OS_APPLE)
++                // Arrow keys arrive as the 3-byte escape sequence ESC '[' C/D. ESC alone is
++                // also the quit key, so on ESC we peek for more bytes with a short poll()
++                // timeout instead of assuming: a real Escape keypress has nothing following
++                // it, while an arrow key's remaining bytes are already sitting in the
++                // terminal's input buffer by the time we get here (the pty writes all three
++                // as one burst). Left/right also has plain '<'/'>' as a keyboard-only
++                // fallback in HandleKey, in case a given terminal encodes arrows differently.
++                if (c == 27 && isatty(STDIN_FILENO)) {
++                    pollfd pfd{STDIN_FILENO, POLLIN, 0};
++                    if (poll(&pfd, 1, 30) > 0) {
++                        const int c2 = getchar();
++                        if (c2 == '[') {
++                            pollfd pfd2{STDIN_FILENO, POLLIN, 0};
++                            if (poll(&pfd2, 1, 30) > 0) {
++                                const int c3 = getchar();
++                                if (c3 == 'C') {
++                                    PlayerControl::StepFrame(1);
++                                } else if (c3 == 'D') {
++                                    PlayerControl::StepFrame(-1);
++                                }
++                                // any other CSI sequence (up/down, Home/End, F-keys...): not
++                                // handled, just swallowed along with its introducer bytes.
++                            }
++                            continue;
++                        }
++                        // ESC followed by something that isn't '[': treat the ESC as the
++                        // real quit keypress it looks like, then let the next byte act too.
++                        PlayerControl::HandleKey(27);
++                        if (PlayerControl::QuitRequested()) quitKeyPressed = true;
++                        PlayerControl::HandleKey(c2);
++                        if (PlayerControl::QuitRequested()) quitKeyPressed = true;
++                        continue;
++                    }
++                }
++#endif
+                 PlayerControl::HandleKey(c);
+                 if (PlayerControl::QuitRequested()) quitKeyPressed = true;
+                 if (c == EOF) break;
+diff --git a/src/tests/hello_xr/playercontrol.cpp b/src/tests/hello_xr/playercontrol.cpp
+index 5009c7d..10f9595 100644
+--- a/src/tests/hello_xr/playercontrol.cpp
++++ b/src/tests/hello_xr/playercontrol.cpp
+@@ -25,6 +25,7 @@ std::atomic<bool> g_paused{false};
+ std::atomic<bool> g_nextTrack{false};
+ std::atomic<bool> g_quit{false};
+ std::atomic<int> g_seekJumpSeconds{0};
++std::atomic<int> g_frameStepRequest{0};
+ std::atomic<int> g_quitHoldPermille{0};
+ std::atomic<bool> g_recenterRequested{false};
+ // Stored as bit-pattern-in-an-int64 (via memcpy) rather than std::atomic<double>, which isn't
+@@ -100,6 +101,15 @@ void QueueSeek(int seconds) {
+     Log::Write(Log::Level::Info, Fmt("player: seek %+ds", seconds));
+ }
+ 
++int TakeFrameStepRequest() { return g_frameStepRequest.exchange(0); }
++
++void StepFrame(int frames) {
++    g_paused = true;
++    g_frameStepRequest += frames;
++    TouchInteraction();
++    Log::Write(Log::Level::Info, Fmt("player: frame %+d", frames));
++}
++
+ double SecondsSinceLastInteraction() {
+     const int64_t last = g_lastInteractionMs.load();
+     if (last == 0) return 1e9;  // never touched - "a long time ago" for the auto-hide timer
+@@ -167,6 +177,12 @@ bool HandleKey(int c) {
+         case 'L':
+             QueueSeek(10);
+             return true;
++        case '<':
++            StepFrame(-1);
++            return true;
++        case '>':
++            StepFrame(1);
++            return true;
+         case '\r':
+         case '\n':
+             RequestRecenter();
+@@ -214,7 +230,8 @@ void EndRawInput() {
+ }
+ 
+ const char* HelpLine() {
+-    return "  Teclas: [espacio] pausa   [ ] velocidad   1 normal   h/l -10s/+10s   enter recentra   "
++    return "  Teclas: [espacio] pausa   [ ] velocidad   1 normal   h/l -10s/+10s   "
++           "<-/-> (o < >) frame a frame   enter recentra   "
+            "n siguiente   q salir "
+            "(mando WMR: trigger pausa, stick seek, grip recentra, mantener Menu ~1.5s sale)";
+ }
+diff --git a/src/tests/hello_xr/playercontrol.h b/src/tests/hello_xr/playercontrol.h
+index 16e0427..139b569 100644
+--- a/src/tests/hello_xr/playercontrol.h
++++ b/src/tests/hello_xr/playercontrol.h
+@@ -8,6 +8,8 @@
+ //   [  ]    slower / faster (1x, 0.5x, 0.25x, 2x ...)
+ //   1       back to normal speed
+ //   h  l    seek -10s / +10s (also: WMR controller thumbstick)
++//   <- ->   step back / forward one frame (also: < >). Pauses first - the jump is a single
++//           frame, too small to see while still playing.
+ //   enter   recenter forward (also: WMR controller squeeze/grip)
+ //   n       next file in the playlist
+ //   q ESC   quit (also: hold the WMR Menu button ~1.5s)
+@@ -37,6 +39,17 @@ int TakeSeekRequest();
+ // controller thumbstick poll in openxr_program.cpp.
+ void QueueSeek(int seconds);
+ 
++// Frames to step (positive = forward, negative = back), accumulated since the last call.
++// Cleared on read. The consumer (graphicsplugin_vulkan.cpp) turns this into a Video360::Seek
++// of frameCount * frame duration - there's no separate frame-accurate decode path, it's the
++// same seek-and-flush machinery h/l use, just for a much smaller delta.
++int TakeFrameStepRequest();
++
++// Queues a frame step and forces a pause: stepping while playing would move less than a
++// frame's worth of the eye can register, since normal playback is already advancing many
++// frames a second.
++void StepFrame(int frames);
++
+ // How long ago (seconds) the user last touched a transport control (pause/seek/speed) -
+ // drives the progress bar's auto-hide timer. A large number once nothing has happened for a
+ // while.
+-- 
+2.47.3
+

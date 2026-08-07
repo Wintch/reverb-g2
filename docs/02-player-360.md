@@ -37,7 +37,8 @@ on the lab machine it died with "hello_xr not built" with no further explanation
 
 When run from a **real terminal** (not piped or backgrounded), there are transport keys:
 `space` pauses, `[`/`]` speed (0.125x–4x), `1` normal, `h`/`l` seek -10s/+10s,
-`enter` recenters, `n` next, `q` quit. If a dirty disconnect leaves the terminal mute:
+left/right arrow (or `<`/`>`) step one frame back/forward, `enter` recenters, `n` next,
+`q` quit. If a dirty disconnect leaves the terminal mute:
 `stty sane`. In a pipe there are no keys and the run ends at stdin's EOF, as always.
 
 ### Seek + progress bar (2026-08-06)
@@ -83,6 +84,26 @@ in THAT block of `openxr_program.cpp` or it's dead on arrival.
   the content instead of painting black, so the app's clear color is finally visible.
 - When controllers connect, the player prints `Active profile /user/hand/...` and the
   sources for each action — for a dead button, check that first.
+
+### Frame-by-frame step (2026-08-07, `0006-*.patch`) — NOT YET VERIFIED LIVE
+
+Left/right arrow steps back/forward exactly one frame, forcing a pause first (the jump is
+too small to see while still playing). `<`/`>` are a plain-keyboard fallback in case a
+terminal encodes arrows differently. No new decode machinery: it reuses the same
+`Video360::Seek(seconds)` call `h`/`l` already use, just scaled by `1/FrameRate()` instead
+of a fixed 10s — see `PlayerControl::StepFrame` in `playercontrol.cpp`.
+
+Arrow keys are a 3-byte escape sequence (`ESC [ C/D`) and `ESC` alone is already the quit
+key; `main.cpp`'s key thread disambiguates with a short (30ms) `poll()` after seeing `ESC` —
+a bare Escape press has nothing following it, an arrow key's remaining bytes are already
+buffered by the time the first one is read.
+
+**Status: compiles clean, not run live.** `hello_xr` needs an active OpenXR runtime
+(`monado-service` up) to get past instance creation at all — that wasn't brought up this
+session, so this hasn't been exercised through even a fake-pty keyboard test, let alone
+with the headset on. Next time the stack is up: fake-pty test first (arrows + `<`/`>`,
+check the log for `player: frame +1`/`-1`), then confirm with the headset that stepping
+while paused actually lands on the next/previous frame and not a multi-frame jump.
 
 ## Projections and stereo (v3)
 
