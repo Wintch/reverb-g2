@@ -99,13 +99,30 @@ OUT="$(grep -iE "Target backend|Selected .* backend|lease|Found no connectors" "
 echo
 echo "=== video mode taken ==="
 OUT="$(grep -E "found display mode|frame interval" "$LOG" | tail -3)"
-[ -n "$OUT" ] && echo "$OUT" || echo "  (no mode found -- the HMD may not be leasable)"
+MODE_OK=0
+if [ -n "$OUT" ]; then
+    echo "$OUT"
+    MODE_OK=1
+else
+    echo "  (no mode found -- the HMD may not be leasable)"
+fi
 
 echo
-if [ -S "$SOCKET" ]; then
+# A socket existing is NOT enough: the IPC server binds it before it tries to init the
+# compositor, so a failed lease (no connector, no mode) still leaves a live process with a
+# live socket -- any OpenXR app launched against it fails later with XRT_ERROR_RUNTIME_FAILURE
+# on xrGetSystem, and the broken service just sits there until something kills it (found the
+# hard way on 2026-08-07: had to manually pkill a service that had been "Socket ready" for
+# several failed launches in a row). Require BOTH the socket and a real mode; otherwise kill
+# the broken instance ourselves instead of reporting a false success.
+if [ "$MODE_OK" = 1 ] && [ -S "$SOCKET" ]; then
     echo "Socket ready. Launch an OpenXR app with:"
     echo "  XR_RUNTIME_JSON=$VR/monado/build/openxr_monado-dev.json IPC_IGNORE_VERSION=1 <app> --graphics Vulkan2"
 else
-    echo "!! Socket didn't appear. Last lines of the log:" >&2
+    echo "!! No usable compositor (no leasable connector / no mode found) -- not leaving a broken service running." >&2
+    echo "!! Last lines of the log:" >&2
     tail -15 "$LOG" >&2
+    for p in $(pgrep -f "monado[-]service"); do kill -9 "$p" 2>/dev/null; done
+    rm -f "$SOCKET"
+    exit 1
 fi

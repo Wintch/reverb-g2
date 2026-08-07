@@ -223,3 +223,42 @@ On teardown-by-timeout mid-playlist, `hello_xr` emits Vulkan validation errors
 in-flight command buffers freed during shutdown. Exit code was still 0 and nothing
 user-visible; cosmetic for now, but it's a real ordering bug in the player's shutdown
 path if anyone touches that code anyway.
+
+## The power rail specifically, isolated from the USB2 branch (T046, 2026-08-07 ~03:30)
+
+A session hours after the T041-T045 resolution found the panel completely dead again --
+no logo, no DP hotplug on any of the system's three DP connectors -- while the USB2
+branch (companion + audio) needed its usual reseat-to-recover dance (twice, both
+successful). What's new: this is the first time the power path was isolated cleanly
+enough to say it's a **separate fault from the USB2 data pins**, not just "the same
+marginal contact, sometimes." Two reseats of the visor-end connector fixed USB 2/2 and
+fixed power 0/2.
+
+Elimination chain, each step confirmed before moving to the next:
+1. **Brick**: has its own indicator LED, lit -- receiving wall power.
+2. **Breakout-box barrel connector**: exercised directly by unplugging just the 12V
+   line and reconnecting it. Unexpected side effect worth remembering for next time:
+   the *whole* USB tree (5/5 devices) dropped the instant the barrel was pulled --
+   confirmed in the kernel log, five simultaneous `USB disconnect` lines at one
+   timestamp -- even though nothing on the USB side was touched. Handling the
+   breakout box at all disturbs this cable enough to affect branches you didn't mean
+   to touch. Reconnecting the barrel brought USB straight back to a stable 5/5;
+   the panel stayed dark throughout.
+3. **GPU port**: moved the DP cable to a different physical port on the card. All
+   three DP connectors (`DP-1`/`DP-2`/`DP-3`) read `disconnected` regardless of which
+   one is occupied -- rules out a single bad GPU port.
+
+With the brick, the breakout barrel, the USB branch and the GPU port all cleared, what's
+left is inside the visor-end connector itself (a different pin subset than the USB data
+pins that keep recovering) or a break further down the cable run. Not reseatable by the
+procedure in the section above -- this pushes the rev2A replacement cable from "firm
+recommendation" to "the next real step," and the untried, more invasive option is
+opening the breakout box to inspect the internal 12V wiring directly.
+
+**Housekeeping fix from the same session**: `jack-in-wayland.sh` used to report "Socket
+ready, launch an app" whenever the IPC socket existed, even if the compositor had
+already failed to find a leasable connector -- the socket opens before the compositor
+init, so a failed lease still left a live-but-broken `monado-service` process sitting
+there (had to be killed by hand once). The script now requires the log to show a real
+video mode taken, not just a live socket, before reporting success; on failure it kills
+the stale service and exits 1 instead of pointing at a broken IPC endpoint.
