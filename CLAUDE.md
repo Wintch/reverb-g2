@@ -70,11 +70,33 @@
 > with a generic error 422 (documented as common for G2 + the Oasis driver, not conclusive
 > on its own) and the panel doesn't light — **but the HP logo DOES show**, unlike the total
 > blackout on Linux. So the cable isn't 100% dead (Windows gets further), which complicates
-> a clean "dead cable" verdict. **Still open, needs the user:** is there a separable DP
-> segment between the dongle and the PC to swap for a spare, and is there more detail behind
-> Windows' error 422 worth chasing. Don't re-run the software-side checks already covered
-> above (USB replug ×2, power-cut, reboot, both DP ports, both GNOME/Wayland and — pending —
-> Plasma/X11) — they're exhausted, this is a physical-layer question now.
+> a clean "dead cable" verdict. Don't re-run the software-side checks already covered
+> above (USB replug ×2, power-cut, reboot, both DP ports, both GNOME/Wayland and Plasma/X11
+> — T036 confirmed X11 direct-mode fails identically) — they're exhausted, this is a
+> physical-layer question now.
+>
+> **FINAL STATE OF THE NIGHT (T037-T038) — it's progressive hardware failure in the
+> headset/cable/power chain, full stop.** Two corrections that reorder everything above:
+> (1) T034's "Windows machine" was the **same physical PC** (5600), same port and cable,
+> only the SSD swapped — this project has always been one machine until tonight. (2) The
+> headset was then tested on a **genuinely different machine** (x3600, different
+> board/GPU), with Windows: **not even the HP logo lights anymore**, SteamVR error 108
+> ("headset not detected" — generic display-not-found, don't chase it as software). So
+> within a few hours the symptom *progressed*: panel fully working (T026-T029, afternoon) →
+> logo-but-no-panel on Windows/5600 (T034, ~01:45) → no logo on any host (T038). A
+> monotonic decay independent of host hardware, OS, port, and SSD kills every host-side
+> theory including T037's "residual software state" suspicion. What's shared across all
+> failing configs: the visor, its cable (an **active** cable — the inline box contains a DP
+> repeater; a dying repeater explains USB-still-fine + DP-never-hotplugs + gradual decay),
+> and the 12V power brick. The community record matches exactly: early-production G2 cables
+> failed en masse (HP shipped a rev2A replacement cable; symptoms = "not detected", USB OK
+> but display dead, blinking cable-box LED). **The old "power supply ruled out" note in
+> docs/06 no longer holds** — it predates tonight's degradation. Next steps, in cost order,
+> agreed direction: (a) reseat the cable at the **visor end** — it detaches behind the
+> magnetic face gasket, it is NOT fully integrated; (b) check the 12V brick/barrel
+> connection; (c) replacement cable (the classic fix); (d) if a new cable changes nothing,
+> it's the visor's display board — service territory. The 90Hz/playlist verification queue
+> stays frozen until the headset lights again.
 >
 > **Unrelated but costly mistake, same night, keep out of the way next time:** while waiting
 > to test the X11 path, the user reported black borders around windows (leftover
