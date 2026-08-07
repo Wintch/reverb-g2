@@ -33,19 +33,20 @@ and this project produced four confidently wrong conclusions that were all reach
 | Area | State |
 |---|---|
 | Headset display | ✅ 60 Hz via Monado direct mode, X11 and Wayland |
-| 90 Hz | ❌ panel stays dark — root cause still open, see below |
+| 90 Hz | ✅ clean at both native modes (2880×1440 and supersampled 4320×2160) — see below |
 | Head tracking, 3DoF | ✅ solid (IMU, `WMR_SLAM=0`) |
 | Head tracking, 6DoF | ⚠️ Basalt SLAM diverges (~3° drift while stationary) |
 | 360 / VR180 player | ✅ our own, built on `hello_xr`; 8K stereo at 60 fps |
 | Headset audio | ✅ works — the long-standing failure was a bad USB port |
 | Controllers | ⚠️ 3DoF only (upstream driver limit); connection reliability fixed here |
-| SteamVR | ❌ Valve packaging bug (`vrmonitor`/Qt); OpenComposite is the way |
+| SteamVR | ❌ Valve packaging bug (`vrmonitor`/Qt); try [xrizer](https://github.com/The-personified-devil/xrizer) instead of OpenComposite (unmaintained since 2024) |
 
 ## What came out of this: an NVIDIA driver bug
 
 While chasing 90 Hz we root-caused a separate bug in the NVIDIA display driver, filed
 upstream as
-**[open-gpu-kernel-modules#1275](https://github.com/NVIDIA/open-gpu-kernel-modules/pull/1275)**:
+**[open-gpu-kernel-modules#1275](https://github.com/NVIDIA/open-gpu-kernel-modules/pull/1275)**
+(open, not yet reviewed or merged as of 2026-08-06):
 
 > `nvDpyGetOutputColorFormatInfo()` treats "the EDID did not declare a color depth" as "the
 > sink wants 6 bpc" and drives the DisplayPort link at 18 bpp. The DSI branch of the same
@@ -56,23 +57,21 @@ upstream as
 Full write-up in [`docs/13-bug-6bpc.md`](docs/13-bug-6bpc.md), and in the
 [NVIDIA forum thread](https://forums.developer.nvidia.com/t/379240).
 
-**It did not fix 90 Hz.** That remains open. As far as we can tell there is not a single
-confirmed human sighting of a Reverb G2 running 90 Hz on Linux, on any GPU — the claims we
-could find all rest on API-level evidence, which this project has shown repeatedly is
-compatible with a dead panel.
-
-[`docs/16-lab-vblank.md`](docs/16-lab-vblank.md) ran the factorial that separates refresh
-rate, vertical blanking, and pixel clock as independent variables (7 points, physical
-verification each time) — none of them, alone or combined, explain the failure. The only
-pixel clock that has ever produced an image is the one from the mode that already worked.
-[`docs/13-bug-6bpc.md`](docs/13-bug-6bpc.md) then closed the USB/HID side of the
-investigation from the Windows angle too: the headset's own status report is byte-identical
+**It was the fix — confirmed 2026-08-06.** The patch (`patches/nvidia/0004`) stayed
+unconfirmed for two extra days for a mundane reason, not a second bug: every retest after
+applying it kept reusing the synthetic, injected EDID timings from the earlier
+investigation instead of the panel's plain native mode.
+[`docs/16-lab-vblank.md`](docs/16-lab-vblank.md) ran a careful factorial across refresh
+rate, vertical blanking, and pixel clock on those injected timings and, correctly, found
+none of them explained anything — the injected timings were never the actual problem. Once
+the plain native EDID mode was retested with the patch applied, both native 90 Hz modes came
+up clean. [`docs/13-bug-6bpc.md`](docs/13-bug-6bpc.md) separately closed the USB/HID side of
+the investigation from the Windows angle: the headset's own status report is byte-identical
 between Linux and Windows, including at the exact moment of a live 60↔90 Hz switch on
 Windows (no special command fires). Filed as
-[NVIDIA bug 5923212](docs/19-nvidia-bug-5923212-followup.md) — everything reachable with
-user-space tools on either OS has been checked; what's left needs either NVIDIA's own
-visibility into the closed GSP firmware, or a DisplayPort AUX-channel capture, which needs
-hardware this project doesn't have yet.
+[NVIDIA bug 5923212](docs/19-nvidia-bug-5923212-followup.md). Full three-day timeline,
+including how the "still open" methodology trap was found, in
+[`docs/21-project-retrospective.md`](docs/21-project-retrospective.md).
 
 ## Getting started
 
@@ -126,6 +125,8 @@ experiments/   the headset's own EDID plus prepared variants for the 90 Hz work
 | [17](docs/17-publishing.md) | Preparing this repo for publication |
 | [18](docs/18-monado-upstreaming.md) | Upstreaming the Monado WMR patches |
 | [19](docs/19-nvidia-bug-5923212-followup.md) | Follow-up for the NVIDIA 60Hz-only bug thread |
+| [20](docs/20-desktop-plasma-crash.md) | A Plasma desktop crash hit during the lab work |
+| [21](docs/21-project-retrospective.md) | Project retrospective: machines, timeline, fixes, credits |
 
 ## Reference hardware
 

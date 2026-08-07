@@ -106,7 +106,9 @@ both trace back to his commits via `git blame` against upstream `main`. The four
 - **NVIDIA** (`abchauhan`) — triaged and opened internal bug **5923212** in March 2026 from
   the original forum report; no further response since, independent of this investigation.
 - **Jan Schmidt / Nima01** — original authors of the Monado WMR driver code this project
-  found and fixed real bugs in; not yet notified/reviewed as of this writing.
+  found and fixed real bugs in. Jan notified directly via a comment on !2968 (2026-08-06)
+  explaining the three defects traced to his commits; no reply yet as of this writing.
+  Nima01 not yet notified.
 
 ## State at the end of day 3
 
