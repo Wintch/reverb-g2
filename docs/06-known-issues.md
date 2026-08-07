@@ -181,7 +181,27 @@ The Monado driver for SteamVR loads fine (with patch 0002's RPATH + lib bundle),
 Valve's `vrmonitor` crashes due to a missing `libQt5Multimedia.so.5` **inside Valve's
 runtime container**. Recommended path: ~~OpenComposite~~ — unmaintained since 2024. The
 active replacement is **xrizer** (OpenVR reimplemented on top of OpenXR, runs against
-Monado without launching SteamVR) — not tested yet.
+Monado without launching SteamVR).
+
+> **Update 2026-08-07 (T063): xrizer tested, builds and partially works, not usable yet.**
+> Full setup done from scratch: Steam installed (needs `nvidia-driver-libs:i386` for the
+> 595 driver series — **not** `libgl1-nvidia-glvnd-glx:i386`, that package only exists at
+> the old 550 version and conflicts), Rust via rustup, xrizer built with `cargo xbuild
+> --release` (needs `libclang-dev` and `glslc` beyond what's documented anywhere else in
+> this repo), `openvrpaths.vrpath` pointed at the build. Real trap found: nothing on this
+> system registers `libopenxr_loader.so` via `ldconfig` — xrizer's dynamic loader lookup
+> silently fails with `ERROR_RUNTIME_UNAVAILABLE` unless launched with `LD_LIBRARY_PATH`
+> including `~/vr/OpenXR-SDK-Source/build/src/loader`, even though Monado itself is
+> running fine (confirmed live with `hello_xr` against the same service at the same
+> moment). With that fixed, tried two OpenVR titles: **NVIDIA VR Funhouse** never reached
+> VR init at all (blocked earlier by an unrelated GPU PhysX/CUDA error under Proton, not
+> investigated). **InCell VR** (native Linux, Unity/Mono) reproducibly `SIGABRT`s inside
+> xrizer's own `VR_InitInternal` → `dlclose` (confirmed 3x via `coredumpctl`), crashing
+> before xrizer's own log (`~/.local/state/xrizer/xrizer.txt`) even records the attempt —
+> looks like a real xrizer/old-Mono interop bug, not a config issue here. **Verdict: not
+> usable yet on this rig, on either available title** — but the setup is fully in place
+> (source at `~/vr/xrizer`, `openvrpaths.vrpath` configured, the `LD_LIBRARY_PATH` fix
+> known) for whoever picks this up next. Full detail in `docs/pruebas.jsonl` T063.
 
 ## RESOLVED (2026-08-06, afternoon) — everything below in this section has been superseded
 
