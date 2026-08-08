@@ -34,3 +34,14 @@ session):
   cause of the stuck retry loop is still unknown -- needs fresh investigation into why the
   client-side interface-negotiation retry never gives up. See `docs/pruebas.jsonl` T072
   (original, now-superseded diagnosis) and T085-T086 (this session's retest).
+- **Water Bears VR recreates the swapchain every single frame, forever, and never
+  stabilizes a presentable image.** `compositor.rs:1247` logs `recreating swapchain` for
+  both eyes continuously (~65 cycles/sec, confirmed via line-count deltas over time),
+  meaning `submit_impl`'s `is_usable_swapchain()` check never accepts what the game submits
+  the frame after creating it. The game itself is healthy the whole time -- confirmed
+  physically that its trigger gives audible feedback (input reaches it fine) and it renders
+  normally to its own flat 2D mirror -- so this is purely a compositor-side bug, not input
+  or session negotiation. Not root-caused further -- likely candidate is a per-eye
+  texture/bounds mismatch (the game may submit one wide texture with different UV bounds
+  per eye, and something about how `swapchain_info_for_texture` derives the effective
+  per-eye size from those bounds may never converge). See `docs/pruebas.jsonl` T087.

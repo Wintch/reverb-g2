@@ -1,0 +1,78 @@
+# 23 — Game compatibility status
+
+Every VR title tried on this rig (xrizer + Monado, bypassing SteamVR entirely — see
+`docs/06-known-issues.md`), with its Steam AppID and a link to SteamDB. Status reflects the
+last time each title was actually looked at with the headset on — per this project's core
+rule (`CLAUDE.md`, "the single most important rule"), a title isn't "working" until a human
+saw it, and several early sweep results below are marked accordingly as log-only, not
+physically verified.
+
+**Shared limitation across every WORKING title below**: controller **position** tracking
+(constellation, camera-based) is paused pending upstream Monado reviewer feedback
+(`docs/03-controllers.md`). All 6DoF sessions are head-only — controllers rotate correctly
+but stay positionally offset from wherever they started. This is expected, not a per-game
+bug, and isn't repeated in every row.
+
+## Working
+
+| Game | AppID | SteamDB | Notes |
+|---|---|---|---|
+| International Space Station Tour VR | [797200](https://steamdb.info/app/797200/) | ✓ | Cleanest signal of the whole sweep (T073, T075) — zero warnings, FOCUSED, real 6DoF head tracking confirmed live. |
+| Aliens Attack VR | [932190](https://steamdb.info/app/932190/) | ✓ | One `IVRChaperoneSetup_005` unknown-interface warning caused one session to cycle and exit, but recovered clean on a second attempt (T073, T076). |
+| Cosmic Flow: A Relaxing VR Experience | [1267950](https://steamdb.info/app/1267950/) | ✓ | Confirmed working, real 3D (T073, T077). |
+| VRSailing by BeTomorrow | [579050](https://steamdb.info/app/579050/) | ✓ | Confirmed working (T073, T079); also the title used to field-test the global recenter patch (`patches/xrizer/0001`) — was ~4m off its play-space center, recenters correctly with height preserved after the fix (T080). |
+| SUPERHOT VR | [617830](https://steamdb.info/app/617830/) | ✓ | Trigger, grab, and hand tracking all confirmed working (T082). Menu button was dead on arrival (T067) — root-caused and fixed for the **left** controller via `patches/xrizer/0002` (T083-T084); right hand not expected to work, `Menu` is Left-only on the `oculus_touch` profile, matching real Oculus Touch hardware. |
+| VRChat | [438100](https://steamdb.info/app/438100/) | ✓ | Confirmed working, reached `FOCUSED`, real gameplay, EasyAntiCheat loads clean under Proton (T082-session, same day). First attempt showed nothing — traced to an unrelated DP/panel dropout from heavy session churn that session, not a VRChat bug; a clean retest worked immediately. |
+| Propagation VR | [1363430](https://steamdb.info/app/1363430/) | ✓ | Best signal of the whole non-original sweep — "works just perfect", including exiting the game from inside via the controllers (menu/quit works out of the box, no patch needed unlike SUPERHOT). First launch had controllers powered off (Monado has no controller hot-add — confirmed `<none>`/`<none>` in the log), retested clean after a full jack-in-wayland.sh restart with controllers on beforehand. |
+
+## Broken — real, reproducible xrizer/Monado bugs
+
+| Game | AppID | SteamDB | Notes |
+|---|---|---|---|
+| Poly Runner VR | [462910](https://steamdb.info/app/462910/) | ✓ | Reproducible 2/2: gets stuck permanently at OpenXR session state `READY`, spamming `app requested unknown interface "IVRCompositor_013"` in an infinite tight loop (~1300 lines/sec, ~190% CPU), never advancing or exiting on its own — killed by hand both times. Renders normally in flat 2D the whole time (confirmed physically), just never enters stereo VR. `IVRCompositor_013` itself is a confirmed dead end (never existed in any real SteamVR release, see `patches/xrizer/README.md`) — the real bug is why the client-side retry never gives up, still open. |
+| Water Bears VR | [394130](https://steamdb.info/app/394130/) | ✓ | xrizer's compositor recreates the swapchain every single frame, for both eyes, forever (`recreating swapchain` spamming in `compositor.rs:1247`, ~65 cycles/sec) — never stabilizes a presentable frame, panel stays dark. Game itself is healthy: input works (trigger gives audible feedback) and it renders fine to its own flat 2D mirror the whole time. Real cause not fully isolated — likely a per-eye texture/bounds mismatch that `is_usable_swapchain()` never accepts, worth a closer look. |
+| War Robots VR: The Skirmish | [672640](https://steamdb.info/app/672640/) | ✓ | Calibrates fine, then drops to backlight-only with an un-skippable "put on your VR helmet" prompt. Root cause spans two repos: xrizer never implements HMD presence/worn detection (`ShouldApplicationPause`/`IsInputAvailable` in `src/system.rs` are hardcoded stubs), and Monado's `wmr_hmd.c` already reads the real proximity sensor but never wires it into Monado's own working `XR_EXT_user_presence` support. Scoped, not started — see `patches/xrizer/README.md`. |
+
+## Failed — unrelated to xrizer/Monado (Proton/engine-specific)
+
+| Game | AppID | SteamDB | Notes |
+|---|---|---|---|
+| NVIDIA® VR Funhouse | [468700](https://steamdb.info/app/468700/) | ✓ | Fails before VR even initializes — a Proton/PhysX/CUDA error. |
+| InCell VR | [396030](https://steamdb.info/app/396030/) | ✓ | Reproducible xrizer `VR_InitInternal`/`dlclose` crash, but on a native (non-Proton) process — a build/packaging issue on the game's own native Linux port, not the WMR/xrizer input or compositor path. |
+| InMind VR | [343740](https://steamdb.info/app/343740/) | ✓ | Unrelated Mono runtime crash before ever touching VR. |
+| Surgeon Simulator VR: Meet The Medic | [457420](https://steamdb.info/app/457420/) | ✓ | Crash-loop: 4 rapid connect/disconnect cycles from `SurgeonVR.exe` before giving up (T073, log-only, never looked at physically). |
+| World of Guns: VR | [1111760](https://steamdb.info/app/1111760/) | ✓ | Never gets past the initial steam/wineopenxr probe stage at all — fails earlier than every other title tried (T073, log-only). |
+
+## Untested / inconclusive
+
+| Game | AppID | SteamDB | Notes |
+|---|---|---|---|
+| Overkill VR | [518720](https://steamdb.info/app/518720/) | ✓ | Reaper process stayed alive the full 30s sweep window but the real game never touched Monado in that window — may just be a slow Unity boot needing a longer window. Never retested with a human actually watching (T073). |
+| Welcome to Chornobayivka VR | [2064150](https://steamdb.info/app/2064150/) | ✓ | One dangling `BEGIN_SESSION` then a fast exit — ambiguous, never looked at physically (T073). |
+| Dark Room VR | [1394640](https://steamdb.info/app/1394640/) | ✓ | Never even produced a reaper process in 40s during the sweep — likely stuck on a first-run Steam dialog (EULA/install) that needs an interactive click. Not diagnosed further (T073). |
+
+## Not a game
+
+| Item | AppID | SteamDB | Notes |
+|---|---|---|---|
+| fpsVR | [908520](https://steamdb.info/app/908520/) | ✓ | A SteamVR performance-overlay tool, not a VR title — installed but out of scope for this compatibility sweep. |
+
+## Non-Steam titles
+
+Standalone DK2/DK1-era demos and tech demos that aren't Steam apps at all — no AppID, no
+Steam Play sandboxing, just a Windows binary run directly under Wine. Table shape kept
+consistent with the sections above (Runtime/Requirements/Status) minus the Steam-specific
+columns.
+
+| Item | Source | Status | Notes |
+|---|---|---|---|
+| Blade Runner 9732 (Deckard's apartment tour) | [developer site](https://br9732.quentinlengele.com/) | Not available | Was briefly on Steam (AppID [770990](https://steamdb.info/app/770990/)) but delisted January 2018 after a DMCA claim over the Blade Runner IP. User never owned it before delisting, so there's no copy to test — Steam won't offer a re-download for an app never in the library, and the dev site's public download predates confirmation it's still live. Requires HTC Vive per its listed system requirements (Windows-only, GTX 970+) — untested whether it'd even accept a WMR/xrizer OpenVR session if a copy turns up later. |
+
+If other old standalone binaries turn up (the user recalls having several from the DK2 era),
+add them here the same way — they don't need a SteamDB link, just where the binary came from.
+
+## Reference
+
+Full session-by-session detail for every entry above is in `docs/pruebas.jsonl` — search by
+game name or by the T-numbers cited per row (T063-T086 cover this sweep as of
+2026-08-08).
