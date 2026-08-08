@@ -1,5 +1,36 @@
 # Next step
 
+> **UPDATE (2026-08-08, ~18:55) — third physical machine, full stack re-validated clean,
+> now moving on to the big remaining gap: real 6DoF (positional) tracking for the
+> controllers.** Read `docs/pruebas.jsonl` T096.
+>
+> The lab hardware changed again mid-project — new machine ("iashur", Gigabyte A520M K V2,
+> RTX 3060 Ti GA104), same lab SSD carried over. User asked to validate everything before
+> continuing, and nothing was assumed: checked the NVIDIA driver's actual patch state (not
+> just that *a* driver loaded — confirmed via `/var/lib/dkms/.../make.log` that all 4
+> patches, including the load-bearing bpc one, applied in the last build and that the
+> system uptime postdates it), USB enumeration, DP hotplug, the Wayland DRM lease, and the
+> real WMR builder taking 90Hz. **Two separate human-verified runs, both clean**: a 3DoF
+> photo test ("todo perfecto, el test se ve claro a 90hz") and a 6DoF+both-controllers run
+> with real head movement and Basalt/SLAM ("todo bien"). Both controllers registered on the
+> first try with no startup-race loss. Nothing about the move broke anything — the stack's
+> reproducibility doesn't depend on any one box.
+>
+> **Next task, requested directly by the user right after validation: give the controllers
+> real 6DoF (positional) tracking, not just 3DoF rotation.** This is the big item flagged
+> in `docs/03-controllers.md` under "What's still missing" as *"THE big next step after
+> 90Hz"* — constellation tracking (optical LED-based positional tracking using the
+> headset's own cameras) already exists upstream and compiles into this build
+> (`libconstellation.a`), the headset camera already separates controller frames
+> (frametype `0x2`, currently discarded into a debug sink), and the LED geometry is already
+> parsed from the controller's calibration and thrown away. What's missing is wiring it
+> up: the ring occlusion model, moving-camera mosaic, and camera/IMU temporal alignment.
+> `docs/03` names two in-tree reference drivers (rift, pssense) and a fork that has this
+> working for WMR specifically — thaytan's `dev-constellation-controller-tracking` — as
+> "the base for Project-VR's work." Not started yet as of this note; scope it out (read
+> `docs/03`'s section in full, look at thaytan's fork) before writing any code, this is a
+> substantially bigger task than anything else closed today.
+
 > **UPDATE (2026-08-08, same-day continuation) — full game compatibility sweep, one more real
 > xrizer bug found, the T073 backlog fully closed, and a genuinely open question about our
 > own recenter patch that needs picking up.** Full session in `docs/pruebas.jsonl` T087-T095,
