@@ -1,5 +1,70 @@
 # Next step
 
+> **UPDATE (2026-08-08, same-day continuation) — full game compatibility sweep, one more real
+> xrizer bug found, the T073 backlog fully closed, and a genuinely open question about our
+> own recenter patch that needs picking up.** Full session in `docs/pruebas.jsonl` T087-T095,
+> new reference doc `docs/23-game-compatibility.md` (every title tried, Steam AppID + SteamDB
+> link, working/broken/failed/untested, with notes).
+>
+> **Two more titles confirmed fully working, one of them the best result of the whole
+> project so far.** VRChat reaches `FOCUSED`, real gameplay, EasyAntiCheat loads clean under
+> Proton. **Propagation VR (Unreal Engine) "works just perfect" — trigger/grip AND the
+> in-game menu/quit both work out of the box, no patch needed at all**, unlike SUPERHOT
+> which needed `patches/xrizer/0002` just for its left-hand menu. Controller hot-add still
+> doesn't exist (confirmed again) — Propagation VR's first attempt had `<none>`/`<none>`
+> because the controllers were off before Monado started; a clean `jack-in-wayland.sh`
+> restart with them on beforehand fixed it.
+>
+> **A third distinct real xrizer bug found: Water Bears VR.** The compositor recreates the
+> swapchain every single frame, for both eyes, forever (`compositor.rs:1247`, ~65
+> cycles/sec) — never stabilizes a presentable frame, panel stays dark the whole time. The
+> game itself is healthy (trigger gives audible feedback, renders fine to its own 2D
+> mirror) — purely a compositor-side bug, not root-caused further. Logged in
+> `patches/xrizer/README.md` alongside the Poly Runner and War Robots entries.
+>
+> **The entire T073 backlog (5 titles left "inconclusive"/"log-only" for weeks) is now
+> closed, no exceptions.** Overkill VR and Dark Room VR were both "maybe just needs longer"
+> guesses — both physically confirmed as real failures instead: xrizer opens one harmless
+> throwaway session then goes permanently silent, headset stays dark, the game keeps
+> running/rendering in its own 2D window the whole time (Dark Room VR even shows a black
+> square placeholder where its VR view should be, not a crash). Dark Room VR's launch had
+> additionally been silently blocked by a hidden "headset may not be supported" dialog
+> sitting behind Steam's main window this whole time — worth remembering as a class of
+> false "nothing happens" symptom. Welcome to Chornobayivka VR reaches `FOCUSED` with
+> working controllers, but has a **fixed camera roll baked in at launch by the game's own
+> non-standard calibration** — confirmed our recenter patch neither causes nor fixes it (by
+> design, recenter only ever touches yaw + position, matching real SteamVR).
+>
+> **Open question, NOT resolved, possibly bigger than one game — pick this up next:** on
+> Chornobayivka, the user reported that holding the real recenter (menu-hold 3s) always
+> seemed to return to the same fixed-feeling wrong spot regardless of where they'd
+> physically moved first. This could just be the persistent roll bug above making every
+> recenter look equally "wrong," or it could be a real bug in `reset_tracking_space`
+> triggered under some condition this game hits (it worked correctly and was confirmed
+> position-accurate on VRSailing in T080, so it's not a blanket failure). A discriminating
+> test was proposed and NOT run: face a different direction before recentering and check
+> whether the facing (yaw) updates independent of the roll, or whether it snaps back to a
+> fixed facing too. Do this first before touching `openxr_data.rs` again.
+>
+> **Non-Steam titles: one real success, one dead end, one bigger idea parked.** Blade Runner
+> 9732 (Deckard's apartment tour, delisted from Steam in 2018 over a DMCA claim) was
+> recovered via the developer's own still-live Google Drive link and run in a dedicated
+> standalone Proton prefix (`~/vr/nonsteam/`, own `openvrpaths.vrpath` pointing at xrizer) —
+> reaches xrizer's `ClientCore` but hangs forever on `VR state wait timeout`, a fourth
+> distinct failure shape from today, not root-caused further. "The Matrix VR" (DK2-era) has
+> a dead source site, not recovered. True DK2-era native-Oculus-SDK demos would need a
+> Revive-style shim first (different API generation entirely, pre-dates OpenVR) — parked to
+> memory (`idea_dk2_revive_legacy_demos.md`), explicitly NOT started, bigger than this sweep.
+>
+> **Infra lessons reinforced, not new:** the panel/DP link dropped fully dark twice more
+> after roughly an hour of continuous `monado-service` uptime and heavy session churn —
+> both times a plain `jack-in-wayland.sh` restart recovered it instantly with zero
+> regression (confirmed via SUPERHOT re-checks each time). USB2 storms recurred three more
+> times; passive waiting never once cleared one on its own (tested up to 5 minutes
+> straight), but a plain 12V power-brick reconnect (not a full visor-end cable reseat)
+> cleared every single one, 3/3. Doesn't retire the rev2A cable question — still treat it as
+> open — but it's a cheaper first thing to try than a full reseat.
+
 > **UPDATE (2026-08-08, midday session) — item 1 below got real progress (SUPERHOT's menu
 > button, a related-but-different bug), and item 1's Poly Runner part got re-characterized,
 > not closed.** Full session in `docs/pruebas.jsonl` T082-T086, patch in
