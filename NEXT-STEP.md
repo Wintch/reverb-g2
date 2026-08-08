@@ -1,5 +1,34 @@
 # Next step
 
+> **RESOLVED (2026-08-08, ~05:25) — the item right below this note is fully closed.** Did
+> exactly what it asked: rebuilt `~/vr/monado` clean via `git am` of `patches/monado/0001-
+> 0011` only, re-ran the controller-registration scenario (3x, not just once) — clean every
+> time, no drift, no `0012` needed. `0012` is now deleted from `patches/monado/`, README
+> updated with the postmortem. Along the way, a much bigger and completely unrelated
+> "the cable must be dying again" panic turned out to be a missing `panel.py` file in the
+> lab's `~/vr/` deployment (not hardware) — see the CLAUDE.md milestone banner dated
+> 2026-08-08 for the full night, including a new xrizer patch (global recenter,
+> `patches/xrizer/0001`) and four real, human-verified working games with 6DoF head
+> tracking. **Next things queued from that session, none started:**
+> 1. Root-cause Poly Runner VR's real exit cause from scratch — the `IVRCompositor_013`
+>    diagnosis was checked against every OpenVR header Valve ever shipped and found to be
+>    wrong (that version never existed); the actual reason its xrizer session exits is
+>    still unknown. See `patches/xrizer/README.md`.
+> 2. War Robots VR: The Skirmish is blocked on HMD presence detection missing in BOTH
+>    Monado (`wmr_hmd.c` never wires its own proximity sensor into `XR_EXT_user_presence`)
+>    and xrizer (`ShouldApplicationPause`/`IsInputAvailable` are stubs) — a two-repo fix,
+>    scoped but not started. `patches/xrizer/README.md` has the detail.
+> 3. The rest of the game list from `docs/pruebas.jsonl` T073 (Overkill VR inconclusive,
+>    Dark Room VR never even launched, Surgeon Simulator/Chornobayivka/World of Guns failed
+>    fast) still needs a proper, unhurried look now that the panel/DP bug and the recenter
+>    feature are both fixed — several of those failures might resolve or look different
+>    with a working recenter available.
+> 4. `patches/xrizer/0001` (global recenter) has only been field-tested on the
+>    `oculus/touch_controller` profile (what our WMR controllers present as) -- the field
+>    edits to `knuckles.rs`/`vive_controller.rs`/`simple_controller.rs`/`vive_focus3.rs`/
+>    `meta_touch_plus.rs` compile and pass the existing binding tests, but were never tested
+>    on real hardware of those types (none is available in this lab).
+
 > **CORRECTION NEEDED (2026-08-07, from the comms session, mounted the lab SSD read-only to
 > check upstream status) — patch `0012` does not describe a bug in anything pushed
 > upstream; the tracked patch series is fine as-is.**

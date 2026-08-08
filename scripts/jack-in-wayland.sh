@@ -80,7 +80,14 @@ rm -f "$SOCKET"
 # idempotent on top of this.
 PANEL_PY="$(dirname "${BASH_SOURCE[0]}")/panel.py"
 echo "Activating panel and waiting for DP hotplug..."
-python3 "$PANEL_PY" activate >/dev/null 2>&1
+# Don't swallow this: if panel.py can't even run (e.g. missing/moved -- this exact
+# silent failure cost a whole night of "the cable must be dying again" 2026-08-08,
+# every single automated activation was a no-op with the panel never told to turn on),
+# a wrong DP-never-came-up diagnosis a screenful below is the wrong thing to chase.
+if ! ACTIVATE_OUT="$(python3 "$PANEL_PY" activate 2>&1)"; then
+    echo "  !! panel.py activate FAILED (not a hardware symptom -- fix this first):" >&2
+    echo "$ACTIVATE_OUT" | sed 's/^/     /' >&2
+fi
 DP_UP=0
 for _i in $(seq 1 20); do
     for s in /sys/class/drm/card*-DP-*/status; do

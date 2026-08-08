@@ -1,0 +1,347 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: iam <iam@iashur.internal>
+Date: Sat, 8 Aug 2026 05:29:51 -0300
+Subject: [PATCH] input: add global recenter via held menu button
+
+No dashboard/vrmonitor exists in this reimplementation, so there was no
+way to recenter a game that doesn't expose its own in-game recenter
+option -- SLAM origin drift just stayed baked in for the whole session.
+Real SteamVR provides this globally via its dashboard, intercepting the
+button before the game ever sees it.
+
+Adds Input::check_system_recenter_hold, called once per frame from
+frame_start_update for any game using the legacy input path: if the
+real physical menu button is held 3s (XRIZER_RECENTER_HOLD_SECS to
+override), calls the existing (and already working)
+OpenXrData::reset_tracking_space(Standing).
+
+Two real bugs found and fixed via live testing on WMR hardware before
+this worked correctly:
+
+- First version reused the existing app_menu action directly. On the
+  oculus/touch_controller profile (what WMR controllers present as),
+  app_menu is bound to the Y/B face buttons, not the real physical menu
+  button -- the hold was never detected. Fixed by adding a dedicated
+  system_recenter action, bound only to the real menu button where one
+  exists per profile, and deliberately never read by
+  get_legacy_controller_state, so it stays fully invisible to games.
+  (An even earlier attempt bound the real menu button directly into
+  app_menu instead of a separate action -- that broke in-game input
+  outright: every recenter hold also delivered a real ApplicationMenu
+  press to the game, which several titles interpret as "toggle pause".)
+
+- reset_tracking_space(Standing) sets the new origin's position
+  directly from the current head pose, including height -- this
+  clobbered any height/floor calibration a game had already done at
+  startup, leaving the player noticeably too low afterward. Standing
+  recenter should only fix horizontal position and facing direction,
+  the same way real SteamVR's room-scale recenter leaves floor height
+  alone (Seated is unaffected -- eye height is part of what seated
+  calibration is expected to set). reset_tracking_space now takes a
+  preserve_height flag, zeroing the Y offset for Standing only.
+
+Confirmed live: VRSailing by BeTomorrow (was ~4m from its expected
+play-space center) recenters correctly with real height preserved,
+and normal gameplay input (trigger, movement, etc.) is unaffected by
+holding the recenter button.
+
+Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
+---
+ src/input.rs                            | 13 +++++
+ src/input/legacy.rs                     | 71 ++++++++++++++++++++++++-
+ src/input/profiles/knuckles.rs          |  4 ++
+ src/input/profiles/meta_touch_plus.rs   |  1 +
+ src/input/profiles/oculus_touch.rs      |  1 +
+ src/input/profiles/simple_controller.rs |  1 +
+ src/input/profiles/vive_controller.rs   |  1 +
+ src/input/profiles/vive_focus3.rs       |  1 +
+ src/openxr_data.rs                      | 17 +++++-
+ 9 files changed, 107 insertions(+), 3 deletions(-)
+
+diff --git a/src/input.rs b/src/input.rs
+index 77ab6ed..fd83b57 100644
+--- a/src/input.rs
++++ b/src/input.rs
+@@ -37,6 +37,7 @@ use std::path::PathBuf;
+ use std::sync::atomic::AtomicBool;
+ use std::sync::atomic::Ordering;
+ use std::sync::{Arc, Mutex, OnceLock, RwLock, RwLockReadGuard};
++use std::time::Instant;
+ 
+ new_key_type! {
+     struct InputSourceKey;
+@@ -62,6 +63,13 @@ pub struct Input<C: openxr_data::Compositor> {
+     subaction_paths: SubactionPaths,
+     events: Mutex<VecDeque<InputEvent>>,
+     loading_actions: AtomicBool,
++    // No dashboard/vrmonitor exists in this reimplementation to provide SteamVR's usual
++    // "hold the menu button to recenter" shortcut, so games without their own in-game
++    // recenter option have no way to fix play-space drift. This adds that shortcut back
++    // globally, reusing the app_menu action every profile already binds real hardware to
++    // (see input/legacy.rs::check_system_recenter_hold).
++    system_recenter_hold: Mutex<Option<Instant>>,
++    system_recenter_fired: AtomicBool,
+ }
+ 
+ struct InputEvent {
+@@ -135,6 +143,8 @@ impl<C: openxr_data::Compositor> Input<C> {
+             subaction_paths,
+             events: Mutex::default(),
+             loading_actions: false.into(),
++            system_recenter_hold: Mutex::new(None),
++            system_recenter_fired: false.into(),
+         }
+     }
+ 
+@@ -1489,6 +1499,7 @@ impl<C: openxr_data::Compositor> Input<C> {
+             }
+             return;
+         }
++        drop(devices);
+ 
+         match input_data.get_legacy_actions() {
+             Some(actions) => {
+@@ -1500,6 +1511,8 @@ impl<C: openxr_data::Compositor> Input<C> {
+                     .unwrap();
+ 
+                 self.legacy_state.on_action_sync();
++                drop(data);
++                self.check_system_recenter_hold();
+             }
+             None => {
+                 if self.loading_actions.load(Ordering::Relaxed) {
+diff --git a/src/input/legacy.rs b/src/input/legacy.rs
+index 3099735..ebf89aa 100644
+--- a/src/input/legacy.rs
++++ b/src/input/legacy.rs
+@@ -6,10 +6,11 @@ use crate::{
+     },
+     openxr_data::{self},
+ };
+-use log::{debug, trace, warn};
++use log::{debug, info, trace, warn};
+ use openvr as vr;
+ use openxr as xr;
+ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
++use std::time::Instant;
+ 
+ #[derive(Default)]
+ pub(super) struct LegacyState {
+@@ -298,6 +299,64 @@ impl<C: openxr_data::Compositor> Input<C> {
+ 
+         true
+     }
++
++    /// No dashboard/vrmonitor exists in this reimplementation, so there's normally no way
++    /// to recenter a game that doesn't expose its own in-game recenter option -- SLAM
++    /// origin drift just stays baked in for the whole session. Real SteamVR provides a
++    /// global "hold the menu button" shortcut for this via its dashboard, intercepting the
++    /// button before the game ever sees it -- this reproduces that using system_recenter, a
++    /// dedicated action bound only to the real physical menu button where one exists,
++    /// deliberately never read by get_legacy_controller_state above, so games never see it
++    /// (first version of this reused app_menu directly and broke in-game input on real
++    /// hardware -- games received real menu-press events during every recenter hold and got
++    /// stuck in their own paused/menu state). Called once per frame from
++    /// Input::frame_start_update, regardless of which game is running, so it works the same
++    /// way real SteamVR's shortcut does.
++    pub fn check_system_recenter_hold(&self) {
++        let held = {
++            let data = self.openxr.session_data.get();
++            let Some(legacy) = data.input_data.get_legacy_actions() else {
++                return;
++            };
++            [openxr_data::Hand::Left, openxr_data::Hand::Right]
++                .into_iter()
++                .any(|hand| {
++                    let hand_path = self.get_subaction_path(hand);
++                    legacy
++                        .actions
++                        .system_recenter
++                        .state(&data.session, hand_path)
++                        .map(|s| s.current_state)
++                        .unwrap_or(false)
++                })
++        }; // session_data read guard dropped here -- reset_tracking_space below takes a write lock
++
++        let mut hold_since = self.system_recenter_hold.lock().unwrap();
++        if held {
++            let since = *hold_since.get_or_insert_with(Instant::now);
++            if !self.system_recenter_fired.load(Ordering::Relaxed) && since.elapsed() >= recenter_hold_duration()
++            {
++                info!(
++                    "menu button held {:?} -- recentering play space",
++                    since.elapsed()
++                );
++                self.openxr
++                    .reset_tracking_space(vr::ETrackingUniverseOrigin::Standing);
++                self.system_recenter_fired.store(true, Ordering::Relaxed);
++            }
++        } else {
++            *hold_since = None;
++            self.system_recenter_fired.store(false, Ordering::Relaxed);
++        }
++    }
++}
++
++fn recenter_hold_duration() -> std::time::Duration {
++    std::env::var("XRIZER_RECENTER_HOLD_SECS")
++        .ok()
++        .and_then(|s| s.parse::<f32>().ok())
++        .map(std::time::Duration::from_secs_f32)
++        .unwrap_or(std::time::Duration::from_secs(3))
+ }
+ 
+ mod marker {
+@@ -330,6 +389,12 @@ use marker::*;
+ #[allow(private_interfaces, private_bounds)]
+ pub(super) struct Legacy<M: ActionsMarker> {
+     pub app_menu: Action<bool, M>,
++    // Separate from app_menu: bound ONLY to the real physical menu/system button where one
++    // exists, never surfaced to games (see check_system_recenter_hold below) -- app_menu
++    // itself stays whatever each profile already used it for (often a face button), so
++    // wiring the real menu button in wouldn't be visible to games without also suppressing
++    // it there, and games use ApplicationMenu for their own purposes (e.g. pausing).
++    pub system_recenter: Action<bool, M>,
+     pub a: Action<bool, M>,
+     pub trigger_click: Action<bool, M>,
+     pub squeeze_click: Action<bool, M>,
+@@ -369,6 +434,7 @@ impl LegacyBindings {
+                 .into_iter()
+                 .map(|path| xr::Binding::new(&pose_data.grip, path)),
+             app_menu,
++            system_recenter,
+             a,
+             trigger_click,
+             squeeze_click,
+@@ -405,6 +471,9 @@ impl LegacyActionData {
+             app_menu: set
+                 .create_action("app-menu", "Application Menu", &leftright)
+                 .unwrap(),
++            system_recenter: set
++                .create_action("system-recenter", "System Recenter (internal)", &leftright)
++                .unwrap(),
+             a: set.create_action("a", "A Button", &leftright).unwrap(),
+             squeeze_click: set
+                 .create_action("grip-click", "Grip Click", &leftright)
+diff --git a/src/input/profiles/knuckles.rs b/src/input/profiles/knuckles.rs
+index 4b297d5..0526d35 100644
+--- a/src/input/profiles/knuckles.rs
++++ b/src/input/profiles/knuckles.rs
+@@ -95,6 +95,10 @@ impl InteractionProfile for Knuckles {
+                 grip_pose: c.pose(),
+             },
+             app_menu: c.leftright::<B, Click, _, _>(),
++            // Real Index controllers reserve their system button for the runtime -- no
++            // legal path exists for it here (see LegalPaths above), so the global recenter
++            // hold just isn't available on this profile.
++            system_recenter: vec![],
+             a: c.leftright::<A, Click, _, _>(),
+             trigger: c.leftright::<Trigger, Value, _, _>(),
+             trigger_click: c.leftright::<Trigger, Click, _, _>(),
+diff --git a/src/input/profiles/meta_touch_plus.rs b/src/input/profiles/meta_touch_plus.rs
+index a82e5f3..b33ff43 100644
+--- a/src/input/profiles/meta_touch_plus.rs
++++ b/src/input/profiles/meta_touch_plus.rs
+@@ -89,6 +89,7 @@ impl InteractionProfile for MetaTouchPlus {
+                 c.into::<Right<B, Click>, _>(),
+             ]
+             .concat(),
++            system_recenter: c.into::<Left<Menu, Click>, _>(),
+             a: [
+                 c.into::<Left<X, Click>, _>(),
+                 c.into::<Right<A, Click>, _>(),
+diff --git a/src/input/profiles/oculus_touch.rs b/src/input/profiles/oculus_touch.rs
+index 2c27503..353184b 100644
+--- a/src/input/profiles/oculus_touch.rs
++++ b/src/input/profiles/oculus_touch.rs
+@@ -88,6 +88,7 @@ impl InteractionProfile for OculusTouch {
+                 c.into::<Right<B, Click>, _>(),
+             ]
+             .concat(),
++            system_recenter: c.into::<Left<Menu, Click>, _>(),
+             a: [
+                 c.into::<Left<X, Click>, _>(),
+                 c.into::<Right<A, Click>, _>(),
+diff --git a/src/input/profiles/simple_controller.rs b/src/input/profiles/simple_controller.rs
+index 6f4aad1..26ed705 100644
+--- a/src/input/profiles/simple_controller.rs
++++ b/src/input/profiles/simple_controller.rs
+@@ -67,6 +67,7 @@ impl InteractionProfile for SimpleController {
+             trigger: c.leftright::<Select, Click, _, _>(),
+             trigger_click: c.leftright::<Select, Click, _, _>(),
+             app_menu: c.leftright::<Menu, Click, _, _>(),
++            system_recenter: c.leftright::<Menu, Click, _, _>(),
+             a: vec![],
+             squeeze: c.leftright::<Menu, Click, _, _>(),
+             squeeze_click: c.leftright::<Menu, Click, _, _>(),
+diff --git a/src/input/profiles/vive_controller.rs b/src/input/profiles/vive_controller.rs
+index b999143..ca6055e 100644
+--- a/src/input/profiles/vive_controller.rs
++++ b/src/input/profiles/vive_controller.rs
+@@ -84,6 +84,7 @@ impl InteractionProfile for ViveWands {
+ 
+             trigger_click: c.leftright::<Trigger, Click, _, _>(),
+             app_menu: c.leftright::<Menu, Click, _, _>(),
++            system_recenter: c.leftright::<Menu, Click, _, _>(),
+             a: vec![],
+             squeeze: c.leftright::<Squeeze, Click, _, _>(),
+             squeeze_click: c.leftright::<Squeeze, Click, _, _>(),
+diff --git a/src/input/profiles/vive_focus3.rs b/src/input/profiles/vive_focus3.rs
+index 4468303..d6ad7c3 100644
+--- a/src/input/profiles/vive_focus3.rs
++++ b/src/input/profiles/vive_focus3.rs
+@@ -89,6 +89,7 @@ impl InteractionProfile for ViveFocus3 {
+                 c.into::<super::Right<B, Click>, _>(),
+             ]
+             .concat(),
++            system_recenter: c.into::<super::Left<Menu, Click>, _>(),
+             a: [
+                 c.into::<super::Left<X, Click>, _>(),
+                 c.into::<super::Right<A, Click>, _>(),
+diff --git a/src/openxr_data.rs b/src/openxr_data.rs
+index 9511cc8..5565740 100644
+--- a/src/openxr_data.rs
++++ b/src/openxr_data.rs
+@@ -274,15 +274,26 @@ impl<C: Compositor> OpenXrData<C> {
+             ..
+         } = &mut **guard;
+ 
+-        let reset_space = |ref_space, adjusted_space: &mut xr::Space, ty| {
++        let reset_space = |ref_space, adjusted_space: &mut xr::Space, ty, preserve_height: bool| {
+             let xr::Posef {
+-                position,
++                mut position,
+                 orientation,
+             } = view_space
+                 .locate(ref_space, self.display_time.get())
+                 .unwrap()
+                 .pose;
+ 
++            // Standing/room-scale floor height is a fixed, separately-calibrated value --
++            // recentering should only fix horizontal position and facing direction, the
++            // same way real SteamVR's room-scale recenter leaves floor height alone. Zeroing
++            // the Y offset here means the adjusted space sits at the same height as the
++            // unadjusted stage origin, so the head's reported height stays whatever it
++            // already was (real height above floor) instead of snapping to "wherever the
++            // head happened to be" at the moment of recentering.
++            if preserve_height {
++                position.y = 0.0;
++            }
++
+             // Only set the rotation around the y axis
+             let (twist, _) = swing_twist_decomposition(
+                 Quat::from_xyzw(orientation.x, orientation.y, orientation.z, orientation.w),
+@@ -317,11 +328,13 @@ impl<C: Compositor> OpenXrData<C> {
+                 stage_space_reference,
+                 stage_space_adjusted,
+                 xr::ReferenceSpaceType::STAGE,
++                true,
+             ),
+             vr::ETrackingUniverseOrigin::Seated => reset_space(
+                 local_space_reference,
+                 local_space_adjusted,
+                 xr::ReferenceSpaceType::LOCAL,
++                false,
+             ),
+         };
+     }

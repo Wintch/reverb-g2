@@ -1,6 +1,101 @@
 # Context for the 90Hz lab agent
 
-> ## NEW MILESTONE (2026-08-07, ~07:37) — xrizer works: first real SteamVR-alternative game session, SUPERHOT VR at 90Hz with image, sound, and real 6DoF tracking. Read `docs/pruebas.jsonl` T063-T067.
+> ## NEW MILESTONE (2026-08-08, ~05:25) — 4 real games confirmed working end-to-end with real 6DoF head tracking; the "cable dying again" panic was a missing file, not hardware; a real xrizer patch shipped. Read `docs/pruebas.jsonl` T068-T081.
+>
+> **Biggest single finding: the night's recurring "USB2/DP is dying, cable is degrading
+> again" panic (multiple points tonight) had a mundane root cause for its WORST instance —
+> `jack-in-wayland.sh`'s own panel-activation call was silently failing on every single
+> automated run, for possibly the whole night, because `panel.py` was never copied into the
+> lab's flat `~/vr/` deployment** (it only ever existed at `scripts/panel.py` in this repo).
+> `python3 $PANEL_PY activate` errored with a plain `No such file or directory`, but the
+> script piped that to `/dev/null 2>&1`, so it silently no-op'd and the panel was never
+> actually told to turn on — the subsequent "DP never came up" was 100% consistent with
+> that, zero hardware involved. Confirmed by testing the SAME activation call by hand
+> (`/home/iam/Documents/reverb-g2/scripts/panel.py activate`, the correct full path): it
+> worked every single time it was tried standalone. Fixed at the source
+> (`scripts/jack-in-wayland.sh`, now surfaces `panel.py` failures loudly instead of
+> swallowing them — this exact bug class can't hide again) and synced to `~/vr/`; verified
+> 6/6 clean automatic starts immediately after. **Before ever suspecting the cable/connector
+> again, check that `~/vr/panel.py` actually exists and that `jack-in-wayland.sh`'s own
+> stderr isn't hiding a plain file-not-found.**
+>
+> **A REAL USB2 outage also happened tonight, separately, and is worth its own note**
+> (`docs/pruebas.jsonl` T074): after a batch of 10 Steam/Proton game launches plus several
+> `monado-service` restarts in quick succession, the companion+hub+audio branch died with
+> the classic `error -71`/`Cannot enable. Maybe the USB cable is bad?` signature. Neither a
+> PC-end replug, nor a visor-end reseat, nor 3 minutes of passive waiting recovered it —
+> only reseating **every** connector together (not DP) did. Correlates with the
+> already-documented "repeated service/panel cycling aggravates this" risk factor, not new
+> hardware decay. Separately, the right controller stopped responding entirely afterward
+> (43 consecutive fw-read timeouts, no race — genuinely no response) and needed a **full
+> headset power cycle** (12V brick, ~1 min) plus a genuinely idle 2-minute wait (no more
+> service restarts) to clear. Lesson reinforced hard tonight: **repeatedly restarting
+> `monado-service` to "just check again" is itself a likely trigger** — when something looks
+> broken, let it sit before hammering it with more restarts.
+>
+> **The `patches/monado/0012` correction from the previous session is now fully closed and
+> verified.** Rebuilt `~/vr/monado` completely fresh via `git am` of `patches/monado/0001-
+> 0011` only (no `0012`, no hand edits) — confirmed both controllers register 3/3 clean on
+> that binary. `0012` is deleted from `patches/monado/`; the eleven-patch series alone is
+> sufficient. Real lesson, not just a correction: the actual git history in `~/vr/monado`'s
+> working branch had drifted from the tracked patch files (a stale, hand-edited commit with
+> a 3s deadline instead of 0003's 10s, and the literal AND/OR bug) — every controller test
+> for at least a week, maybe longer, ran against that drifted binary, not the tracked
+> series. **Whenever "the tracked patches are fine but the lab keeps showing a bug they
+> should have fixed" comes up again, suspect this exact class of drift first**: rebuild
+> clean from `patches/` via `git am` before trusting anything the running binary does.
+>
+> **First real, human-verified, unhurried game sessions this entire project has ever had —
+> four of them, back to back, with real 6DoF head tracking (`jack-in-wayland.sh 1 6dof`,
+> Basalt SLAM) instead of the 3dof used everywhere before tonight:** International Space
+> Station Tour VR, Aliens Attack VR, Cosmic Flow: A Relaxing VR Experience, and VRSailing by
+> BeTomorrow. All four: stable, real 3D, functional controller input. **Known, expected, not
+> a bug:** controllers appear positionally offset (sometimes several meters) and only rotate
+> in place — this project's controller **position** tracking (constellation tracking, using
+> the headset's cameras) was deliberately paused pending upstream Monado reviewer feedback
+> (`docs/03`), so 6DoF head + 3DoF-only controllers is the correct current state, not a
+> regression. **Process lesson, said directly by the user and worth keeping**: an earlier
+> automated 10-game sweep this same session (`docs/pruebas.jsonl` T073) auto-closed every
+> title after a fixed 30s timer before the user had real time to look — good for log-based
+> triage (which titles are even worth a look), **useless as actual verification**, since the
+> whole point of this project's core rule is that a human has to see it. When testing
+> something a human needs to verify, launch it and wait for their real, unhurried
+> confirmation — don't script a timeout around them.
+>
+> **War Robots VR: The Skirmish is genuinely blocked, and the real cause spans two repos.**
+> Shows real 3D, calibrates fine, then immediately after calibration drops to backlight-only
+> with an un-skippable "put on your VR helmet" prompt. Root-caused: xrizer implements zero
+> HMD presence/worn detection (`ShouldApplicationPause`/`IsInputAvailable` in `system.rs` are
+> hardcoded stubs) — but even fixing that alone wouldn't be enough, because Monado's own
+> `wmr_hmd.c` already reads the headset's real proximity sensor and never wires it into
+> Monado's own generic `XR_EXT_user_presence` support (fully implemented and working for
+> other drivers). Needs changes in both `~/vr/monado` and `~/vr/xrizer` — not attempted
+> tonight, `patches/xrizer/README.md` has the detail for whoever picks it up.
+>
+> **A same-night self-correction worth remembering as a pattern, not just a one-off: the
+> `IVRCompositor_013` "missing interface shim" diagnosis from earlier tonight (T072) was
+> wrong, caught before any code was written against it.** Before touching xrizer's
+> compositor dispatch, checked every OpenVR SDK header xrizer vendors (0.9.12 through
+> 2.15.6, the complete published history) — Valve's own versioning skips straight from
+> `IVRCompositor_012` to `_014`; version 013 **never existed on any real SteamVR release**.
+> Poly Runner VR requesting it and failing is near-certainly harmless version-probing, not
+> the actual reason its session exits — the real cause is still unknown. Good instinct
+> that paid off: check primary sources (the vendored headers, in this case) before writing
+> a patch against a claim from an earlier session, even one already logged as a finding.
+>
+> **The actual xrizer patch effort tonight went to something higher-leverage instead, and
+> it's real and working: a global "hold the menu button 3s to recenter" shortcut**
+> (`patches/xrizer/0001`), reproducing what real SteamVR's dashboard provides and this
+> from-scratch reimplementation otherwise has no way to do at all — every game with SLAM
+> origin drift and no in-game recenter option was permanently stuck until this. Two real
+> bugs found and fixed via live hardware testing before it worked correctly (not just
+> compiled): naively reusing the existing `app_menu` action bound to the wrong physical
+> button first, then (once bound correctly) discovering it delivered real menu-press events
+> into games and broke their input — fixed with a dedicated, game-invisible action; and
+> `reset_tracking_space(Standing)` clobbering height/floor calibration on every recenter —
+> fixed with a height-preserving flag, Standing-only. Confirmed live on VRSailing (was ~4m
+> off its expected play-space center, now recenters correctly with height intact and normal
+> gameplay input unaffected). Lives at `patches/xrizer/0001`, not yet upstreamed.
 >
 > The whole night's second major thread, independent of the cable saga below: **xrizer**
 > (OpenVR reimplemented on OpenXR, bypasses SteamVR's broken `vrmonitor` entirely) went

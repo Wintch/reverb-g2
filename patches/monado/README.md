@@ -1,10 +1,10 @@
 # Monado patches
 
-Twelve patches on top of Monado `main` @ `735e29e4e` (the SHA `bootstrap-lab.sh sources`
+Eleven patches on top of Monado `main` @ `735e29e4e` (the SHA `bootstrap-lab.sh sources`
 pins). The first ten are the linear form of four independent MR branches prepared for
 upstreaming — see [`docs/18-monado-upstreaming.md`](../../docs/18-monado-upstreaming.md) for
-the branches, the review that shaped them, and the submission runbook. 0011 and 0012 came
-later (2026-08-06, 2026-08-07) and aren't part of that grouping yet.
+the branches, the review that shaped them, and the submission runbook. 0011 came later
+(2026-08-06) and isn't part of that grouping yet.
 
 | patches | MR branch | what |
 |---|---|---|
@@ -13,9 +13,19 @@ later (2026-08-06, 2026-08-07) and aren't part of that grouping yet.
 | 0009 | `wmr-camera-stream-toggle` | `WMR_CAMERAS=0`: orientation-only, cameras never start |
 | 0010 | `steamvr-drv-origin-rpath` | `$ORIGIN` runtime path on `driver_monado.so` for pressure-vessel |
 | 0011 | (unfiled) | G2 driver was missing the native `microsoft/motion_controller` binding remap — every binding under that profile silently failed to resolve, not just one input. See `docs/03-controllers.md` |
-| 0012 | (unfiled) | The bounded controller-status wait from 0003 used `&&` where it needed `||` — the loop exited the instant EITHER controller answered, not when BOTH did, so on the G2's shared HID channel the second controller (observed: always right) never got a chance to register. Reproduced 9/9 times; fixed and verified both controllers register every time now. See `docs/pruebas.jsonl` T051/T066. |
 
-All twelve apply with plain `git am` onto the pinned SHA and build with zero warnings.
+All eleven apply with plain `git am` onto the pinned SHA and build with zero warnings.
+
+**A twelfth patch existed briefly (2026-08-07) and was retracted (2026-08-08).** It "fixed"
+an AND/OR bug in 0003's bounded controller-status wait, reproduced 9/9 times in a real
+session. Turned out the bug only existed in a hand-edited lab build that had drifted from
+this tracked series — applying 0001–0011 fresh via `git am`, with zero manual edits, never
+reproduces it (0003 already has the correct form). The apparent bug was an artifact of the
+drifted live tree, not something wrong with the tracked patches. Full postmortem in
+`docs/pruebas.jsonl` T068 and the (now-historical) correction in this repo's git log. Lesson
+learned: the lab's built-and-tested binary must periodically be reconstructed from a clean
+`git am` of this directory, not just accumulated live edits, or drift like this can hide for
+a long time behind a plausible-looking "found a real bug" story.
 
 Still needed on top for 90 Hz testing: the Project-VR nominal-frame-interval patch, see
 `docs/04-lab-90hz.md` step 5.
