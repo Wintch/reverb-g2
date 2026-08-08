@@ -1,5 +1,38 @@
 # Next step
 
+> **UPDATE (2026-08-08, midday session) — item 1 below got real progress (SUPERHOT's menu
+> button, a related-but-different bug), and item 1's Poly Runner part got re-characterized,
+> not closed.** Full session in `docs/pruebas.jsonl` T082-T086, patch in
+> `patches/xrizer/0002`.
+>
+> **SUPERHOT's unresponsive menu button (T067, never resolved) is fixed for the left
+> controller.** Confirmed first, via `XRT_DEBUG_GUI=1`, that raw input was 100% healthy at
+> the Monado level on both controllers (trigger, squeeze, menu, Y/B, bt_pairing all
+> register) — also confirmed trigger/grab/hand-tracking all work fine in-game now, so
+> T067's "no button does anything" was almost certainly that night's USB2 instability, not
+> a real bug. The menu specifically was real though: SUPERHOT's default oculus_touch
+> bindings only offer two sources for its MENU action — a `long` press on X (input mode not
+> implemented anywhere in xrizer) and a click on `system` (never a recognized path string in
+> xrizer at all) — so the action was permanently unbound, regardless of controller type, not
+> WMR/G2-specific. Patched the `system` half (`patches/xrizer/0002`, one line, same alias
+> pattern already used for `application_menu`): confirmed live, left controller's physical
+> menu button now opens SUPERHOT's pause menu. The `long`-press half is NOT fixed — more
+> invasive, needs real long-press detection added to `ButtonInput`. Right hand also not
+> expected to work (`Menu` is Left-only on this profile, matches real hardware).
+>
+> **Poly Runner VR's `IVRCompositor_013` diagnosis is still a dead end (confirmed again),
+> but T072's "clean self-exit" characterization does NOT reproduce.** Retested twice: both
+> times the game gets stuck permanently at OpenXR session state `READY`, spamming the
+> interface request in a tight infinite loop (~1300 lines/sec, ~190% CPU), never exiting on
+> its own — had to be killed by hand both times. The game keeps rendering normally in flat
+> 2D throughout (confirmed physically), it just never enters stereo VR. Whoever picks up
+> item 1 below for Poly Runner: start from this corrected behavior, not T072's.
+>
+> Also found and NOT fixed: `wmr_controller_hp.c` parses controller battery level from
+> hardware but never wires it into Monado's generic `xrt_device::get_battery_status` API —
+> only visible in the interactive debug GUI, not queryable via `libmonado`/IPC. Small,
+> same-pattern fix if useful later.
+
 > **RESOLVED (2026-08-08, ~05:25) — the item right below this note is fully closed.** Did
 > exactly what it asked: rebuilt `~/vr/monado` clean via `git am` of `patches/monado/0001-
 > 0011` only, re-ran the controller-registration scenario (3x, not just once) — clean every

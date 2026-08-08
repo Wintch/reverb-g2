@@ -1,0 +1,70 @@
+From 5df802308046b4d2f3eaf7cf66e6a92a100971c3 Mon Sep 17 00:00:00 2001
+From: iam <iam@iashur.internal>
+Date: Sat, 8 Aug 2026 12:25:24 -0300
+Subject: [PATCH] input: alias legacy "system" path to the Menu subpath
+
+SUPERHOT's default oculus_touch bindings (bindings_oculus_touch.json)
+offer two alternate sources for their MENU action: a long-press on X,
+and a click on "system" (/user/hand/*/input/system). Neither ever
+resolved, so the action was permanently unbound -- the game's own log
+showed hundreds of "No active binding for SetupOpenAction
+(/actions/default/in/MENU)" lines per session, and the menu never
+opened on any physical button, confirmed live with both controllers'
+raw input registering fine in Monado's debug GUI (ruling out a
+hardware/driver problem).
+
+Root cause, isolated by reading the two relevant code paths:
+
+- "long" as a button input mode is not implemented at all --
+  ButtonInput (action_manifest/bindings.rs) only has touch/click/double
+  fields, so serde silently drops that source, no error.
+- "system" was never a recognized subpath string anywhere in
+  src/input/ -- DynSubpath::from_openvr_str had no case for it, so
+  that source failed to parse.
+
+This fixes the second one, following the exact precedent already in
+this function: "application_menu" is already aliased to the Menu
+subpath a few lines above. On WMR/Touch-style controllers the
+OpenVR-legacy "system" button and "application_menu" both refer to
+the same physical control (already proven by this project's own
+recenter patch, which binds Left<Menu, Click> to the real physical
+menu button) -- so this alias only ever activates when Menu is
+already a legal path for that hand, no new plumbing required.
+
+The "long" gap is NOT fixed here -- it would need real long-press
+detection added to ButtonInput, more invasive, left for later.
+
+Confirmed live on SUPERHOT (oculus/touch_controller profile, HP
+Reverb G2 controllers): rebuilt, relaunched, the per-session "No
+active binding" spam dropped from hundreds to one (a transient at
+startup), and the left controller's physical menu button now opens
+SUPERHOT's pause menu correctly. Right hand untested/expected to
+still not work -- Menu is only a legal path for Left on this profile,
+matching real Oculus Touch hardware.
+
+Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
+---
+ src/input/profiles.rs | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/src/input/profiles.rs b/src/input/profiles.rs
+index d929080..0c70779 100644
+--- a/src/input/profiles.rs
++++ b/src/input/profiles.rs
+@@ -561,7 +561,12 @@ pub mod paths {
+                 "b" => Some(Self::B),
+                 "x" => Some(Self::X),
+                 "y" => Some(Self::Y),
+-                "application_menu" => Some(Self::Menu),
++                // "system" is another OpenVR-legacy name apps bind for the physical
++                // menu/system button, distinct from "application_menu" but referring to the
++                // same physical control on WMR/Touch-style controllers -- alias it the same
++                // way, so bindings like SUPERHOT's default oculus_touch MENU source
++                // (/user/hand/*/input/system/click) resolve instead of silently failing.
++                "application_menu" | "system" => Some(Self::Menu),
+                 "trigger" => Some(Self::Trigger),
+                 "grip" => Some(Self::Squeeze),
+                 "thumbstick" | "joystick" => Some(Self::Thumbstick),
+-- 
+2.47.3
+
