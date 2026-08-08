@@ -1,0 +1,31 @@
+From dfa10d2291b382209517e2e34701f0885cf40fe9 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Sat, 8 Aug 2026 20:09:02 -0300
+Subject: [PATCH] d/wmr: Link constellation tracking library into drv_wmr
+
+Build-only change, no behavior change yet: adds tracking-includes and
+constellation (already used by rift and pssense) to drv_wmr's link
+libraries. Nothing in the WMR driver calls into it yet -- this is
+step one of wiring up real positional tracking for the G2 controllers
+via the headset's own cameras, following the same pattern rift/pssense
+already use.
+---
+ src/xrt/drivers/CMakeLists.txt | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/src/xrt/drivers/CMakeLists.txt b/src/xrt/drivers/CMakeLists.txt
+index d26dd2fce..085012175 100644
+--- a/src/xrt/drivers/CMakeLists.txt
++++ b/src/xrt/drivers/CMakeLists.txt
+@@ -579,6 +579,8 @@ if(XRT_BUILD_DRIVER_WMR)
+ 			aux_util_sink # TODO remove this when converted to builders.
+ 			aux_math
+ 			aux_tracking
++			tracking-includes
++			constellation
+ 			xrt-external-cjson
+ 		)
+ 	list(APPEND ENABLED_HEADSET_DRIVERS wmr)
+-- 
+2.47.3
+
