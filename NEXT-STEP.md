@@ -1,5 +1,52 @@
 # Next step
 
+> **UPDATE (2026-08-08, ~20:10) — G2-controller-6DoF work started for real: Stage 0
+> confirmed the LEDs are trackable, Patch 0012 (`patches/monado/0012`) landed and is
+> physically verified. Two unrelated pre-existing bugs surfaced along the way and are
+> worth knowing about before the next session. Read `docs/pruebas.jsonl` T097-T098 and the
+> plan at the bottom of this note.**
+>
+> Full plan for real positional tracking on the controllers was designed and approved
+> (via plan mode, not summarized here — see the plan file referenced by this session, or
+> re-derive it from `docs/03-controllers.md` if it's gone) as a staged `patches/monado/
+> 0012`-`0017`+ series, each patch with a mandatory physical verification checkpoint.
+> **Stage 0** (zero code — just `XRT_DEBUG_GUI=1` and looking at the existing, previously
+> ignored "Controller Tracking Streams" debug panel) confirmed the headset's own cameras
+> already see the controller LEDs as clean, sharp, moving blobs — the real signal
+> constellation tracking needs is there. **Patch 0012** (link `libconstellation.a`,
+> already used by `rift`/`pssense`, into `drv_wmr` — build-only, zero call sites added
+> yet) is committed in `~/vr/monado` and exported to `patches/monado/0012`, verified
+> clean after a detour (below).
+>
+> **Two real, pre-existing bugs found while regression-testing 0012 — neither caused by
+> the patch, but both worth remembering:**
+> 1. `monado-service` has a real SIGSEGV bug inside Basalt's `vit_tracker_push_img_sample`,
+>    apparently on teardown — `coredumpctl list monado-service` shows this same crash
+>    class recurring since 2026-08-04, well before today. Not root-caused or fixed this
+>    session (out of scope for the 6DoF work), just confirmed real and pre-existing via
+>    `coredumpctl info <pid>`. Worth a look sometime: `coredumpctl` is the tool, not
+>    guessing from logs.
+> 2. The Logitech wireless mouse/keyboard receiver (`046d:c534`) re-enumerates unstably
+>    on this new machine and confuses Monado's USB prober (`p_dev_get_usb_dev` logs "USB
+>    device with same address but different vendor and product found!"). Cosmetic noise
+>    in the log, not confirmed to break anything, but now identified so it doesn't get
+>    mistaken for a headset problem later.
+>
+> **Process lesson re-confirmed hard, live, in this exact session**: after landing 0012,
+> rapid repeated `monado-service` restarts (rebuild → relaunch → check → relaunch again)
+> is what actually triggered a USB2 companion+audio drop and, separately, a silent
+> mid-startup death with no coredump — matching this project's own long-standing warning
+> about restart-cycling being a trigger, not a diagnostic. The fix both times was the
+> same as always: stop, let the hardware sit a few minutes, then ONE clean relaunch —
+> which worked immediately. Don't skip the pause next time either.
+>
+> **Next step**: Patch 0013 — add the `else` branch in `wmr_camera.c`'s `img_xfer_cb` to
+> route frametype-0x2 (controller) frames into a `t_rift_blobwatch` instance per camera
+> and a new debug-visualizer panel, instead of dropping them. This is real code inside
+> the same realtime USB callback the already-working SLAM path uses, so its own
+> regression check (does head tracking still behave normally right after) matters more
+> than usual. Both controllers need to be on before `monado-service` starts, as always.
+
 > **UPDATE (2026-08-08, ~18:55) — third physical machine, full stack re-validated clean,
 > now moving on to the big remaining gap: real 6DoF (positional) tracking for the
 > controllers.** Read `docs/pruebas.jsonl` T096.
