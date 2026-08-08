@@ -42,14 +42,15 @@ bug, and isn't repeated in every row.
 | InMind VR | [343740](https://steamdb.info/app/343740/) | ✓ | Unrelated Mono runtime crash before ever touching VR. |
 | Surgeon Simulator VR: Meet The Medic | [457420](https://steamdb.info/app/457420/) | ✓ | Crash-loop: 4 rapid connect/disconnect cycles from `SurgeonVR.exe` before giving up (T073, log-only, never looked at physically). |
 | World of Guns: VR | [1111760](https://steamdb.info/app/1111760/) | ✓ | Never gets past the initial steam/wineopenxr probe stage at all — fails earlier than every other title tried (T073, log-only). |
+| Overkill VR | [518720](https://steamdb.info/app/518720/) | ✓ | Confirmed physically (was log-only "inconclusive" in T073): xrizer shows a throwaway session cycle at launch (READY→EXITING in 18ms, same shape as VRChat/Overkill's own harmless probe) then goes silent — no second real session ever opens, even after waiting well past the process's own high-CPU "loading" window. Desktop mirror shows a plain white screen, headset shows nothing. Not the slow-Unity-boot theory T073 floated — it just never gets further. |
+| Welcome to Chornobayivka VR | [2064150](https://steamdb.info/app/2064150/) | ✓ | Confirmed physically (was log-only "ambiguous" in T073): reaches `FOCUSED`, real 3D, controllers load fine (`oculus/touch_controller` on both hands) — but the game's own camera has a fixed **roll** (world tilted sideways), always the same initial angle, present from launch and unaffected by recentering. Our recenter patch doesn't touch it either way, by design (it only ever resets yaw + position, same as real SteamVR) — consistent with the game doing its own one-time "calibrate forward" at startup that captures the player's full incidental head tilt as its reference "level" instead of extracting gravity-aligned yaw only, baking the error in permanently. Also dropped the user somewhere with no visible menu, "lugar raro" (odd spawn location). Normal head pitch/yaw tracking is otherwise correct — this reads as a bug in the game's own camera rig, not an xrizer/Monado issue. |
+| Dark Room VR | [1394640](https://steamdb.info/app/1394640/) | ✓ | Was blocked by a silent first-run dialog exactly as suspected (a hidden "headset may not be supported" warning behind the main Steam window) — cleared once the user clicked through it. After that, reproduced identically twice: xrizer does its usual harmless throwaway session cycle, then goes quiet — headset shows nothing at all, game only ever renders to its 2D desktop window (no VR menu/options visible there either). Inside the game's own 2D window a plain black square covers the play area the whole time (its own failed VR-view placeholder, never an actual crash) — everything else in the window keeps running and responding normally, and it exits cleanly. Same failure shape as Overkill VR: reaches xrizer briefly, never opens a real VR session. |
 
 ## Untested / inconclusive
 
-| Game | AppID | SteamDB | Notes |
-|---|---|---|---|
-| Overkill VR | [518720](https://steamdb.info/app/518720/) | ✓ | Reaper process stayed alive the full 30s sweep window but the real game never touched Monado in that window — may just be a slow Unity boot needing a longer window. Never retested with a human actually watching (T073). |
-| Welcome to Chornobayivka VR | [2064150](https://steamdb.info/app/2064150/) | ✓ | One dangling `BEGIN_SESSION` then a fast exit — ambiguous, never looked at physically (T073). |
-| Dark Room VR | [1394640](https://steamdb.info/app/1394640/) | ✓ | Never even produced a reaper process in 40s during the sweep — likely stuck on a first-run Steam dialog (EULA/install) that needs an interactive click. Not diagnosed further (T073). |
+Nothing left here as of this sweep — every T073 backlog title has now been either confirmed
+working, confirmed failed, or blocked on something outside this agent's reach (Dark Room
+VR's dialog, since resolved).
 
 ## Not a game
 
