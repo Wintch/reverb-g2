@@ -24,6 +24,9 @@ bug, and isn't repeated in every row.
 | SUPERHOT VR | [617830](https://steamdb.info/app/617830/) | ✓ | Trigger, grab, and hand tracking all confirmed working (T082). Menu button was dead on arrival (T067) — root-caused and fixed for the **left** controller via `patches/xrizer/0002` (T083-T084); right hand not expected to work, `Menu` is Left-only on the `oculus_touch` profile, matching real Oculus Touch hardware. |
 | VRChat | [438100](https://steamdb.info/app/438100/) | ✓ | Confirmed working, reached `FOCUSED`, real gameplay, EasyAntiCheat loads clean under Proton (T082-session, same day). First attempt showed nothing — traced to an unrelated DP/panel dropout from heavy session churn that session, not a VRChat bug; a clean retest worked immediately. |
 | Propagation VR | [1363430](https://steamdb.info/app/1363430/) | ✓ | Best signal of the whole non-original sweep — "works just perfect", including exiting the game from inside via the controllers (menu/quit works out of the box, no patch needed unlike SUPERHOT). First launch had controllers powered off (Monado has no controller hot-add — confirmed `<none>`/`<none>` in the log), retested clean after a full jack-in-wayland.sh restart with controllers on beforehand. |
+| Aircar | [1073390](https://steamdb.info/app/1073390/) | ✓ | User verdict: "first game I'd call 99%" — real VR, full controller input, excellent GPU utilization. First launch fell to 2D-only via the localconfig launch-options trap (see the note below this table). Two session-level issues observed, neither the game's fault: a pronounced CCW **roll drift** on the long-uptime 6DoF/SLAM session (horizon re-tilts right after every recenter — recenter is yaw-only by design), and on the fresh-SLAM session a wrong start position ("outside the vehicle") from the origin anchoring where the headset sat. See T106 for the SLAM-divergence follow-up. |
+| Google Earth VR | [348250](https://steamdb.info/app/348250/) | ✓ | **Works perfectly on a 3dof session** — user: "funciona perfecto… todos sus controles andan perfecto, eso se ve en el modelo 3d adentro" (the in-game controller model confirms every input works). On the same night's *diverging* 6DoF/SLAM session it was unusable (head jitter + view flying away — Basalt numerical divergence, `det(Q1Jl)==0` cascades in the log; light on didn't help, recenter didn't either). Controller *position* missing is the known project-wide 3DoF-controllers limitation, not a game issue. First launch attempt also hit the localconfig trap ("OpenVR failed to initialize / InterfaceNotFound" was the visible symptom). |
+| Dead Herring VR | [1498490](https://steamdb.info/app/1498490/) | ✓ | Real VR image and gameplay reached; user was mispositioned (same diverging-SLAM session as Google Earth — needs a clean-session retest for a final verdict, but the game itself renders and runs). Curiosity: has a 2D debug mode showing a map on the desktop window in 3D. |
 
 ## Broken — real, reproducible xrizer/Monado bugs
 
@@ -32,6 +35,8 @@ bug, and isn't repeated in every row.
 | Poly Runner VR | [462910](https://steamdb.info/app/462910/) | ✓ | Reproducible 2/2: gets stuck permanently at OpenXR session state `READY`, spamming `app requested unknown interface "IVRCompositor_013"` in an infinite tight loop (~1300 lines/sec, ~190% CPU), never advancing or exiting on its own — killed by hand both times. Renders normally in flat 2D the whole time (confirmed physically), just never enters stereo VR. `IVRCompositor_013` itself is a confirmed dead end (never existed in any real SteamVR release, see `patches/xrizer/README.md`) — the real bug is why the client-side retry never gives up, still open. |
 | Water Bears VR | [394130](https://steamdb.info/app/394130/) | ✓ | xrizer's compositor recreates the swapchain every single frame, for both eyes, forever (`recreating swapchain` spamming in `compositor.rs:1247`, ~65 cycles/sec) — never stabilizes a presentable frame, panel stays dark. Game itself is healthy: input works (trigger gives audible feedback) and it renders fine to its own flat 2D mirror the whole time. Real cause not fully isolated — likely a per-eye texture/bounds mismatch that `is_usable_swapchain()` never accepts, worth a closer look. |
 | War Robots VR: The Skirmish | [672640](https://steamdb.info/app/672640/) | ✓ | Calibrates fine, then drops to backlight-only with an un-skippable "put on your VR helmet" prompt. Root cause spans two repos: xrizer never implements HMD presence/worn detection (`ShouldApplicationPause`/`IsInputAvailable` in `src/system.rs` are hardcoded stubs), and Monado's `wmr_hmd.c` already reads the real proximity sensor but never wires it into Monado's own working `XR_EXT_user_presence` support. Scoped, not started — see `patches/xrizer/README.md`. |
+| IL DIVINO - Michelangelo's Sistine Ceiling in VR | [1165850](https://steamdb.info/app/1165850/) | ✓ | Menu renders 2D-only on the desktop; entering the experience gives audio in the headset but **no image** (backlight only). Session reached `FOCUSED` with both controllers registered, launch options confirmed applied — the failure is in the render path, cause not investigated (2026-08-09, one attempt). |
+| Meditation VR | [1301850](https://steamdb.info/app/1301850/) | ✓ | All-black in the headset, nothing ever shows. Log-clean: `FOCUSED`, controllers on `oculus/touch_controller`, one harmless `IVRExtendedDisplay_001` unknown-interface probe (same benign category as the `IVRCompositor_013` lesson). Same "session healthy, renders nothing visible" shape as the player's own LoadPhotoTexture trap — not investigated further (2026-08-09, one attempt). |
 
 ## Failed — unrelated to xrizer/Monado (Proton/engine-specific)
 
@@ -56,7 +61,21 @@ VR's dialog, since resolved).
 
 | Item | AppID | SteamDB | Notes |
 |---|---|---|---|
-| fpsVR | [908520](https://steamdb.info/app/908520/) | ✓ | A SteamVR performance-overlay tool, not a VR title — installed but out of scope for this compatibility sweep. |
+| fpsVR | [908520](https://steamdb.info/app/908520/) | ✓ | A SteamVR performance-overlay tool, not a VR title. First real attempt 2026-08-09: blocked by the launch-options trap below ("VR HMD not found" dialog, `ERROR_RUNTIME_UNAVAILABLE` in xrizer). Worth retrying with UI-set options: xrizer's `overlay.rs` implements `IVROverlay` seriously (1600+ lines, up to `IVROverlay028`), so the prognosis isn't hopeless — still pending. |
+
+## Trap: Steam launch options edited on disk don't exist (2026-08-09)
+
+Every VR title here needs the same launch options
+(`XR_RUNTIME_JSON=... IPC_IGNORE_VERSION=1 PRESSURE_VESSEL_FILESYSTEMS_RW=... %command%`).
+**Editing them into `userdata/<id>/config/localconfig.vdf` while Steam is running does
+nothing and is actively dangerous**: the running client only reads that file at startup,
+launches the game *without* the env vars (`ERROR_RUNTIME_UNAVAILABLE`, game falls back to
+2D — how both Aircar's and fpsVR's first attempts failed, and Google Earth VR's "OpenVR
+failed to initialize / InterfaceNotFound"), and then **overwrites the file from memory on
+exit**, silently destroying the hand edit. The tell in a live diagnosis: the game's
+`/bin/sh -c` line in `ps` has no env-var prefix even though the file on disk shows them.
+Always set launch options through the Steam UI (Properties → Launch Options) — applies
+immediately and survives.
 
 ## Non-Steam titles
 
