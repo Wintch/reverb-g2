@@ -37,6 +37,44 @@ Probing with `scripts/find-port.sh` confirmed the definitive physical map:
 |---|---|---|---|
 | `07:00.3` (Matisse, CPU) | usb3 (480M) / usb4 (10G) | 4 + 4 | **the 4 blue USB3 ports on the rear panel** |
 | `02:00.0` (A520 chipset) | usb1 (480M) | 9 | the 2 rear USB2 ports (Logitech receiver is on `1-8`) + headers |
+
+### Open item, not yet measured: reliability may differ port-to-port within the 4 (2026-08-09)
+
+The table above says all 4 rear USB3 ports share the same controller — true, but it
+doesn't mean they're identical. The user's own recollection (not yet backed by logged
+incidents): of the 4, 2 have historically been reliable for the headset and 2 haven't,
+independent of the cable/connector issues tracked in `docs/22`. The cable is connected via
+a fixed (non-reversible) USB-C-to-USB3-A adapter, so cable-orientation flipping —
+speculated elsewhere as a contributing factor — isn't a variable here.
+
+`find-port.sh` can't distinguish this: it only tells you which *controller* a port
+belongs to, and all 4 are on `07:00.3`. Confirming a real per-port difference needs
+correlating `ID_PATH` (via `udevadm info -q path /sys/bus/usb/devices/usb3` or `usb4`,
+whichever the headset lands on) against actual incident outcomes over time, not memory.
+
+First real data points: 2026-08-09, same session, two different physical sockets tested,
+both user-confirmed as historically-good ports — one next to the GPU's DisplayPort
+output, one next to the motherboard's integrated HDMI (the two-pair split found in the
+board's own manual, `2-6 Back Panel Connectors` diagram: the 4 rear USB 3.2 Gen1 ports
+sit as one pair beside HDMI and one pair beside the RJ-45 LAN port, not in a single row).
+**Both read the identical `ID_PATH`, `pci-0000:07:00.3-usb-0:1` ("root port 1").** So
+`ID_PATH` via this method does NOT currently distinguish these two physical sockets from
+each other — a real methodology gap, not a "they're the same port" conclusion. Don't trust
+`ID_PATH` alone to tell physical sockets apart on this board until that's understood
+(possibly needs the deeper `sysfs` port-topology path, not just the resolved device path).
+
+Both sockets recovered the USB2 branch via a PC-end-only replug this session (see
+`docs/pruebas.jsonl` around T117) — but the *first* attempt on the HDMI-side socket sat
+silent at 0/5 for ~1m50s with zero re-enumeration attempts in `journalctl -k` (the same
+"quiet, not storming" pattern as T115/T116) before a second, firmer reseat brought it back
+in under 4 seconds. Lesson: a quick unplug/replug isn't always enough — worth confirming
+it's genuinely fully seated, not just touched, before concluding a port/replug attempt
+failed.
+
+**Longer-term idea, not started:** if a real per-port pattern gets confirmed, worth
+turning into a plain visual diagram ("plug USB here, DP there, avoid these two") as part
+of the diagnostic-toolkit-for-anyone-with-this-headset direction, not just an internal
+lab note.
 | `02:00.0` (A520 chipset) | usb2 (10G) | 3 | **internal headers only — the case has no wired front panel** |
 
 The rear panel has 6 ports: 2 USB2 + 4 USB3. The 4 USB3 ports are **all** on the CPU
