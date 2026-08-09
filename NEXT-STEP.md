@@ -1,5 +1,136 @@
 # Next step
 
+> **UPDATE (2026-08-09, closing this session) — Patch 0013 PHYSICALLY VERIFIED. The T046
+> connector fault below was transient this time: reconnecting the 12V power brick alone
+> (no visor-end reseat needed) eventually brought connector 137 back up.** With
+> `XRT_DEBUG_GUI=1 ./jack-in-wayland.sh 1 6dof` and both controllers confirmed online first
+> (via the new `preflight.sh`, see below), the "Controller Blob Cam N" panels showed blob
+> boxes tracking the LED ring live while moving a controller in view, and the user
+> confirmed SLAM head-tracking and controller rotation showed zero regression. `docs/03`
+> and `patches/monado/README.md` updated to reflect the verified status.
+>
+> **New tool this session, born directly from tonight's mistakes — `scripts/preflight.sh`,
+> also deployed to `~/vr/`.** Consolidates three checks that used to be done ad-hoc (and
+> got skipped, causing real wasted attempts tonight) into one script with a clear
+> READY/NOT-READY verdict and a concrete next action per failure:
+> 1. USB devices 5/5.
+> 2. **Controllers paired AND online**, checked directly via `controller-pair-check.py`
+>    (now also deployed to `~/vr/`) — no Monado needed. This is the check that would have
+>    caught tonight's first post-recovery attempt, which came back `left: <none> right:
+>    <none>` simply because the controllers weren't powered on yet (hot-add doesn't exist,
+>    already documented, but nothing enforced checking it *before* burning a launch
+>    attempt).
+> 3. The HMD's own DP connector via `drmprops`, requiring `non-desktop=1` specifically —
+>    not just "some DP connector is connected" (see the false-positive bug below).
+>
+> Run `./preflight.sh` before every `jack-in-wayland.sh` from now on — it's what "no errar
+> con las pruebas" (avoid wasting a launch attempt on something checkable in 5 seconds)
+> means going forward for this project.
+>
+> **Script fixes from earlier this session (still in `~/vr/jack-in-wayland.sh` and synced
+> to `scripts/jack-in-wayland.sh`, along with `preflight.sh`/`controller-pair-check.py`
+> deployment) are NOT YET COMMITTED to git** — ask before committing (repo is public).
+>
+> The rest of this note (kept below, historical) is the T046-pattern connector-down
+> diagnosis from earlier the same session — read it if this recurs, since this time it
+> resolved with just a power-brick reconnect, cheaper than the visor-end reseat it
+> initially pointed to.
+
+> **UPDATE (2026-08-09, later same session) — Patch 0013 is code-complete but its physical
+> verification is blocked: the headset's own DP connector genuinely isn't coming up right
+> now, a real T046-pattern hardware symptom, not anything in the patch or the launch
+> script.** Trying to run the first `XRT_DEBUG_GUI=1 ./jack-in-wayland.sh 1 6dof` check for
+> 0013 (see the block right below this one) hit three straight "Found no connectors
+> available for direct mode" failures plus two recurrences of the already-known,
+> pre-existing Basalt/pangolin teardown SIGSEGV (`coredumpctl`, `vit_tracker_push_img_sample`
+> / `t_slam_node_destroy` → `dlclose`, unrelated to 0013 — confirmed by backtrace, not in
+> either crashing thread's stack).
+>
+> **Two real, separate script bugs found and fixed along the way (both kept regardless of
+> tonight's hardware outcome):**
+> 1. Added a bounded retry (3 attempts, 3s settle) around the whole service-launch-and-check
+>    sequence in `jack-in-wayland.sh`, in case of a genuine transient compositor-side race.
+> 2. **The actual root cause of tonight's repeated failures: the DP pre-flight check in
+>    `jack-in-wayland.sh` accepted ANY `card*-DP-*/status == connected`, not specifically the
+>    headset's own connector.** This machine ("iashur") has a real desktop monitor
+>    permanently connected on a different DP port, which satisfied the check every single
+>    time regardless of whether the headset's connector ever came up — a silent false
+>    positive. Fixed by switching the pre-flight check to `drmprops` (already in
+>    `scripts/`), requiring the specific DRM property that's actually HMD-specific:
+>    `non-desktop=1` (T096 already established the headset is connector 137 on this
+>    machine). Confirmed the new check correctly reports DOWN against the real current
+>    state, where the old check was reporting a false UP.
+>
+> **With the false positive removed, the real state is visible: connector 137 stays
+> `disconnected`, `non-desktop=0`, even right after a fresh `panel.py activate` that itself
+> reports a fully healthy response (`0x09/0x08/0x06`, no `-1`s -- the same "HID is fine"
+> signature T048 already established as normal).** This exactly matches `docs/22`'s T046
+> pattern: USB/HID healthy and activation succeeds, but the DP/panel-power path stays dead
+> regardless -- a decoupled fault, not a software/timing one. **Next step is physical**,
+> per `docs/22`'s ladder: reseat the cable at the visor end (behind the magnetic face
+> gasket) first; if that doesn't budge it, check the 12V brick. Don't re-diagnose this in
+> software again before that -- the check-lease.sh / drmprops signal is now trustworthy and
+> already confirms it's not a compositor or Monado-side problem.
+>
+> **Script fixes are in `~/vr/jack-in-wayland.sh` and synced to
+> `scripts/jack-in-wayland.sh` in this repo, but NOT YET COMMITTED** -- ask before
+> committing (repo is public). `~/vr/drmprops.c` was also added (copied from
+> `scripts/drmprops.c`, wasn't deployed there before).
+>
+> **Once the connector comes back up, resume exactly where this left off**: run
+> `XRT_DEBUG_GUI=1 ./jack-in-wayland.sh 1 6dof`, and check the new "Controller Blob Cam N"
+> debug panels for live LED blob tracking while moving a controller in camera view (see the
+> 0013 block below for full detail). Nothing about 0013 itself needs re-work -- it never
+> got a chance to be exercised yet, this was blocked before the stack ever came up.
+
+> **UPDATE (2026-08-09) — 6DoF resumed without waiting for upstream reviewer feedback;
+> Patch 0013 written and built clean, NOT yet physically verified.** The prior pause (below)
+> was waiting on the 4 Monado MRs before touching this again. Decision this session: stop
+> waiting — the only reviewer activity so far (Jan Schmidt / thaytan, on `!2967`) is about
+> code authorship, not about constellation-tracking design, and there's no signal a
+> 6DoF-specific review is coming soon. The plan: build the whole thing working locally first
+> (each patch independently verified), which makes every patch easier to justify when it
+> does go upstream — same pattern that already worked for 0001-0011.
+>
+> **Also decided this session: a desktop-only verification loop, no headset-worn required
+> for most of the series.** Investigated before writing any code — Monado already ships
+> `constellation_debug_scribble.cpp` (draws detected blobs + solved pose over the camera
+> image, toggleable, visible in the existing `XRT_DEBUG_GUI=1` window) and the "Controller
+> Tracking Streams" panel already used for Stage 0. Nothing new needed to build a visor —
+> just wire the existing debug-GUI machinery through as each patch lands. Headset sits
+> powered on (not worn) pointed at where a controller moves; only the last two patches
+> (position actually fused into the output pose) need the headset on a real head.
+>
+> **Full staged plan (0013-0018), designed via Claude's plan mode and approved, is written
+> out patch-by-patch in `docs/03-controllers.md`'s "Positional tracking (6DoF)" discussion
+> and duplicated here for durability** (the interactive plan file itself lives outside this
+> repo and may not survive to the next session):
+> 1. **0013** (this session, done, NOT physically verified yet): split controller-tracking
+>    frames per camera in `wmr_camera.c` (previously dropped at `drop_frame:`), run LED blob
+>    detection via `t_rift_blobwatch`, show it in a new "Controller Blob Cam N" debug panel.
+>    Builds clean, `ninja monado-service` links. **Next physical step: `XRT_DEBUG_GUI=1`,
+>    headset on but not worn, pointed at a controller, both controllers on — the new panels
+>    should show live blob boxes tracking the LED ring, and normal SLAM/head-tracking
+>    behavior must be unaffected (regression check).**
+> 2. **0014**: create a `t_constellation_tracker` over the WMR camera mosaic (build/plumbing
+>    only, gated behind `WMR_CONSTELLATION_CONTROLLERS`, default off).
+> 3. **0015**: build the G2's LED model from `wcb->config.leds[]` (parsed today, thrown
+>    away) and register both controllers with `t_constellation_tracker_add_device`.
+> 4. **0016**: store constellation position samples per controller (telemetry only) +
+>    live XYZ counters in the debug GUI — this is the desktop instrument that directly
+>    answers "is it still just rotating in place, or has it started moving in 3D".
+> 5. **0017**: fuse constellation POSITION into the controller's output pose. Orientation
+>    stays exclusively from the existing, already-good gyro fusion (`wcb->fusion.rot`),
+>    never overwritten — deliberately not doing what rift/pssense do (they replace the whole
+>    pose). **First patch needing full physical on-headset verification, no exceptions.**
+>    Also the point to sanity-check the user's own hypothesis about a missing height/floor
+>    calibration: if the fused position looks offset by a constant amount (not noisy, just
+>    shifted), check the tracker's world-frame anchor (`pose_in_origin`) before assuming a
+>    solver bug — the placeholder position has a hardcoded `y=1.2` today.
+> 6. **0018**: flip the default to on, re-verify physically at least once more.
+>
+> `patches/monado/0013` exported and in the tree; `patches/monado/README.md` updated.
+
 > **UPDATE (2026-08-08, ~20:10) — G2-controller-6DoF work started for real: Stage 0
 > confirmed the LEDs are trackable, Patch 0012 (`patches/monado/0012`) landed and is
 > physically verified. Two unrelated pre-existing bugs surfaced along the way and are

@@ -1,6 +1,6 @@
 # Monado patches
 
-Eleven patches on top of Monado `main` @ `735e29e4e` (the SHA `bootstrap-lab.sh sources`
+Thirteen patches on top of Monado `main` @ `735e29e4e` (the SHA `bootstrap-lab.sh sources`
 pins). The first ten are the linear form of four independent MR branches prepared for
 upstreaming — see [`docs/18-monado-upstreaming.md`](../../docs/18-monado-upstreaming.md) for
 the branches, the review that shaped them, and the submission runbook. 0011 came later
@@ -14,8 +14,9 @@ the branches, the review that shaped them, and the submission runbook. 0011 came
 | 0010 | `steamvr-drv-origin-rpath` | `$ORIGIN` runtime path on `driver_monado.so` for pressure-vessel |
 | 0011 | (unfiled) | G2 driver was missing the native `microsoft/motion_controller` binding remap — every binding under that profile silently failed to resolve, not just one input. See `docs/03-controllers.md` |
 | 0012 | (unfiled, in progress) | First step of real 6DoF controller tracking: link `constellation` (the optical LED tracker rift/pssense already use) into `drv_wmr`. Build-only, no behavior change — nothing calls into it yet. See `docs/03-controllers.md` |
+| 0013 | (unfiled, in progress, physically verified 2026-08-09) | Second step of 6DoF: split controller-tracking frames (frametype `0x2`) per camera in `wmr_camera.c` (previously dropped) and run LED blob detection on them via `t_rift_blobwatch`, visualized in a new "Controller Blob Cam N" debug GUI panel per camera. Still debug-only — no `t_constellation_tracker` wired up yet. Confirmed live with `XRT_DEBUG_GUI=1`: blob boxes track the LED ring in real time while moving a controller, and SLAM/controller rotation showed zero regression. See `docs/03-controllers.md` and the plan referenced from `NEXT-STEP.md`. |
 
-All twelve apply with plain `git am` onto the pinned SHA and build with zero warnings.
+All thirteen apply with plain `git am` onto the pinned SHA and build with zero warnings.
 
 **A twelfth patch existed briefly (2026-08-07) and was retracted (2026-08-08).** It "fixed"
 an AND/OR bug in 0003's bounded controller-status wait, reproduced 9/9 times in a real

@@ -1,0 +1,181 @@
+From c0767ac955ed38922e2a457c8809b43cb9fb07b3 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Sun, 9 Aug 2026 16:05:47 -0300
+Subject: [PATCH] d/wmr: Split controller-frame images per camera and detect
+ LED blobs (debug-only)
+
+Controller-tracking frames (frametype 0x2, ~2 out of every 3 camera
+transfers per the existing comment in img_xfer_cb) currently fall
+straight through to drop_frame and are never split or forwarded past
+an optional raw debug preview.
+
+Add an else branch alongside the existing SLAM split, ROI-splitting
+the composite frame across all tcam_count cameras (not just
+slam_cam_count -- the composite frame already carries every tracking
+camera's image data regardless of frametype) and forwarding each
+camera's frame to a new, parallel ctrl_cam_sinks[] array.
+
+wmr_source.c wires each of those sinks through a per-camera
+t_rift_blobwatch instance (same params rift uses) into a
+u_sink_blob_visualizer, exposed as a new "Controller Blob Cam N" debug
+GUI panel per camera. No t_constellation_tracker exists yet, so the
+visualizer's downstream blob sink is NULL -- this is purely a debug
+visualization step to confirm blob detection works on real footage
+before wiring up any tracker.
+
+Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
+---
+ src/xrt/drivers/wmr/wmr_camera.c | 20 +++++++++++++++
+ src/xrt/drivers/wmr/wmr_camera.h |  3 +++
+ src/xrt/drivers/wmr/wmr_source.c | 44 ++++++++++++++++++++++++++++++++
+ 3 files changed, 67 insertions(+)
+
+diff --git a/src/xrt/drivers/wmr/wmr_camera.c b/src/xrt/drivers/wmr/wmr_camera.c
+index 9fd007a9c..ba3427010 100644
+--- a/src/xrt/drivers/wmr/wmr_camera.c
++++ b/src/xrt/drivers/wmr/wmr_camera.c
+@@ -125,6 +125,7 @@ struct wmr_camera
+ 	struct u_sink_debug debug_sinks[2];
+ 
+ 	struct xrt_frame_sink *cam_sinks[WMR_MAX_CAMERAS]; //!< Downstream sinks to push tracking frames to
++	struct xrt_frame_sink *ctrl_cam_sinks[WMR_MAX_CAMERAS]; //!< Downstream sinks for controller-tracking frames
+ 
+ 	enum u_logging_level log_level;
+ };
+@@ -426,6 +427,24 @@ img_xfer_cb(struct libusb_transfer *xfer)
+ 		for (int i = 0; i < cam->slam_cam_count; i++) {
+ 			xrt_frame_reference(&frames[i], NULL);
+ 		}
++	} else {
++		DRV_TRACE_IDENT(push_to_ctrl_sinks);
++
++		// Controller-tracking frames carry all tcam_count cameras' image data, not just the SLAM subset.
++		struct xrt_frame *frames[WMR_MAX_CAMERAS] = {NULL};
++		for (int i = 0; i < cam->tcam_count; i++) {
++			u_frame_create_roi(xf, cam->tcam_confs[i].roi, &frames[i]);
++		}
++
++		for (int i = 0; i < cam->tcam_count; i++) {
++			if (cam->ctrl_cam_sinks[i] != NULL) {
++				xrt_sink_push_frame(cam->ctrl_cam_sinks[i], frames[i]);
++			}
++		}
++
++		for (int i = 0; i < cam->tcam_count; i++) {
++			xrt_frame_reference(&frames[i], NULL);
++		}
+ 	}
+ 
+ drop_frame:
+@@ -458,6 +477,7 @@ wmr_camera_open(struct wmr_camera_open_config *config)
+ 	for (int i = 0; i < cam->tcam_count; i++) {
+ 		cam->tcam_confs[i] = *config->tcam_confs[i];
+ 		cam->cam_sinks[i] = config->tcam_sinks[i];
++		cam->ctrl_cam_sinks[i] = config->ctrl_cam_sinks != NULL ? config->ctrl_cam_sinks[i] : NULL;
+ 	}
+ 
+ 	if (os_thread_helper_init(&cam->usb_thread) != 0) {
+diff --git a/src/xrt/drivers/wmr/wmr_camera.h b/src/xrt/drivers/wmr/wmr_camera.h
+index 2c1865e01..f840d14ed 100644
+--- a/src/xrt/drivers/wmr/wmr_camera.h
++++ b/src/xrt/drivers/wmr/wmr_camera.h
+@@ -28,6 +28,9 @@ struct wmr_camera_open_config
+ 	struct xrt_prober_device *dev_holo;
+ 	struct wmr_camera_config **tcam_confs; //!< Pointers to tracking cameras. Will be copied.
+ 	struct xrt_frame_sink **tcam_sinks;    //!< Sinks for tracking cameras
++	struct xrt_frame_sink **ctrl_cam_sinks; //!< Sinks for controller-tracking frames (frametype 0x2), one per
++	                                         //!< tracking camera. Entries may be NULL to drop that camera's
++	                                         //!< controller frames; the whole array may be NULL to disable.
+ 	int tcam_count;                        //!< Tracking camera count
+ 	int slam_cam_count;                    //!< Number of tracking cameras to use for SLAM
+ 	enum u_logging_level log_level;
+diff --git a/src/xrt/drivers/wmr/wmr_source.c b/src/xrt/drivers/wmr/wmr_source.c
+index 9b3cf7c48..a439604fb 100644
+--- a/src/xrt/drivers/wmr/wmr_source.c
++++ b/src/xrt/drivers/wmr/wmr_source.c
+@@ -11,6 +11,7 @@
+ #include "wmr_config.h"
+ #include "wmr_protocol.h"
+ 
++#include "constellation/t_rift_blobwatch.h"
+ #include "math/m_api.h"
+ #include "math/m_clock_tracking.h"
+ #include "math/m_filter_fifo.h"
+@@ -71,6 +72,9 @@ struct wmr_source
+ 	struct m_ff_vec3_f32 *gyro_ff;                     //!< Queue of gyroscope data to display in UI
+ 	struct m_ff_vec3_f32 *accel_ff;                    //!< Queue of accelerometer data to display in UI
+ 
++	// Controller-tracking (constellation) frames: blob detection only for now, debug-only, no tracker wired yet
++	struct u_sink_debug ctrl_blob_debug_sinks[WMR_MAX_CAMERAS]; //!< Sink to display detected LED blobs in UI
++
+ 	bool is_running;              //!< Whether the device is streaming
+ 	bool first_imu_received;      //!< Don't send frames until first IMU sample
+ 	timepoint_ns last_imu_ns;     //!< Last timepoint received.
+@@ -275,6 +279,7 @@ wmr_source_node_destroy(struct xrt_frame_node *node)
+ 	WMR_DEBUG(ws, "Destroying WMR source");
+ 	for (int i = 0; i < ws->config.tcam_count; i++) {
+ 		u_sink_debug_destroy(&ws->ui_cam_sinks[i]);
++		u_sink_debug_destroy(&ws->ctrl_blob_debug_sinks[i]);
+ 	}
+ 	m_ff_vec3_f32_free(&ws->gyro_ff);
+ 	m_ff_vec3_f32_free(&ws->accel_ff);
+@@ -327,10 +332,44 @@ wmr_source_create(struct xrt_frame_context *xfctx, struct xrt_prober_device *dev
+ 	}
+ 	ws->in_sinks.imu = &ws->imu_sink;
+ 
++	// Controller-tracking (frametype 0x2) frames: run LED blob detection per camera and show it in the debug
++	// GUI. Debug-only for now -- no t_constellation_tracker exists yet, so the visualizer's downstream blob
++	// sink is NULL.
++	struct xrt_frame_sink *ctrl_cam_sinks[WMR_MAX_CAMERAS] = {NULL};
++	for (int i = 0; i < cfg.tcam_count; i++) {
++		u_sink_debug_init(&ws->ctrl_blob_debug_sinks[i]);
++
++		struct t_blob_sink *blob_sink = NULL;
++		u_sink_blob_visualizer_create(xfctx, NULL, &ws->ctrl_blob_debug_sinks[i], cfg.tcams[i]->roi.extent.w,
++		                              cfg.tcams[i]->roi.extent.h, &blob_sink);
++
++		struct t_rift_blobwatch_params bw_params = {
++		    .pixel_threshold = RIFT_BLOBWATCH_PIXEL_THRESHOLD_CV1,
++		    .blob_required_threshold = RIFT_BLOBWATCH_BLOB_REQUIRED_THRESHOLD,
++		    .max_match_dist = RIFT_BLOBWATCH_DEFAULT_MAX_MATCH_DIST,
++		    .max_blob_width = RIFT_BLOBWATCH_DEFAULT_MAX_BLOB_WIDTH,
++		};
++		struct xrt_frame_sink *frame_sink = NULL;
++		struct t_blobwatch *blobwatch = NULL;
++		int ret = t_rift_blobwatch_create(&bw_params, xfctx, blob_sink, &frame_sink, &blobwatch);
++		if (ret != 0) {
++			WMR_WARN(ws, "Failed to create controller-tracking blobwatch for camera %d: %d", i, ret);
++			continue;
++		}
++
++		if (!u_sink_simple_queue_create(xfctx, frame_sink, &frame_sink)) {
++			WMR_WARN(ws, "Failed to create controller-tracking blobwatch queue for camera %d", i);
++			continue;
++		}
++
++		ctrl_cam_sinks[i] = frame_sink;
++	}
++
+ 	struct wmr_camera_open_config options = {
+ 	    .dev_holo = dev_holo,
+ 	    .tcam_confs = cfg.tcams,
+ 	    .tcam_sinks = ws->in_sinks.cams,
++	    .ctrl_cam_sinks = ctrl_cam_sinks,
+ 	    .tcam_count = cfg.tcam_count,
+ 	    .slam_cam_count = cfg.slam_cam_count,
+ 	    .log_level = ws->log_level,
+@@ -354,6 +393,11 @@ wmr_source_create(struct xrt_frame_context *xfctx, struct xrt_prober_device *dev
+ 		(void)snprintf(label, sizeof(label), "Camera %d", i);
+ 		u_var_add_sink_debug(ws, &ws->ui_cam_sinks[i], label);
+ 	}
++	for (int i = 0; i < cfg.tcam_count; i++) {
++		char label[] = "Controller Blob Cam NNNNNNNNNNN";
++		(void)snprintf(label, sizeof(label), "Controller Blob Cam %d", i);
++		u_var_add_sink_debug(ws, &ws->ctrl_blob_debug_sinks[i], label);
++	}
+ 
+ 	// Setup node
+ 	struct xrt_frame_node *xfn = &ws->node;
+-- 
+2.47.3
+

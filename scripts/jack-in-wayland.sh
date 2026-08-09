@@ -88,18 +88,47 @@ if ! ACTIVATE_OUT="$(python3 "$PANEL_PY" activate 2>&1)"; then
     echo "  !! panel.py activate FAILED (not a hardware symptom -- fix this first):" >&2
     echo "$ACTIVATE_OUT" | sed 's/^/     /' >&2
 fi
+# 2026-08-09: checking ANY "card*-DP-*/status == connected" is a false-positive trap on any
+# machine with a real desktop monitor on another DP port -- it satisfies this check forever,
+# regardless of whether the HEADSET's own connector ever comes up. Found live: this exact
+# false positive masked a real, total headset DP hotplug failure for 3+ attempts in a row
+# (T096 already established the headset is specifically connector 137/non-desktop=1 on this
+# machine -- it stayed disconnected/non-desktop=0 the whole time while a monitor on another
+# DP port kept this loop happy). Use drmprops (already in this repo, ../scripts/drmprops.c)
+# to check the one DRM property that's actually HMD-specific, instead of raw connector status.
+DRMPROPS_C="$(dirname "${BASH_SOURCE[0]}")/drmprops.c"
+DRMPROPS_BIN="${TMPDIR:-/tmp}/drmprops.$$"
 DP_UP=0
-for _i in $(seq 1 20); do
-    for s in /sys/class/drm/card*-DP-*/status; do
-        [ "$(cat "$s" 2>/dev/null)" = "connected" ] && { DP_UP=1; break 2; }
+if gcc -o "$DRMPROPS_BIN" "$DRMPROPS_C" -ldrm -I/usr/include/libdrm 2>/dev/null; then
+    for _i in $(seq 1 20); do
+        if "$DRMPROPS_BIN" 2>/dev/null | awk '
+            /^connector/ { conn = $0 }
+            /non-desktop  = 1/ { if (conn ~ /CONNECTED/) found = 1 }
+            END { exit !found }
+        '; then
+            DP_UP=1
+            break
+        fi
+        sleep 0.5
     done
-    sleep 0.5
-done
-if [ "$DP_UP" = 1 ]; then
-    echo "  DP connector up."
+    rm -f "$DRMPROPS_BIN"
 else
-    echo "  !! DP never came up after activation (waited 10s) -- starting Monado anyway," >&2
-    echo "     it will report 'Found no connectors available' if this doesn't clear." >&2
+    echo "  !! couldn't compile drmprops.c (missing libdrm-dev?) -- falling back to the old," >&2
+    echo "     less precise check (any connected DP-*, can false-positive on other monitors)" >&2
+    for _i in $(seq 1 20); do
+        for s in /sys/class/drm/card*-DP-*/status; do
+            [ "$(cat "$s" 2>/dev/null)" = "connected" ] && { DP_UP=1; break 2; }
+        done
+        sleep 0.5
+    done
+fi
+if [ "$DP_UP" = 1 ]; then
+    echo "  HMD connector (non-desktop=1) up."
+else
+    echo "  !! The HMD's own connector never came up after activation (waited 10s) --" >&2
+    echo "     starting Monado anyway, it will report 'Found no connectors available'" >&2
+    echo "     if this doesn't clear. This is a real headset/cable symptom, not the old" >&2
+    echo "     any-DP-connector false positive -- see docs/22 before assuming software." >&2
 fi
 
 if [ "$TRACKING" = "6dof" ]; then
@@ -116,6 +145,19 @@ echo "Starting Monado (mode $MODE, tracking $TRACKING) via DRM lease... log: $LO
 # question, without unbounded growth.
 [ -f "$LOG" ] && cp -f "$LOG" "${LOG%.log}.prev.log"
 
+# 2026-08-09: "Found no connectors available for direct mode" is a SEPARATE race from the DP
+# hotplug already polled above -- confirmed by reading comp_window_direct_wayland.c. It does
+# one wl_display_roundtrip() (binds the wp_drm_lease_device_v1 object) then loops
+# wl_display_dispatch() until the device sends its "done" event, and accepts THAT as final --
+# if mutter's own internal recognition of the just-hotplugged connector as lease-eligible
+# hasn't caught up yet and sends "done" with zero connectors, Monado gives up immediately
+# instead of waiting/retrying. This is downstream of the sysfs "connected" state we already
+# waited for above (that only proves the kernel/DRM side is up, not that mutter's own
+# hotplug handling has processed it) -- reproduced 3/3 in a row on 2026-08-09. Cheapest fix
+# without touching the live compositor (never do that live, see CLAUDE.md) or patching
+# upstream C code: retry the whole launch a few times, same "let it settle, one clean retry"
+# pattern already used elsewhere in this project for hardware timing races.
+#
 # WMR_DISPLAY_INIT_SLEEP_SECONDS=2 is load-bearing just like in X11: the panel turns off
 # on its own after ~3s if it doesn't receive a video signal, and with the default 4s Monado wakes up
 # when it has already turned off.
@@ -124,26 +166,53 @@ echo "Starting Monado (mode $MODE, tracking $TRACKING) via DRM lease... log: $LO
 # in the background, dies with 'epoll_ctl(stdin) failed' -> IPC_MAINLOOP_FAILED_TO_INIT before
 # even reaching the compositor. setsid + stdbuf -oL keep the log alive (using
 # `script` to give it a pty buffers so much that failures become unreadable).
-env XRT_COMPOSITOR_FORCE_WAYLAND_DIRECT=1 \
-    XRT_COMPOSITOR_DESIRED_MODE="$MODE" \
-    XRT_COMPOSITOR_LOG=debug \
-    XRT_NO_STDIN=1 \
-    "${TRACKING_ENV[@]}" \
-    WMR_DISPLAY_INIT_SLEEP_SECONDS=2 \
-    setsid stdbuf -oL -eL "$SERVICE" < /dev/null > "$LOG" 2>&1 &
+MAX_ATTEMPTS=3
+ATTEMPT=1
+SUCCESS=0
+while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+    if [ "$ATTEMPT" -gt 1 ]; then
+        echo "Retry $ATTEMPT/$MAX_ATTEMPTS after a short settle..."
+        sleep 3
+    fi
 
-SVC=$!
-for _i in $(seq 1 30); do
-    [ -S "$SOCKET" ] && break
-    kill -0 "$SVC" 2>/dev/null || break
-    sleep 1
-done
+    env XRT_COMPOSITOR_FORCE_WAYLAND_DIRECT=1 \
+        XRT_COMPOSITOR_DESIRED_MODE="$MODE" \
+        XRT_COMPOSITOR_LOG=debug \
+        XRT_NO_STDIN=1 \
+        "${TRACKING_ENV[@]}" \
+        WMR_DISPLAY_INIT_SLEEP_SECONDS=2 \
+        setsid stdbuf -oL -eL "$SERVICE" < /dev/null > "$LOG" 2>&1 &
 
-# The socket appears BEFORE the compositor finishes logging the backend and the mode,
-# so grepping as soon as we see it comes back empty and looks like a failure. We wait for the marker.
-for _i in $(seq 1 20); do
-    grep -q "found display mode" "$LOG" && break
-    sleep 1
+    SVC=$!
+    for _i in $(seq 1 30); do
+        [ -S "$SOCKET" ] && break
+        kill -0 "$SVC" 2>/dev/null || break
+        sleep 1
+    done
+
+    # The socket appears BEFORE the compositor finishes logging the backend and the mode,
+    # so grepping as soon as we see it comes back empty and looks like a failure. We wait for
+    # the marker.
+    for _i in $(seq 1 20); do
+        grep -q "found display mode" "$LOG" && break
+        sleep 1
+    done
+
+    # A socket existing is NOT enough: the IPC server binds it before it tries to init the
+    # compositor, so a failed lease (no connector, no mode) still leaves a live process with a
+    # live socket -- any OpenXR app launched against it fails later with
+    # XRT_ERROR_RUNTIME_FAILURE on xrGetSystem. Require BOTH the socket and a real mode.
+    if grep -q "found display mode" "$LOG" && [ -S "$SOCKET" ]; then
+        SUCCESS=1
+        break
+    fi
+
+    # Failed attempt: don't leave a broken instance running into the next try (found the hard
+    # way on 2026-08-07: had to manually pkill a service that had been "Socket ready" for
+    # several failed launches in a row).
+    for p in $(pgrep -f "monado[-]service"); do kill -9 "$p" 2>/dev/null; done
+    rm -f "$SOCKET"
+    ATTEMPT=$((ATTEMPT + 1))
 done
 
 echo
@@ -158,27 +227,14 @@ OUT="$(grep -iE "Target backend|Selected .* backend|lease|Found no connectors" "
 echo
 echo "=== video mode taken ==="
 OUT="$(grep -E "found display mode|frame interval" "$LOG" | tail -3)"
-MODE_OK=0
-if [ -n "$OUT" ]; then
-    echo "$OUT"
-    MODE_OK=1
-else
-    echo "  (no mode found -- the HMD may not be leasable)"
-fi
+[ -n "$OUT" ] && echo "$OUT" || echo "  (no mode found -- the HMD may not be leasable)"
 
 echo
-# A socket existing is NOT enough: the IPC server binds it before it tries to init the
-# compositor, so a failed lease (no connector, no mode) still leaves a live process with a
-# live socket -- any OpenXR app launched against it fails later with XRT_ERROR_RUNTIME_FAILURE
-# on xrGetSystem, and the broken service just sits there until something kills it (found the
-# hard way on 2026-08-07: had to manually pkill a service that had been "Socket ready" for
-# several failed launches in a row). Require BOTH the socket and a real mode; otherwise kill
-# the broken instance ourselves instead of reporting a false success.
-if [ "$MODE_OK" = 1 ] && [ -S "$SOCKET" ]; then
-    echo "Socket ready. Launch an OpenXR app with:"
+if [ "$SUCCESS" = 1 ]; then
+    echo "Socket ready (attempt $ATTEMPT/$MAX_ATTEMPTS). Launch an OpenXR app with:"
     echo "  XR_RUNTIME_JSON=$VR/monado/build/openxr_monado-dev.json IPC_IGNORE_VERSION=1 <app> --graphics Vulkan2"
 else
-    echo "!! No usable compositor (no leasable connector / no mode found) -- not leaving a broken service running." >&2
+    echo "!! No usable compositor after $MAX_ATTEMPTS attempts (no leasable connector / no mode found)." >&2
     echo "!! Last lines of the log:" >&2
     tail -15 "$LOG" >&2
     for p in $(pgrep -f "monado[-]service"); do kill -9 "$p" 2>/dev/null; done
