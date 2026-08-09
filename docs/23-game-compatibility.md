@@ -79,6 +79,48 @@ exit**, silently destroying the hand edit. The tell in a live diagnosis: the gam
 Always set launch options through the Steam UI (Properties → Launch Options) — applies
 immediately and survives.
 
+**Update (2026-08-09, later the same day): there's a simpler alternative that skips this
+trap entirely.** Exporting the same 3 variables (`XR_RUNTIME_JSON`, `IPC_IGNORE_VERSION`,
+`PRESSURE_VESSEL_FILESYSTEMS_RW`) in the shell **before starting the `steam` client
+itself**, instead of per-game Launch Options, works: verified live by reading
+`/proc/<pid>/environ` on every process in the chain for a freshly-launched, never-before-
+configured title (VersaillesVR) — `reaper` → `pressure-vessel`/`srt-bwrap` → `pv-adverb` →
+Proton → the actual Windows `.exe` under Wine all inherited the 3 vars with zero manual
+Steam UI steps, and the game reached a real `FOCUSED` OpenXR session with both controllers
+on the first try. `pressure-vessel`'s sandbox evidently passes through the ambient
+environment of the process that launches it (Steam), not just what's baked into a specific
+game's Launch Options. This means every *future* title can skip the manual
+Properties-dialog step from now on, as long as Steam itself is started with these three
+vars already exported — no per-game setup needed at all.
+
+## Trap: overlapping VR game launches + background Steam downloads can hang the whole
+## desktop (2026-08-09)
+
+Launched a second title (`Emergence`) via `steam steam://rungameid/<id>` before confirming
+the first one (`Back to Dinosaur Island`) had actually released the compositor — `pgrep`
+showed its process gone, but that doesn't guarantee xrizer/Monado had finished tearing down
+its OpenXR session cleanly. At the same time, Steam was still downloading several other
+titles in the background (including the multi-GB `SteamVR` + `steamvr_environments`
+depots). Net effect, live-observed by the user in the headset: **two/three sessions
+visibly stacked/layered on top of each other**, not a clean single game view. Checking
+`jack-in-wayland.log` afterward showed 10 `client_connected` vs. only 8
+`client_disconnected` — real unclosed sessions, not just a visual glitch. System load hit
+**20.84** (normally single digits), swap was in active use, and **the desktop became
+unresponsive enough that the user had to force-close Steam by hand**. `monado-service`
+itself was found dead afterward (crashed or OOM-killed under the load, not investigated
+further) and had to be relaunched from scratch.
+
+**Rule going forward: one VR game launch at a time, full stop.** Before launching the next
+title: (1) confirm the previous game's process is completely gone (`pgrep`), (2) confirm
+Monado's log shows a matching `client_disconnected` for its `client_connected`, (3) check
+`free -h` and `uptime` aren't showing memory/swap pressure or an inflated load average, and
+(4) check `~/.steam/steam/logs/content_log.txt` for the client still actively downloading
+something — pause/let it finish first. None of this touches the cable/USB physically, but
+heavy concurrent load is a real confound for any zero-touch stability test: a USB dropout
+seen during a session like this can't cleanly be attributed to the cable degrading at rest,
+since system-level resource starvation is a live alternative explanation.
+immediately and survives.
+
 ## Non-Steam titles
 
 Standalone DK2/DK1-era demos and tech demos that aren't Steam apps at all — no AppID, no

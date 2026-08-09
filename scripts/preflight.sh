@@ -53,26 +53,56 @@ else
 fi
 
 echo
-echo "=== 3/3: HMD's own DP connector (non-desktop=1, not just any connected DP) ==="
+echo "=== 3/3: HMD's own DP connector (real G2 EDID fingerprint + non-desktop=1, not just 'connected') ==="
+echo "  Note: the HP logo lighting is a separate power+HID signal (panel.py's activation"
+echo "  handshake) and is NOT checked here -- it can light with the panel/DP still dead."
+echo "  This step reads the actual DRM connector state, which is what really matters."
 PANEL_PY="$HERE/panel.py"
 [ -f "$PANEL_PY" ] || PANEL_PY="$VR/panel.py"
 if ! ACTIVATE_OUT="$(python3 "$PANEL_PY" activate 2>&1)"; then
     echo "  !! panel.py activate FAILED (fix this first, it's not a hardware symptom):"
     echo "$ACTIVATE_OUT" | sed 's/^/     /'
 fi
+if echo "$ACTIVATE_OUT" | grep -qE "OSError|Errno"; then
+    echo "  !! companion control-channel read errors during activation (docs/22 storm pattern):"
+    echo "$ACTIVATE_OUT" | grep -E "OSError|Errno" | sed 's/^/     /'
+fi
 
 DRMPROPS_BIN="${TMPDIR:-/tmp}/drmprops.$$"
-DP_UP=0
+DP_STATE=none   # none | connected-fake-edid | ready
+LAST_DUMP=""
 if gcc -o "$DRMPROPS_BIN" "$HERE/drmprops.c" -ldrm -I/usr/include/libdrm 2>/dev/null; then
     for _i in $(seq 1 20); do
-        if "$DRMPROPS_BIN" 2>/dev/null | awk '
-            /^connector/ { conn = $0 }
-            /non-desktop  = 1/ { if (conn ~ /CONNECTED/) found = 1 }
-            END { exit !found }
-        '; then
-            DP_UP=1
-            break
-        fi
+        LAST_DUMP="$("$DRMPROPS_BIN" 2>/dev/null)"
+        # Identify the visor's connector by its EDID FINGERPRINT (drmprops.c checks it
+        # against a known-good G2 capture), not by byte count or connector id -- those
+        # aren't stable across boots and, worse, a plain 128-byte base-block EDID is
+        # completely normal on this rig's real desktop monitors too (verified live: it
+        # is NOT a truncation signal by itself). A connector with no real G2 EDID but a
+        # single 640x480@60 fallback mode is the kernel's synthetic "sink present,
+        # nothing readable" default -- CONNECTED electrically, but no real panel identity.
+        STATE="$(echo "$LAST_DUMP" | awk '
+            /^connector/ {
+                conn = $0; nd = ""; is_g2 = 0; first_mode = ""
+                split($0, parts, "modes="); modes = parts[2] + 0
+            }
+            /non-desktop  = / { nd = $NF }
+            /fingerprint matches the G2 panel/ { is_g2 = 1 }
+            /mode:/ {
+                if (first_mode == "") first_mode = $2
+                if (conn ~ /CONNECTED/) {
+                    rank = 0; label = "none"
+                    if (is_g2 && nd == "1" && modes > 1)               { rank = 3; label = "ready" }
+                    else if (is_g2 || (modes == 1 && first_mode == "640x480@60")) {
+                        rank = 1; label = "connected-fake-edid"
+                    }
+                    if (rank > best) { best = rank; beststr = label }
+                }
+            }
+            END { print (beststr == "" ? "none" : beststr) }
+        ')"
+        [ -n "$STATE" ] && DP_STATE="$STATE"
+        [ "$DP_STATE" = "ready" ] && break
         sleep 0.5
     done
     rm -f "$DRMPROPS_BIN"
@@ -80,16 +110,32 @@ else
     echo "  !! couldn't compile drmprops.c (missing libdrm-dev?) -- can't run this check."
 fi
 
-if [ "$DP_UP" = 1 ]; then
-    echo "  READY: HMD connector up (non-desktop=1, real DP-90Hz modes present)."
-else
-    echo "  NOT READY: the HMD's own connector never came up after activation (waited 10s)."
-    echo "  -> This is the docs/22 T046 pattern (HID/USB healthy, DP/panel-power path dead)."
-    echo "     Next: reseat the cable at the VISOR end (behind the magnetic face gasket)."
-    echo "     If that doesn't help, check the 12V brick. Don't re-diagnose this in software"
-    echo "     again -- this check already rules out compositor/Monado-side causes."
-    OVERALL_READY=0
-fi
+case "$DP_STATE" in
+    ready)
+        echo "  READY: HMD connector up -- EDID fingerprint confirmed the G2, non-desktop=1, real modes."
+        ;;
+    connected-fake-edid)
+        echo "  NOT READY: a connector is electrically CONNECTED where the visor should be, but its"
+        echo "  EDID does NOT match the G2's real fingerprint -- it's a synthetic placeholder the"
+        echo "  kernel falls back to when the AUX channel never returns real panel data (confirmed"
+        echo "  by hex-dumping it: all zero bytes past the mandatory EDID header). This means the"
+        echo "  DP link sees SOME sink present but never gets the panel's actual identity -- this is"
+        echo "  functionally the same physical-layer failure as a full disconnect, NOT partial"
+        echo "  progress. Don't read it as 'closer to working.'"
+        echo "  -> Same as always (docs/22): reseat the cable at the VISOR end next. If that doesn't"
+        echo "     help, check the 12V brick."
+        echo "$LAST_DUMP" | sed 's/^/     /'
+        OVERALL_READY=0
+        ;;
+    none)
+        echo "  NOT READY: the HMD's own connector never came up after activation (waited 10s)."
+        echo "  -> This is the docs/22 T046 pattern (HID/USB healthy, DP/panel-power path dead)."
+        echo "     Next: reseat the cable at the VISOR end (behind the magnetic face gasket)."
+        echo "     If that doesn't help, check the 12V brick. Don't re-diagnose this in software"
+        echo "     again -- this check already rules out compositor/Monado-side causes."
+        OVERALL_READY=0
+        ;;
+esac
 
 echo
 if [ "$OVERALL_READY" = 1 ]; then

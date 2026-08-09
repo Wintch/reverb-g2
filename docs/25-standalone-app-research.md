@@ -1,4 +1,4 @@
-# 24 — Standalone app research: the OpenXR toolbox
+# 25 — Standalone app research: the OpenXR toolbox
 
 > Desk research, 2026-08-09, run as 5 parallel research agents + 1 synthesis agent with web
 > search, verified against primary sources where possible (real LICENSE files, Monado's real

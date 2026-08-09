@@ -35,11 +35,13 @@ and this project produced four confidently wrong conclusions that were all reach
 | Headset display | ✅ 60 Hz via Monado direct mode, X11 and Wayland |
 | 90 Hz | ✅ clean at both native modes (2880×1440 and supersampled 4320×2160) — see below |
 | Head tracking, 3DoF | ✅ solid (IMU, `WMR_SLAM=0`) |
-| Head tracking, 6DoF | ⚠️ Basalt SLAM diverges (~3° drift while stationary) |
+| Head tracking, 6DoF | ✅ real Basalt SLAM, confirmed across multiple full game sessions (`docs/23`) — occasional divergence on long-uptime sessions, see `docs/06` |
 | 360 / VR180 player | ✅ our own, built on `hello_xr`; 8K stereo at 60 fps |
-| Headset audio | ✅ works — the long-standing failure was a bad USB port |
-| Controllers | ⚠️ 3DoF only (upstream driver limit); connection reliability fixed here |
-| SteamVR | ❌ Valve packaging bug (`vrmonitor`/Qt); try [xrizer](https://github.com/The-personified-devil/xrizer) instead of OpenComposite (unmaintained since 2024) |
+| Headset audio | ✅ works electrically; shares a marginal USB2 contact with the panel, see `docs/22` |
+| Controllers | ⚠️ 3DoF only (constellation position tracking paused upstream, `docs/03`); rotation + buttons confirmed working in real games |
+| SteamVR (native) | ❌ Valve packaging bug (`vrmonitor`/Qt) |
+| SteamVR titles (via [xrizer](https://github.com/The-personified-devil/xrizer)) | ✅ multiple titles confirmed working end to end, bypassing `vrmonitor` entirely — see `docs/23` |
+| Cable/connector | ⚠️ known marginal contact (USB2 branch + panel power); reseat procedure in `docs/22`, not yet replaced |
 
 ## What came out of this: an NVIDIA driver bug
 
@@ -79,12 +81,38 @@ including how the "still open" methodology trap was found, in
 ./scripts/bootstrap-lab.sh deps      # build dependencies
 ./scripts/bootstrap-lab.sh sources   # clone upstream at the pinned SHAs, apply patches
 ./scripts/bootstrap-lab.sh build
-./scripts/jack-in.sh                 # bring up the whole VR pipeline
 ```
 
 Read [`docs/00-hardware-usb.md`](docs/00-hardware-usb.md) first. If the companion device
 `03f0:0580` is missing from `lsusb`, the problem is the USB port, not the software — and
 you will waste days debugging Monado if you skip that chapter.
+
+## Daily bring-up (the step-by-step to actually turn it on)
+
+Every session, in this order — this is the procedure, don't improvise it:
+
+```bash
+./scripts/preflight.sh               # 5-second READY/NOT READY check, no Monado started yet
+```
+
+`preflight.sh` checks, in order: (1) all 5 headset USB devices enumerated, (2) both
+controllers paired **and** online (power them on first — there is no hot-add, see
+`docs/03`), (3) the HMD's own DP connector actually up after `panel.py activate`. If it
+says NOT READY, it also prints the concrete next action — usually a cable reseat, see the
+ladder in [`docs/22-cable-connector-diagnosis.md`](docs/22-cable-connector-diagnosis.md).
+Don't re-diagnose this in software before reading that chapter; it's exhausted.
+
+Once `preflight.sh` says READY:
+
+```bash
+./scripts/jack-in-wayland.sh 1 6dof  # bring up the pipeline: mode 1 (4320x2160@90), real 6DoF SLAM
+./scripts/play360.sh <file-or-dir>   # or launch a Steam title through xrizer, see docs/23
+```
+
+Use `jack-in-wayland.sh`, not `jack-in.sh` (X11 path, untested at 90 Hz since the bpc
+fix). It needs the **"GNOME" entry under Wayland** at the login screen specifically —
+not Plasma, not "GNOME" under X11. Nothing above is verified until a human has the
+headset on and looks — see the rule right above.
 
 Source trees are not vendored. `bootstrap-lab.sh` clones upstream at the exact SHAs the
 patches were generated against and applies them, so this repo stays at a few megabytes and
