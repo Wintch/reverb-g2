@@ -56,8 +56,16 @@ else
             FAIL=1
         fi
     done
-    if grep -qiE "reject|FAILED" "$LOG"; then
-        echo "  !! The build log contains reject/FAILED lines -- read it in full before trusting anything:"
+    # Don't grep bare "reject|FAILED" -- it false-positives on mangled C++ symbol names
+    # (messageFailed, RejectedByHW, mstEdidReadFailed...) in harmless objtool warning
+    # lines, which are unrelated to whether the patches applied or the build succeeded.
+    # Check the actual patch-apply and make outcomes instead.
+    if grep -qiE "^[0-9]+ out of [0-9]+ hunks? FAILED|\*\*\* [Rr]eject|can't find file to patch" "$LOG"; then
+        echo "  !! The build log shows a real patch-apply failure -- read it in full before trusting anything:"
+        echo "     $LOG"
+        FAIL=1
+    elif ! grep -q "^# exit code: 0$" "$LOG"; then
+        echo "  !! The build log's own exit code isn't 0 -- read it in full before trusting anything:"
         echo "     $LOG"
         FAIL=1
     fi

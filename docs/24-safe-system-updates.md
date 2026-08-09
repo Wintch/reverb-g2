@@ -5,6 +5,11 @@ of fear of breaking things — but never lose a working VR stack to an update wi
 back. This chapter is the procedure, plus two scripts (`scripts/pre-update-check.sh`,
 `scripts/post-update-verify.sh`) that do the checking so it isn't done by memory each time.
 
+**Debian 13 (trixie) specific.** Every path, package name, and mechanism here (DKMS,
+`/etc/kernel/postinst.d/dkms`, the exact `dkms.conf` PATCH[] convention, GRUB's "Advanced
+options" submenu) was checked against this exact install. Never tried on another
+distro/release — don't assume it transfers as-is.
+
 ## Why this needs its own procedure at all
 
 Almost everything on this machine is safe to update anytime — desktop apps, codecs,
@@ -32,26 +37,30 @@ depends on.
    of a DRM lease issue that night, for unrelated reasons, and turned out fine, but it's a
    real dependency to be aware of, not a coincidence).
 
-## One-time prep: make the rollback kernel actually work (do this now, not during an emergency)
+## Keep the rollback kernel actually working
 
-**Found 2026-08-09: the rollback safety net was fake.** Two kernels are installed
-(`6.12.100` current, `6.12.94` kept alongside it, Debian's normal behavior), which looks
-like a rollback path — but `dkms status` only shows a build for `6.12.100`, and
-`linux-headers-6.12.94+deb13-amd64` isn't installed at all. Booting into `6.12.94` today
-would leave the machine with **no NVIDIA module for that kernel** — no time to build one
-either, since headers aren't there. A "rollback" that requires a from-scratch DKMS build
-under time pressure, possibly without network access to fetch headers, isn't a real
-rollback.
+**Checked 2026-08-09 with `pre-update-check.sh`: on this machine, right now, the rollback
+is real** — `dkms status` shows the nvidia module installed for both `6.12.100` (current)
+and `6.12.94` (kept alongside it, Debian's normal behavior), and
+`linux-headers-6.12.94+deb13-amd64` is present. (An earlier pass that same night, done by
+hand instead of with the script, wrongly concluded this was missing — a manual `dpkg -l`
+check gave a false negative for reasons not fully tracked down. Lesson kept on purpose:
+**trust `pre-update-check.sh`'s own output over a one-off manual command**, and re-run it
+if something here ever looks stale.)
 
-**Fix, one time, whenever there's a few minutes to spare (not urgent, but do it before
-relying on the rollback plan below):**
+**This isn't self-maintaining, though** — a DKMS build only exists for a kernel that had
+headers installed *at the time* something triggered the build. If a future update ever
+removes the second-newest kernel's headers, or the second-newest kernel itself gets
+purged, the rollback quietly stops being real again until fixed:
 
 ```bash
-sudo apt install linux-headers-6.12.94+deb13-amd64   # match whatever the OLD kernel is,
-                                                       # check with: dpkg -l 'linux-image-*'
-sudo dkms install nvidia/595.71.05 -k 6.12.94+deb13-amd64
-/usr/sbin/dkms status   # should now show BOTH kernels as "installed"
+sudo apt install linux-headers-<OLD_KERNEL_VERSION>   # check with: dpkg -l 'linux-image-*'
+sudo dkms install nvidia/595.71.05 -k <OLD_KERNEL_VERSION>
+/usr/sbin/dkms status   # should show BOTH kernels as "installed"
 ```
+
+`pre-update-check.sh`'s "rollback kernel readiness" section checks exactly this — trust
+its verdict, don't re-derive it by hand.
 
 **Whenever a new kernel becomes "current" after an update (see procedure below), the kernel
 that was current a moment ago becomes the new fallback — repeat this for whichever
@@ -116,6 +125,25 @@ previous kernel entry (the one made a real fallback in the one-time prep above).
 work immediately on that kernel — no rebuild needed under pressure, because the DKMS build
 for it was already proven working beforehand. Debug the new kernel/driver combination at
 leisure from there, not from a broken VR stack with the clock running.
+
+## First real end-to-end run of this procedure (2026-08-09, kernel 6.12.101)
+
+`post-update-verify.sh` caught a real bug in itself: step 3's `reject|FAILED` grep on the
+fresh `make.log` false-positived on mangled C++ symbol names (`messageFailed`,
+`RejectedByHW`, ...) inside harmless `objtool` "naked return" warnings — nothing to do with
+whether the patches applied or the build succeeded (all 4 patches applied clean, `# exit
+code: 0`). Same false-positive class as the DP check fixed the commit before this one.
+Fixed by checking for real patch-reject markers and the build's own `# exit code: 0` line
+instead of a bare keyword grep. Synced to `~/vr/`.
+
+Everything else passed straight through: kernel/DKMS/patches clean, `verify-bpc.sh`,
+`preflight.sh` (once the controllers were powered on — they were off from the previous
+session). Full physical verification: `jack-in-wayland.sh 1 6dof` + `play360.sh` on the
+real 3-video playlist — real `wmr` builder, both controllers registered, real
+`wayland-direct` lease, `4320x2160@90` taken. One side note, not a regression: NVDEC
+rejected the 4320px width (`Video width 4320 not within range from 48 to 4096`) and fell
+back to software decode — still hit ~55-60 fps, no visible impact. User, headset on:
+"sí, todo perfecto". Full detail: `docs/pruebas.jsonl` T108-T109.
 
 ## What NOT to do
 
