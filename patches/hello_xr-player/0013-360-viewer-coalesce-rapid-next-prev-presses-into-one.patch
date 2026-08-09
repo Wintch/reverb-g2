@@ -1,0 +1,182 @@
+From e8c25516d4357f720056690ded688cf614f2f47a Mon Sep 17 00:00:00 2001
+From: iam <iam@iashur.internal>
+Date: Sun, 9 Aug 2026 05:47:38 -0300
+Subject: [PATCH] 360 viewer: coalesce rapid next/prev presses into one
+ playlist jump
+
+User report, live on a 13-file playlist: pressing next more than once in
+quick succession didn't advance further ("arranca de nuevo del mismo punto")
+- only after waiting a few seconds did another press register. Two causes:
+the next/prev request was a latched BOOL, so N presses before the render
+thread consumed it collapsed into one advance; and each advance paid the
+full between-tracks hitch (vkDeviceWaitIdle + realloc), during which the
+main thread is blocked and a quick press+release is invisible to
+xrSyncActions entirely (changedSinceLastSync with currentState=FALSE at the
+next sync - our edge check correctly ignores that shape).
+
+Fix: RequestNextTrack()/RequestPreviousTrack() now increment atomic
+counters; the consumer takes both, computes the net delta, and the new
+AdvanceTrackBy(delta) (replacing the AdvanceTrack/PreviousTrack pair) jumps
+the whole distance with a SINGLE destroy/reopen hitch - modulo-normalized so
+negatives and over-wraps work, and falling back to one-at-a-time forward
+steps when a file fails to open. Presses landing fully inside a hitch are
+still unseeable (the thread is blocked in vkDeviceWaitIdle) - shrinking the
+hitch itself is future work - but presses on either side of it now
+accumulate correctly instead of vanishing.
+
+Builds clean; not yet verified live (shipped mid-session while the previous
+binary was still playing - applies on the next launch).
+---
+ src/tests/hello_xr/graphicsplugin_vulkan.cpp | 55 +++++++++-----------
+ src/tests/hello_xr/playercontrol.cpp         | 17 +++---
+ src/tests/hello_xr/playercontrol.h           | 10 ++--
+ 3 files changed, 43 insertions(+), 39 deletions(-)
+
+diff --git a/src/tests/hello_xr/graphicsplugin_vulkan.cpp b/src/tests/hello_xr/graphicsplugin_vulkan.cpp
+index bc645de..036f8f2 100644
+--- a/src/tests/hello_xr/graphicsplugin_vulkan.cpp
++++ b/src/tests/hello_xr/graphicsplugin_vulkan.cpp
+@@ -1205,33 +1205,27 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+         if (m_photoImageMemory) { vkFreeMemory(m_vkDevice, m_photoImageMemory, nullptr); m_photoImageMemory = VK_NULL_HANDLE; }
+     }
+ 
+-    // Moves to the next file in the playlist, rebuilding everything for its geometry. A file
+-    // that will not open is skipped rather than fatal - one bad download should not end
+-    // playback - but if none of them open we give up and leave the last good frame on screen.
+-    void AdvanceTrack() {
+-        const size_t count = m_playlist.size();
+-        for (size_t attempt = 0; attempt < count; attempt++) {
++    // Moves |delta| steps through the playlist (negative = backward), rebuilding everything
++    // for the new file's geometry. Replaces the old single-step AdvanceTrack()/
++    // PreviousTrack() pair (2026-08-09): next/prev requests are now COUNTED, not latched
++    // (see playercontrol.h), and coalesced here into one jump - N rapid presses cost one
++    // destroy/reopen hitch instead of N sequential ones, which is also what made rapid
++    // pressing feel broken before (each press paid the full vkDeviceWaitIdle + realloc
++    // hitch, and presses landing inside a hitch were swallowed entirely). A file that will
++    // not open is skipped forward one at a time rather than fatal; if nothing opens we give
++    // up and leave the last good frame on screen.
++    void AdvanceTrackBy(long delta) {
++        const long count = (long)m_playlist.size();
++        long step = ((delta % count) + count) % count;  // normalize, negatives included
++        if (step == 0) return;  // net-zero movement (incl. full wraps) - nothing to do
++        for (long attempt = 0; attempt < count; attempt++) {
+             DestroyVideoResources();
+             m_videoMode = false;
+-            m_playlistIndex = (m_playlistIndex + 1) % count;
+-            Log::Write(Log::Level::Info, Fmt("playlist: %zu/%zu", m_playlistIndex + 1, count));
+-            if (OpenVideoTexture(m_playlist[m_playlistIndex])) return;
+-            Log::Write(Log::Level::Warning, Fmt("playlist: skipping '%s'", m_playlist[m_playlistIndex].c_str()));
+-        }
+-        Log::Write(Log::Level::Error, "playlist: no file in the list could be opened, stopping playback");
+-    }
+-
+-    // Mirror of AdvanceTrack(), other direction. `count - 1` instead of `-1` because
+-    // m_playlistIndex is unsigned - going below 0 would wrap to a huge number, not -1.
+-    void PreviousTrack() {
+-        const size_t count = m_playlist.size();
+-        for (size_t attempt = 0; attempt < count; attempt++) {
+-            DestroyVideoResources();
+-            m_videoMode = false;
+-            m_playlistIndex = (m_playlistIndex + count - 1) % count;
+-            Log::Write(Log::Level::Info, Fmt("playlist: %zu/%zu", m_playlistIndex + 1, count));
++            m_playlistIndex = (m_playlistIndex + (size_t)step) % (size_t)count;
++            Log::Write(Log::Level::Info, Fmt("playlist: %zu/%zu", m_playlistIndex + 1, (size_t)count));
+             if (OpenVideoTexture(m_playlist[m_playlistIndex])) return;
+             Log::Write(Log::Level::Warning, Fmt("playlist: skipping '%s'", m_playlist[m_playlistIndex].c_str()));
++            step = 1;  // after a bad file, walk forward one at a time
+         }
+         Log::Write(Log::Level::Error, "playlist: no file in the list could be opened, stopping playback");
+     }
+@@ -1691,12 +1685,15 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+             if (frameStep != 0 && m_video->FrameRate() > 0.0) {
+                 m_video->Seek(frameStep / m_video->FrameRate());
+             }
+-            const bool skip = PlayerControl::TakeNextTrackRequest() && m_playlist.size() > 1;
+-            const bool back = PlayerControl::TakePreviousTrackRequest() && m_playlist.size() > 1;
+-            if (back) {
+-                PreviousTrack();
+-            } else if (skip || (m_playlist.size() > 1 && m_video->Finished())) {
+-                AdvanceTrack();
++            // Net movement: accumulated next-presses minus prev-presses since the last
++            // frame, coalesced into one jump (see AdvanceTrackBy). Counters are drained
++            // even for single-file playback so stale presses can't fire later.
++            const long fwd = PlayerControl::TakeNextTrackRequest();
++            const long bwd = PlayerControl::TakePreviousTrackRequest();
++            if (m_playlist.size() > 1) {
++                long delta = fwd - bwd;
++                if (delta == 0 && m_video->Finished()) delta = 1;
++                if (delta != 0) AdvanceTrackBy(delta);
+             }
+             if (m_videoMode) UpdateVideoTexture();
+         }
+diff --git a/src/tests/hello_xr/playercontrol.cpp b/src/tests/hello_xr/playercontrol.cpp
+index 800aab4..c789fe5 100644
+--- a/src/tests/hello_xr/playercontrol.cpp
++++ b/src/tests/hello_xr/playercontrol.cpp
+@@ -22,8 +22,13 @@ constexpr int kNormalRateIndex = 3;
+ 
+ std::atomic<int> g_rateIndex{kNormalRateIndex};
+ std::atomic<bool> g_paused{false};
+-std::atomic<bool> g_nextTrack{false};
+-std::atomic<bool> g_prevTrack{false};
++// Counters, not bools (changed 2026-08-09): with a bool, N quick presses before the render
++// thread consumed the flag collapsed into ONE track advance - user report: pressing next
++// repeatedly "arranca de nuevo del mismo punto" until waiting a few seconds between
++// presses. Counting lets rapid presses accumulate, and the consumer coalesces them into a
++// single N-position jump with one destroy/reopen hitch instead of N sequential ones.
++std::atomic<int> g_nextTrack{0};
++std::atomic<int> g_prevTrack{0};
+ std::atomic<bool> g_quit{false};
+ std::atomic<int> g_seekJumpSeconds{0};
+ std::atomic<int> g_frameStepRequest{0};
+@@ -121,19 +126,19 @@ void NormalSpeed() {
+     ReportRate();
+ }
+ 
+-bool TakeNextTrackRequest() { return g_nextTrack.exchange(false); }
++int TakeNextTrackRequest() { return g_nextTrack.exchange(0); }
+ 
+ void RequestNextTrack() {
+-    g_nextTrack = true;
++    g_nextTrack += 1;
+     TouchInteraction();
+     MaybeQuitOnAnyKey();
+     Log::Write(Log::Level::Info, "player: siguiente");
+ }
+ 
+-bool TakePreviousTrackRequest() { return g_prevTrack.exchange(false); }
++int TakePreviousTrackRequest() { return g_prevTrack.exchange(0); }
+ 
+ void RequestPreviousTrack() {
+-    g_prevTrack = true;
++    g_prevTrack += 1;
+     TouchInteraction();
+     MaybeQuitOnAnyKey();
+     Log::Write(Log::Level::Info, "player: anterior");
+diff --git a/src/tests/hello_xr/playercontrol.h b/src/tests/hello_xr/playercontrol.h
+index 2814143..0a79ad9 100644
+--- a/src/tests/hello_xr/playercontrol.h
++++ b/src/tests/hello_xr/playercontrol.h
+@@ -34,13 +34,15 @@ void Faster();
+ void NormalSpeed();
+ bool IsPaused();
+ 
+-// Set by 'n' (also: Touch controller Y, left hand), cleared by whoever acts on it. Ignored
+-// when there is only one file.
+-bool TakeNextTrackRequest();
++// Accumulated next-track presses since last read ('n', also: Touch controller Y, left
++// hand), cleared on read. A COUNT, not a flag (2026-08-09): rapid presses used to collapse
++// into one advance; now the consumer coalesces N presses into a single N-position jump.
++// Ignored when there is only one file.
++int TakeNextTrackRequest();
+ void RequestNextTrack();
+ 
+ // Same shape, other direction: 'p' (also: Touch controller X, left hand).
+-bool TakePreviousTrackRequest();
++int TakePreviousTrackRequest();
+ void RequestPreviousTrack();
+ 
+ // Seconds to jump the playback position by (negative = back), accumulated from 'h'/'l' and
+-- 
+2.47.3
+

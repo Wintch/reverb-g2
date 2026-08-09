@@ -521,6 +521,15 @@ With the headset on and `HELLO_XR_VIDEO_STATS=1`:
   controller position (6DoF) tracking rather than tackled alone - a light drawn at a
   position isn't meaningful while controllers are still 3DoF-only. Not started; user's own
   call to defer both together.
+- ~~Rapid next/prev presses collapsing into one advance~~ FIXED 2026-08-09
+  (`0013-*.patch`, found live on a 13-file playlist): the next/prev request was a latched
+  bool, so N quick presses collapsed into one advance, and each advance paid the full
+  between-tracks hitch during which further taps were invisible to `xrSyncActions`. Now
+  counted and coalesced — N presses become ONE `AdvanceTrackBy(net-delta)` jump with a
+  single destroy/reopen hitch (modulo-normalized, negatives/over-wraps included; bad files
+  skip forward one at a time). Presses landing fully *inside* a hitch are still lost
+  (thread blocked in `vkDeviceWaitIdle`) — shrinking the hitch is future work. Built clean;
+  **not yet verified live** (shipped mid-session; applies on next launch).
 - ~~Loop-restart pacing bug~~ FIXED 2026-08-09 (`0008-*.patch`, NOT the zoom patch's fault —
   see also `docs/pruebas.jsonl` T099 for the first, incomplete diagnosis, and
   `BUG_player_loop_speedup_2026-08-09.md` in the `stereo3d-pack` repo for the write-up with
