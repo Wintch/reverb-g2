@@ -17,6 +17,7 @@ of a future Windows-equivalent checklist, per the project's diagnostic-
 toolkit direction (see agent memory / docs/26). Don't over-abstract that
 now; this file is still Linux-specific end to end.
 """
+import json
 import os
 import re
 import subprocess
@@ -29,8 +30,31 @@ VR = HERE.parent
 if (Path.home() / "vr" / "monado").is_dir():
     VR = Path.home() / "vr"
 
-MODE = sys.argv[1] if len(sys.argv) > 1 else "1"
-TRACKING = sys.argv[2] if len(sys.argv) > 2 else "3dof"
+STATS_LOG = VR / "power-on-stats.jsonl"
+
+
+def log_stats(verdict, step_reached, details):
+    """Append one line per run -- so results across sessions can be compared later
+    instead of relying on memory (the whole point of docs/pruebas.jsonl too)."""
+    entry = {
+        "iso_time": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "verdict": verdict,
+        "step_reached": step_reached,
+        **details,
+    }
+    try:
+        with open(STATS_LOG, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except OSError:
+        pass
+
+SKIP = set()
+for a in sys.argv[1:]:
+    if a.startswith("--skip="):
+        SKIP.add(a.split("=", 1)[1])
+POSITIONAL = [a for a in sys.argv[1:] if not a.startswith("--skip=")]
+MODE = POSITIONAL[0] if len(POSITIONAL) > 0 else "1"
+TRACKING = POSITIONAL[1] if len(POSITIONAL) > 1 else "3dof"
 
 TTY = sys.stdout.isatty()
 C_OK = "\033[1;32m" if TTY else ""
@@ -102,6 +126,29 @@ def id_path_for(dev_path):
     return m.group(1) if m else ""
 
 
+def try_self_repair():
+    """Software-only fix, zero physical contact: unbind/rebind the USB2 root
+    hub (docs/pruebas.jsonl T117/T120-T122 validated this recovers the branch
+    sometimes). Root-only -- caller must check os.geteuid() first. Returns
+    the new lsusb text after the attempt."""
+    for bus in ("usb3", "usb1"):
+        if not Path(f"/sys/bus/usb/devices/{bus}").exists():
+            continue
+        driver_unbind = Path("/sys/bus/usb/drivers/usb/unbind")
+        driver_bind = Path("/sys/bus/usb/drivers/usb/bind")
+        try:
+            driver_unbind.write_text(bus)
+            time.sleep(3)
+            driver_bind.write_text(bus)
+        except OSError:
+            continue
+        for _ in range(10):
+            time.sleep(1)
+            if headset_count(lsusb_output()) >= 4:
+                break
+    return lsusb_output()
+
+
 class Failure:
     def __init__(self):
         self.reason = None
@@ -115,19 +162,34 @@ class Failure:
 
 def main():
     fail = Failure()
+    stats = {"step_reached": 0}
 
     print(f"{C_BOLD}=== Encendiendo el HP Reverb G2 ==={C_RESET}")
     dim("Esto corre en tu monitor normal, no en el casco -- todavia no hay nada que ponerte.")
 
+    def give_up():
+        """One step failed -- print the verdict now, log it, and stop -- don't start the next step."""
+        log_stats("TE NECESITO" if fail.kind == "physical" else "HAY QUE COMPRAR",
+                   stats["step_reached"], {"reason": fail.reason, "part": fail.part})
+        print(f"\n{C_BOLD}=== Veredicto ==={C_RESET}")
+        if fail.kind == "physical":
+            print(f"{C_WARN}{C_BOLD}TE NECESITO.{C_RESET} {fail.reason}")
+            print("  Esto no cuesta plata -- es reconectar algo. Volvé a correr este script después.")
+        else:
+            print(f"{C_BAD}{C_BOLD}HAY QUE COMPRAR.{C_RESET} {fail.reason}")
+            print(f"  Pieza: {fail.part} -- ver docs/26-diagnostic-toolkit-and-buying-guide.md para el link.")
+
     # ---- 1/5: USB census ----------------------------------------------
+    stats["step_reached"] = 1
     step(1, "¿Está todo conectado?")
     lsusb_text = lsusb_output()
     count = headset_count(lsusb_text)
     hub_dev = find_device_by_id("04b4", "6506") or find_device_by_id("04b4", "6504")
     superspeed_hub_present = "04b4:6504" in lsusb_text
+    t126_signature = count == 4 and not superspeed_hub_present and "045e:0659" in lsusb_text
     if count >= 5:
         ok("5/5 piezas del casco responden (hub, cámaras, controlador, audio).")
-    elif count == 4 and not superspeed_hub_present and "045e:0659" in lsusb_text:
+    elif t126_signature:
         # T126 signature: everything except the SuperSpeed-only hub identifier --
         # structurally the max reachable on a USB2-only port, not a generic failure.
         warn("4/5 -- falta justo el hub SuperSpeed (04b4:6504): esto pasa cuando estás en")
@@ -138,14 +200,28 @@ def main():
         for line in lsusb_text.splitlines():
             if any(dev in line for dev in DEV_IDS):
                 print(f"    {line}")
-        jlog = run(["journalctl", "-k", "--since", "2 min ago"])
-        if re.search(r"error -71|Cannot enable", jlog.stdout):
-            warn("El kernel está reintentando solo y fallando (error -71) -- contacto marginal, no un cable roto del todo.")
-            fail.set("El cable está reconectando solo sin llegar a agarrar bien.", "physical")
+        if os.geteuid() == 0:
+            dim("Corriendo como root -- intento arreglarlo solo antes de pedirte algo (reset de bus, sin tocar nada físico)...")
+            lsusb_text = try_self_repair()
+            count = headset_count(lsusb_text)
+            if count >= 4:
+                ok(f"Se arregló solo -- {count}/5 ahora, sin que tuvieras que tocar nada.")
+            else:
+                bad("El reset de bus tampoco alcanzó.")
         else:
-            fail.set("Nada responde y no hay reintentos -- el conector puede no estar bien asentado.", "physical")
+            dim("Corré este script con sudo y voy a intentar un reset de bus por software solo, antes de pedirte algo.")
+        if count < 4:
+            jlog = run(["journalctl", "-k", "--since", "2 min ago"])
+            if re.search(r"error -71|Cannot enable", jlog.stdout):
+                warn("El kernel está reintentando solo y fallando (error -71) -- contacto marginal, no un cable roto del todo.")
+                fail.set("El cable está reconectando solo sin llegar a agarrar bien.", "physical")
+            else:
+                fail.set("Nada responde y no hay reintentos -- el conector puede no estar bien asentado.", "physical")
+    if fail.reason:
+        return give_up()
 
     # ---- 2/5: which physical port --------------------------------------
+    stats["step_reached"] = 2
     step(2, "¿Estás en un puerto que sabemos que funciona?")
     idpath = id_path_for(hub_dev)
     if "usb-0:1" in idpath:
@@ -160,22 +236,13 @@ def main():
         warn("No pude identificar el puerto (¿nada conectado en el paso 1?).")
     else:
         warn(f"Puerto sin clasificar todavía ({idpath}) -- ninguno de los ya mapeados en docs/00.")
+    if fail.reason:
+        return give_up()
 
     # ---- 3/5: negotiated speed of the cameras (T126: enumerating != healthy)
+    stats["step_reached"] = 3
     step(3, "¿Las cámaras tienen el ancho de banda que necesitan?")
-    cam_dev = None
-    usb_devices = Path("/sys/bus/usb/devices")
-    if usb_devices.is_dir():
-        for d in usb_devices.iterdir():
-            vid = d / "idVendor"
-            pid = d / "idProduct"
-            if vid.exists() and pid.exists():
-                try:
-                    if vid.read_text().strip() == "045e" and pid.read_text().strip() == "0659":
-                        cam_dev = d
-                        break
-                except OSError:
-                    continue
+    cam_dev = find_device_by_id("045e", "0659")
     if cam_dev and (cam_dev / "speed").exists():
         speed = int((cam_dev / "speed").read_text().strip() or "0")
         if speed >= 5000:
@@ -185,44 +252,65 @@ def main():
             fail.set("Estás en un puerto USB2-only -- las cámaras 'están' pero no van a poder seguirte la cabeza bien.", "physical")
     else:
         dim("Cámaras no detectadas todavía (se resuelve solo si el paso 1 se arregla).")
+    if fail.reason:
+        return give_up()
 
     # ---- 4/5: panel / DP fingerprint -----------------------------------
+    stats["step_reached"] = 4
     step(4, "¿El panel está despierto y es realmente el del G2?")
     panel_py = HERE / "panel.py"
     if not panel_py.exists():
         panel_py = VR / "panel.py"
     run([sys.executable, str(panel_py), "activate"])
-    drmprops_bin = Path(f"/tmp/drmprops.{os.getpid()}")
+    # Cached build: only recompile if the binary is missing or older than the source --
+    # this used to rebuild on every single run, wasted time when re-checking repeatedly.
+    drmprops_bin = Path("/tmp/drmprops-cache")
+    drmprops_src = HERE / "drmprops.c"
     dp_ok = False
-    build = run(["gcc", "-o", str(drmprops_bin), str(HERE / "drmprops.c"), "-ldrm", "-I/usr/include/libdrm"])
-    if build.returncode == 0:
+    need_build = (
+        not drmprops_bin.exists()
+        or drmprops_bin.stat().st_mtime < drmprops_src.stat().st_mtime
+    )
+    build_ok = True
+    if need_build:
+        build = run(["gcc", "-o", str(drmprops_bin), str(drmprops_src), "-ldrm", "-I/usr/include/libdrm"])
+        build_ok = build.returncode == 0
+    if build_ok:
         for _ in range(20):
             check = run([str(drmprops_bin)])
             if "fingerprint matches" in check.stdout:
                 dp_ok = True
                 break
             time.sleep(0.5)
-        drmprops_bin.unlink(missing_ok=True)
     if dp_ok:
         ok("Panel real del G2 confirmado (huella EDID, no solo 'conectado').")
     else:
         bad("El panel no despertó, o lo que hay conectado no es el G2.")
         dim("El logo HP puede estar prendido igual -- eso es una señal separada, no alcanza sola.")
         fail.set("El panel no responde -- probá reconectar el cable en el extremo del visor.", "physical")
+    if fail.reason:
+        return give_up()
 
     # ---- 5/5: controllers ------------------------------------------------
+    stats["step_reached"] = 5
     step(5, "¿Los controles están prendidos?")
-    ctrl_py = HERE / "controller-pair-check.py"
-    if not ctrl_py.exists():
-        ctrl_py = VR / "controller-pair-check.py"
-    ctrl = run([sys.executable, str(ctrl_py), "3"])
-    ctrl_out = ctrl.stdout + ctrl.stderr
-    left_ok = bool(re.search(r"left.*online", ctrl_out))
-    right_ok = bool(re.search(r"right.*online", ctrl_out))
-    (ok if left_ok else warn)(f"Izquierdo: {'prendido y responde' if left_ok else 'NO responde'}")
-    (ok if right_ok else warn)(f"Derecho:   {'prendido y responde' if right_ok else 'NO responde'}")
-    if not (left_ok and right_ok):
-        warn("Prendé el/los que falten AHORA -- no hay hot-add a mitad de sesión.")
+    if "controllers" in SKIP:
+        warn("SALTEADO a pedido (--skip=controllers) -- consecuencia: sin control físico en la sesión.")
+    else:
+        ctrl_py = HERE / "controller-pair-check.py"
+        if not ctrl_py.exists():
+            ctrl_py = VR / "controller-pair-check.py"
+        ctrl = run([sys.executable, str(ctrl_py), "3"])
+        ctrl_out = ctrl.stdout + ctrl.stderr
+        left_ok = bool(re.search(r"left.*online", ctrl_out))
+        right_ok = bool(re.search(r"right.*online", ctrl_out))
+        (ok if left_ok else warn)(f"Izquierdo: {'prendido y responde' if left_ok else 'NO responde'}")
+        (ok if right_ok else warn)(f"Derecho:   {'prendido y responde' if right_ok else 'NO responde'}")
+        if not (left_ok and right_ok):
+            warn("Prendé el/los que falten, o corré de nuevo con --skip=controllers si sabés que se perdió uno.")
+            fail.set("Falta prender uno o los dos controles.", "physical")
+    if fail.reason:
+        return give_up()
 
     # ---- Bonus: everything else on the USB bus, for context ---------------
     print(f"\n{C_STEP}▸ Otros dispositivos USB de la PC (contexto, no bloquea nada){C_RESET}")
@@ -241,16 +329,11 @@ def main():
         dim(f"{pid}  {label or ''}".rstrip())
 
     # ---- Verdict -----------------------------------------------------------
+    stats["step_reached"] = 5
+    log_stats("LISTO", 5, {"mode": MODE, "tracking": TRACKING})
     print(f"\n{C_BOLD}=== Veredicto ==={C_RESET}")
-    if fail.reason is None:
-        print(f"{C_OK}{C_BOLD}LISTO.{C_RESET} Arrancando la sesión real (modo {MODE}, tracking {TRACKING})...")
-        os.execv(str(VR / "jack-in-wayland.sh"), [str(VR / "jack-in-wayland.sh"), MODE, TRACKING])
-    elif fail.kind == "physical":
-        print(f"{C_WARN}{C_BOLD}TE NECESITO.{C_RESET} {fail.reason}")
-        print("  Esto no cuesta plata -- es reconectar algo. Volvé a correr este script después.")
-    else:
-        print(f"{C_BAD}{C_BOLD}HAY QUE COMPRAR.{C_RESET} {fail.reason}")
-        print(f"  Pieza: {fail.part} -- ver docs/26-diagnostic-toolkit-and-buying-guide.md para el link.")
+    print(f"{C_OK}{C_BOLD}LISTO.{C_RESET} Arrancando la sesión real (modo {MODE}, tracking {TRACKING})...")
+    os.execv(str(VR / "jack-in-wayland.sh"), [str(VR / "jack-in-wayland.sh"), MODE, TRACKING])
 
 
 if __name__ == "__main__":
