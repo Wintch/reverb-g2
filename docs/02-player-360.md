@@ -37,7 +37,9 @@ on the lab machine it died with "hello_xr not built" with no further explanation
 
 When run from a **real terminal** (not piped or backgrounded), there are transport keys:
 `space` pauses, `[`/`]` speed (0.125x–4x), `1` normal, `h`/`l` seek -10s/+10s,
-left/right arrow (or `<`/`>`) step one frame back/forward, `enter` recenters, `n` next,
+left/right arrow (or `<`/`>`) step one frame back/forward, up/down arrow (or `^`/`v`) zoom
+in/out, `0` zoom back to 1x, `b`/`d` brighter/dimmer, `9` brightness back to 1x, `enter`
+recenters, `n` next,
 `q` quit. If a dirty disconnect leaves the terminal mute:
 `stty sane`. In a pipe there are no keys and the run ends at stdin's EOF, as always.
 
@@ -104,6 +106,74 @@ session, so this hasn't been exercised through even a fake-pty keyboard test, le
 with the headset on. Next time the stack is up: fake-pty test first (arrows + `<`/`>`,
 check the log for `player: frame +1`/`-1`), then confirm with the headset that stepping
 while paused actually lands on the next/previous frame and not a multi-frame jump.
+
+### Digital zoom (2026-08-08, `0007-*.patch`) — VERIFIED LIVE
+
+Zoom in/out on whatever's showing (360, VR180, or flat), mapped to the vertical thumbstick
+axis — completely unused until now, since `QueueSeek` already owns X on both the G2's real
+`oculus/touch_controller` profile and `microsoft/motion_controller`. Same hysteresis-latch
+shape as seek/pause: push past 0.7, must fall back under 0.3 before it fires again. Each
+crossing steps the zoom multiplicatively by 1.15x, clamped to `[0.5, 4.0]`. Keyboard: up/down
+arrows (same `ESC [ A/B` disambiguation `main.cpp` already does for the left/right `C`/`D`),
+with `^`/`v` as a plain-key fallback — same idea as `<`/`>` for frame step — and `0` resets to
+1x (pairs with `1` for normal speed).
+
+No new render pass: `PlayerControl::Zoom()` is threaded into the shader through `panoFov.z`,
+which was unused padding in the push-constant (see `vulkan_utils.h`) — same reuse-a-slot
+reasoning as `mode.y`/`mode.z` for the progress bar. `frag.glsl` divides the coordinate
+driving the projection mapping (`az`/`el` for 360/180, `screen` xy for flat) by the zoom
+factor before the existing formulas: the sphere or virtual screen itself never changes, only
+how much of it one physical ray picks up.
+
+**Tested by the agent:** keyboard zoom in x3 / out x1 / reset, via a fake pty against the live
+stack (real `monado-service`, real G2 hardware) — the log shows the exact expected sequence
+(1.15 → 1.32 → 1.52 → 1.32 → 1.00x) and a clean quit. The action registers correctly against
+real hardware too: `Zoom action is bound to 'Left/Right Oculus Touch Controller Thumbstick'`,
+no collision with `Seek` on the same physical stick. One false lead ruled out along the way:
+a `vkDestroySemaphore` validation warning on quit turned out to be pre-existing on the
+unmodified baseline (reproduced by stashing this commit and quitting with zero zoom keys
+pressed) — not something this patch introduced.
+
+**Confirmed live with the headset on, same day.** Played two clips through the full
+`play360.sh` path with real controller input while the user wore the G2: a flat 2D clip
+(`stereo3d-pack/in/01pjni8u.mp4`, forced `-p flat`) and a flat stereo SBS clip
+(`stereo3d-pack/out/03ehybrp_sbs.mp4`, forced `-p flat -e sbs` — see the `stereo3d-pack`
+section above for why the override is needed on this kind of output). Thumbstick Y worked
+exactly as assumed on the first try, no sign flip needed: **stick up = zoom in, stick down =
+zoom out**, either hand. User verdict: "zoom anda perfecto". The `vkDestroySemaphore`
+quit-time validation warning (pre-existing, see above) is the only open loose end, and it
+isn't specific to zoom.
+
+One incidental finding along the way, unrelated to zoom: `03ehybrp_sbs.mp4` (a
+`stereo3d-pack` SBS output, 3840x1080) failed NVDEC init (`cuvidCreateDecoder ...
+CUDA_ERROR_INVALID_VALUE`) and fell back to software decode - functionally fine for this
+short 30s clip (120 fps produced, 0 renderer starves, comfortably above the 90 fps needed),
+but worth a look if a longer `stereo3d-pack` output ever fails to keep up. Not investigated
+further; noted here so it isn't mistaken for a zoom regression later.
+
+### Brightness (2026-08-09, `0009-*.patch`) — VERIFIED LIVE
+
+A plain multiplier on the displayed content: >1 brighter, <1 dimmer, 1.0 is native/off.
+Bound to the right Touch controller's **A** (brighter) and **B** (dimmer) buttons - the last
+free real inputs on `oculus/touch_controller`, since both thumbsticks already carry seek (X)
+and zoom (Y). A/B only exist on the right Touch controller (the left one has X/Y instead)
+and don't exist at all on `microsoft/motion_controller`, so this is Touch-only by necessity -
+same reasoning `docs/03-controllers.md` already gives for why Menu is left-only. Edge-
+triggered like recenter/quit (`changedSinceLastSync`), so it steps once per press instead of
+spamming every frame while held. Keyboard: `b`/`d` (brighter/dimmer), `9` resets to 1x -
+pairs with `1` (normal speed) and `0` (normal zoom).
+
+Threaded through `panoFov.w`, the last unused push-constant slot (`x`/`y` were already
+half-angles/half-extents, `z` is zoom) - still no push-constant growth. `frag.glsl`
+multiplies `FragColor.rgb` by it right after the texture sample, before the progress-bar/
+quit-hold overlay bars, so dimming the video never also dims that feedback.
+
+**Confirmed live with the headset on**, same session as the loop-fix and rolling-artifact
+investigation above. Keyboard sequence tested via fake pty first (up x3/down x1/reset ->
+1.15 -> 1.32 -> 1.52 -> 1.32 -> 1.00x, same pattern as zoom), and the action registers
+cleanly against real hardware (`BrightnessUp action is bound to 'Right Oculus Touch
+Controller A'`, no collisions). User verdict pressing A/B during actual playback: "funciona
+bien, sube y baja el brillo".
 
 ## Projections and stereo (v3)
 
@@ -240,6 +310,44 @@ With the headset on and `HELLO_XR_VIDEO_STATS=1`:
 - ~~Test the transport keys live~~ DONE 2026-08-06 (see "Seek + progress bar" above:
   keyboard tested via fake pty, controller verified with the headset on) and the playlist
   path verified with video 2026-08-07 (T041).
+- ~~Zoom with the headset on~~ DONE 2026-08-08 (see "Digital zoom" above): confirmed live,
+  no sign flip needed, user verdict "zoom anda perfecto".
+- ~~Loop-restart pacing bug~~ FIXED 2026-08-09 (`0008-*.patch`, NOT the zoom patch's fault —
+  see also `docs/pruebas.jsonl` T099 for the first, incomplete diagnosis, and
+  `BUG_player_loop_speedup_2026-08-09.md` in the `stereo3d-pack` repo for the write-up with
+  real evidence that actually cracked it). Short clips played fine through the first loop,
+  then blew up to a sustained ~3x speed right after the SECOND loop-restart and never
+  recovered. Real cause: `loopOffset = lastPts + frameDuration` in `DecodeLoop()`'s
+  EOF-restart path (`video360.cpp`) was a plain **assignment**, not an accumulation.
+  `lastPts` is always the file's own raw, 0-based last timestamp — it naturally lands near
+  the same value every loop, since the file is re-read from position 0 each time — so the
+  assignment silently discarded every earlier loop's accumulated offset. From the second
+  loop onward every loop reused the *exact same* pts window the previous loop had just
+  finished catching up to, so its frames were stale the instant they were queued, the next
+  EOF/seek/flush cycle fired almost immediately, then the next one even faster — dozens of
+  loop-restarts per real second, not slow motion or a one-time jump. Fixed by accumulating
+  (`loopOffset += ...`). The original T099 guess (bad `lastPts` at the EOF-flush drain) and
+  the first fix tried (resetting `clockStarted` on automatic loop, mirroring the manual-seek
+  path) were both real but insufficient on their own — confirmed by measurement: with only
+  the `clockStarted` reset in place, the bug still reproduced almost identically. Kept that
+  reset anyway as a smaller complementary fix (it discards wall-clock drift from the
+  seek/flush itself, which the `loopOffset` fix doesn't address). Verified with live
+  instrumented runs against the bug report's own repro clip
+  (`stereo3d-pack/out/media_sbs_lowres.mp4`, 7.75s/30fps): 90s run, ~12 loop crossings, 44
+  stat samples all 29.8–30.4 fps, decode steady at 30.1 fps with 0 renderer starves
+  throughout, confirmed with the headset on too.
+
+  **The report's second symptom (a vertical "rolling" artifact, same clip) is NOT this
+  project's bug.** Same-day follow-up: confirmed live with the headset on that it survives
+  the loop fix; ruled out `TransferDirect`'s NVDEC stride assumption by forcing
+  `HELLO_XR_VIDEO_HW=0` (software decode, which repacks rows explicitly) — rolling still
+  there, identical. Ruled out this player's Vulkan pipeline entirely by playing the same
+  file in plain `ffplay` on the desktop, fully outside OpenXR/Vulkan — **same rolling
+  artifact, confirmed by the user.** The defect is baked into the file itself, from
+  `stereo3d-pack`'s own conversion — not something `video360.cpp`/`graphicsplugin_vulkan.cpp`
+  can fix by definition, since a completely independent player reproduces it identically.
+  Flagged back to the `stereo3d-pack` repo (`BUG_player_loop_speedup_2026-08-09.md`) rather
+  than tracked further here.
 - Watch the `stereo3d-pack` material in the headset (prepared 2026-08-04, never seen inside the
   visor): `sbs` vs `vr180`, and calibrate depth with `-w`.
 - Fourth detection criterion for flat SBS without metadata (see the `stereo3d-pack` section).

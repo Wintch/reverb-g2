@@ -1,0 +1,391 @@
+From 49a5c1af23f431aba75ed01d2be6570d2e961d98 Mon Sep 17 00:00:00 2001
+From: iam <iam@iashur.internal>
+Date: Sat, 8 Aug 2026 22:36:45 -0300
+Subject: [PATCH] 360 viewer: digital zoom (controller thumbstick Y, keyboard
+ up/down)
+
+Zoom on panoramic/flat content, mapped to the vertical thumbstick axis that
+was completely unused (QueueSeek already owns X on both oculus/touch_controller
+and microsoft/motion_controller) - same hysteresis-latch shape as seek/pause
+(push past 0.7, must fall back under 0.3 to fire again), stepping the zoom
+multiplicatively by 1.15x per crossing, clamped to [0.5, 4.0]. Keyboard: up/down
+arrows (same ESC '[' A/B disambiguation main.cpp already does for C/D), with
+'^'/'v' as a plain-key fallback mirroring '<'/'>' for frame step, and '0' to
+reset to 1x (pairs with '1' for normal speed).
+
+Implementation: PlayerControl::Zoom() stores the multiplier as a bit-pattern
+atomic (RecenterYaw's trick), with 0 as an "unset -> 1.0" sentinel like
+g_lastInteractionMs already uses. Threaded to the shader via panoFov.z, which
+was unused padding (see vulkan_utils.h) - no push-constant growth, same
+reasoning as mode.y/mode.z for the progress bar. frag.glsl divides the
+projection-mapping coordinate (az/el for 360/180, screen xy for flat) by zoom
+before the existing mapping formulas: the sphere/screen never changes, just
+how much of it one physical ray picks up.
+
+Tested by the agent: keyboard zoom in x3 / out x1 / reset, via a fake pty
+against the live stack (real monado-service, real G2 hardware) - log shows
+the exact expected sequence (1.15 -> 1.32 -> 1.52 -> 1.32 -> 1.00x) and a
+clean quit. The action registers correctly against real hardware too: "Zoom
+action is bound to 'Left/Right Oculus Touch Controller Thumbstick'" in the
+log, no collision with Seek on the same physical stick. Ruled out one false
+lead: a vkDestroySemaphore validation warning on quit is pre-existing on the
+unmodified baseline (checked by stashing this commit and reproducing it with
+zero zoom keys pressed) - not introduced here.
+
+NOT yet verified: the controller thumbstick Y sign (assumed +y = up = zoom
+in, standard OpenXR/gamepad convention, but never confirmed live - flip the
+ZoomIn()/ZoomOut() branches in PollActions if it's backwards) and the actual
+visual result in the headset (does zooming in look like a clean magnification,
+does zooming out look acceptably fisheye-y rather than broken). Needs a human
+with the headset on, per this project's core rule.
+---
+ src/tests/hello_xr/graphicsplugin_vulkan.cpp |  3 ++
+ src/tests/hello_xr/main.cpp                  | 15 ++++--
+ src/tests/hello_xr/openxr_program.cpp        | 57 +++++++++++++++++---
+ src/tests/hello_xr/playercontrol.cpp         | 50 +++++++++++++++--
+ src/tests/hello_xr/playercontrol.h           | 14 ++++-
+ src/tests/hello_xr/vulkan_shaders/frag.glsl  | 12 ++++-
+ src/tests/hello_xr/vulkan_utils.h            |  2 +-
+ 7 files changed, 134 insertions(+), 19 deletions(-)
+
+diff --git a/src/tests/hello_xr/graphicsplugin_vulkan.cpp b/src/tests/hello_xr/graphicsplugin_vulkan.cpp
+index c3c4fb6..fed15dd 100644
+--- a/src/tests/hello_xr/graphicsplugin_vulkan.cpp
++++ b/src/tests/hello_xr/graphicsplugin_vulkan.cpp
+@@ -1811,6 +1811,9 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+         PanoEyeUvTransform(m_panoLayout, eye, &pushConstants.uvScaleOffset[0], &pushConstants.uvScaleOffset[2]);
+         pushConstants.panoFov[0] = m_panoLayout.halfFovX;
+         pushConstants.panoFov[1] = m_panoLayout.halfFovY;
++        // panoFov.z was unused (see frag.glsl) - reusing it for digital zoom instead of growing
++        // the push-constant struct, same reasoning as mode.y/mode.z for the progress bar.
++        pushConstants.panoFov[2] = (float)PlayerControl::Zoom();
+         pushConstants.mode[0] = (m_panoLayout.projection == PanoProjection::HalfEquirect180)   ? 1
+                                 : (m_panoLayout.projection == PanoProjection::Flat)           ? 2
+                                                                                               : 0;
+diff --git a/src/tests/hello_xr/main.cpp b/src/tests/hello_xr/main.cpp
+index d02c04c..af07e1a 100644
+--- a/src/tests/hello_xr/main.cpp
++++ b/src/tests/hello_xr/main.cpp
+@@ -316,13 +316,14 @@ int main(int argc, char* argv[]) {
+             while (!quitKeyPressed) {
+                 const int c = getchar();
+ #if defined(XR_OS_LINUX) || defined(XR_OS_APPLE)
+-                // Arrow keys arrive as the 3-byte escape sequence ESC '[' C/D. ESC alone is
++                // Arrow keys arrive as the 3-byte escape sequence ESC '[' A/B/C/D. ESC alone is
+                 // also the quit key, so on ESC we peek for more bytes with a short poll()
+                 // timeout instead of assuming: a real Escape keypress has nothing following
+                 // it, while an arrow key's remaining bytes are already sitting in the
+                 // terminal's input buffer by the time we get here (the pty writes all three
+-                // as one burst). Left/right also has plain '<'/'>' as a keyboard-only
+-                // fallback in HandleKey, in case a given terminal encodes arrows differently.
++                // as one burst). Left/right and up/down also have plain '<'/'>' and '^'/'v' as
++                // a keyboard-only fallback in HandleKey, in case a terminal encodes arrows
++                // differently.
+                 if (c == 27 && isatty(STDIN_FILENO)) {
+                     pollfd pfd{STDIN_FILENO, POLLIN, 0};
+                     if (poll(&pfd, 1, 30) > 0) {
+@@ -335,9 +336,13 @@ int main(int argc, char* argv[]) {
+                                     PlayerControl::StepFrame(1);
+                                 } else if (c3 == 'D') {
+                                     PlayerControl::StepFrame(-1);
++                                } else if (c3 == 'A') {
++                                    PlayerControl::ZoomIn();
++                                } else if (c3 == 'B') {
++                                    PlayerControl::ZoomOut();
+                                 }
+-                                // any other CSI sequence (up/down, Home/End, F-keys...): not
+-                                // handled, just swallowed along with its introducer bytes.
++                                // any other CSI sequence (Home/End, F-keys...): not handled,
++                                // just swallowed along with its introducer bytes.
+                             }
+                             continue;
+                         }
+diff --git a/src/tests/hello_xr/openxr_program.cpp b/src/tests/hello_xr/openxr_program.cpp
+index 74fe419..e9b80f1 100644
+--- a/src/tests/hello_xr/openxr_program.cpp
++++ b/src/tests/hello_xr/openxr_program.cpp
+@@ -393,13 +393,17 @@ struct OpenXrProgram : IOpenXrProgram {
+         XrAction poseAction{XR_NULL_HANDLE};
+         XrAction vibrateAction{XR_NULL_HANDLE};
+         XrAction quitAction{XR_NULL_HANDLE};
+-        // Thumbstick X axis, WMR motion controller only (see the binding block below) - used
+-        // to seek the 360/VR180 video player. Not bound on other profiles: we only have a WMR
+-        // controller to test with, and guessing paths for profiles we cannot verify is how
++        // Thumbstick X axis - seeks the 360/VR180 video player. Only bound on
++        // oculus/touch_controller (what the G2 actually presents, see docs/03-controllers.md)
++        // and microsoft/motion_controller: those are the two profiles bound by hand against
++        // real hardware, and guessing paths for profiles we cannot verify is how
+         // silently-wrong bindings happen.
+         XrAction seekAction{XR_NULL_HANDLE};
+-        // Trigger value, WMR motion controller only - toggles video pause. Same rationale as
+-        // seekAction: only bound on the one profile we have real hardware to verify against.
++        // Thumbstick Y axis, same two profiles and same rationale as seekAction - the vertical
++        // axis was otherwise unused, so it drives digital zoom instead of adding a new button.
++        XrAction zoomAction{XR_NULL_HANDLE};
++        // Trigger value, same two profiles - toggles video pause. Same rationale as
++        // seekAction: only bound on profiles we have real hardware to verify against.
+         XrAction pauseAction{XR_NULL_HANDLE};
+         // Squeeze/grip click, WMR motion controller only - recenters forward. grabAction is
+         // also bound to this same physical button (from the original hello_xr sample, scales a
+@@ -463,7 +467,7 @@ struct OpenXrProgram : IOpenXrProgram {
+             actionInfo.subactionPaths = nullptr;
+             CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.quitAction));
+ 
+-            // Thumbstick X for video seek (WMR only, see InputState::seekAction).
++            // Thumbstick X for video seek (see InputState::seekAction).
+             actionInfo.actionType = XR_ACTION_TYPE_FLOAT_INPUT;
+             strcpy_s(actionInfo.actionName, "seek_video");
+             strcpy_s(actionInfo.localizedActionName, "Seek Video");
+@@ -471,7 +475,15 @@ struct OpenXrProgram : IOpenXrProgram {
+             actionInfo.subactionPaths = m_input.handSubactionPath.data();
+             CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.seekAction));
+ 
+-            // Trigger for video pause/resume (WMR only, see InputState::pauseAction) - a quick
++            // Thumbstick Y for video zoom (see InputState::zoomAction).
++            actionInfo.actionType = XR_ACTION_TYPE_FLOAT_INPUT;
++            strcpy_s(actionInfo.actionName, "zoom_video");
++            strcpy_s(actionInfo.localizedActionName, "Zoom Video");
++            actionInfo.countSubactionPaths = uint32_t(m_input.handSubactionPath.size());
++            actionInfo.subactionPaths = m_input.handSubactionPath.data();
++            CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.zoomAction));
++
++            // Trigger for video pause/resume (see InputState::pauseAction) - a quick
+             // debug-friendly toggle so playback state can be flipped without reaching for the
+             // keyboard.
+             actionInfo.actionType = XR_ACTION_TYPE_FLOAT_INPUT;
+@@ -501,6 +513,7 @@ struct OpenXrProgram : IOpenXrProgram {
+         std::array<XrPath, Side::COUNT> bClickPath;
+         std::array<XrPath, Side::COUNT> triggerValuePath;
+         std::array<XrPath, Side::COUNT> thumbstickXPath;
++        std::array<XrPath, Side::COUNT> thumbstickYPath;
+         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/select/click", &selectPath[Side::LEFT]));
+         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/select/click", &selectPath[Side::RIGHT]));
+         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/squeeze/value", &squeezeValuePath[Side::LEFT]));
+@@ -521,6 +534,8 @@ struct OpenXrProgram : IOpenXrProgram {
+         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/trigger/value", &triggerValuePath[Side::RIGHT]));
+         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/thumbstick/x", &thumbstickXPath[Side::LEFT]));
+         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/thumbstick/x", &thumbstickXPath[Side::RIGHT]));
++        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/thumbstick/y", &thumbstickYPath[Side::LEFT]));
++        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/thumbstick/y", &thumbstickYPath[Side::RIGHT]));
+         // Suggest bindings for KHR Simple.
+         {
+             XrPath khrSimpleInteractionProfilePath;
+@@ -561,6 +576,8 @@ struct OpenXrProgram : IOpenXrProgram {
+                                                             {m_input.vibrateAction, hapticPath[Side::RIGHT]},
+                                                             {m_input.seekAction, thumbstickXPath[Side::LEFT]},
+                                                             {m_input.seekAction, thumbstickXPath[Side::RIGHT]},
++                                                            {m_input.zoomAction, thumbstickYPath[Side::LEFT]},
++                                                            {m_input.zoomAction, thumbstickYPath[Side::RIGHT]},
+                                                             {m_input.pauseAction, triggerValuePath[Side::LEFT]},
+                                                             {m_input.pauseAction, triggerValuePath[Side::RIGHT]},
+                                                             {m_input.recenterAction, squeezeValuePath[Side::LEFT]},
+@@ -626,6 +643,8 @@ struct OpenXrProgram : IOpenXrProgram {
+                                                             {m_input.vibrateAction, hapticPath[Side::RIGHT]},
+                                                             {m_input.seekAction, thumbstickXPath[Side::LEFT]},
+                                                             {m_input.seekAction, thumbstickXPath[Side::RIGHT]},
++                                                            {m_input.zoomAction, thumbstickYPath[Side::LEFT]},
++                                                            {m_input.zoomAction, thumbstickYPath[Side::RIGHT]},
+                                                             {m_input.pauseAction, triggerValuePath[Side::LEFT]},
+                                                             {m_input.pauseAction, triggerValuePath[Side::RIGHT]},
+                                                             {m_input.recenterAction, squeezeClickPath[Side::LEFT]},
+@@ -896,6 +915,7 @@ struct OpenXrProgram : IOpenXrProgram {
+                     LogActionSourceName(m_input.poseAction, "Pose");
+                     LogActionSourceName(m_input.vibrateAction, "Vibrate");
+                     LogActionSourceName(m_input.seekAction, "Seek");
++                    LogActionSourceName(m_input.zoomAction, "Zoom");
+                     LogActionSourceName(m_input.pauseAction, "Pause");
+                     LogActionSourceName(m_input.recenterAction, "Recenter");
+                     break;
+@@ -1051,6 +1071,29 @@ struct OpenXrProgram : IOpenXrProgram {
+                 }
+             }
+ 
++            // Video zoom: thumbstick push up/down steps zoom in/out. Same hysteresis-latch
++            // shape as seek, on the vertical axis seek doesn't use. Sign assumed from the
++            // usual OpenXR/gamepad convention (+y = stick pushed up = zoom in) - not yet
++            // confirmed with the headset on; if it comes out backwards on a live test, flip
++            // the ZoomIn()/ZoomOut() branches below, not the sign of v itself.
++            static std::array<bool, Side::COUNT> zoomLatched{{false, false}};
++            getInfo.action = m_input.zoomAction;
++            XrActionStateFloat zoomValue{XR_TYPE_ACTION_STATE_FLOAT};
++            CHECK_XRCMD(xrGetActionStateFloat(m_session, &getInfo, &zoomValue));
++            if (zoomValue.isActive == XR_TRUE) {
++                const float v = zoomValue.currentState;
++                if (!zoomLatched[hand] && std::fabs(v) > 0.7f) {
++                    if (v > 0.0f) {
++                        PlayerControl::ZoomIn();
++                    } else {
++                        PlayerControl::ZoomOut();
++                    }
++                    zoomLatched[hand] = true;
++                } else if (zoomLatched[hand] && std::fabs(v) < 0.3f) {
++                    zoomLatched[hand] = false;
++                }
++            }
++
+             // Video pause: trigger toggles play/pause. Same hysteresis-latch shape as seek -
+             // fire once past 0.7, must fall back under 0.3 before it can fire again.
+             static std::array<bool, Side::COUNT> pauseLatched{{false, false}};
+diff --git a/src/tests/hello_xr/playercontrol.cpp b/src/tests/hello_xr/playercontrol.cpp
+index 10f9595..81da0d6 100644
+--- a/src/tests/hello_xr/playercontrol.cpp
++++ b/src/tests/hello_xr/playercontrol.cpp
+@@ -32,6 +32,15 @@ std::atomic<bool> g_recenterRequested{false};
+ // guaranteed lock-free on every platform this builds for; this is - matches g_lastInteractionMs.
+ std::atomic<int64_t> g_recenterYawBits{0};
+ 
++// Same bit-pattern trick, and the same "0 means unset" sentinel g_lastInteractionMs uses - the
++// bit pattern of 1.0 is not all-zero, so a freshly-started process (bits == 0) correctly reads
++// as "no zoom" without needing a non-constexpr initializer to store 1.0's bits up front.
++std::atomic<int64_t> g_zoomBits{0};
++
++constexpr double kZoomStep = 1.15;  // multiplicative, per press/threshold-cross
++constexpr double kZoomMin = 0.5;
++constexpr double kZoomMax = 4.0;
++
+ // Milliseconds since steady_clock's epoch. 0 means "never" (SecondsSinceLastInteraction()
+ // then returns a large number, which is what "never touched" should look like to the
+ // progress-bar auto-hide timer).
+@@ -110,6 +119,30 @@ void StepFrame(int frames) {
+     Log::Write(Log::Level::Info, Fmt("player: frame %+d", frames));
+ }
+ 
++double Zoom() {
++    const int64_t bits = g_zoomBits.load();
++    if (bits == 0) return 1.0;
++    double z;
++    std::memcpy(&z, &bits, sizeof(z));
++    return z;
++}
++
++namespace {
++void SetZoom(double z) {
++    if (z < kZoomMin) z = kZoomMin;
++    if (z > kZoomMax) z = kZoomMax;
++    int64_t bits;
++    std::memcpy(&bits, &z, sizeof(bits));
++    g_zoomBits = bits;
++    TouchInteraction();
++    Log::Write(Log::Level::Info, Fmt("player: zoom %.2fx", z));
++}
++}  // namespace
++
++void ZoomIn() { SetZoom(Zoom() * kZoomStep); }
++void ZoomOut() { SetZoom(Zoom() / kZoomStep); }
++void ResetZoom() { SetZoom(1.0); }
++
+ double SecondsSinceLastInteraction() {
+     const int64_t last = g_lastInteractionMs.load();
+     if (last == 0) return 1e9;  // never touched - "a long time ago" for the auto-hide timer
+@@ -183,6 +216,16 @@ bool HandleKey(int c) {
+         case '>':
+             StepFrame(1);
+             return true;
++        case '^':
++            ZoomIn();
++            return true;
++        case 'v':
++        case 'V':
++            ZoomOut();
++            return true;
++        case '0':
++            ResetZoom();
++            return true;
+         case '\r':
+         case '\n':
+             RequestRecenter();
+@@ -231,9 +274,10 @@ void EndRawInput() {
+ 
+ const char* HelpLine() {
+     return "  Teclas: [espacio] pausa   [ ] velocidad   1 normal   h/l -10s/+10s   "
+-           "<-/-> (o < >) frame a frame   enter recentra   "
+-           "n siguiente   q salir "
+-           "(mando WMR: trigger pausa, stick seek, grip recentra, mantener Menu ~1.5s sale)";
++           "<-/-> (o < >) frame a frame   arriba/abajo (o ^ v) zoom   0 zoom normal   "
++           "enter recentra   n siguiente   q salir "
++           "(mando WMR: trigger pausa, stick X seek, stick Y zoom, grip recentra, "
++           "mantener Menu ~1.5s sale)";
+ }
+ 
+ }  // namespace PlayerControl
+diff --git a/src/tests/hello_xr/playercontrol.h b/src/tests/hello_xr/playercontrol.h
+index 139b569..416caac 100644
+--- a/src/tests/hello_xr/playercontrol.h
++++ b/src/tests/hello_xr/playercontrol.h
+@@ -7,9 +7,12 @@
+ //   space   pause / resume (also: WMR controller trigger)
+ //   [  ]    slower / faster (1x, 0.5x, 0.25x, 2x ...)
+ //   1       back to normal speed
+-//   h  l    seek -10s / +10s (also: WMR controller thumbstick)
++//   h  l    seek -10s / +10s (also: WMR controller thumbstick X)
+ //   <- ->   step back / forward one frame (also: < >). Pauses first - the jump is a single
+ //           frame, too small to see while still playing.
++//   up down zoom in / out (also: WMR controller thumbstick Y; ^ v as a plain-key fallback,
++//           same idea as < > for the arrow keys above)
++//   0       back to no zoom (1x)
+ //   enter   recenter forward (also: WMR controller squeeze/grip)
+ //   n       next file in the playlist
+ //   q ESC   quit (also: hold the WMR Menu button ~1.5s)
+@@ -64,6 +67,15 @@ bool QuitRequested();
+ void SetQuitHoldFraction(double frac);
+ int QuitHoldPermille();
+ 
++// Digital zoom on the panoramic/flat content: >1 magnifies (a narrower slice of the source
++// fills the view), <1 shows more of it (mild fisheye-like widening past the native FOV).
++// 1.0 is native/off. Driven by the controller thumbstick Y (the vertical axis is otherwise
++// unused - QueueSeek already owns X) and by Up/Down (or ^/v as a keyboard fallback).
++double Zoom();
++void ZoomIn();
++void ZoomOut();
++void ResetZoom();
++
+ // Recenter: squeeze/grip (either hand) resets "forward" to wherever you're currently facing,
+ // same idea as the recenter button most 360 video players have. Requested by the input-poll
+ // side; the renderer (which is the only place that has the current head pose) does the actual
+diff --git a/src/tests/hello_xr/vulkan_shaders/frag.glsl b/src/tests/hello_xr/vulkan_shaders/frag.glsl
+index f98a30a..6331d1a 100644
+--- a/src/tests/hello_xr/vulkan_shaders/frag.glsl
++++ b/src/tests/hello_xr/vulkan_shaders/frag.glsl
+@@ -42,16 +42,24 @@ void main()
+     float inside = 1.0;
+     bool wraps = false;
+ 
++    // Digital zoom (panoFov.z - see vulkan_utils.h, unused before this): >1 magnifies, <1
++    // shows more of the source than the headset's native FOV would. Applied as a divisor on
++    // whatever angular/screen coordinate each branch below maps into uv - the sphere or
++    // screen itself never changes, just how much of it one physical ray picks up. Floored well
++    // above 0 so a runaway zoom-out can't divide by (near-)zero.
++    float zoom = max(ubuf.panoFov.z, 0.01);
++
+     if (ubuf.mode.x == PROJ_FLAT) {
+         // A virtual screen floating straight ahead. Rays going sideways or backwards miss it.
+         float depth = -dir.z;
+         vec2 screen = dir.xy / max(depth, 1e-4);
++        screen /= zoom;
+         uv = screen / vec2(ubuf.panoFov.x, -ubuf.panoFov.y) * 0.5 + 0.5;
+         inside = (depth > 0.0 && all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)))) ? 1.0 : 0.0;
+     } else {
+         // Equirectangular: horizontal angle -> u, vertical angle -> v.
+-        float az = atan(dir.x, -dir.z);            // 0 straight ahead, +/-PI behind
+-        float el = asin(clamp(dir.y, -1.0, 1.0));  // +PI/2 straight up
++        float az = atan(dir.x, -dir.z) / zoom;            // 0 straight ahead, +/-PI behind
++        float el = asin(clamp(dir.y, -1.0, 1.0)) / zoom;  // +PI/2 straight up
+ 
+         if (ubuf.mode.x == PROJ_180) {
+             // The frame only holds the hemisphere in front of you; everything else stays black
+diff --git a/src/tests/hello_xr/vulkan_utils.h b/src/tests/hello_xr/vulkan_utils.h
+index 59052aa..061938b 100644
+--- a/src/tests/hello_xr/vulkan_utils.h
++++ b/src/tests/hello_xr/vulkan_utils.h
+@@ -941,7 +941,7 @@ struct VulkanUniformBuffer {
+     XrMatrix4x4f mvp;         // eye orientation, view space -> world space
+     XrColor4f tintColor;      // fov tangents: left, right, up, down
+     float uvScaleOffset[4];   // this eye's sub-rectangle of a stereo frame
+-    float panoFov[4];         // 180: half-angles in radians. flat: half-extents of the screen.
++    float panoFov[4];         // xy: 180 half-angles (rad) / flat half-extents. z: zoom (1=off).
+     int32_t mode[4];          // x: 0 = 360 equirect, 1 = 180 half-equirect, 2 = flat screen
+ };
+ 
+-- 
+2.47.3
+

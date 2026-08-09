@@ -25,7 +25,11 @@
 #   space    pause / resume            (controller: trigger)
 #   [  ]     slower / faster (0.125x .. 4x)
 #   1        normal speed
-#   h  l     seek -10s / +10s          (controller: side stick)
+#   h  l     seek -10s / +10s          (controller: stick X)
+#   up down  zoom in / out             (controller: stick Y) - or ^ v as a keyboard fallback
+#   0        zoom back to 1x (off)
+#   b  d     brighter / dimmer          (controller: A/B, right hand)
+#   9        brightness back to 1x (off)
 #   enter    recenter "forward"        (controller: squeeze grip hard)
 #   n        next video in the playlist
 #   q        quit                      (controller: hold left menu ~1.5s, red bar)
@@ -64,7 +68,7 @@ while getopts "t:sp:e:f:w:qh" opt; do
 		f) ENV_EXTRA+=("HELLO_XR_PANO_FOV=$OPTARG") ;;
 		w) ENV_EXTRA+=("HELLO_XR_SCREEN_FOV=$OPTARG") ;;
 		q) STATS=0 ;;
-		h|*) sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+		h|*) sed -n '2,37p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 	esac
 done
 shift $((OPTIND - 1))
@@ -112,8 +116,8 @@ RUNTIME_ENV=(
 )
 if [ -t 0 ]; then
 	echo "Playing $(basename "$FILE") - max ${SECONDS_TO_RUN}s."
-	echo "Keys: [space] pause | [ ] speed | 1 normal | h/l -10s/+10s | enter recenter | n next | q quit"
-	echo "Controller: trigger pause | stick seek | grip recenter | left menu held ~1.5s quits"
+	echo "Keys: [space] pause | [ ] speed | 1 normal | h/l -10s/+10s | up/down (or ^ v) zoom | 0 zoom off | b/d bright | 9 bright off | enter recenter | n next | q quit"
+	echo "Controller: trigger pause | stick X seek | stick Y zoom | A/B (right) brightness | grip recenter | left menu held ~1.5s quits"
 	timeout --foreground "$SECONDS_TO_RUN" env \
 		"${RUNTIME_ENV[@]}" "${ENV_EXTRA[@]}" \
 		stdbuf -oL -eL "$HELLO_XR" --graphics Vulkan2

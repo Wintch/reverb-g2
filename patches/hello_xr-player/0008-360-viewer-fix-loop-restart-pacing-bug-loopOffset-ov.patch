@@ -1,0 +1,101 @@
+From 44b364bad521b30ee57dac795efe1186ec4c58df Mon Sep 17 00:00:00 2001
+From: iam <iam@iashur.internal>
+Date: Sun, 9 Aug 2026 00:44:05 -0300
+Subject: [PATCH] 360 viewer: fix loop-restart pacing bug (loopOffset
+ overwritten, not accumulated)
+
+Real bug, found by user testing stereo3d-pack conversions in the headset and
+written up with real evidence in BUG_player_loop_speedup_2026-08-09.md
+(stereo3d-pack repo): short clips would play fine through the first loop,
+then blow up to a sustained ~3x speed right after the second loop-restart
+and never recover.
+
+Root cause: `loopOffset = lastPts + frameDuration` was a plain assignment,
+not an accumulation. lastPts is always the file's own raw, 0-based last
+timestamp - it naturally lands near the same value every loop, since the
+file gets re-read from position 0 each time. The assignment silently threw
+away every earlier loop's accumulated offset, so from the SECOND loop
+restart onward every loop reused the exact same pts window the previous
+loop used - a window that was already "in the past" relative to
+playbackTime by the time that loop finished. The very next EOF/seek/flush
+cycle then fired almost immediately (its own frames were stale the instant
+they were queued), then the next one even faster, compounding into dozens
+of loop-restarts per real second. Not slow motion, not a one-time jump: the
+file being decoded and immediately discarded far faster than real time,
+over and over, stuck in the same narrow pts window. Fixed by accumulating
+(`loopOffset += ...`) instead of overwriting.
+
+First hypothesis tried (this project's, before the real cause was found):
+that AcquireCurrentSlot() not resetting clockStarted across the automatic
+loop (unlike the manual-seek path, on purpose, to keep the wall clock
+monotonic) was the whole story. Kept as a secondary fix alongside the real
+one - it correctly discards any wall-clock drift accumulated during the
+seek/flush itself, which the loopOffset fix doesn't address on its own -
+but confirmed BY MEASUREMENT (live instrumented runs, see below) that it
+alone was nowhere near sufficient: the bug still reproduced almost
+identically with only that change in place.
+
+Verified with live instrumented runs (temporary DEBUG logging, since
+removed) against the exact repro from the bug report
+(stereo3d-pack/out/media_sbs_lowres.mp4, 7.75s, 30fps, via play360.sh -p
+flat -e sbs): confirmed loopOffset was pinned at one loop's width instead
+of growing, confirmed queue.front().pts was already at the tail of the
+SAME window playbackTime had just finished catching up to, and confirmed
+loop-restart log lines going from ~7.5s apart to sub-second apart within a
+couple of loops - directly matching the report's own measured 24fps ->
+~3x transition. After the fix: 90s run (~12 loop crossings), 44 stat
+samples, all 29.8-30.4 fps (file is 30.0), decode steady at 30.1 fps
+throughout with 0 renderer starves. Not yet re-verified against the
+report's SECOND symptom (a vertical "rolling" artifact on a different
+clip) - unconfirmed whether that was a visible symptom of this same bug or
+something separate; needs a look with the headset on.
+---
+ src/tests/hello_xr/video360.cpp | 32 +++++++++++++++++++++++++++++++-
+ 1 file changed, 31 insertions(+), 1 deletion(-)
+
+diff --git a/src/tests/hello_xr/video360.cpp b/src/tests/hello_xr/video360.cpp
+index 182ad70..08df22f 100644
+--- a/src/tests/hello_xr/video360.cpp
++++ b/src/tests/hello_xr/video360.cpp
+@@ -387,7 +387,37 @@ struct Video360::Impl {
+                 DrainDecoder(frame, swFrame, loopOffset, lastPts);
+                 if (!loop) break;
+                 avcodec_flush_buffers(dec);
+-                loopOffset = lastPts + frameDuration;
++                // BUG (found 2026-08-09, see BUG_player_loop_speedup_2026-08-09.md in the
++                // stereo3d-pack repo): this used to be a plain assignment, `loopOffset =
++                // lastPts + frameDuration`. lastPts is always the file's own RAW, 0-based
++                // last timestamp (it naturally restarts near 0 every loop, since the file is
++                // re-read from position 0 each time) - so the assignment silently threw away
++                // every earlier loop's accumulated offset and reused the SAME one-loop-width
++                // value forever after the second loop. From loop 3 onward every loop's frames
++                // were queued under the identical pts window loop 2 used, which was already
++                // "in the past" relative to playbackTime by the time loop 2 finished - so the
++                // very next EOF/seek/flush cycle would fire almost immediately (its own
++                // frames were stale the instant they were queued), then the next one even
++                // faster, compounding into dozens of loop-restarts per real second. That is
++                // the sustained ~3x speed-up: not slow motion, but the file being re-decoded
++                // and re-discarded far faster than real time, over and over, in the same
++                // narrow pts window. Confirmed live via temporary instrumentation logging
++                // loopOffset/queue state at every EOF - it stayed pinned at one loop's width
++                // instead of growing, and loop-restart log lines went from ~7.5s apart to
++                // sub-second apart within a couple of loops. Must accumulate, not overwrite:
++                loopOffset += lastPts + frameDuration;
++                {
++                    // Secondary, smaller effect, worth keeping regardless of the fix above:
++                    // re-anchor playbackTime to whatever's next in the queue instead of
++                    // trusting the wall-clock accumulator across the loop seam. Without this,
++                    // any real time spent in this seek/flush (however small) is wall-clock
++                    // time AcquireCurrentSlot() still counts as elapsed but that produced no
++                    // frames. Unlike the manual-seek path above, the queue is NOT cleared here
++                    // - whatever's still queued is the tail end of the loop that just
++                    // finished, still correctly paced and still due to be shown.
++                    std::lock_guard<std::mutex> lock2(mutex);
++                    clockStarted = false;
++                }
+                 if (av_seek_frame(fmt, streamIndex, 0, AVSEEK_FLAG_BACKWARD) < 0) {
+                     Log::Write(Log::Level::Warning, "video360: seek to start failed, stopping playback");
+                     break;
+-- 
+2.47.3
+
