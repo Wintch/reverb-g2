@@ -1,0 +1,146 @@
+From 62590db5a0794b247d0793f6c6301c591a5acdba Mon Sep 17 00:00:00 2001
+From: iam <iam@iashur.internal>
+Date: Sun, 9 Aug 2026 02:48:52 -0300
+Subject: [PATCH 1/2] 360 viewer: overlay bars - reposition, fake stereo depth,
+ thinner+red
+
+Same-session iterative fix, three rounds of live headset feedback:
+
+1. Position (found 2026-08-09): the progress bar and quit-hold bar sat at
+   t in [0.94,0.98] / [0.02,0.06] - 2-4% from the absolute edge of the
+   render target. User: "aparece muy abajo, no lo llego a ver". A first
+   move to [0.80,0.88] still wasn't enough ("se ve mejor, pero aun muy
+   abajo") - moved much further inboard to [0.58,0.62] (progress) /
+   [0.30,0.40] (quit), explicitly trading subtlety for guaranteed
+   visibility. Also inset horizontally (was full s in [0,1], "se me va
+   para los costados") to s in [0.20,0.80], centered.
+
+2. Depth (user: "hace que este a la distancia del video"): both bars were
+   drawn identically for both eyes (zero disparity), so they read as glued
+   flat to the lens/at infinity against real stereo 3D content that has
+   its own depth baked into the footage via camera parallax. Faked a
+   comfortable fixed HUD depth (1.5m) with a small-angle stereo parallax
+   shift per eye, using a nominal half-IPD (31.5mm) - same tan(x)~=x
+   approximation already used elsewhere in this shader. Needed to know
+   which eye is rendering: packed a flag into spare bits of mode.x
+   (which only ever needed values 0-2 for PROJ_*) instead of growing the
+   push-constant struct past its current 128 bytes.
+
+3. Style (user: "el indicador de la posicion mas fino y rojo"): progress
+   bar thickness reduced further as part of the position fix above, fill
+   color changed from white/gray to red (0.95,0.15,0.12 filled /
+   0.30,0.08,0.07 unfilled) to read as a clear position marker.
+
+Verified live with the headset on across all three rounds, on VR180 4K
+content (blade_runner_visuals_vr180_4k.mp4, blade_runner_skyline_vr180_4k.mp4).
+Final user verdict: "se ve bien, funciona" - described it as reading like a
+thin red position marker over a lighter total-duration track, exactly the
+intended design.
+---
+ src/tests/hello_xr/graphicsplugin_vulkan.cpp |  3 ++
+ src/tests/hello_xr/vulkan_shaders/frag.glsl  | 45 +++++++++++++++++---
+ 2 files changed, 43 insertions(+), 5 deletions(-)
+
+diff --git a/src/tests/hello_xr/graphicsplugin_vulkan.cpp b/src/tests/hello_xr/graphicsplugin_vulkan.cpp
+index 1bba34f..89d2120 100644
+--- a/src/tests/hello_xr/graphicsplugin_vulkan.cpp
++++ b/src/tests/hello_xr/graphicsplugin_vulkan.cpp
+@@ -1819,6 +1819,9 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+         pushConstants.mode[0] = (m_panoLayout.projection == PanoProjection::HalfEquirect180)   ? 1
+                                 : (m_panoLayout.projection == PanoProjection::Flat)           ? 2
+                                                                                               : 0;
++        // Bit 0x10 alongside PROJ_* in the low nibble: which eye this is, for frag.glsl's
++        // overlay-bar parallax (see there). Spare bits in an int that only ever needed 0/1/2.
++        if (eye == 1) pushConstants.mode[0] |= 0x10;
+         // Progress bar (see frag.glsl): mode.y is fill fraction *1000, mode.z is visibility
+         // alpha *255. Only shown for a few seconds after the last transport-control touch, so
+         // it doesn't sit on screen the whole time someone is just watching.
+diff --git a/src/tests/hello_xr/vulkan_shaders/frag.glsl b/src/tests/hello_xr/vulkan_shaders/frag.glsl
+index 756437b..fbfe760 100644
+--- a/src/tests/hello_xr/vulkan_shaders/frag.glsl
++++ b/src/tests/hello_xr/vulkan_shaders/frag.glsl
+@@ -38,6 +38,11 @@ void main()
+     // View space looks down -Z. Rotate the ray into world space; no translation, the image is at infinity.
+     vec3 dir = normalize(mat3(ubuf.viewRotation) * vec3(xv, yv, -1.0));
+ 
++    // mode.x carries the eye index in bit 4 alongside PROJ_* in the low bits (spare bits in an
++    // int that only ever needed 0/1/2 - see the overlay-bar parallax comment below for why).
++    int projType = ubuf.mode.x & 0xF;
++    bool isRightEye = (ubuf.mode.x & 0x10) != 0;
++
+     vec2 uv;
+     float inside = 1.0;
+     bool wraps = false;
+@@ -49,7 +54,7 @@ void main()
+     // above 0 so a runaway zoom-out can't divide by (near-)zero.
+     float zoom = max(ubuf.panoFov.z, 0.01);
+ 
+-    if (ubuf.mode.x == PROJ_FLAT) {
++    if (projType == PROJ_FLAT) {
+         // A virtual screen floating straight ahead. Rays going sideways or backwards miss it.
+         float depth = -dir.z;
+         vec2 screen = dir.xy / max(depth, 1e-4);
+@@ -61,7 +66,7 @@ void main()
+         float az = atan(dir.x, -dir.z) / zoom;            // 0 straight ahead, +/-PI behind
+         float el = asin(clamp(dir.y, -1.0, 1.0)) / zoom;  // +PI/2 straight up
+ 
+-        if (ubuf.mode.x == PROJ_180) {
++        if (projType == PROJ_180) {
+             // The frame only holds the hemisphere in front of you; everything else stays black
+             // instead of smearing the edge columns across the back of your head.
+             uv = vec2(az / (2.0 * ubuf.panoFov.x) + 0.5, 0.5 - el / (2.0 * ubuf.panoFov.y));
+@@ -94,10 +99,39 @@ void main()
+     // Progress bar and quit-hold bar (see below) draw over their screen-space strip whether or
+     // not it's `inside` - a bar should never vanish just because it happens to fall outside the
+     // content area (letterboxing in flat mode, the void beyond a 180 frame's edge, etc).
++    // Found 2026-08-09: the strips used to sit at t in [0.94,0.98] / [0.02,0.06] - 2-4% from
++    // the absolute edge of the render target. That's outside where anyone actually looks with
++    // the headset on (no one rotates their eyes/head to the extreme edge of the lens just to
++    // check a progress bar) - user report: "aparece muy abajo, no lo llego a ver". A first
++    // move to [0.80,0.88] still wasn't enough ("se ve mejor, pero aun muy abajo") - the
++    // effective comfortable/sharp area of this headset's optics is clearly smaller than the
++    // nominal render FOV suggests. Moved much further inboard this time, explicitly trading
++    // subtlety for guaranteed visibility per the user - fine if it eats into the content more.
++    // Horizontal inset too (found same session): full-width (s 0..1) read as "goes off to the
++    // sides" once the bar was actually inside the visible area - centered and narrowed to the
++    // same comfortable window both bars now live in vertically.
++    const float kBarSMin = 0.20;
++    const float kBarSMax = 0.80;
++
++    // Found same session: drawn identically for both eyes (zero disparity), the bars read as
++    // glued flat to the lens/at infinity, floating oddly against real stereo 3D content that
++    // has its own depth from disparity baked into the footage - user: "hace que este a la
++    // distancia del video". Fake a comfortable fixed HUD depth (kHudMeters) instead of true
++    // per-pixel depth (which isn't knowable - it's baked into whatever the footage shows):
++    // shift each eye's copy of the bar by the small angle a real object at that depth would
++    // subtend given a nominal IPD, same small-angle approximation (tan(x) ~= x) used
++    // everywhere else in this shader. Left eye sees a centered point shifted right, right eye
++    // sees it shifted left - sign flips with isRightEye (see above).
++    const float kHalfIpdMeters = 0.0315;
++    const float kHudMeters = 1.5;
++    float parallaxShiftS = (kHalfIpdMeters / kHudMeters) / (ubuf.fovTangents.y - ubuf.fovTangents.x);
++    float sBar = isRightEye ? s + parallaxShiftS : s - parallaxShiftS;
++
+     float barAlpha = float(ubuf.mode.z) / 255.0;
+-    bool inProgressBar = barAlpha > 0.0 && t > 0.94 && t < 0.98;
++    bool inProgressBar = barAlpha > 0.0 && t > 0.58 && t < 0.62 && sBar > kBarSMin && sBar < kBarSMax;
+     float quitHold = float(ubuf.mode.w) / 1000.0;
+-    bool inQuitFill = quitHold > 0.0 && t > 0.02 && t < 0.06 && s < quitHold;
++    bool inQuitFill = quitHold > 0.0 && t > 0.30 && t < 0.40 && sBar > kBarSMin &&
++                       sBar < mix(kBarSMin, kBarSMax, quitHold);
+ 
+     // Genuinely empty space (no content, no bar) is left to whatever the app cleared the frame
+     // to (see GetBackgroundClearColor() in openxr_program.cpp / HELLO_XR_THEME) instead of
+@@ -119,7 +153,8 @@ void main()
+     // the 128 bytes Vulkan guarantees (it's already exactly at that limit).
+     if (inProgressBar) {
+         float progress = float(ubuf.mode.y) / 1000.0;
+-        vec3 barColor = (s < progress) ? vec3(1.0, 1.0, 1.0) : vec3(0.35, 0.35, 0.35);
++        float sNorm = (sBar - kBarSMin) / (kBarSMax - kBarSMin);  // 0..1 across the inset bar
++        vec3 barColor = (sNorm < progress) ? vec3(0.95, 0.15, 0.12) : vec3(0.30, 0.08, 0.07);
+         FragColor.rgb = mix(FragColor.rgb, barColor, barAlpha);
+     }
+ 
+-- 
+2.47.3
+

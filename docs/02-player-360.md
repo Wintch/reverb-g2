@@ -175,6 +175,178 @@ cleanly against real hardware (`BrightnessUp action is bound to 'Right Oculus To
 Controller A'`, no collisions). User verdict pressing A/B during actual playback: "funciona
 bien, sube y baja el brillo".
 
+### Overlay bars: position, fake stereo depth, thinner + red (2026-08-09, `0010-*.patch`) — VERIFIED LIVE
+
+The progress bar and quit-hold bar went through three rounds of live headset feedback the
+same session, all against real VR180 4K content
+(`blade_runner_visuals_vr180_4k.mp4`/`blade_runner_skyline_vr180_4k.mp4`, both `stereo3d-pack`
+outputs, 3840x1920).
+
+1. **Position.** They used to sit at `t` in `[0.94,0.98]` / `[0.02,0.06]` - 2-4% from the
+   absolute edge of the render target. User: "aparece muy abajo, no lo llego a ver". A first
+   move to `[0.80,0.88]` still wasn't enough ("se ve mejor, pero aun muy abajo") - the
+   comfortable/sharp area of this headset's optics is clearly smaller than the nominal FOV
+   suggests. Moved much further inboard to `[0.58,0.62]` (progress) / `[0.30,0.40]` (quit),
+   explicitly trading subtlety for guaranteed visibility. Also inset horizontally - full-width
+   `s` in `[0,1]` read as "se me va para los costados" once the bar was actually visible - to
+   `s` in `[0.20,0.80]`, centered.
+2. **Depth.** User: "hace que este a la distancia del video". Both bars used to draw
+   identically for both eyes (zero disparity), reading as glued flat to the lens/at infinity
+   against real stereo 3D content that has its own depth from camera parallax baked into the
+   footage. Faked a fixed, comfortable HUD depth (1.5m) with a small-angle stereo parallax
+   shift per eye (nominal half-IPD 31.5mm, same `tan(x)~=x` approximation this shader already
+   uses elsewhere) - needed which-eye info in the shader, packed into spare bits of `mode.x`
+   (only ever needed 0-2 for `PROJ_*`) rather than growing the push-constant struct.
+3. **Style.** User: "el indicador de la posicion mas fino y rojo". Thickness folded into the
+   position fix above; fill color changed from white/gray to red
+   (`0.95,0.15,0.12` filled / `0.30,0.08,0.07` unfilled).
+
+Final verdict: "se ve bien, funciona" - described it as reading like a thin red position
+marker over a lighter total-duration track, which is exactly the intended design.
+
+### Next track from the controller (2026-08-09, `0011-*.patch`) — VERIFIED LIVE
+
+Directory playlists could only advance via the keyboard (`n`) - no way to do it with the
+headset on, and the user asked directly: "como paso al proximo video si es una lista?".
+Bound to **Y on the left Touch controller** (the mirror of A/B, right-hand-only, used for
+brightness above - the last free real input on the profile), edge-triggered like
+recenter/brightness/quit. `PlayerControl::RequestNextTrack()` factored out of what used to be
+inline logic in `HandleKey`'s `'n'` case, so keyboard and controller share one
+implementation.
+
+Verified: the action registers against real hardware (`NextTrack action is bound to 'Left
+Oculus Touch Controller Y'`), and confirmed live playing a real 3-file directory playlist
+(`~/vr/media/playlist-test/`: `leblon_vr180_meta.mp4` 4320x2160/40s,
+`short_vr180_meta.mp4` and `short_vr180_ovda_dirfill_meta.mp4` both 3840x1920/15s, all VR180
+SBS with container metadata) - pressed Y, log shows `player: siguiente` immediately followed
+by the next file's projection line, user confirmed watching it change: "si, cambio bien".
+
+**Still open, scoped but not started:** a lightweight "gallery"/browse mode for playlists -
+user wants to page through files one at a time as a paused thumbnail (a real decoded video
+frame, not a separate pre-generated image) with a counter, instead of blind sequential
+autoplay, so you get a sense of what's in a folder before committing to watching something
+in full. Scope agreed via AskUserQuestion: single-item navigation (not a multi-thumbnail
+grid), thumbnail source is a real frame decoded from the video itself (not a companion
+`.jpg`). Not yet designed in code terms - next session's starting point if picked back up.
+
+### Previous track (2026-08-09) — VERIFIED (binding), continuation of Next track
+
+Mirror of Next track above: **X on the left Touch controller** (the other left-hand face
+button, next to Y), plus `p`/`P` on the keyboard. `AdvanceTrack()` and the new
+`PreviousTrack()` (`graphicsplugin_vulkan.cpp`) are exact mirrors - same skip-on-failure
+loop, `(index + count - 1) % count` instead of `(index + 1) % count` for the wraparound
+(unsigned index, so `count - 1` avoids underflowing past 0). `PlayerControl::
+RequestPreviousTrack()`/`TakePreviousTrackRequest()` mirror the Next-track refactor exactly.
+Verified against real hardware: `PrevTrack action is bound to 'Left Oculus Touch Controller
+X'`, no collisions. Not yet exercised live going backward through a real playlist -
+next-track's own live playlist test (`0011`) covered the forward direction; this landed
+right after and hasn't had its own dedicated headset check yet.
+
+### Background theme default flipped to black (2026-08-09)
+
+`HELLO_XR_THEME`'s default was "daylight" (medium grey) - for VR180 content specifically,
+that grey covers the entire rear 180 degrees the frame doesn't hold. User: "en el player la
+parte de atras de mi queda blanca... hagamos negro todo por ahora". Default is now "night"
+(black); pass `HELLO_XR_THEME=daylight` to get the grey back if ever needed. Confirmed live:
+"se ve todo negro atrás, perfecto".
+
+### Playlist wrap-around — CONFIRMED, not a bug (2026-08-09)
+
+User asked directly whether the playlist restarts from the beginning after the last file.
+Before touching anything, checked the existing code (`AdvanceTrack()` already used
+`(index + 1) % count`, correct modulo wraparound) and then measured it directly rather than
+trusting the read: a 220s run of the 3-file test playlist logged three full clean cycles
+(`2/3 → 3/3 → 1/3`, repeated three times) via `journalctl`-style log grep, then reproduced
+again with the headset on (five cycles this time). Playlist wraparound already worked;
+nothing needed fixing. Worth remembering as a lesson, not just a data point: the user likely
+hadn't personally watched a full cycle complete in earlier, shorter test runs - the code was
+never actually broken.
+
+### "Any key advances" for a temporary controls-legend flow (2026-08-09)
+
+New wrapper script, no player architecture change: **`scripts/play-with-legend.sh`** shows a
+static image with the current control list (rendered as pixels via ImageMagick, English -
+see `~/vr/media/controles.png`, the filename kept from an earlier Spanish draft but the
+content is now English to match the rest of this repo) using the player's existing photo
+mode, then chains straight into the real content. Exists because there's no in-headset text
+rendering at all today (everything on screen is colored bars, not glyphs) - a real text
+engine would be a much bigger feature, and this was explicitly requested as a temporary
+measure instead.
+
+During this, the user asked for **any button except Menu to instantly skip the legend**,
+rather than needing the same 1.5s hold-to-quit gesture a real session uses to end. Added
+`PlayerControl::SetAnyKeyQuits(bool)` plus a new `HELLO_XR_ANY_KEY_QUITS=1` env var (read
+once at startup in `main.cpp`) - when set, every control's action function (pause, speed,
+seek, frame-step, zoom, brightness, recenter, next/prev track) also sets the quit flag via a
+new shared `MaybeQuitOnAnyKey()` helper, deliberately kept separate from
+`TouchInteraction()` (zoom/brightness don't touch the progress-bar timer, but should still
+count as "a key was pressed" here). Menu's own dedicated hold-to-confirm path is completely
+untouched - still the only way to *quit* a real session outright.
+
+**Scoping bug caught and fixed before it caused confusion:** the env var must apply to the
+legend phase ONLY, not the real content phase after it (where every button needs its actual
+job back, not "instantly quit"). First attempt set it as a blanket prefix on the whole
+wrapper script invocation - wrong, would have made every button quit real playback too.
+Fixed inside the script itself: `HELLO_XR_ANY_KEY_QUITS=1` scoped to just the legend's
+`play360.sh` call, explicitly `env -u`'d back off for the real content's `exec`.
+
+The first "confirmed live" of this flow ("vamos RE bien!") turned out to be misleading: the
+legend *closed* on a button press, but the video never followed. Chasing that uncovered two
+real exit bugs — see the next section, the biggest find of the session. After both fixes,
+the complete flow was confirmed live for real: button press on the legend → content starts
+within a second or two ("ahora funcionó, el video arrancó al toque"). `0012-*.patch`.
+
+### The controller-quit exit deadlock (2026-08-09, `0012-*.patch`) — ROOT-CAUSED WITH GDB, FIXED, VERIFIED LIVE
+
+**Symptom:** any quit initiated from the controller (Menu hold, or any button under
+`HELLO_XR_ANY_KEY_QUITS=1`) ended the XR session — backlight-only in the visor — but the
+process never exited, so anything chained after it (like `play-with-legend.sh`'s content
+phase) never started. Reproduced repeatedly with the headset on; never reproducible via
+fake-pty keyboard tests, which was the tell.
+
+**Root cause, caught red-handed with `gdb -p` on a live hang:** a classic two-thread
+deadlock inside glibc.
+
+- The keyboard thread (ours, since patch 0003) waits for keys in `getchar()` — stdio, which
+  holds stdin's internal `FILE` lock for the entire blocking read.
+- A controller-driven quit means no key was ever pressed, so that thread is still parked
+  there, lock held, when the main thread returns from `main()` and enters `exit()` — whose
+  `_IO_flush_all()` needs that exact lock. Deadlock; the process is immortal.
+
+**Latent since the Menu-quit patch (0005, 2026-08-06), masked by two accidental backstops:**
+interactive runs got killed by `timeout --foreground`'s SIGTERM at the `-t` bound, and the
+old non-interactive `sleep N | hello_xr` stdin pipe delivered EOF at N seconds — waking the
+keyboard thread, releasing the lock, and letting `exit()` finish *late*. Every "Menu quit
+worked" before tonight was really "the hang resolved itself before anyone measured it".
+Tonight's `sleep infinity` stdin change removed the EOF backstop and the controller-quit
+feature made the trigger the common case — which is what finally surfaced it.
+
+**Fix:** the keyboard thread reads via raw `read(2)` (`ReadKeyByte()` in `main.cpp`) instead
+of `getchar()`. A kernel-level read holds no user-space locks, so the thread parks in it at
+exit harmlessly forever. Side bonus: `poll()`+`read()` on the same fd (the arrow-key
+disambiguation) is also more coherent than the old `poll()`+`getchar()` mix, where bytes
+could sit in stdio's buffer invisible to `poll()`.
+
+**Second, separate exit bug found in the same dig:** `~OpenXrProgram()` destroyed the
+swapchain/session/instance with the last frame's GPU work potentially still in flight — the
+actual source of the `vkFreeCommandBuffers`/`vkDestroySemaphore` "is in use" validation
+errors that had been printing on *every* quit all along (long dismissed as harmless
+shutdown noise; T099 even "ruled it out" as pre-existing — pre-existing yes, harmless no).
+New `IGraphicsPlugin::WaitForGpuIdle()` (no-op default, `vkDeviceWaitIdle` in the Vulkan
+backend), called first thing in the destructor. Also fixed on the way: the quit flag set by
+controller paths was only ever *watched* by the keyboard thread, so `PollActions()` now
+latches `xrRequestExitSession()` itself when `QuitRequested()` goes true.
+
+**Also fixed in `play360.sh` during the same arc:** the non-interactive mode's `sleep N |`
+pipe made the script block the full N seconds even after `hello_xr` exited early (the shell
+waits for both pipe members); replaced with `timeout` on `hello_xr` directly plus a
+`sleep infinity` stdin keepalive via process substitution — which then needed explicit
+cleanup (`kill` after the run), since an orphaned keepalive never notices its reader died
+(six had accumulated within the hour).
+
+Verification: keyboard paths re-checked via fake pty after the raw-read switch (all keys
+work, clean exit in 0.06s), and the full controller flow confirmed live with the headset on.
+
 ## Projections and stereo (v3)
 
 The player understands three projections — **360 equirect, VR180 half-equirect, flat**
@@ -312,6 +484,43 @@ With the headset on and `HELLO_XR_VIDEO_STATS=1`:
   path verified with video 2026-08-07 (T041).
 - ~~Zoom with the headset on~~ DONE 2026-08-08 (see "Digital zoom" above): confirmed live,
   no sign flip needed, user verdict "zoom anda perfecto".
+- ~~Brightness controls~~ DONE 2026-08-09 (see "Brightness" above, `0009-*.patch`): A/B on
+  the right Touch controller, confirmed live.
+- ~~Overlay bar position/depth/style~~ DONE 2026-08-09 (see "Overlay bars" above,
+  `0010-*.patch`): three rounds of live tweaking, final verdict "se ve bien, funciona".
+- ~~Next track from the controller~~ DONE 2026-08-09 (see "Next track from the controller"
+  above, `0011-*.patch`): Y on the left Touch controller, confirmed live on a real playlist.
+- **Gallery/browse mode for playlists** — scoped, not started (see "Next track from the
+  controller" above for the agreed scope: single-item paged navigation, real decoded video
+  frame as the thumbnail, no multi-thumbnail grid). Next session's pickup point if resumed.
+- **"Wall" mode: 3 videos decoding and playing simultaneously** (previous/current/next from
+  a playlist, side by side, works the same in flat 2D and real VR) — proposed 2026-08-09,
+  needs a real design pass before any code. Two purposes: a genuine way to preview/browse a
+  playlist, and a stress test for how many concurrent NVDEC sessions and how much bandwidth
+  this GPU can actually sustain. Only the video in the middle gets audio - moot until audio
+  itself exists at all (still on this list, below). This is architecture work, not a tweak:
+  today there is exactly one `Video360` instance (one decode thread, one staging ring, one
+  texture set) - three concurrent means three full instances running in parallel plus a new
+  multi-screen layout, not just calling existing code three times. Real, already-measured
+  constraint to design around: **H.264 hits a hard 4096px-wide ceiling on this GPU's NVDEC**
+  (`Video width 4320 not within range from 48 to 4096`, hit live 2026-08-09 by
+  `leblon_vr180_meta.mp4`, fell back to software decode) - HEVC does not have this ceiling
+  (matches the `stereo3d-pack --vr-size 2160` finding same session). Sourcing the wall from
+  H.264 VR180/SBS content wide enough to hit that limit would silently degrade one lane to
+  software before even adding the other two. Not started; suggested next step is a proper
+  design session (Plan mode) before touching code.
+- **Per-controller battery indicator** — a colored light (red/yellow/white) per controller,
+  drawn at its actual tracked position, shown when a session starts. Investigated 2026-08-09
+  whether the data is even available before promising anything - see
+  `docs/03-controllers.md`, "Battery status" section, for the full technical finding.
+  Short version: the raw battery byte is already parsed by the WMR controller driver
+  (`wmr_controller_hp.c:277`) but never reaches OpenXR - two real changes needed in
+  `~/vr/monado` before `hello_xr` could draw anything at all (wire the driver's own
+  `get_battery_status`, then implement `XR_EXT_interaction_profile_battery_state_display`
+  from scratch, which doesn't exist in Monado today). Deliberately bundled with real
+  controller position (6DoF) tracking rather than tackled alone - a light drawn at a
+  position isn't meaningful while controllers are still 3DoF-only. Not started; user's own
+  call to defer both together.
 - ~~Loop-restart pacing bug~~ FIXED 2026-08-09 (`0008-*.patch`, NOT the zoom patch's fault —
   see also `docs/pruebas.jsonl` T099 for the first, incomplete diagnosis, and
   `BUG_player_loop_speedup_2026-08-09.md` in the `stereo3d-pack` repo for the write-up with
@@ -348,6 +557,19 @@ With the headset on and `HELLO_XR_VIDEO_STATS=1`:
   can fix by definition, since a completely independent player reproduces it identically.
   Flagged back to the `stereo3d-pack` repo (`BUG_player_loop_speedup_2026-08-09.md`) rather
   than tracked further here.
+- **Full-resolution native SBS from 4K sources, once `stereo3d-pack` has the test file ready
+  (2026-08-09).** Finding from today's session: `--vr-size 2160` for VR180 output matches the
+  headset panel exactly and decodes clean via NVDEC/HEVC (the format switch is automatic on
+  output width, not a flag) — same mechanism that already proved clean tonight, zero errors,
+  zero starves. Open question: does full SBS at native 4K width (7680px) decode equally
+  clean now that the assumed H.264 ceiling may not actually apply? If yes, it's likely the
+  better default over VR180 in general for content that stays local (VR180's equirect warp
+  already documented above as wasting ~80% of the per-eye canvas — 694x1036 of 1920x1920).
+  **Review this one carefully when it lands, don't rubber-stamp it** — check the `MODE:`
+  banner picked the right projection/stereo, check `HELLO_XR_VIDEO_STATS=1` for a clean
+  NVDEC/HEVC decode with 0 renderer starves same as tonight's clips, and this project's core
+  rule still applies: a human has to actually look at it in the headset before it counts as
+  verified, the same rigor as the loop-speedup and rolling-artifact bugs this session.
 - Watch the `stereo3d-pack` material in the headset (prepared 2026-08-04, never seen inside the
   visor): `sbs` vs `vr180`, and calibrate depth with `-w`.
 - Fourth detection criterion for flat SBS without metadata (see the `stereo3d-pack` section).

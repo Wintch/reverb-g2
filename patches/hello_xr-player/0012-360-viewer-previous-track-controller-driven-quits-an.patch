@@ -1,0 +1,576 @@
+From 84bf12a3d2f832ddae91e59e1e6f2548905d5ed6 Mon Sep 17 00:00:00 2001
+From: iam <iam@iashur.internal>
+Date: Sun, 9 Aug 2026 04:26:29 -0300
+Subject: [PATCH] 360 viewer: previous track, controller-driven quits, and two
+ real exit bugs
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+One session arc, bundled like the bar-rework commit (0010) was - each piece
+below is documented in its own section of docs/02-player-360.md in the
+reverb-g2 repo, and the exit-deadlock investigation in docs/pruebas.jsonl
+T105.
+
+- Previous track: X on the left Touch controller (mirror of Y=next), 'p' on
+  the keyboard. PreviousTrack() mirrors AdvanceTrack() with the wraparound
+  inverted ((index + count - 1) % count - unsigned index, so count-1 instead
+  of -1). Binding verified against real hardware; not yet exercised live
+  going backward through a multi-file playlist.
+
+- Background default flipped to black: HELLO_XR_THEME's default was
+  "daylight" (medium grey), which for VR180 content paints the entire rear
+  hemisphere grey - user wanted black ("hagamos negro todo por ahora").
+  HELLO_XR_THEME=daylight opts back in. Confirmed live.
+
+- Zoom/brightness no longer flash the progress bar: SetZoom()/
+  SetBrightness() no longer call TouchInteraction() - they're image
+  settings, not playback-position controls, and the auto-hide timer
+  exists for the latter. Confirmed live.
+
+- HELLO_XR_ANY_KEY_QUITS=1 (read once at startup): every control, keyboard
+  or controller, also quits - except Menu, whose hold-to-confirm gesture is
+  untouched. For the reverb-g2 repo's play-with-legend.sh controls-screen
+  flow ("press anything to move on"). With it came the FIRST exit bug fix:
+  PlayerControl's quit flag was only ever watched by the keyboard thread,
+  which sits blocked in a read the whole time - a controller-driven quit set
+  the flag and nothing noticed. PollActions() now latches
+  xrRequestExitSession() when QuitRequested() goes true (latched - g_quit
+  never clears, and calling xrRequestExitSession twice once the session has
+  left RUNNING is a spec error).
+
+- Exit bug two, the deep one - a guaranteed exit() deadlock on every
+  controller-driven quit, latent since the Menu-quit patch (0005) and
+  diagnosed with gdb on a live hang: the keyboard thread's getchar() holds
+  stdin's stdio FILE lock for the whole blocking read, and glibc's exit()
+  -> _IO_flush_all() needs that same lock. Any exit while that thread was
+  still parked (i.e. every quit that came from the controller, since no
+  key was ever pressed) deadlocked inside exit() with the XR session
+  already ended - backlight on, process immortal. It was masked for days
+  by two accidental backstops: interactive runs died to timeout's SIGTERM,
+  and the old `sleep N |` stdin pipe delivered EOF at N seconds, waking
+  the thread late. Fixed by reading keys via raw read(2) (ReadKeyByte()) -
+  a kernel-level read holds no user-space locks, so the thread parks in it
+  at exit() harmlessly. Bonus correctness: poll()+read() on the same fd is
+  also more coherent than the old poll()+getchar() mix, where bytes could
+  hide in stdio's buffer invisible to poll().
+
+- Also from the same debugging: ~OpenXrProgram() destroyed the swapchain/
+  session/instance with the last frame's GPU work potentially still in
+  flight - the source of the vkFreeCommandBuffers/vkDestroySemaphore
+  "in use" validation errors printed on every quit all along. New
+  IGraphicsPlugin::WaitForGpuIdle() (default no-op; vkDeviceWaitIdle in
+  the Vulkan backend), called first thing in the destructor.
+
+Verified live with the headset on: controller button on the legend screen
+-> legend closes -> next session starts immediately ("ahora funcionó, el
+video arrancó al toque"). Keyboard paths re-verified via fake pty after the
+raw-read switch: keys all work, clean exit in 0.06s.
+---
+ src/tests/hello_xr/graphicsplugin.h          | 10 ++++
+ src/tests/hello_xr/graphicsplugin_vulkan.cpp | 26 +++++++-
+ src/tests/hello_xr/main.cpp                  | 42 +++++++++++--
+ src/tests/hello_xr/openxr_program.cpp        | 63 ++++++++++++++++++--
+ src/tests/hello_xr/playercontrol.cpp         | 49 +++++++++++++--
+ src/tests/hello_xr/playercontrol.h           | 15 ++++-
+ 6 files changed, 187 insertions(+), 18 deletions(-)
+
+diff --git a/src/tests/hello_xr/graphicsplugin.h b/src/tests/hello_xr/graphicsplugin.h
+index 29aadb9..960adcb 100644
+--- a/src/tests/hello_xr/graphicsplugin.h
++++ b/src/tests/hello_xr/graphicsplugin.h
+@@ -23,6 +23,16 @@ struct IGraphicsPlugin {
+     // Create an instance of this graphics api for the provided instance and systemId.
+     virtual void InitializeDevice(XrInstance instance, XrSystemId systemId) = 0;
+ 
++    // Blocks until the GPU has finished all work submitted so far. Found 2026-08-09:
++    // ~OpenXrProgram() used to destroy the swapchain/session/instance with no such wait -
++    // usually harmless (the GPU had already caught up by the time cleanup ran), but with
++    // real controller-driven quits during a real session the app could reach here with a
++    // frame's work still in flight, and destroying command buffers/semaphores the GPU is
++    // still using is a validation error, not a no-op - it hung the process outright at
++    // least once. Default no-op so any future non-Vulkan backend isn't forced to implement
++    // this if it doesn't need the same kind of explicit wait.
++    virtual void WaitForGpuIdle() {}
++
+     // Select the preferred swapchain format from the list of available formats.
+     virtual int64_t SelectColorSwapchainFormat(bool throwIfNotFound, span<const int64_t> imageFormatArray) const = 0;
+     virtual int64_t SelectDepthSwapchainFormat(bool throwIfNotFound, span<const int64_t> imageFormatArray) const = 0;
+diff --git a/src/tests/hello_xr/graphicsplugin_vulkan.cpp b/src/tests/hello_xr/graphicsplugin_vulkan.cpp
+index 89d2120..bc645de 100644
+--- a/src/tests/hello_xr/graphicsplugin_vulkan.cpp
++++ b/src/tests/hello_xr/graphicsplugin_vulkan.cpp
+@@ -529,6 +529,10 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+         return nullptr;
+     }
+ 
++    void WaitForGpuIdle() override {
++        if (m_vkDevice != VK_NULL_HANDLE) vkDeviceWaitIdle(m_vkDevice);
++    }
++
+     void InitializeDevice(XrInstance instance, XrSystemId systemId) override {
+         // Create the Vulkan device for the adapter associated with the system.
+         // Extension function must be loaded by name
+@@ -1217,6 +1221,21 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+         Log::Write(Log::Level::Error, "playlist: no file in the list could be opened, stopping playback");
+     }
+ 
++    // Mirror of AdvanceTrack(), other direction. `count - 1` instead of `-1` because
++    // m_playlistIndex is unsigned - going below 0 would wrap to a huge number, not -1.
++    void PreviousTrack() {
++        const size_t count = m_playlist.size();
++        for (size_t attempt = 0; attempt < count; attempt++) {
++            DestroyVideoResources();
++            m_videoMode = false;
++            m_playlistIndex = (m_playlistIndex + count - 1) % count;
++            Log::Write(Log::Level::Info, Fmt("playlist: %zu/%zu", m_playlistIndex + 1, count));
++            if (OpenVideoTexture(m_playlist[m_playlistIndex])) return;
++            Log::Write(Log::Level::Warning, Fmt("playlist: skipping '%s'", m_playlist[m_playlistIndex].c_str()));
++        }
++        Log::Write(Log::Level::Error, "playlist: no file in the list could be opened, stopping playback");
++    }
++
+     bool OpenVideoTexture(const std::string& path) {
+         m_video = std::make_unique<Video360>();
+         if (!m_video->Open(path)) return false;
+@@ -1673,7 +1692,12 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+                 m_video->Seek(frameStep / m_video->FrameRate());
+             }
+             const bool skip = PlayerControl::TakeNextTrackRequest() && m_playlist.size() > 1;
+-            if (skip || (m_playlist.size() > 1 && m_video->Finished())) AdvanceTrack();
++            const bool back = PlayerControl::TakePreviousTrackRequest() && m_playlist.size() > 1;
++            if (back) {
++                PreviousTrack();
++            } else if (skip || (m_playlist.size() > 1 && m_video->Finished())) {
++                AdvanceTrack();
++            }
+             if (m_videoMode) UpdateVideoTexture();
+         }
+ 
+diff --git a/src/tests/hello_xr/main.cpp b/src/tests/hello_xr/main.cpp
+index af07e1a..f7bac7e 100644
+--- a/src/tests/hello_xr/main.cpp
++++ b/src/tests/hello_xr/main.cpp
+@@ -12,12 +12,35 @@
+ #include "playercontrol.h"
+ 
+ #include <cstdlib>
++#include <cstring>
+ 
+ #if defined(XR_OS_LINUX) || defined(XR_OS_APPLE)
+ #include <poll.h>
+ #include <unistd.h>
+ #endif
+ 
++namespace {
++// One byte from stdin, deliberately via raw read(2) and NOT getchar(). Found 2026-08-09,
++// via gdb on a live hang: stdio's getchar() holds stdin's FILE lock for the whole blocking
++// read, and glibc's exit() -> _IO_flush_all() needs that same lock - so any exit that
++// happens while the keyboard thread is still parked in getchar() (i.e. every quit that
++// came from the CONTROLLER rather than a key: Menu hold, HELLO_XR_ANY_KEY_QUITS) was a
++// guaranteed deadlock inside exit(), with the XR session already ended and the process
++// refusing to die. Latent since the Menu-quit patch (0005) - masked until now because the
++// old `sleep N |` stdin pipe delivered EOF at N seconds and unblocked the thread late,
++// and interactive runs had timeout's SIGTERM as a backstop. A kernel-level read() holds
++// no user-space locks, so the thread can stay parked in it at exit() harmlessly forever.
++// Returns EOF on end-of-stream or error, matching what getchar() reported.
++int ReadKeyByte() {
++#if defined(XR_OS_LINUX) || defined(XR_OS_APPLE)
++    unsigned char b;
++    return (read(STDIN_FILENO, &b, 1) == 1) ? (int)b : EOF;
++#else
++    return getchar();
++#endif
++}
++}  // namespace
++
+ #if defined(_WIN32)
+ // Favor the high performance NVIDIA or AMD GPUs
+ extern "C" {
+@@ -305,16 +328,23 @@ int main(int argc, char* argv[]) {
+         std::shared_ptr<PlatformData> data = std::make_shared<PlatformData>();
+ 
+         // One thread reading stdin drives the transport controls. It used to be "any key
+-        // quits"; now only q/ESC/EOF do, and the rest are pause, speed and track skip. On a
+-        // pipe (the timed `sleep N | hello_xr` runs) there are no keys and getchar returns EOF
+-        // when the pipe closes, which still ends the run exactly as before.
++        // quits"; now only q/ESC/EOF do, and the rest are pause, speed and track skip - unless
++        // HELLO_XR_ANY_KEY_QUITS=1 opts back into the old behavior (added 2026-08-09 for
++        // play-with-legend.sh's "press anything to get past the controls screen"; Menu's own
++        // hold-to-confirm gesture is untouched either way). On a pipe (the timed
++        // `sleep N | hello_xr` runs) there are no keys and getchar returns EOF when the pipe
++        // closes, which still ends the run exactly as before.
++        {
++            const char* anyKeyQuits = getenv("HELLO_XR_ANY_KEY_QUITS");
++            PlayerControl::SetAnyKeyQuits(anyKeyQuits != nullptr && strcmp(anyKeyQuits, "1") == 0);
++        }
+         static bool quitKeyPressed = false;
+         PlayerControl::BeginRawInput();
+         std::atexit(PlayerControl::EndRawInput);
+         auto exitPollingThread = std::thread{[] {
+             Log::Write(Log::Level::Info, PlayerControl::HelpLine());
+             while (!quitKeyPressed) {
+-                const int c = getchar();
++                const int c = ReadKeyByte();
+ #if defined(XR_OS_LINUX) || defined(XR_OS_APPLE)
+                 // Arrow keys arrive as the 3-byte escape sequence ESC '[' A/B/C/D. ESC alone is
+                 // also the quit key, so on ESC we peek for more bytes with a short poll()
+@@ -327,11 +357,11 @@ int main(int argc, char* argv[]) {
+                 if (c == 27 && isatty(STDIN_FILENO)) {
+                     pollfd pfd{STDIN_FILENO, POLLIN, 0};
+                     if (poll(&pfd, 1, 30) > 0) {
+-                        const int c2 = getchar();
++                        const int c2 = ReadKeyByte();
+                         if (c2 == '[') {
+                             pollfd pfd2{STDIN_FILENO, POLLIN, 0};
+                             if (poll(&pfd2, 1, 30) > 0) {
+-                                const int c3 = getchar();
++                                const int c3 = ReadKeyByte();
+                                 if (c3 == 'C') {
+                                     PlayerControl::StepFrame(1);
+                                 } else if (c3 == 'D') {
+diff --git a/src/tests/hello_xr/openxr_program.cpp b/src/tests/hello_xr/openxr_program.cpp
+index bf12ebc..2980a86 100644
+--- a/src/tests/hello_xr/openxr_program.cpp
++++ b/src/tests/hello_xr/openxr_program.cpp
+@@ -98,6 +98,13 @@ struct OpenXrProgram : IOpenXrProgram {
+         : m_platformPlugin(platformPlugin), m_graphicsPlugin(graphicsPlugin) {}
+ 
+     ~OpenXrProgram() override {
++        // Found 2026-08-09: destroying the swapchain/session/instance below with GPU work
++        // from the last rendered frame(s) still in flight is a Vulkan validation error, not
++        // a harmless race - it hung the process outright at least once, reproduced live with
++        // a real controller-driven quit. Usually the GPU had already caught up by the time a
++        // session ended, which is why this went unnoticed for a while.
++        if (m_graphicsPlugin) m_graphicsPlugin->WaitForGpuIdle();
++
+         if (m_input.actionSet != XR_NULL_HANDLE) {
+             for (auto hand : {Side::LEFT, Side::RIGHT}) {
+                 xrDestroySpace(m_input.handSpace[hand]);
+@@ -300,9 +307,12 @@ struct OpenXrProgram : IOpenXrProgram {
+         // (see frag.glsl) instead of painting them black, so this color is what shows in that
+         // empty space - previously it was set but never visible, since the shader used to
+         // cover every pixel regardless. HELLO_XR_THEME picks it: "night" (or the older "void")
+-        // is the original black look, anything else (default "daylight") is a plain medium
+-        // grey, added because pure black outside the frame reads as "did tracking break?"
+-        // rather than "empty".
++        // is the original black look, "daylight" is a plain medium grey (added because pure
++        // black outside the frame reads as "did tracking break?" rather than "empty" - but
++        // found 2026-08-09, VR180 content: that grey covers the entire back 180 degrees, and
++        // the user's call was that of the two options, all-black reads better than all-grey
++        // there - so black is the default now; pass HELLO_XR_THEME=daylight to get the grey
++        // back).
+         static const std::array<float, 4> Night{{0.0f, 0.0f, 0.0f, 1.0f}};
+         static const std::array<float, 4> Daylight{{0.5f, 0.5f, 0.5f, 1.0f}};
+         static const std::array<float, 4> TransparentBlack{{0.0f, 0.0f, 0.0f, 0.0f}};
+@@ -311,8 +321,8 @@ struct OpenXrProgram : IOpenXrProgram {
+         switch (m_blendMode) {
+             case XR_ENVIRONMENT_BLEND_MODE_OPAQUE: {
+                 const char* theme = getenv("HELLO_XR_THEME");
+-                const bool night = theme != nullptr && (strcmp(theme, "night") == 0 || strcmp(theme, "void") == 0);
+-                return night ? Night : Daylight;
++                const bool daylight = theme != nullptr && strcmp(theme, "daylight") == 0;
++                return daylight ? Daylight : Night;
+             }
+             case XR_ENVIRONMENT_BLEND_MODE_ADDITIVE:
+                 return Black;
+@@ -420,6 +430,9 @@ struct OpenXrProgram : IOpenXrProgram {
+         // of A/B (which are right-hand-only), and was the last free real input. Next track in
+         // a directory playlist - previously keyboard-only ('n'), useless with the headset on.
+         XrAction nextTrackAction{XR_NULL_HANDLE};
++        // X click, same profile/hand as Y above - the other left-hand face button. Previous
++        // track, the direction Y doesn't cover.
++        XrAction prevTrackAction{XR_NULL_HANDLE};
+         std::array<XrPath, Side::COUNT> handSubactionPath;
+         std::array<XrSpace, Side::COUNT> handSpace;
+         std::array<float, Side::COUNT> handScale = {{1.0f, 1.0f}};
+@@ -535,6 +548,14 @@ struct OpenXrProgram : IOpenXrProgram {
+             actionInfo.countSubactionPaths = 0;
+             actionInfo.subactionPaths = nullptr;
+             CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.nextTrackAction));
++
++            // X click for previous track (see InputState::prevTrackAction) - left hand only.
++            actionInfo.actionType = XR_ACTION_TYPE_BOOLEAN_INPUT;
++            strcpy_s(actionInfo.actionName, "prev_track");
++            strcpy_s(actionInfo.localizedActionName, "Previous Track");
++            actionInfo.countSubactionPaths = 0;
++            actionInfo.subactionPaths = nullptr;
++            CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.prevTrackAction));
+         }
+ 
+         std::array<XrPath, Side::COUNT> selectPath;
+@@ -547,6 +568,7 @@ struct OpenXrProgram : IOpenXrProgram {
+         std::array<XrPath, Side::COUNT> bClickPath;
+         std::array<XrPath, Side::COUNT> aClickPath;
+         std::array<XrPath, Side::COUNT> yClickPath;
++        std::array<XrPath, Side::COUNT> xClickPath;
+         std::array<XrPath, Side::COUNT> triggerValuePath;
+         std::array<XrPath, Side::COUNT> thumbstickXPath;
+         std::array<XrPath, Side::COUNT> thumbstickYPath;
+@@ -571,6 +593,8 @@ struct OpenXrProgram : IOpenXrProgram {
+         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/a/click", &aClickPath[Side::RIGHT]));
+         // Mirror of the above: y/click only exists on the left hand.
+         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/y/click", &yClickPath[Side::LEFT]));
++        // Same story for x/click - left hand only.
++        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/x/click", &xClickPath[Side::LEFT]));
+         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/trigger/value", &triggerValuePath[Side::LEFT]));
+         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/trigger/value", &triggerValuePath[Side::RIGHT]));
+         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/thumbstick/x", &thumbstickXPath[Side::LEFT]));
+@@ -625,7 +649,8 @@ struct OpenXrProgram : IOpenXrProgram {
+                                                             {m_input.recenterAction, squeezeValuePath[Side::RIGHT]},
+                                                             {m_input.brightnessUpAction, aClickPath[Side::RIGHT]},
+                                                             {m_input.brightnessDownAction, bClickPath[Side::RIGHT]},
+-                                                            {m_input.nextTrackAction, yClickPath[Side::LEFT]}}};
++                                                            {m_input.nextTrackAction, yClickPath[Side::LEFT]},
++                                                            {m_input.prevTrackAction, xClickPath[Side::LEFT]}}};
+             XrInteractionProfileSuggestedBinding suggestedBindings{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
+             suggestedBindings.interactionProfile = oculusTouchInteractionProfilePath;
+             suggestedBindings.suggestedBindings = bindings.data();
+@@ -965,6 +990,7 @@ struct OpenXrProgram : IOpenXrProgram {
+                     LogActionSourceName(m_input.brightnessUpAction, "BrightnessUp");
+                     LogActionSourceName(m_input.brightnessDownAction, "BrightnessDown");
+                     LogActionSourceName(m_input.nextTrackAction, "NextTrack");
++                    LogActionSourceName(m_input.prevTrackAction, "PrevTrack");
+                     break;
+                 case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING:
+                 default: {
+@@ -1184,6 +1210,21 @@ struct OpenXrProgram : IOpenXrProgram {
+             PlayerControl::SetQuitHoldFraction(0.0);
+         }
+ 
++        // Bug found 2026-08-09: PlayerControl::g_quit (set by keyboard q/ESC/EOF, and by
++        // MaybeQuitOnAnyKey() under HELLO_XR_ANY_KEY_QUITS=1) used to only be watched by
++        // main.cpp's keyboard-reading thread - which sits blocked in getchar() the entire
++        // time in a controller-only session, so it never actually noticed. User report:
++        // "zoom, menu, recenter works, brightness works, but nothing triggers playing
++        // video" - zoom/recenter/brightness all correctly set g_quit via MaybeQuitOnAnyKey(),
++        // but nothing was polling for it here. g_quit is never cleared once set, and this
++        // runs every frame, so latch the call - a second xrRequestExitSession() once the
++        // session has left RUNNING is a spec error, not a harmless no-op.
++        static bool exitSessionRequested = false;
++        if (!exitSessionRequested && PlayerControl::QuitRequested()) {
++            CHECK_XRCMD(xrRequestExitSession(m_session));
++            exitSessionRequested = true;
++        }
++
+         // Recenter: no subaction paths, same "don't care which hand" shape as quit.
+         XrActionStateGetInfo recenterGetInfo{XR_TYPE_ACTION_STATE_GET_INFO, nullptr, m_input.recenterAction,
+                                              XR_NULL_PATH};
+@@ -1223,6 +1264,16 @@ struct OpenXrProgram : IOpenXrProgram {
+             (nextTrackValue.currentState == XR_TRUE)) {
+             PlayerControl::RequestNextTrack();
+         }
++
++        // Previous track: X on the left Touch controller, same edge-triggered shape.
++        XrActionStateGetInfo prevTrackGetInfo{XR_TYPE_ACTION_STATE_GET_INFO, nullptr, m_input.prevTrackAction,
++                                              XR_NULL_PATH};
++        XrActionStateBoolean prevTrackValue{XR_TYPE_ACTION_STATE_BOOLEAN};
++        CHECK_XRCMD(xrGetActionStateBoolean(m_session, &prevTrackGetInfo, &prevTrackValue));
++        if ((prevTrackValue.isActive == XR_TRUE) && (prevTrackValue.changedSinceLastSync == XR_TRUE) &&
++            (prevTrackValue.currentState == XR_TRUE)) {
++            PlayerControl::RequestPreviousTrack();
++        }
+     }
+ 
+     void RenderFrame() override {
+diff --git a/src/tests/hello_xr/playercontrol.cpp b/src/tests/hello_xr/playercontrol.cpp
+index f5f67d6..800aab4 100644
+--- a/src/tests/hello_xr/playercontrol.cpp
++++ b/src/tests/hello_xr/playercontrol.cpp
+@@ -23,6 +23,7 @@ constexpr int kNormalRateIndex = 3;
+ std::atomic<int> g_rateIndex{kNormalRateIndex};
+ std::atomic<bool> g_paused{false};
+ std::atomic<bool> g_nextTrack{false};
++std::atomic<bool> g_prevTrack{false};
+ std::atomic<bool> g_quit{false};
+ std::atomic<int> g_seekJumpSeconds{0};
+ std::atomic<int> g_frameStepRequest{0};
+@@ -59,6 +60,15 @@ void TouchInteraction() {
+                                .count();
+ }
+ 
++std::atomic<bool> g_anyKeyQuits{false};
++
++// Called from every action below except the ones Menu's own hold-to-quit gesture already
++// covers. Deliberately separate from TouchInteraction() - zoom/brightness intentionally
++// don't touch the progress-bar timer, but should still count as "a key was pressed" here.
++void MaybeQuitOnAnyKey() {
++    if (g_anyKeyQuits.load()) g_quit = true;
++}
++
+ #if defined(XR_OS_LINUX) || defined(XR_OS_APPLE)
+ termios g_savedTermios{};
+ bool g_rawActive = false;
+@@ -81,6 +91,7 @@ bool IsPaused() { return g_paused; }
+ void TogglePause() {
+     g_paused = !g_paused;
+     TouchInteraction();
++    MaybeQuitOnAnyKey();
+     ReportRate();
+ }
+ 
+@@ -89,6 +100,7 @@ void Slower() {
+     if (i > 0) g_rateIndex = i - 1;
+     g_paused = false;
+     TouchInteraction();
++    MaybeQuitOnAnyKey();
+     ReportRate();
+ }
+ 
+@@ -97,6 +109,7 @@ void Faster() {
+     if (i < kRateCount - 1) g_rateIndex = i + 1;
+     g_paused = false;
+     TouchInteraction();
++    MaybeQuitOnAnyKey();
+     ReportRate();
+ }
+ 
+@@ -104,6 +117,7 @@ void NormalSpeed() {
+     g_rateIndex = kNormalRateIndex;
+     g_paused = false;
+     TouchInteraction();
++    MaybeQuitOnAnyKey();
+     ReportRate();
+ }
+ 
+@@ -112,14 +126,25 @@ bool TakeNextTrackRequest() { return g_nextTrack.exchange(false); }
+ void RequestNextTrack() {
+     g_nextTrack = true;
+     TouchInteraction();
++    MaybeQuitOnAnyKey();
+     Log::Write(Log::Level::Info, "player: siguiente");
+ }
+ 
++bool TakePreviousTrackRequest() { return g_prevTrack.exchange(false); }
++
++void RequestPreviousTrack() {
++    g_prevTrack = true;
++    TouchInteraction();
++    MaybeQuitOnAnyKey();
++    Log::Write(Log::Level::Info, "player: anterior");
++}
++
+ int TakeSeekRequest() { return g_seekJumpSeconds.exchange(0); }
+ 
+ void QueueSeek(int seconds) {
+     g_seekJumpSeconds += seconds;
+     TouchInteraction();
++    MaybeQuitOnAnyKey();
+     Log::Write(Log::Level::Info, Fmt("player: seek %+ds", seconds));
+ }
+ 
+@@ -129,6 +154,7 @@ void StepFrame(int frames) {
+     g_paused = true;
+     g_frameStepRequest += frames;
+     TouchInteraction();
++    MaybeQuitOnAnyKey();
+     Log::Write(Log::Level::Info, Fmt("player: frame %+d", frames));
+ }
+ 
+@@ -147,7 +173,12 @@ void SetZoom(double z) {
+     int64_t bits;
+     std::memcpy(&bits, &z, sizeof(bits));
+     g_zoomBits = bits;
+-    TouchInteraction();
++    // No TouchInteraction() here on purpose (found 2026-08-09): zoom and brightness are
++    // display/image settings, not playback-position controls - SecondsSinceLastInteraction()
++    // exists specifically to drive the progress bar's auto-hide timer, and the user does not
++    // want that bar flashing on screen just because they adjusted zoom or brightness.
++    // MaybeQuitOnAnyKey() is unrelated to that and still applies - see its own comment.
++    MaybeQuitOnAnyKey();
+     Log::Write(Log::Level::Info, Fmt("player: zoom %.2fx", z));
+ }
+ }  // namespace
+@@ -171,7 +202,9 @@ void SetBrightness(double b) {
+     int64_t bits;
+     std::memcpy(&bits, &b, sizeof(bits));
+     g_brightnessBits = bits;
+-    TouchInteraction();
++    // No TouchInteraction() - see the same note in SetZoom() above. MaybeQuitOnAnyKey()
++    // still applies.
++    MaybeQuitOnAnyKey();
+     Log::Write(Log::Level::Info, Fmt("player: brillo %.2fx", b));
+ }
+ }  // namespace
+@@ -191,6 +224,8 @@ double SecondsSinceLastInteraction() {
+ 
+ bool QuitRequested() { return g_quit; }
+ 
++void SetAnyKeyQuits(bool on) { g_anyKeyQuits = on; }
++
+ void SetQuitHoldFraction(double frac) {
+     if (frac < 0.0) frac = 0.0;
+     if (frac > 1.0) frac = 1.0;
+@@ -202,6 +237,7 @@ int QuitHoldPermille() { return g_quitHoldPermille.load(); }
+ void RequestRecenter() {
+     g_recenterRequested = true;
+     TouchInteraction();
++    MaybeQuitOnAnyKey();
+     Log::Write(Log::Level::Info, "player: recenter");
+ }
+ 
+@@ -282,6 +318,10 @@ bool HandleKey(int c) {
+         case 'N':
+             RequestNextTrack();
+             return true;
++        case 'p':
++        case 'P':
++            RequestPreviousTrack();
++            return true;
+         case 'q':
+         case 'Q':
+         case 27:   // ESC
+@@ -323,9 +363,10 @@ const char* HelpLine() {
+     return "  Teclas: [espacio] pausa   [ ] velocidad   1 normal   h/l -10s/+10s   "
+            "<-/-> (o < >) frame a frame   arriba/abajo (o ^ v) zoom   0 zoom normal   "
+            "b/d brillo   9 brillo normal   "
+-           "enter recentra   n siguiente   q salir "
++           "enter recentra   n siguiente   p anterior   q salir "
+            "(mando WMR: trigger pausa, stick X seek, stick Y zoom, grip recentra, "
+-           "A/B (der.) brillo, mantener Menu ~1.5s sale)";
++           "A/B (der.) brillo, Y (izq.) siguiente, X (izq.) anterior, "
++           "mantener Menu ~1.5s sale)";
+ }
+ 
+ }  // namespace PlayerControl
+diff --git a/src/tests/hello_xr/playercontrol.h b/src/tests/hello_xr/playercontrol.h
+index 9aa7001..2814143 100644
+--- a/src/tests/hello_xr/playercontrol.h
++++ b/src/tests/hello_xr/playercontrol.h
+@@ -16,7 +16,8 @@
+ //   b  d    brighter / dimmer (also: Touch controller A/B, right hand)
+ //   9       back to normal brightness (1x)
+ //   enter   recenter forward (also: WMR controller squeeze/grip)
+-//   n       next file in the playlist
++//   n       next file in the playlist (also: Touch controller Y, left hand)
++//   p       previous file in the playlist (also: Touch controller X, left hand)
+ //   q ESC   quit (also: hold the WMR Menu button ~1.5s)
+ 
+ #pragma once
+@@ -38,6 +39,10 @@ bool IsPaused();
+ bool TakeNextTrackRequest();
+ void RequestNextTrack();
+ 
++// Same shape, other direction: 'p' (also: Touch controller X, left hand).
++bool TakePreviousTrackRequest();
++void RequestPreviousTrack();
++
+ // Seconds to jump the playback position by (negative = back), accumulated from 'h'/'l' and
+ // controller thumbstick pushes since the last call. Cleared on read. 0 most of the time.
+ int TakeSeekRequest();
+@@ -109,4 +114,12 @@ void EndRawInput();
+ // One line describing the controls, for the startup banner.
+ const char* HelpLine();
+ 
++// HELLO_XR_ANY_KEY_QUITS=1 (read once at startup - see main.cpp): every control listed
++// above, keyboard or controller, also quits - except Menu, which keeps its own dedicated
++// hold-to-confirm gesture untouched. Added 2026-08-09 for play-with-legend.sh: showing a
++// static "here's what everything does" image before real content, where the fastest way
++// out should be "press literally anything", not the same 1.5s hold used to end a real
++// session.
++void SetAnyKeyQuits(bool on);
++
+ }  // namespace PlayerControl
+-- 
+2.47.3
+

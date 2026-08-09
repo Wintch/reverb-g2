@@ -174,3 +174,52 @@ read is correct.
 
 Source of the investigation: `docs/09-oasis-driver-re.md` (same disassembly method,
 applied to `unlock_wmr.exe` instead of `driver_oasis.dll`/`HololensSensors.dll`).
+
+## Battery status (investigated 2026-08-09)
+
+**The raw data already exists — it's just never surfaced anywhere an application can see
+it.** Came up from a player-side feature idea (a colored light per controller — red/yellow/
+white — drawn at its tracked position when a session starts). Investigated whether Monado
+exposes battery level at all before promising anything.
+
+**Nothing reaches OpenXR today.** The real spec extension is
+`XR_EXT_interaction_profile_battery_state_display` (not `XR_EXT_battery_status`, which
+doesn't exist) — Monado's `oxr_extension_support.py` (the master list it generates dispatch
+from) has no entry for it, and nothing in `src/xrt/state_trackers/oxr/` mentions battery at
+all. The headers to build against it ARE already vendored
+(`src/external/openxr_includes/openxr/openxr.h`, matching the SDK this project builds
+`hello_xr` against) — the extension would need implementing in Monado from scratch, it's not
+a missing build dependency.
+
+**Monado has its own internal battery plumbing, but no driver implements it.**
+`xrt_device` (`src/xrt/include/xrt/xrt_device.h`) has a `get_battery_status(xdev,
+out_present, out_charging, out_charge)` vtable slot, wired through to Monado's own IPC
+(`ipc_handle_device_get_battery_status`) and `libmonado`'s monitoring API
+(`mnd_root_get_device_battery_status`) — this is Monado's introspection/telemetry tooling,
+separate from OpenXR entirely. Every device currently falls back to the stub
+`u_device_ni_get_battery_status()` (`u_device_ni.c:186`), which just reports
+not-implemented.
+
+**The G2 controllers' own driver already parses the byte and throws it away.** Both
+`wmr_controller_hp.c` (the HP Reverb G2 controllers specifically) and `wmr_controller_og.c`
+read a raw `uint8_t battery` straight out of the controller's HID input report
+(`wmr_controller_hp.c:277`, `last_input->battery = read8(&p);`, stored in the
+`last_input`/`last_inputs` struct). It's only ever surfaced through Monado's generic debug-
+variable system (`u_var_add_u8(..., "input.battery")`, viewable live in `monado-gui`) — never
+wired into `get_battery_status`, never reaches an application. `wmr_hmd.c` has no battery
+handling at all, which is expected — the G2 headset itself is USB/wired-powered, no battery
+to report.
+
+**What real work this would take, if picked up:** two changes, both in `~/vr/monado`, not
+`hello_xr`: (1) normalize the already-parsed `last_input.battery` byte into a real
+`get_battery_status` implementation for the WMR controller driver; (2) implement
+`XR_EXT_interaction_profile_battery_state_display` in Monado's OXR layer from scratch (it
+doesn't exist there today) so an application can actually query it. Only after both land
+does drawing anything in `hello_xr` become possible.
+
+**Deliberately bundled with real controller position (6DoF) tracking, not started now.**
+The player-side design (a light drawn AT the controller's actual position in space) is only
+meaningful once controller position tracking is real — today controllers are 3DoF-only
+(rotation, no real position; see "What's still missing" above and the paused constellation-
+tracking effort). User's call: test this together with that work once it resumes, not as a
+standalone task now.

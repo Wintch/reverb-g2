@@ -31,7 +31,7 @@
 #   b  d     brighter / dimmer          (controller: A/B, right hand)
 #   9        brightness back to 1x (off)
 #   enter    recenter "forward"        (controller: squeeze grip hard)
-#   n        next video in the playlist
+#   n        next video in the playlist  (controller: Y, left hand)
 #   q        quit                      (controller: hold left menu ~1.5s, red bar)
 #
 # HELLO_XR_THEME=night paints the empty space outside the video black (default: light gray).
@@ -108,8 +108,14 @@ fi
 #    mode; if it dies uncleanly (timeout's SIGTERM, Ctrl-C) the atexit restore never runs,
 #    so ALWAYS run `stty sane` afterwards or the shell is left half-mute.
 #
-#  - Piped/backgrounded (tests, automation): the old form - a timed `sleep` on stdin, and
-#    the run ends when the pipe hits EOF. No keys, same behavior as always.
+#  - Piped/backgrounded (tests, automation): no real keyboard, so hello_xr's stdin comes
+#    from a `sleep infinity` via process substitution instead - never delivers EOF on its
+#    own, so it can't fake a keypress, but it also doesn't block this script the way a
+#    literal `sleep N | hello_xr` pipe used to (found 2026-08-09: a real pipe makes the
+#    shell wait for BOTH sides, so the script used to hang until N seconds elapsed even
+#    after hello_xr had already exited on its own). `timeout` on hello_xr directly is what
+#    actually bounds the run now; ends whenever hello_xr does (naturally, a quit gesture,
+#    HELLO_XR_ANY_KEY_QUITS, a crash) or at N seconds, whichever comes first.
 RUNTIME_ENV=(
 	XR_RUNTIME_JSON="$MONADO_BUILD/openxr_monado-dev.json"
 	IPC_IGNORE_VERSION=1
@@ -117,7 +123,7 @@ RUNTIME_ENV=(
 if [ -t 0 ]; then
 	echo "Playing $(basename "$FILE") - max ${SECONDS_TO_RUN}s."
 	echo "Keys: [space] pause | [ ] speed | 1 normal | h/l -10s/+10s | up/down (or ^ v) zoom | 0 zoom off | b/d bright | 9 bright off | enter recenter | n next | q quit"
-	echo "Controller: trigger pause | stick X seek | stick Y zoom | A/B (right) brightness | grip recenter | left menu held ~1.5s quits"
+	echo "Controller: trigger pause | stick X seek | stick Y zoom | A/B (right) brightness | Y (left) next | grip recenter | left menu held ~1.5s quits"
 	timeout --foreground "$SECONDS_TO_RUN" env \
 		"${RUNTIME_ENV[@]}" "${ENV_EXTRA[@]}" \
 		stdbuf -oL -eL "$HELLO_XR" --graphics Vulkan2
@@ -125,8 +131,25 @@ if [ -t 0 ]; then
 	stty sane 2>/dev/null
 	exit "$RC"
 else
-	echo "Playing $(basename "$FILE") for ${SECONDS_TO_RUN}s (no keyboard: stdin is not a terminal)."
-	sleep "$SECONDS_TO_RUN" | env \
+	echo "Playing $(basename "$FILE") for up to ${SECONDS_TO_RUN}s (no keyboard: stdin is not a terminal)."
+	# Found 2026-08-09: this used to be `sleep N | hello_xr` - a real pipe. sleep writes
+	# nothing and never notices hello_xr exiting early (Menu hold, HELLO_XR_ANY_KEY_QUITS,
+	# natural end of non-looping content, a crash...), so the whole line - and this script -
+	# used to block for the FULL N seconds regardless, even once the interesting part was
+	# long done. `timeout` on hello_xr directly, with stdin fed by a background `sleep
+	# infinity` via process substitution (not a pipe), fixes that: hello_xr still never sees
+	# EOF on its own, but this script only waits on hello_xr's actual process, not on a
+	# sibling sleep the shell would otherwise also wait for. The keepalive sleep DOES need
+	# killing by hand afterwards, though - it never notices its reader went away (it never
+	# writes, so no SIGPIPE) and orphans forever otherwise; six of them had piled up within
+	# an hour of the first version of this.
+	exec 3< <(exec sleep infinity)
+	STDIN_KEEPALIVE_PID=$!
+	timeout "$SECONDS_TO_RUN" env \
 		"${RUNTIME_ENV[@]}" "${ENV_EXTRA[@]}" \
-		stdbuf -oL -eL "$HELLO_XR" --graphics Vulkan2
+		stdbuf -oL -eL "$HELLO_XR" --graphics Vulkan2 0<&3
+	RC=$?
+	exec 3<&-
+	[ -n "$STDIN_KEEPALIVE_PID" ] && kill "$STDIN_KEEPALIVE_PID" 2>/dev/null
+	exit "$RC"
 fi

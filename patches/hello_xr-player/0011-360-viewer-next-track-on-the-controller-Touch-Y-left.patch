@@ -1,0 +1,156 @@
+From 3205919adbc35ebc6aacfd758c384820ee30f107 Mon Sep 17 00:00:00 2001
+From: iam <iam@iashur.internal>
+Date: Sun, 9 Aug 2026 02:49:03 -0300
+Subject: [PATCH 2/2] 360 viewer: next track on the controller (Touch Y, left
+ hand)
+
+Directory playlists could only advance to the next file via the keyboard
+('n') - useless with the headset on, and the user asked directly: "como
+paso al proximo video si es una lista?" (there was no answer). Bound to
+Y on the left Touch controller, the mirror of A/B (right-hand-only) added
+for brightness and the last free real input on the profile - edge-
+triggered like recenter/brightness/quit, fires once per press.
+
+Refactored PlayerControl::RequestNextTrack() out of what used to be
+duplicated inline in HandleKey's 'n' case, so the keyboard and controller
+paths share one implementation instead of drifting.
+
+Verified: action registers against real hardware ("NextTrack action is
+bound to 'Left Oculus Touch Controller Y'"), and CONFIRMED live with the
+headset on playing a real 3-file directory playlist - pressed Y, log shows
+"player: siguiente" immediately followed by the next file's projection
+line, user confirmed watching it: "si, cambio bien".
+---
+ src/tests/hello_xr/openxr_program.cpp | 29 ++++++++++++++++++++++++++-
+ src/tests/hello_xr/playercontrol.cpp  |  9 +++++++--
+ src/tests/hello_xr/playercontrol.h    |  4 +++-
+ 3 files changed, 38 insertions(+), 4 deletions(-)
+
+diff --git a/src/tests/hello_xr/openxr_program.cpp b/src/tests/hello_xr/openxr_program.cpp
+index cd054e3..bf12ebc 100644
+--- a/src/tests/hello_xr/openxr_program.cpp
++++ b/src/tests/hello_xr/openxr_program.cpp
+@@ -416,6 +416,10 @@ struct OpenXrProgram : IOpenXrProgram {
+         // physical inputs. Brightness on the displayed content.
+         XrAction brightnessUpAction{XR_NULL_HANDLE};
+         XrAction brightnessDownAction{XR_NULL_HANDLE};
++        // Y click, oculus/touch_controller ONLY, left hand only - Y is the left-hand mirror
++        // of A/B (which are right-hand-only), and was the last free real input. Next track in
++        // a directory playlist - previously keyboard-only ('n'), useless with the headset on.
++        XrAction nextTrackAction{XR_NULL_HANDLE};
+         std::array<XrPath, Side::COUNT> handSubactionPath;
+         std::array<XrSpace, Side::COUNT> handSpace;
+         std::array<float, Side::COUNT> handScale = {{1.0f, 1.0f}};
+@@ -523,6 +527,14 @@ struct OpenXrProgram : IOpenXrProgram {
+             actionInfo.countSubactionPaths = 0;
+             actionInfo.subactionPaths = nullptr;
+             CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.brightnessDownAction));
++
++            // Y click for next track (see InputState::nextTrackAction) - left hand only.
++            actionInfo.actionType = XR_ACTION_TYPE_BOOLEAN_INPUT;
++            strcpy_s(actionInfo.actionName, "next_track");
++            strcpy_s(actionInfo.localizedActionName, "Next Track");
++            actionInfo.countSubactionPaths = 0;
++            actionInfo.subactionPaths = nullptr;
++            CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.nextTrackAction));
+         }
+ 
+         std::array<XrPath, Side::COUNT> selectPath;
+@@ -534,6 +546,7 @@ struct OpenXrProgram : IOpenXrProgram {
+         std::array<XrPath, Side::COUNT> menuClickPath;
+         std::array<XrPath, Side::COUNT> bClickPath;
+         std::array<XrPath, Side::COUNT> aClickPath;
++        std::array<XrPath, Side::COUNT> yClickPath;
+         std::array<XrPath, Side::COUNT> triggerValuePath;
+         std::array<XrPath, Side::COUNT> thumbstickXPath;
+         std::array<XrPath, Side::COUNT> thumbstickYPath;
+@@ -556,6 +569,8 @@ struct OpenXrProgram : IOpenXrProgram {
+         // a/click only exists on the right hand on any profile in this file (Touch's left
+         // controller has x/y, not a/b) - not bothering to resolve the left path at all.
+         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/a/click", &aClickPath[Side::RIGHT]));
++        // Mirror of the above: y/click only exists on the left hand.
++        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/y/click", &yClickPath[Side::LEFT]));
+         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/trigger/value", &triggerValuePath[Side::LEFT]));
+         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/trigger/value", &triggerValuePath[Side::RIGHT]));
+         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/thumbstick/x", &thumbstickXPath[Side::LEFT]));
+@@ -609,7 +624,8 @@ struct OpenXrProgram : IOpenXrProgram {
+                                                             {m_input.recenterAction, squeezeValuePath[Side::LEFT]},
+                                                             {m_input.recenterAction, squeezeValuePath[Side::RIGHT]},
+                                                             {m_input.brightnessUpAction, aClickPath[Side::RIGHT]},
+-                                                            {m_input.brightnessDownAction, bClickPath[Side::RIGHT]}}};
++                                                            {m_input.brightnessDownAction, bClickPath[Side::RIGHT]},
++                                                            {m_input.nextTrackAction, yClickPath[Side::LEFT]}}};
+             XrInteractionProfileSuggestedBinding suggestedBindings{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
+             suggestedBindings.interactionProfile = oculusTouchInteractionProfilePath;
+             suggestedBindings.suggestedBindings = bindings.data();
+@@ -948,6 +964,7 @@ struct OpenXrProgram : IOpenXrProgram {
+                     LogActionSourceName(m_input.recenterAction, "Recenter");
+                     LogActionSourceName(m_input.brightnessUpAction, "BrightnessUp");
+                     LogActionSourceName(m_input.brightnessDownAction, "BrightnessDown");
++                    LogActionSourceName(m_input.nextTrackAction, "NextTrack");
+                     break;
+                 case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING:
+                 default: {
+@@ -1196,6 +1213,16 @@ struct OpenXrProgram : IOpenXrProgram {
+             (brightDownValue.currentState == XR_TRUE)) {
+             PlayerControl::BrightnessDown();
+         }
++
++        // Next track: Y on the left Touch controller, same edge-triggered shape.
++        XrActionStateGetInfo nextTrackGetInfo{XR_TYPE_ACTION_STATE_GET_INFO, nullptr, m_input.nextTrackAction,
++                                              XR_NULL_PATH};
++        XrActionStateBoolean nextTrackValue{XR_TYPE_ACTION_STATE_BOOLEAN};
++        CHECK_XRCMD(xrGetActionStateBoolean(m_session, &nextTrackGetInfo, &nextTrackValue));
++        if ((nextTrackValue.isActive == XR_TRUE) && (nextTrackValue.changedSinceLastSync == XR_TRUE) &&
++            (nextTrackValue.currentState == XR_TRUE)) {
++            PlayerControl::RequestNextTrack();
++        }
+     }
+ 
+     void RenderFrame() override {
+diff --git a/src/tests/hello_xr/playercontrol.cpp b/src/tests/hello_xr/playercontrol.cpp
+index be1066b..f5f67d6 100644
+--- a/src/tests/hello_xr/playercontrol.cpp
++++ b/src/tests/hello_xr/playercontrol.cpp
+@@ -109,6 +109,12 @@ void NormalSpeed() {
+ 
+ bool TakeNextTrackRequest() { return g_nextTrack.exchange(false); }
+ 
++void RequestNextTrack() {
++    g_nextTrack = true;
++    TouchInteraction();
++    Log::Write(Log::Level::Info, "player: siguiente");
++}
++
+ int TakeSeekRequest() { return g_seekJumpSeconds.exchange(0); }
+ 
+ void QueueSeek(int seconds) {
+@@ -274,8 +280,7 @@ bool HandleKey(int c) {
+             return true;
+         case 'n':
+         case 'N':
+-            g_nextTrack = true;
+-            Log::Write(Log::Level::Info, "player: siguiente");
++            RequestNextTrack();
+             return true;
+         case 'q':
+         case 'Q':
+diff --git a/src/tests/hello_xr/playercontrol.h b/src/tests/hello_xr/playercontrol.h
+index c856204..9aa7001 100644
+--- a/src/tests/hello_xr/playercontrol.h
++++ b/src/tests/hello_xr/playercontrol.h
+@@ -33,8 +33,10 @@ void Faster();
+ void NormalSpeed();
+ bool IsPaused();
+ 
+-// Set by 'n', cleared by whoever acts on it. Ignored when there is only one file.
++// Set by 'n' (also: Touch controller Y, left hand), cleared by whoever acts on it. Ignored
++// when there is only one file.
+ bool TakeNextTrackRequest();
++void RequestNextTrack();
+ 
+ // Seconds to jump the playback position by (negative = back), accumulated from 'h'/'l' and
+ // controller thumbstick pushes since the last call. Cleared on read. 0 most of the time.
+-- 
+2.47.3
+
