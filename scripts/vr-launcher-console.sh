@@ -74,25 +74,30 @@ for _i in $(seq 1 "$WAIT_MAX"); do
         # build a login-like environment the way runuser does, so nothing
         # (not even HOME/USER) can be assumed present.
         #
-        # --property=SupplementaryGroups= explicit too -- found live 2026-08-10,
-        # same session: the first systemd-run attempt got PAST the runuser
-        # session-teardown bug (real progress) but then failed differently,
-        # ipc_server: XRT_ERROR_DEVICE_CREATION_FAILED, root cause
-        # LIBUSB_ERROR_ACCESS / open('/dev/hidraw2') = -13 (EACCES).
-        # /dev/hidraw2 is root:plugdev 0660 with NO uaccess ACL (checked with
-        # getfacl -- this device uses the older static ":seat:" udev tag, not
-        # dynamic uaccess), so read+write literally requires real membership
-        # in the plugdev group. `runuser`/`su` reliably call initgroups() for
-        # the target user; whether a root-invoked `systemd-run --uid=<name>`
-        # does the same by default wasn't something I could verify without
-        # root access to test directly -- rather than assume either way,
-        # force the group list explicitly so it can't matter.
+        # NOT using --property=SupplementaryGroups= -- tried it (2026-08-10),
+        # it's not a valid transient property for a --scope unit ("Unknown
+        # assignment", confirmed via the debug log below -- scopes wrap an
+        # already-forked process, they don't go through systemd's own
+        # exec-context machinery the way service units do, so exec-context
+        # properties like this one don't apply). Confirmed instead, by
+        # testing `systemd-run --scope --uid=iam -- id` directly, that
+        # --uid=<username> alone already resolves full supplementary groups
+        # correctly (plugdev included) -- the EACCES seen on /dev/hidraw2
+        # right before this had some other cause, not missing group
+        # membership; don't reintroduce this property if that resurfaces,
+        # look elsewhere.
+        #
+        # stderr also to a plain file, not just the tty -- StandardOutput=tty
+        # in the .service hides everything from journalctl (same trap noted
+        # elsewhere in this file), which made each of tonight's fixes above
+        # slower to root-cause than it needed to be (had to wait for a human
+        # to read tty4 directly). Debug aid, harmless to leave permanently.
         exec systemd-run --quiet --scope --uid="$VR_USER" \
-            --property=SupplementaryGroups="adm cdrom floppy audio dip video plugdev users netdev" \
             --setenv=HOME="/home/$VR_USER" --setenv=USER="$VR_USER" --setenv=LOGNAME="$VR_USER" \
             --setenv=XDG_RUNTIME_DIR="/run/user/1000" --setenv=WAYLAND_DISPLAY="wayland-0" \
             --setenv=XDG_SESSION_TYPE="wayland" --setenv=DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/1000/bus" \
-            -- python3 "$HERE/vr-launcher.py" "${MODE:-1}" "${TRACKING:-3dof}"
+            -- python3 "$HERE/vr-launcher.py" "${MODE:-1}" "${TRACKING:-3dof}" \
+            2>>/tmp/vr-launcher-console-debug.log
     fi
     sleep 1
 done
