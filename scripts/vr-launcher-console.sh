@@ -73,7 +73,22 @@ for _i in $(seq 1 "$WAIT_MAX"); do
         # Explicit env, same reasoning as before: systemd-run --uid= doesn't
         # build a login-like environment the way runuser does, so nothing
         # (not even HOME/USER) can be assumed present.
+        #
+        # --property=SupplementaryGroups= explicit too -- found live 2026-08-10,
+        # same session: the first systemd-run attempt got PAST the runuser
+        # session-teardown bug (real progress) but then failed differently,
+        # ipc_server: XRT_ERROR_DEVICE_CREATION_FAILED, root cause
+        # LIBUSB_ERROR_ACCESS / open('/dev/hidraw2') = -13 (EACCES).
+        # /dev/hidraw2 is root:plugdev 0660 with NO uaccess ACL (checked with
+        # getfacl -- this device uses the older static ":seat:" udev tag, not
+        # dynamic uaccess), so read+write literally requires real membership
+        # in the plugdev group. `runuser`/`su` reliably call initgroups() for
+        # the target user; whether a root-invoked `systemd-run --uid=<name>`
+        # does the same by default wasn't something I could verify without
+        # root access to test directly -- rather than assume either way,
+        # force the group list explicitly so it can't matter.
         exec systemd-run --quiet --scope --uid="$VR_USER" \
+            --property=SupplementaryGroups="adm cdrom floppy audio dip video plugdev users netdev" \
             --setenv=HOME="/home/$VR_USER" --setenv=USER="$VR_USER" --setenv=LOGNAME="$VR_USER" \
             --setenv=XDG_RUNTIME_DIR="/run/user/1000" --setenv=WAYLAND_DISPLAY="wayland-0" \
             --setenv=XDG_SESSION_TYPE="wayland" --setenv=DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/1000/bus" \
