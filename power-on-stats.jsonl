@@ -19,3 +19,5 @@
 {"iso_time": "2026-08-10T01:29:48-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": true}
 {"iso_time": "2026-08-10T13:04:56-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": false}
 {"iso_time": "2026-08-10T14:02:34-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": false}
+{"iso_time": "2026-08-10T14:40:23-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": false, "gamepad_present": true}
+{"iso_time": "2026-08-10T14:47:08-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": false, "gamepad_present": true}

@@ -65,6 +65,37 @@ echo
 # or the wrong Wayland one) breaks the DRM lease Monado needs. If SDDM can't
 # honor autologin for any reason, it just falls back to its normal login
 # screen -- this can't lock anyone out.
+#
+# TRIED AND REVERTED, 2026-08-10 (T144): pointed this at mutter-bare.desktop
+# instead, on the theory that it'd finally work because THIS script's own
+# power-on.py --pre-login call below already activates the panel (step 4)
+# before SDDM even starts -- so mutter would see the connector already
+# connected at ITS OWN startup, the one case already confirmed working live
+# (T142/mutter-bare-session.sh, connector present -> lease offered
+# correctly). The theory itself was never actually disproven -- what broke
+# it is one level up: SDDM's AUTOLOGIN path never even tried mutter-bare.
+# Manually picking "Mutter (bare, no shell)" from SDDM's own graphical
+# session list worked fine (confirmed live, same night) -- proving the
+# .desktop file itself is valid and discovered normally. But with
+# Session=mutter-bare.desktop written into this exact file byte-for-byte
+# correct (verified with `xxd`, no encoding/whitespace issue) well before
+# SDDM ever starts (this printf runs synchronously long before the
+# `systemctl isolate graphical.target` at the end of this script), SDDM's
+# own log on the very next boot went straight to reading
+# gnome-wayland.desktop -- no attempt at mutter-bare logged anywhere, not
+# even a failed one. Ruled out, each confirmed live: a second write
+# resetting the file, a second vr-boot-selector.service run, a race between
+# this script's write and SDDM's own start (journalctl timestamps show the
+# write is a full ~19s before sddm.service even starts), and any other
+# script in this repo touching 98-vr-autologin.conf. Best remaining guess,
+# NOT confirmed: SDDM's autologin path may resolve the session against a
+# session list that's scanned/cached separately from (and earlier than) the
+# interactive greeter's own live directory scan, so a .desktop file added
+# the same session doesn't show up there yet -- untested, would need
+# SDDM source review or a reboot with the file present from an EARLIER
+# boot to distinguish "autologin never sees new sessions" from "autologin
+# never works for mutter-bare specifically". Revisit with fresh eyes before
+# trying this again; don't just retry the same write-and-reboot loop.
 SDDM_AUTOLOGIN_CONF=/etc/sddm.conf.d/98-vr-autologin.conf
 case "$CHOICE" in
     m|M)
