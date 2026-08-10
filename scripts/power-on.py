@@ -360,8 +360,9 @@ def main():
         time.sleep(5)
         run(["systemctl", "isolate", "graphical.target"], timeout=15)
     else:
-        print(f"{C_OK}{C_BOLD}LISTO.{C_RESET} Arrancando la sesión real (modo {MODE}, tracking {TRACKING})...")
-        os.execv(str(VR / "jack-in-wayland.sh"), [str(VR / "jack-in-wayland.sh"), MODE, TRACKING])
+        print(f"{C_OK}{C_BOLD}LISTO.{C_RESET} Abriendo el launcher (modo {MODE}, tracking {TRACKING})...")
+        launcher = HERE / "vr-launcher.py"
+        os.execv(sys.executable, [sys.executable, str(launcher), MODE, TRACKING])
 
 
 if __name__ == "__main__":
