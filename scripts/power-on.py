@@ -20,6 +20,7 @@ now; this file is still Linux-specific end to end.
 import json
 import os
 import re
+import select
 import subprocess
 import sys
 import time
@@ -31,7 +32,12 @@ if (Path.home() / "vr" / "monado").is_dir():
     VR = Path.home() / "vr"
 
 STATS_LOG = VR / "power-on-stats.jsonl"
-READY_FILE = Path.home() / ".vr-ready"
+READY_FILE = Path("/run/vr-ready")
+# Not Path.home()/".vr-ready" -- this runs as root via systemd (no login shell,
+# $HOME may be unset entirely, and even when it resolves it's /root, not
+# /home/iam), and the reader side (vr-launcher-console.sh) runs as root too.
+# /run is root-owned, unambiguous regardless of execution context, and being
+# tmpfs it naturally clears on reboot instead of persisting stale state.
 
 
 def log_stats(verdict, step_reached, details):
@@ -317,6 +323,10 @@ def main():
     # ---- 5/5: controllers ------------------------------------------------
     stats["step_reached"] = 5
     step(5, "¿Los controles están prendidos?")
+    gamepad_present = "045e:028e" in lsusb_output()
+    if gamepad_present:
+        ok("Gamepad tipo Xbox 360 detectado -- sirve de respaldo si falta un control VR")
+        dim("  (fallback parcial, no todos los juegos lo aceptan -- ver docs/pruebas.jsonl T127).")
     if "controllers" in SKIP:
         warn("SALTEADO a pedido (--skip=controllers) -- consecuencia: sin control físico en la sesión.")
     else:
@@ -331,7 +341,27 @@ def main():
         (ok if right_ok else warn)(f"Derecho:   {'prendido y responde' if right_ok else 'NO responde'}")
         if not (left_ok and right_ok):
             warn("Prendé el/los que falten, o corré de nuevo con --skip=controllers si sabés que se perdió uno.")
-            fail.set("Falta prender uno o los dos controles.", "physical")
+            if PRE_LOGIN:
+                # This specific failure is the one worth asking about interactively --
+                # unlike a dead cable (nothing to decide, needs a physical fix), a
+                # missing VR controller might still be playable via the gamepad
+                # fallback just detected above. Same timeout-default philosophy as
+                # the boot selector itself: a real choice, but never a hang.
+                extra = " (hay gamepad de respaldo)" if gamepad_present else " (SIN gamepad de respaldo)"
+                choice = ""
+                print(f"\n  [c] Continuar igual{extra}   [d] Diagnosticar (ir al escritorio)")
+                ready, _, _ = select.select([sys.stdin], [], [], 15)
+                if ready:
+                    choice = sys.stdin.readline().strip().lower()
+                else:
+                    print("  (sin respuesta en 15s -- diagnosticar, default seguro)")
+                if choice == "c":
+                    ok("Seguimos sin los controles VR -- anotado para el launcher.")
+                    SKIP.add("controllers")
+                else:
+                    fail.set("Falta prender uno o los dos controles.", "physical")
+            else:
+                fail.set("Falta prender uno o los dos controles.", "physical")
     if fail.reason:
         return give_up()
 

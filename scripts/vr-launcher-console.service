@@ -1,4 +1,4 @@
-# vr-launcher-console.service -- lighter tty3-based alternative to the
+# vr-launcher-console.service -- lighter tty4-based alternative to the
 # gnome-terminal + GNOME autostart approach (no longer used -- see
 # vr-launcher-console.sh for the reasoning). NOT installed/enabled by default.
 #
@@ -12,9 +12,9 @@
 #   sudo systemctl daemon-reload
 
 [Unit]
-Description=VR launcher console (tty3) -- shows the picker after a real LISTO, otherwise a normal console
-After=graphical.target getty@tty3.service
-Conflicts=getty@tty3.service
+Description=VR launcher console (tty4) -- shows the picker after a real LISTO, otherwise a normal console
+After=graphical.target getty@tty4.service
+Conflicts=getty@tty4.service
 
 [Service]
 ExecStart=/home/iam/Documents/reverb-g2/scripts/vr-launcher-console.sh
@@ -23,7 +23,7 @@ Restart=on-failure
 RestartSec=5
 StandardInput=tty
 StandardOutput=tty
-TTYPath=/dev/tty3
+TTYPath=/dev/tty4
 TTYReset=yes
 TTYVHangup=yes
 TTYVTDisallocate=yes
