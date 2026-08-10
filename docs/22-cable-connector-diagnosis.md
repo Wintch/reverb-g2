@@ -353,3 +353,45 @@ reached this session due to the live degradation. Worth a clean retry once/if th
 is calm (check with a 60s idle `journalctl -k` count first, per the experiment above --
 low single digits is the current "calm" baseline on this unit, zero is not realistic to
 expect).
+
+## Reseating mid-session (2026-08-10) -- `panel.py activate` alone isn't enough once Monado already has a lease
+
+**Symptom**: a real VR session already running fine (Aircar, real 6DoF), then "logo on,
+panel off" appeared mid-session (not at cold boot -- the case every earlier section of
+this doc covers). A visor-end reseat (the standard fix elsewhere in this doc) caused a
+real DP disconnect/reconnect (confirmed in `/sys/class/drm/card0-DP-2/status`, back to
+`connected` ~8s after a `panel.py activate` run right after the reseat) -- but the
+backlight **stayed dark** and Aircar had silently fallen back to a flat 2D window.
+`panel.py activate` itself kept reporting clean success (`exit 0, full activation +
+screen on`) both before and after the reseat -- the HID activation genuinely works, it
+just isn't the layer that's broken here.
+
+**Root cause**: `panel.py`'s HID activation and Monado's DRM lease are two entirely
+separate channels. The `monado-service` process that was already running *before* the
+reseat had already taken a lease on the old DP-2 connector instance -- the physical
+disconnect/reconnect invalidated that lease, but the already-running compositor has no
+way to notice and never re-acquires a fresh one. Re-running `panel.py activate` fixes
+the physical panel/backlight power state, but does nothing for a compositor that's still
+holding a dead lease handle -- hence logo on, DP shows `connected` again, EDID
+fingerprint still matches, and yet nothing is actually being scanned out to the panel.
+
+**Fix, and the sequence that matters** (order-dependent -- skipping step 4 is exactly
+what leaves the backlight dark even though every earlier step reports success):
+
+1. Reseat the cable physically (visor end, as elsewhere in this doc).
+2. Wait for `/sys/class/drm/card0-DP-2/status` (or whichever connector is the headset)
+   to read `connected` again -- can take a few seconds, don't assume instant.
+3. `./scripts/panel.py activate` -- the HID layer, powers the panel back on.
+4. **Kill the old session** -- `monado-service`, Steam, and the game process, plus
+   `rm -f /run/user/1000/monado_comp_ipc` -- this is the step that's easy to skip
+   because everything up to here already looks successful.
+5. `./scripts/jack-in-wayland.sh` from scratch, against the now-healthy DP link, to get
+   a genuinely fresh DRM lease.
+
+**General lesson**: any physical hotplug event (reseat, unplug/replug, cable wiggle)
+that happens *while Monado is already running* needs a full Monado restart, not just a
+panel re-activation -- the two failure classes ("panel never got the HID command" vs.
+"compositor's lease is stale") look identical from the outside (logo on, panel dark) but
+need different fixes. Don't assume `panel.py activate` alone settles a backlight-dark
+report without first checking whether a session was already active when the physical
+event happened.
