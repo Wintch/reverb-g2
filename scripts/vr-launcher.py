@@ -90,10 +90,29 @@ DEFAULT_GAME = "Aircar"
 def bring_up_monado():
     print("=== subiendo Monado ===")
     IPC_SOCKET.unlink(missing_ok=True)  # SIGKILL de una corrida anterior no limpia esto
-    r = subprocess.run(
-        [str(VR / "jack-in-wayland.sh"), MODE, TRACKING],
-        capture_output=True, text=True, timeout=60,
-    )
+    # 180s, no 60s -- encontrado en vivo 2026-08-10: jack-in-wayland.sh's propio
+    # peor caso (10s de poll de DP + hasta 3 intentos de ~50s cada uno con 3s de
+    # settle entre reintentos) puede superar los 166s. Con 60s, un TimeoutExpired
+    # sin capturar tiraba todo el launcher abajo a mitad de un reintento legitimo
+    # y dejaba un monado-service huerfano corriendo (subprocess.run mata al hijo
+    # directo en el timeout, pero setsid dentro de jack-in-wayland.sh ya habia
+    # desacoplado a monado-service de ese proceso).
+    try:
+        r = subprocess.run(
+            [str(VR / "jack-in-wayland.sh"), MODE, TRACKING],
+            capture_output=True, text=True, timeout=180,
+        )
+    except subprocess.TimeoutExpired as e:
+        print(f"jack-in-wayland.sh no termino en 180s -- abortando y limpiando.")
+        if e.stdout:
+            print(e.stdout if isinstance(e.stdout, str) else e.stdout.decode(errors="replace"))
+        # pgrep + kill, not pkill -- matches jack-in-wayland.sh's own convention
+        # elsewhere in this project (pkill isn't consistently available/safe here).
+        pids = subprocess.run(["pgrep", "-f", "monado[-]service"], capture_output=True, text=True).stdout.split()
+        for pid in pids:
+            subprocess.run(["kill", "-9", pid])
+        IPC_SOCKET.unlink(missing_ok=True)
+        return False
     print(r.stdout)
     if r.returncode != 0 or not IPC_SOCKET.exists():
         print("jack-in-wayland.sh no dejo el socket de Monado listo.")

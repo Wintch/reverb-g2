@@ -1,0 +1,21 @@
+{"iso_time": "2026-08-09T21:14:33-0300", "verdict": "TE NECESITO", "step_reached": 1, "reason": "El cable est\u00e1 reconectando solo sin llegar a agarrar bien.", "part": null}
+{"iso_time": "2026-08-09T21:42:21-0300", "verdict": "TE NECESITO", "step_reached": 1, "reason": "El cable est\u00e1 reconectando solo sin llegar a agarrar bien.", "part": null}
+{"iso_time": "2026-08-09T21:59:24-0300", "verdict": "TE NECESITO", "step_reached": 1, "reason": "El cable est\u00e1 reconectando solo sin llegar a agarrar bien.", "part": null}
+{"iso_time": "2026-08-09T22:27:35-0300", "verdict": "TE NECESITO", "step_reached": 1, "reason": "Nada responde y no hay reintentos -- el conector puede no estar bien asentado.", "part": null}
+{"iso_time": "2026-08-09T23:12:09-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true}
+{"iso_time": "2026-08-09T23:14:41-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true}
+{"iso_time": "2026-08-09T23:30:37-0300", "verdict": "TE NECESITO", "step_reached": 5, "reason": "Falta prender uno o los dos controles.", "part": null}
+{"iso_time": "2026-08-09T23:44:50-0300", "verdict": "TE NECESITO", "step_reached": 5, "reason": "Falta prender uno o los dos controles.", "part": null}
+{"iso_time": "2026-08-09T23:55:47-0300", "verdict": "TE NECESITO", "step_reached": 5, "reason": "Falta prender uno o los dos controles.", "part": null}
+{"iso_time": "2026-08-10T00:04:58-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": false}
+{"iso_time": "2026-08-10T00:19:46-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": true}
+{"iso_time": "2026-08-10T00:24:48-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": true}
+{"iso_time": "2026-08-10T00:28:46-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": true}
+{"iso_time": "2026-08-10T00:36:28-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": true}
+{"iso_time": "2026-08-10T00:42:43-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": true}
+{"iso_time": "2026-08-10T00:45:37-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": true}
+{"iso_time": "2026-08-10T00:50:25-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": true}
+{"iso_time": "2026-08-10T01:06:08-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": false}
+{"iso_time": "2026-08-10T01:29:48-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": true}
+{"iso_time": "2026-08-10T13:04:56-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": false}
+{"iso_time": "2026-08-10T14:02:34-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": false}

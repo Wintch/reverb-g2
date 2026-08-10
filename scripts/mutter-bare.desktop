@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Mutter (bare, no shell)
+Comment=Test session: mutter --wayland --no-x11 --display-server with no gnome-shell UI -- checks whether it still offers the G2's DRM lease. If it doesn't work, log out and pick "GNOME on Wayland" instead.
+Exec=/usr/local/bin/mutter-bare-session.sh
+TryExec=/usr/local/bin/mutter-bare-session.sh
+Type=Application
+DesktopNames=mutter-bare

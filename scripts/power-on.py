@@ -379,7 +379,7 @@ def main():
     # ---- Verdict -----------------------------------------------------------
     stats["step_reached"] = 5
     controllers_ok = "controllers" not in SKIP
-    log_stats("LISTO", 5, {"mode": MODE, "tracking": TRACKING, "pre_login": PRE_LOGIN, "controllers_ok": controllers_ok})
+    log_stats("LISTO", 5, {"mode": MODE, "tracking": TRACKING, "pre_login": PRE_LOGIN, "controllers_ok": controllers_ok, "gamepad_present": gamepad_present})
     print(f"\n{C_BOLD}=== Veredicto ==={C_RESET}")
     if PRE_LOGIN:
         # Run from a bare console (multi-user.target), before any desktop session
@@ -393,18 +393,25 @@ def main():
         # vr-launcher.py automatically or leave the normal classic desktop
         # alone -- only written here, on a real LISTO, never on a failure path
         # (give_up() explicitly removes it first, see there).
-        # Third field tells vr-launcher-console.sh whether it's safe to auto-open
-        # the VR launcher menu, or whether this should behave like an ordinary
-        # Linux boot instead -- headset ready but no controllers isn't "launch a
-        # VR game automatically", it's "let the human decide from the desktop"
+        # Third and fourth fields tell vr-launcher-console.sh whether it's safe to
+        # auto-open the VR launcher menu, or whether this should behave like an
+        # ordinary Linux boot instead. Headset ready but no controllers AND no
+        # gamepad is "let the human decide from the desktop" -- but a gamepad
+        # alone is enough to launch (Aircar and others already run on gamepad
+        # input only, docs/pruebas.jsonl T127) so don't force a manual desktop
+        # detour just because the VR controllers specifically are off.
         # (see vr-launcher-console.sh for the actual branch).
-        READY_FILE.write_text(f"{MODE} {TRACKING} {'1' if controllers_ok else '0'}\n")
+        READY_FILE.write_text(
+            f"{MODE} {TRACKING} {'1' if controllers_ok else '0'} {'1' if gamepad_present else '0'}\n"
+        )
         print(f"{C_OK}{C_BOLD}LISTO.{C_RESET} Hardware verificado, sin login todavía.")
         print("  Andá al login y elegí 'GNOME' bajo la lista de Wayland (no X11, no KWin).")
         if controllers_ok:
             print(f"  {C_BOLD}Poné el casco{C_RESET} -- una vez logueado, el launcher se abre solo y levanta el juego.")
+        elif gamepad_present:
+            print("  Sin controles VR, pero hay gamepad de respaldo -- el launcher se abre solo igual.")
         else:
-            print("  Sin controles todavía -- una vez logueado vas a caer al escritorio normal, sin auto-launch.")
+            print("  Sin controles ni gamepad todavía -- una vez logueado vas a caer al escritorio normal, sin auto-launch.")
         print("  Subiendo a graphical.target en 5s...")
         time.sleep(5)
         run(["systemctl", "isolate", "graphical.target"], timeout=15)
