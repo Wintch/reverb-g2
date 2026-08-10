@@ -1,0 +1,56 @@
+# vr-boot-selector.service -- NOT installed/enabled by default. This file is a
+# reference to review and install by hand, deliberately, not something this
+# project auto-applies. See scripts/vr-boot-selector.sh for the dry-run-safe
+# script it runs.
+#
+# Runs the boot selector on tty1 -- the SAME console sddm.service claims under
+# graphical.target (mirrored exactly: same Conflicts=/After= pairing, same
+# TTYPath idiom), because tty1 is the only getty started by default and the
+# one console a human physically at the machine will actually see at boot.
+# A selector on tty2 would be invisible unless someone knew to press
+# Ctrl+Alt+F2 -- caught by a dedicated safety review before this was ever
+# installed, see docs/pruebas.jsonl and the plan this came from.
+#
+# getty@tty2 is left as the always-available recovery shell (explicitly
+# enabled below, not left to logind's on-demand autovt) -- if this unit ever
+# hangs or misbehaves, Ctrl+Alt+F2 always gets a normal login prompt to fix
+# it from, independent of whatever this unit is doing on tty1.
+#
+# Install (only after testing scripts/vr-boot-selector.sh by hand first):
+#   sudo cp scripts/vr-boot-selector.service /etc/systemd/system/
+#   sudo systemctl enable getty@tty2.service
+#   sudo systemctl enable vr-boot-selector.service
+#
+# Requires the default boot target to be multi-user.target for the "minimal
+# services" goal to actually hold -- that's a SEPARATE, bigger decision
+# (sudo systemctl set-default multi-user.target), not bundled into this file.
+# Without that change, this unit would just add a selector on tty1 alongside
+# whatever else is already running -- not wrong, just not minimal, and it
+# WOULD then compete with sddm.service for tty1 (both Conflicts=/After=
+# getty@tty1.service, but nothing arbitrates between the two of THEM) --
+# don't install this without also planning the target change, even if you
+# apply that change later as its own separate step.
+#
+# Uninstall / undo:
+#   sudo systemctl disable vr-boot-selector.service
+#   sudo rm /etc/systemd/system/vr-boot-selector.service
+#   sudo systemctl set-default graphical.target   # if that was changed too
+
+[Unit]
+Description=HP Reverb G2 boot selector (auto-diagnostic vs normal graphical login)
+After=multi-user.target getty@tty1.service
+Conflicts=getty@tty1.service
+
+[Service]
+ExecStart=/home/iam/Documents/reverb-g2/scripts/vr-boot-selector.sh 10
+Type=idle
+Restart=no
+StandardInput=tty
+StandardOutput=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+
+[Install]
+WantedBy=multi-user.target

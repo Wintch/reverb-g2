@@ -49,10 +49,11 @@ def log_stats(verdict, step_reached, details):
         pass
 
 SKIP = set()
+PRE_LOGIN = "--pre-login" in sys.argv
 for a in sys.argv[1:]:
     if a.startswith("--skip="):
         SKIP.add(a.split("=", 1)[1])
-POSITIONAL = [a for a in sys.argv[1:] if not a.startswith("--skip=")]
+POSITIONAL = [a for a in sys.argv[1:] if not a.startswith("--skip=") and a != "--pre-login"]
 MODE = POSITIONAL[0] if len(POSITIONAL) > 0 else "1"
 TRACKING = POSITIONAL[1] if len(POSITIONAL) > 1 else "3dof"
 
@@ -88,8 +89,16 @@ def dim(msg):
     print(f"    {C_DIM}{msg}{C_RESET}")
 
 
-def run(cmd, **kw):
-    return subprocess.run(cmd, capture_output=True, text=True, **kw)
+def run(cmd, timeout=10, **kw):
+    # A wedged USB controller (plausible given tonight's own findings) could hang
+    # any of lsusb/udevadm/journalctl indefinitely -- on a bare pre-login console
+    # that's the only process running, so a hang here is a dead machine, not just
+    # a slow check. Bounded by default; callers needing longer (drmprops polling,
+    # the self-repair sleep loop) pass their own timeout explicitly.
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, **kw)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(cmd, returncode=124, stdout="", stderr="timeout")
 
 
 def lsusb_output():
@@ -168,7 +177,10 @@ def main():
     dim("Esto corre en tu monitor normal, no en el casco -- todavia no hay nada que ponerte.")
 
     def give_up():
-        """One step failed -- print the verdict now, log it, and stop -- don't start the next step."""
+        """One step failed -- print the verdict now, log it, and stop -- don't start the next step.
+        In --pre-login mode this MUST still hand off to graphical.target: otherwise a
+        single disconnected cable (the exact class of thing this whole project debugs)
+        dead-ends the console forever, with nobody remote to recover it."""
         log_stats("TE NECESITO" if fail.kind == "physical" else "HAY QUE COMPRAR",
                    stats["step_reached"], {"reason": fail.reason, "part": fail.part})
         print(f"\n{C_BOLD}=== Veredicto ==={C_RESET}")
@@ -178,6 +190,10 @@ def main():
         else:
             print(f"{C_BAD}{C_BOLD}HAY QUE COMPRAR.{C_RESET} {fail.reason}")
             print(f"  Pieza: {fail.part} -- ver docs/26-diagnostic-toolkit-and-buying-guide.md para el link.")
+        if PRE_LOGIN:
+            print("  Volviendo al login gráfico en 5s (Ctrl+C para quedarte en esta consola)...")
+            time.sleep(5)
+            run(["systemctl", "isolate", "graphical.target"], timeout=15)
 
     # ---- 1/5: USB census ----------------------------------------------
     stats["step_reached"] = 1
@@ -330,10 +346,22 @@ def main():
 
     # ---- Verdict -----------------------------------------------------------
     stats["step_reached"] = 5
-    log_stats("LISTO", 5, {"mode": MODE, "tracking": TRACKING})
+    log_stats("LISTO", 5, {"mode": MODE, "tracking": TRACKING, "pre_login": PRE_LOGIN})
     print(f"\n{C_BOLD}=== Veredicto ==={C_RESET}")
-    print(f"{C_OK}{C_BOLD}LISTO.{C_RESET} Arrancando la sesión real (modo {MODE}, tracking {TRACKING})...")
-    os.execv(str(VR / "jack-in-wayland.sh"), [str(VR / "jack-in-wayland.sh"), MODE, TRACKING])
+    if PRE_LOGIN:
+        # Run from a bare console (multi-user.target), before any desktop session
+        # exists -- there's no Wayland session here to launch into yet. Real VR
+        # launch still needs the one validated path: SDDM -> "GNOME" (Wayland),
+        # logged in by a human. Not automated -- no autologin path has ever been
+        # tested for this project, don't invent one live tonight.
+        print(f"{C_OK}{C_BOLD}LISTO.{C_RESET} Hardware verificado, sin login todavía.")
+        print("  Andá al login y elegí 'GNOME' bajo la lista de Wayland (no X11, no KWin).")
+        print("  Subiendo a graphical.target en 5s...")
+        time.sleep(5)
+        run(["systemctl", "isolate", "graphical.target"], timeout=15)
+    else:
+        print(f"{C_OK}{C_BOLD}LISTO.{C_RESET} Arrancando la sesión real (modo {MODE}, tracking {TRACKING})...")
+        os.execv(str(VR / "jack-in-wayland.sh"), [str(VR / "jack-in-wayland.sh"), MODE, TRACKING])
 
 
 if __name__ == "__main__":
