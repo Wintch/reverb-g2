@@ -31,6 +31,7 @@ if (Path.home() / "vr" / "monado").is_dir():
     VR = Path.home() / "vr"
 
 STATS_LOG = VR / "power-on-stats.jsonl"
+READY_FILE = Path.home() / ".vr-ready"
 
 
 def log_stats(verdict, step_reached, details):
@@ -191,6 +192,12 @@ def main():
             print(f"{C_BAD}{C_BOLD}HAY QUE COMPRAR.{C_RESET} {fail.reason}")
             print(f"  Pieza: {fail.part} -- ver docs/26-diagnostic-toolkit-and-buying-guide.md para el link.")
         if PRE_LOGIN:
+            # Explicitly clear this on every failure path -- the autostart entry
+            # on the other side only opens vr-launcher.py automatically if this
+            # file says the LAST run was a real LISTO. A stale file from a
+            # previous successful run must not leak into a session that starts
+            # right after a failed one.
+            READY_FILE.unlink(missing_ok=True)
             print("  Volviendo al login gráfico en 5s (Ctrl+C para quedarte en esta consola)...")
             time.sleep(5)
             run(["systemctl", "isolate", "graphical.target"], timeout=15)
@@ -354,8 +361,16 @@ def main():
         # launch still needs the one validated path: SDDM -> "GNOME" (Wayland),
         # logged in by a human. Not automated -- no autologin path has ever been
         # tested for this project, don't invent one live tonight.
+        #
+        # READY_FILE is how the post-login side (a GNOME autostart entry,
+        # ~/.config/autostart/vr-launcher.desktop) knows whether to open
+        # vr-launcher.py automatically or leave the normal classic desktop
+        # alone -- only written here, on a real LISTO, never on a failure path
+        # (give_up() explicitly removes it first, see there).
+        READY_FILE.write_text(f"{MODE} {TRACKING}\n")
         print(f"{C_OK}{C_BOLD}LISTO.{C_RESET} Hardware verificado, sin login todavía.")
         print("  Andá al login y elegí 'GNOME' bajo la lista de Wayland (no X11, no KWin).")
+        print("  Una vez adentro, el launcher se abre solo y trata de levantar el juego.")
         print("  Subiendo a graphical.target en 5s...")
         time.sleep(5)
         run(["systemctl", "isolate", "graphical.target"], timeout=15)

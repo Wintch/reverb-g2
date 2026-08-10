@@ -19,6 +19,7 @@ runs is unreliable/dangerous.
 
   ./scripts/vr-launcher.py [mode] [3dof|6dof]   (passed through to jack-in-wayland.sh)
 """
+import select
 import subprocess
 import sys
 from pathlib import Path
@@ -50,15 +51,29 @@ def bring_up_monado():
     return True
 
 
+def read_choice_with_timeout(prompt, timeout):
+    """Same philosophy as vr-boot-selector.sh's own a/m timeout: give a real
+    choice, but don't require one -- proceed with the known-good default
+    (option 2, Aircar) if nobody answers in time. This is what "arma todo
+    para lanzar apps en vr" (auto keeps going, doesn't just wait forever)
+    actually means once hardware is already confirmed healthy."""
+    print(prompt, end="", flush=True)
+    ready, _, _ = select.select([sys.stdin], [], [], timeout)
+    if ready:
+        return sys.stdin.readline().strip()
+    print(f"\n  (sin respuesta en {timeout}s -- sigo con la opcion 2, Aircar)")
+    return "2"
+
+
 def main():
     print("==================================================")
     print("  VR launcher")
     print("==================================================")
     print("  [1] Player 360/VR180 (contenido de prueba)")
-    print("  [2] Juego de Steam (por ahora solo Aircar, confirmado que anda bien)")
+    print("  [2] Juego de Steam (por ahora solo Aircar, confirmado que anda bien) -- default")
     print("  [3] Juego que no es de Steam (todavia no armado)")
     print()
-    choice = input("Elegí [1/2/3]: ").strip()
+    choice = read_choice_with_timeout("Elegí [1/2/3], 15s -> Aircar: ", 15)
 
     if choice == "3":
         print("Opcion 3 todavia no tiene nada real conectado -- no hay ningun juego")
