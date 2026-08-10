@@ -52,24 +52,32 @@ for _i in $(seq 1 "$WAIT_MAX"); do
         # launch must run as the real user -- Steam (and anything reading
         # the user's own config/session) must not run as root.
         #
-        # XDG_RUNTIME_DIR/WAYLAND_DISPLAY explicit, not inherited -- a bare
-        # `runuser -u X --` from a root service (no --login) doesn't reliably
-        # get the PAM/logind-populated session environment a real interactive
-        # login gets, even though the socket itself already exists on disk
-        # (that's all the [-S ...] check above proves). Same bug class as the
-        # $HOME-under-set-u crash found earlier tonight: something a real
-        # login shell provides for free, silently missing one hop removed
-        # from it. Without these, Monado's compositor can fail to reach
-        # mutter's Wayland socket even though everything LOOKS ready.
-        # XDG_SESSION_TYPE=wayland too -- jack-in-wayland.sh has its own real
-        # sanity check on this exact variable (not cosmetic, see there), and
-        # it's just as absent from a bare runuser as the other two. Found
-        # live 2026-08-10 by reproducing the failure with a minimal env -i
-        # instead of guessing -- the first fix (RUNTIME_DIR+DISPLAY alone)
-        # LOOKED plausible but still failed identically until this was added.
-        exec runuser -u "$VR_USER" -- env XDG_RUNTIME_DIR="/run/user/1000" WAYLAND_DISPLAY="wayland-0" \
-            XDG_SESSION_TYPE="wayland" \
-            python3 "$HERE/vr-launcher.py" "${MODE:-1}" "${TRACKING:-3dof}"
+        # systemd-run --scope, NOT runuser -- found live 2026-08-10 (T136):
+        # runuser wraps the command in a PAM/logind LOGIN SESSION scope, and
+        # systemd tears that whole scope down (killing every process still in
+        # it) the instant its leader (vr-launcher.py) exits -- regardless of
+        # whether children are still running. vr-launcher.py exits on purpose
+        # right after handing off ("lanzado en background, no espera"), so
+        # monado-service and Steam were being killed the moment it returned --
+        # confirmed in jack-in-wayland.log: a real BEGIN_SESSION, then
+        # "Server exiting: '0'" at the exact same second runuser's PAM session
+        # closed in the journal. `setsid` inside jack-in-wayland.sh doesn't
+        # escape this -- it changes the kernel process session (job control),
+        # not the systemd cgroup the login-session teardown acts on.
+        # `systemd-run --scope` instead creates its own transient scope that
+        # is NOT tied to any login session -- systemd keeps it (and everything
+        # in it) alive as long as the cgroup isn't empty, which is exactly
+        # "as long as Monado/Steam are still running", regardless of whether
+        # vr-launcher.py itself has already exited.
+        #
+        # Explicit env, same reasoning as before: systemd-run --uid= doesn't
+        # build a login-like environment the way runuser does, so nothing
+        # (not even HOME/USER) can be assumed present.
+        exec systemd-run --quiet --scope --uid="$VR_USER" \
+            --setenv=HOME="/home/$VR_USER" --setenv=USER="$VR_USER" --setenv=LOGNAME="$VR_USER" \
+            --setenv=XDG_RUNTIME_DIR="/run/user/1000" --setenv=WAYLAND_DISPLAY="wayland-0" \
+            --setenv=XDG_SESSION_TYPE="wayland" --setenv=DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/1000/bus" \
+            -- python3 "$HERE/vr-launcher.py" "${MODE:-1}" "${TRACKING:-3dof}"
     fi
     sleep 1
 done
