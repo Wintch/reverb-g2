@@ -39,8 +39,15 @@ VR_USER="iam"
 
 for _i in $(seq 1 "$WAIT_MAX"); do
     if [ -f "$READY_FILE" ] && [ -S "/run/user/1000/wayland-0" ]; then
-        read -r MODE TRACKING < "$READY_FILE"
+        read -r MODE TRACKING CTRL_OK < "$READY_FILE"
         rm -f "$READY_FILE"  # one-shot
+        if [ "${CTRL_OK:-1}" != "1" ]; then
+            # Headset's fine, controllers aren't -- don't auto-launch a VR menu
+            # that leads nowhere good. Behave like an ordinary Linux boot: leave
+            # the human at a normal console/desktop to decide by hand.
+            echo "vr-launcher-console: casco listo pero sin controles -- sin auto-launch, consola normal."
+            exec /sbin/agetty tty4 linux
+        fi
         # The console/TTY handling above needs root, but the actual app
         # launch must run as the real user -- Steam (and anything reading
         # the user's own config/session) must not run as root.

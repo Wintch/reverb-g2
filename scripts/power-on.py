@@ -65,12 +65,17 @@ MODE = POSITIONAL[0] if len(POSITIONAL) > 0 else "1"
 TRACKING = POSITIONAL[1] if len(POSITIONAL) > 1 else "3dof"
 
 TTY = sys.stdout.isatty()
-C_OK = "\033[1;32m" if TTY else ""
+# Bright green throughout for anything that isn't a fail/warn signal -- this
+# mostly runs on a bare VT before login, styled to read like a kiosk boot
+# screen. C_BAD (red) and C_WARN (yellow) are untouched on purpose: those
+# carry real meaning (something needs attention) and must stay visually
+# distinct from "everything's fine" green, cosmetics shouldn't blur that.
+C_OK = "\033[1;92m" if TTY else ""
 C_BAD = "\033[1;31m" if TTY else ""
 C_WARN = "\033[1;33m" if TTY else ""
-C_STEP = "\033[1;36m" if TTY else ""
+C_STEP = "\033[1;92m" if TTY else ""
 C_DIM = "\033[2m" if TTY else ""
-C_BOLD = "\033[1m" if TTY else ""
+C_BOLD = "\033[1;92m" if TTY else ""
 C_RESET = "\033[0m" if TTY else ""
 
 DEV_IDS = ["03f0:0580", "045e:0659", "04b4:6504", "04b4:6506", "0bda:4c15"]
@@ -340,30 +345,20 @@ def main():
         (ok if left_ok else warn)(f"Izquierdo: {'prendido y responde' if left_ok else 'NO responde'}")
         (ok if right_ok else warn)(f"Derecho:   {'prendido y responde' if right_ok else 'NO responde'}")
         if not (left_ok and right_ok):
-            warn("Prendé el/los que falten, o corré de nuevo con --skip=controllers si sabés que se perdió uno.")
-            if PRE_LOGIN:
-                # This specific failure is the one worth asking about interactively --
-                # unlike a dead cable (nothing to decide, needs a physical fix), a
-                # missing VR controller might still be playable via the gamepad
-                # fallback just detected above. Same timeout-default philosophy as
-                # the boot selector itself: a real choice, but never a hang.
-                extra = " (hay gamepad de respaldo)" if gamepad_present else " (SIN gamepad de respaldo)"
-                choice = ""
-                print(f"\n  [c] Continuar igual{extra}   [d] Diagnosticar (ir al escritorio)")
-                ready, _, _ = select.select([sys.stdin], [], [], 15)
-                if ready:
-                    choice = sys.stdin.readline().strip().lower()
-                else:
-                    print("  (sin respuesta en 15s -- diagnosticar, default seguro)")
-                if choice == "c":
-                    ok("Seguimos sin los controles VR -- anotado para el launcher.")
-                    SKIP.add("controllers")
-                else:
-                    fail.set("Falta prender uno o los dos controles.", "physical")
-            else:
-                fail.set("Falta prender uno o los dos controles.", "physical")
-    if fail.reason:
-        return give_up()
+            # Never blocks -- only the headset itself (steps 1-4) can stop the user.
+            # Missing controllers are treated as temporary/non-fatal: they (or a
+            # gamepad) can be connected later, same as on Windows. One real caveat,
+            # said explicitly so it's not a silent surprise mid-session: THIS stack's
+            # VR-controller hot-add doesn't work yet (docs/pruebas.jsonl T043) --
+            # unlike Windows, connecting one after the session has already started
+            # won't make Monado see it. Plug in before jack-in-wayland.sh actually
+            # launches, or restart the session once it's on.
+            extra = " -- hay gamepad de respaldo" if gamepad_present else " -- sin gamepad de respaldo tampoco"
+            warn(f"Sigue sin controles por ahora{extra}. No bloquea, arrancamos igual.")
+            dim("Se pueden prender/conectar después -- pero el hot-plug de controles VR todavía no anda en")
+            dim("este stack (a diferencia de Windows): si los conectás con la sesión ya arrancada, Monado no")
+            dim("los va a ver hasta la próxima vez que arranque.")
+            SKIP.add("controllers")
 
     # ---- Bonus: everything else on the USB bus, for context ---------------
     print(f"\n{C_STEP}▸ Otros dispositivos USB de la PC (contexto, no bloquea nada){C_RESET}")
@@ -383,7 +378,8 @@ def main():
 
     # ---- Verdict -----------------------------------------------------------
     stats["step_reached"] = 5
-    log_stats("LISTO", 5, {"mode": MODE, "tracking": TRACKING, "pre_login": PRE_LOGIN})
+    controllers_ok = "controllers" not in SKIP
+    log_stats("LISTO", 5, {"mode": MODE, "tracking": TRACKING, "pre_login": PRE_LOGIN, "controllers_ok": controllers_ok})
     print(f"\n{C_BOLD}=== Veredicto ==={C_RESET}")
     if PRE_LOGIN:
         # Run from a bare console (multi-user.target), before any desktop session
@@ -397,10 +393,18 @@ def main():
         # vr-launcher.py automatically or leave the normal classic desktop
         # alone -- only written here, on a real LISTO, never on a failure path
         # (give_up() explicitly removes it first, see there).
-        READY_FILE.write_text(f"{MODE} {TRACKING}\n")
+        # Third field tells vr-launcher-console.sh whether it's safe to auto-open
+        # the VR launcher menu, or whether this should behave like an ordinary
+        # Linux boot instead -- headset ready but no controllers isn't "launch a
+        # VR game automatically", it's "let the human decide from the desktop"
+        # (see vr-launcher-console.sh for the actual branch).
+        READY_FILE.write_text(f"{MODE} {TRACKING} {'1' if controllers_ok else '0'}\n")
         print(f"{C_OK}{C_BOLD}LISTO.{C_RESET} Hardware verificado, sin login todavía.")
         print("  Andá al login y elegí 'GNOME' bajo la lista de Wayland (no X11, no KWin).")
-        print("  Una vez adentro, el launcher se abre solo y trata de levantar el juego.")
+        if controllers_ok:
+            print(f"  {C_BOLD}Poné el casco{C_RESET} -- una vez logueado, el launcher se abre solo y levanta el juego.")
+        else:
+            print("  Sin controles todavía -- una vez logueado vas a caer al escritorio normal, sin auto-launch.")
         print("  Subiendo a graphical.target en 5s...")
         time.sleep(5)
         run(["systemctl", "isolate", "graphical.target"], timeout=15)

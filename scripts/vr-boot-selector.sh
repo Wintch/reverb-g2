@@ -30,13 +30,21 @@ set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TIMEOUT="${1:-10}"
 
-echo "=================================================="
-echo "  HP Reverb G2 -- selector de arranque"
-echo "=================================================="
-echo "  [a] Auto    -- diagnostico ahora mismo, en consola, sin escritorio"
-echo "  [m] Manual  -- arranque normal (login grafico), como siempre"
+# Bigger, bolder console font for this bare VT -- purely cosmetic, never fatal:
+# on a real VT it makes the boot screen legible from a few steps away (kiosk-
+# style); in any other context (xterm, ssh, CI) setfont just errors harmlessly.
+setfont Lat15-TerminusBold24x12 >/dev/null 2>&1 || true
+
+G='\033[1;92m'   # bright green -- the "matrix" accent, cosmetic only
+R='\033[0m'
+
+echo -e "${G}=================================================="
+echo -e "  HP Reverb G2 -- selector de arranque"
+echo -e "==================================================${R}"
+echo -e "  ${G}[a] Auto${R}    -- diagnostico ahora mismo, en consola, sin escritorio"
+echo -e "  ${G}[m] Manual${R}  -- arranque normal (login grafico), como siempre"
 echo
-echo "  Sin elegir nada en ${TIMEOUT}s -> Manual (default seguro)."
+echo "  Sin elegir nada en ${TIMEOUT}s -> Auto (default)."
 echo
 
 CHOICE=""
@@ -48,7 +56,7 @@ case "$CHOICE" in
         echo "=== MANUAL -- arranque grafico normal ==="
         ;;
     *)
-        echo "=== AUTO (default, o timeout) -- corriendo power-on.py --pre-login ==="
+        echo -e "${G}=== AUTO (default, o timeout) -- corriendo power-on.py --pre-login ===${R}"
         # No 'exec' here on purpose: power-on.py already hands off to
         # graphical.target on both its success AND failure paths, but this
         # wrapper is the actual safety net if the script crashes before
