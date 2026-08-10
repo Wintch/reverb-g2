@@ -51,7 +51,25 @@ for _i in $(seq 1 "$WAIT_MAX"); do
         # The console/TTY handling above needs root, but the actual app
         # launch must run as the real user -- Steam (and anything reading
         # the user's own config/session) must not run as root.
-        exec runuser -u "$VR_USER" -- python3 "$HERE/vr-launcher.py" "${MODE:-1}" "${TRACKING:-3dof}"
+        #
+        # XDG_RUNTIME_DIR/WAYLAND_DISPLAY explicit, not inherited -- a bare
+        # `runuser -u X --` from a root service (no --login) doesn't reliably
+        # get the PAM/logind-populated session environment a real interactive
+        # login gets, even though the socket itself already exists on disk
+        # (that's all the [-S ...] check above proves). Same bug class as the
+        # $HOME-under-set-u crash found earlier tonight: something a real
+        # login shell provides for free, silently missing one hop removed
+        # from it. Without these, Monado's compositor can fail to reach
+        # mutter's Wayland socket even though everything LOOKS ready.
+        # XDG_SESSION_TYPE=wayland too -- jack-in-wayland.sh has its own real
+        # sanity check on this exact variable (not cosmetic, see there), and
+        # it's just as absent from a bare runuser as the other two. Found
+        # live 2026-08-10 by reproducing the failure with a minimal env -i
+        # instead of guessing -- the first fix (RUNTIME_DIR+DISPLAY alone)
+        # LOOKED plausible but still failed identically until this was added.
+        exec runuser -u "$VR_USER" -- env XDG_RUNTIME_DIR="/run/user/1000" WAYLAND_DISPLAY="wayland-0" \
+            XDG_SESSION_TYPE="wayland" \
+            python3 "$HERE/vr-launcher.py" "${MODE:-1}" "${TRACKING:-3dof}"
     fi
     sleep 1
 done

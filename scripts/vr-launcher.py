@@ -2,14 +2,13 @@
 """vr-launcher.py -- "our own launcher", the single entry point between the boot
 selector's OK verdict and something actually running in the headset.
 
-Deliberately very simple for now: one screen, 3 options. Brings up Monado first
-(jack-in-wayland.sh), then routes to whichever option was picked. Each option is
-a thin proxy today, not a real content browser -- there's exactly one concrete
-target wired up per category so far (the 360/VR180 player with its test content,
-and Aircar as the one Steam VR title confirmed working well per
-docs/23-game-compatibility.md: "first game I'd call 99%"). Option 3 (non-Steam
-games) is an honest stub, not built -- nothing non-Steam has been identified or
-tested yet, don't fake a working option.
+Brings up Monado first (jack-in-wayland.sh), then routes to whichever option was
+picked: the 360/VR180 player, or one of the Steam VR titles confirmed working in
+docs/23-game-compatibility.md's "Working" table (GAMES below is that table,
+copied by hand -- keep them in sync if a game's status there changes). Aircar
+stays the timeout default: user's own verdict was "first game I'd call 99%".
+The non-Steam option is an honest stub, not built -- nothing non-Steam has been
+identified or tested yet, don't fake a working option.
 
 Prerequisite this script does NOT and CANNOT automate: any Steam VR title's
 launch options must already be set once via Steam's own UI (Properties ->
@@ -32,8 +31,25 @@ if (Path.home() / "vr" / "monado").is_dir():
 MODE = sys.argv[1] if len(sys.argv) > 1 else "1"
 TRACKING = sys.argv[2] if len(sys.argv) > 2 else "3dof"
 
-AIRCAR_APPID = "1073390"
 IPC_SOCKET = Path("/run/user/1000/monado_comp_ipc")
+
+# name, Steam AppID -- from docs/23-game-compatibility.md's "Working" table only.
+# Order matches the doc (roughly discovery order, not a ranking).
+GAMES = [
+    ("International Space Station Tour VR", "797200"),
+    ("Aliens Attack VR", "932190"),
+    ("Cosmic Flow: A Relaxing VR Experience", "1267950"),
+    ("VRSailing by BeTomorrow", "579050"),
+    ("SUPERHOT VR", "617830"),
+    ("VRChat", "438100"),
+    ("Propagation VR", "1363430"),
+    ("Aircar", "1073390"),
+    ("Google Earth VR", "348250"),
+    ("Dead Herring VR", "1498490"),
+    ("Tank Mechanic Simulator VR", "1463010"),
+    ("SafeZoneVR", "1701090"),
+]
+DEFAULT_GAME = "Aircar"
 
 
 def bring_up_monado():
@@ -51,36 +67,92 @@ def bring_up_monado():
     return True
 
 
-def read_choice_with_timeout(prompt, timeout):
+def find_steamapps_dir():
+    """A handful of real, common install locations -- Steam itself has used
+    different ones across distros/versions. None found -> None, callers must
+    fall back to showing the full catalog unfiltered rather than crash."""
+    for candidate in (
+        Path.home() / ".steam" / "debian-installation" / "steamapps",
+        Path.home() / ".steam" / "steam" / "steamapps",
+        Path.home() / ".local" / "share" / "Steam" / "steamapps",
+    ):
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def installed_games():
+    """"mapeamos lo que hay" -- don't just trust the hardcoded catalog, check
+    which of those AppIDs are actually installed right now (an
+    appmanifest_<id>.acf really exists), so an uninstalled/removed title never
+    shows up as pickable. Falls back to the full catalog if steamapps can't be
+    found at all -- better to offer something than nothing."""
+    steamapps = find_steamapps_dir()
+    if steamapps is None:
+        return list(GAMES)
+    return [
+        (name, appid) for name, appid in GAMES
+        if (steamapps / f"appmanifest_{appid}.acf").exists()
+    ]
+
+
+def read_choice_with_timeout(prompt, timeout, default_choice, default_label):
     """Same philosophy as vr-boot-selector.sh's own a/m timeout: give a real
-    choice, but don't require one -- proceed with the known-good default
-    (option 2, Aircar) if nobody answers in time. This is what "arma todo
-    para lanzar apps en vr" (auto keeps going, doesn't just wait forever)
-    actually means once hardware is already confirmed healthy."""
+    choice, but don't require one -- proceed with a known-good default if
+    nobody answers in time. This is what "arma todo para lanzar apps en vr"
+    (auto keeps going, doesn't just wait forever) actually means once hardware
+    is already confirmed healthy."""
     print(prompt, end="", flush=True)
     ready, _, _ = select.select([sys.stdin], [], [], timeout)
     if ready:
         return sys.stdin.readline().strip()
-    print(f"\n  (sin respuesta en {timeout}s -- sigo con la opcion 2, Aircar)")
-    return "2"
+    print(f"\n  (sin respuesta en {timeout}s -- sigo con {default_label})")
+    return default_choice
 
 
 def main():
+    games = installed_games()
+
     print("==================================================")
     print("  VR launcher")
     print("==================================================")
     print("  [1] Player 360/VR180 (contenido de prueba)")
-    print("  [2] Juego de Steam (por ahora solo Aircar, confirmado que anda bien) -- default")
-    print("  [3] Juego que no es de Steam (todavia no armado)")
+    default_n = None
+    for i, (name, _appid) in enumerate(games):
+        n = 2 + i
+        tag = "  -- default" if name == DEFAULT_GAME else ""
+        print(f"  [{n}] {name}{tag}")
+        if name == DEFAULT_GAME:
+            default_n = n
+    stub_n = 2 + len(games)
+    print(f"  [{stub_n}] Juego que no es de Steam (todavia no armado)")
     print()
-    choice = read_choice_with_timeout("Elegí [1/2/3], 15s -> Aircar: ", 15)
 
-    if choice == "3":
-        print("Opcion 3 todavia no tiene nada real conectado -- no hay ningun juego")
+    if default_n is None:
+        # DEFAULT_GAME isn't installed right now -- fall back to the player,
+        # never point the unattended default at a game that can't launch.
+        default_n, default_label = 1, "el player 360"
+    else:
+        default_label = DEFAULT_GAME
+    choice = read_choice_with_timeout(
+        f"Elegí [1-{stub_n}], 15s -> {default_label}: ", 15, str(default_n), default_label,
+    )
+
+    if choice == str(stub_n):
+        print(f"Opcion {stub_n} todavia no tiene nada real conectado -- no hay ningun juego")
         print("no-Steam identificado ni probado todavia. No finjo que anda.")
         return
 
-    if choice not in ("1", "2"):
+    try:
+        choice_n = int(choice)
+    except ValueError:
+        choice_n = -1
+
+    if choice_n == 1:
+        selected = ("__player__", None)
+    elif 2 <= choice_n <= stub_n - 1:
+        selected = games[choice_n - 2]
+    else:
         print("Opcion invalida.")
         return
 
@@ -88,12 +160,13 @@ def main():
         print("No lanzo nada -- Monado no quedo listo.")
         sys.exit(1)
 
-    if choice == "1":
+    name, appid = selected
+    if name == "__player__":
         print("=== lanzando el player 360/VR180 ===")
         subprocess.Popen([str(VR / "play360.sh"), str(VR / "media" / "test-equirect.jpg"), "-s"])
     else:
-        print(f"=== lanzando Aircar (Steam appid {AIRCAR_APPID}) ===")
-        subprocess.Popen(["steam", "-applaunch", AIRCAR_APPID])
+        print(f"=== lanzando {name} (Steam appid {appid}) ===")
+        subprocess.Popen(["steam", "-applaunch", appid])
 
     print("  lanzado (queda corriendo en background, este script no espera a que cierre).")
 
