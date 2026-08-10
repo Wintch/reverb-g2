@@ -358,13 +358,25 @@ expect).
 
 **Symptom**: a real VR session already running fine (Aircar, real 6DoF), then "logo on,
 panel off" appeared mid-session (not at cold boot -- the case every earlier section of
-this doc covers). A visor-end reseat (the standard fix elsewhere in this doc) caused a
-real DP disconnect/reconnect (confirmed in `/sys/class/drm/card0-DP-2/status`, back to
-`connected` ~8s after a `panel.py activate` run right after the reseat) -- but the
-backlight **stayed dark** and Aircar had silently fallen back to a flat 2D window.
-`panel.py activate` itself kept reporting clean success (`exit 0, full activation +
-screen on`) both before and after the reseat -- the HID activation genuinely works, it
-just isn't the layer that's broken here.
+this doc covers). A reconnect at the **PC-side USB connector specifically** (confirmed
+after the fact -- initially assumed to be the usual visor-end reseat, corrected once the
+user clarified it wasn't) caused a real DP disconnect/reconnect (confirmed in
+`/sys/class/drm/card0-DP-2/status`, back to `connected` ~8s after a `panel.py activate`
+run right afterward) -- but the backlight **stayed dark** and Aircar had silently fallen
+back to a flat 2D window. `panel.py activate` itself kept reporting clean success
+(`exit 0, full activation + screen on`) both before and after -- the HID activation
+genuinely works, it just isn't the layer that's broken here.
+
+**Open anomaly, not resolved, flagged per this doc's own meta-lesson above**: per "The
+measured anatomy" section, DP and USB take *separate* physical paths from the PC into
+the breakout box, only combining at the visor-end connector -- a pure PC-side USB
+reconnect shouldn't, on that diagram, touch DP's state at all. It did anyway. Couldn't be
+isolated cleanly that same session (a known, unrelated USB2 storm -- companion+audio
+cycling every ~12s, the T052-T053 pattern -- was running concurrently and muddies the
+kernel log). Worth a clean repeat sometime with the storm calm and DP status monitored
+live, specifically to find out whether a plain PC-end USB reconnect is really enough on
+its own, or whether the breakout box's DP and USB lines are physically closer/coupled
+than the anatomy diagram currently shows.
 
 **Root cause**: `panel.py`'s HID activation and Monado's DRM lease are two entirely
 separate channels. The `monado-service` process that was already running *before* the
@@ -378,7 +390,9 @@ fingerprint still matches, and yet nothing is actually being scanned out to the 
 **Fix, and the sequence that matters** (order-dependent -- skipping step 4 is exactly
 what leaves the backlight dark even though every earlier step reports success):
 
-1. Reseat the cable physically (visor end, as elsewhere in this doc).
+1. Reseat/reconnect the cable physically (visor end is the historically-proven fix
+   elsewhere in this doc; a PC-end USB reconnect worked once too, see the anomaly note
+   above -- not yet established as reliably equivalent).
 2. Wait for `/sys/class/drm/card0-DP-2/status` (or whichever connector is the headset)
    to read `connected` again -- can take a few seconds, don't assume instant.
 3. `./scripts/panel.py activate` -- the HID layer, powers the panel back on.
