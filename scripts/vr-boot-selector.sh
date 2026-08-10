@@ -51,11 +51,32 @@ CHOICE=""
 read -r -t "$TIMEOUT" -n 1 -p "Elegí [a/m]: " CHOICE || true
 echo
 
+# SDDM autologin, conditional on the choice -- found live 2026-08-09/10: the
+# user's actual expectation is that Auto means "no login prompt at all,
+# straight through to the game", and the visual login screen is specifically
+# a Manual-mode thing. SDDM reads its config fresh each time it starts
+# (hasn't started yet at this point in multi-user.target), so writing/
+# removing this drop-in right here, before either branch hands off, is
+# enough -- no cross-boot staleness, this script runs on every single boot.
+# Session=gnome-wayland.desktop specifically (not gnome.desktop) because
+# that name exists ONLY under /usr/share/wayland-sessions/ -- gnome.desktop
+# exists in BOTH wayland-sessions/ and xsessions/, and this project's own
+# hard-won lesson (CLAUDE.md) is that picking the wrong "GNOME" entry (X11,
+# or the wrong Wayland one) breaks the DRM lease Monado needs. If SDDM can't
+# honor autologin for any reason, it just falls back to its normal login
+# screen -- this can't lock anyone out.
+SDDM_AUTOLOGIN_CONF=/etc/sddm.conf.d/98-vr-autologin.conf
 case "$CHOICE" in
     m|M)
+        rm -f "$SDDM_AUTOLOGIN_CONF"
         echo "=== MANUAL -- arranque grafico normal ==="
         ;;
     *)
+        # Hardcoded "iam", not `logname` -- nobody's logged in yet at this
+        # point (bare console, pre-graphical.target), logname would have
+        # nothing real to report. Matches vr-launcher-console.sh's own
+        # VR_USER="iam" convention.
+        printf '[Autologin]\nUser=iam\nSession=gnome-wayland.desktop\n' > "$SDDM_AUTOLOGIN_CONF"
         echo -e "${G}=== AUTO (default, o timeout) -- corriendo power-on.py --pre-login ===${R}"
         # No 'exec' here on purpose: power-on.py already hands off to
         # graphical.target on both its success AND failure paths, but this

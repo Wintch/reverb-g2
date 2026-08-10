@@ -18,6 +18,7 @@ runs is unreliable/dangerous.
 
   ./scripts/vr-launcher.py [mode] [3dof|6dof]   (passed through to jack-in-wayland.sh)
 """
+import os
 import select
 import subprocess
 import sys
@@ -32,6 +33,40 @@ MODE = sys.argv[1] if len(sys.argv) > 1 else "1"
 TRACKING = sys.argv[2] if len(sys.argv) > 2 else "3dof"
 
 IPC_SOCKET = Path("/run/user/1000/monado_comp_ipc")
+
+# Verbose logging, per the docs/27 survey -- turned ON here (not left as a
+# someday-maybe) because that's what was asked for after the survey landed.
+# Rule from docs/23's own trap: anything that needs to reach the actual
+# Proton/game process must be exported BEFORE the `steam` client starts, not
+# set via per-game Launch Options -- so this has to happen here, in the env
+# passed to the Popen call, not anywhere downstream. XR_LOADER_DEBUG applies
+# to any OpenXR client (the 360 player too, not just Steam titles) since
+# it's read by libopenxr_loader.so regardless of who links it.
+LOG_DIR = VR / "logs"
+LOG_DIR.mkdir(exist_ok=True)
+GAME_ENV = {
+    **os.environ,
+    "XR_LOADER_DEBUG": "all",
+    "PROTON_LOG": "1",
+    "PROTON_LOG_DIR": str(LOG_DIR),
+    # Proton's own base set (+timestamp,+pid,+tid,+seh,+unwind,+debugstr,
+    # +loaddll,+mscoree) plus +env/+file per docs/27 -- setting this
+    # ourselves, since an explicit WINEDEBUG here would otherwise just get
+    # overridden by whichever value Proton auto-picks when PROTON_LOG=1 sees
+    # nothing already set.
+    "WINEDEBUG": "+timestamp,+pid,+tid,+seh,+unwind,+debugstr,+loaddll,+mscoree,+env,+file",
+    "DXVK_LOG_LEVEL": "info",
+    "VKD3D_DEBUG": "warn",
+}
+# NOT automated here, on purpose: Unreal Engine's own -log/-LogCmds flags
+# (Aircar) need to reach the game binary itself, which only happens via
+# Steam's per-game Launch Options UI -- docs/23's "Trap: Steam launch
+# options edited on disk don't exist" already established that editing
+# localconfig.vdf directly while Steam runs is unreliable/dangerous. Add
+# "-log -LogCmds=\"LogInit Verbose, LogHMD Verbose\"" there by hand if
+# UE-level detail is ever needed. Unity's Player.log needs no flag at all --
+# it's already produced every run at ~/.config/unity3d/<Company>/<Product>/
+# Player.log, just go read it.
 
 # name, Steam AppID -- from docs/23-game-compatibility.md's "Working" table only.
 # Order matches the doc (roughly discovery order, not a ranking).

@@ -48,6 +48,12 @@ for _i in $(seq 1 "$WAIT_MAX"); do
             echo "vr-launcher-console: casco listo pero sin controles -- sin auto-launch, consola normal."
             exec /sbin/agetty tty4 linux
         fi
+        # Switch the visible console to tty4 -- with autologin now landing
+        # straight on the (empty) GNOME desktop on tty1, the picker below
+        # would otherwise run invisibly until someone manually hits
+        # Ctrl+Alt+F4. Requested live 2026-08-10: the menu should be what's
+        # actually on screen in auto mode, not the idle desktop.
+        chvt 4 2>/dev/null || true
         # The console/TTY handling above needs root, but the actual app
         # launch must run as the real user -- Steam (and anything reading
         # the user's own config/session) must not run as root.
