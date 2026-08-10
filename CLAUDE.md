@@ -1,5 +1,92 @@
 # Context for the 90Hz lab agent
 
+> ## NEW MILESTONE (2026-08-10, ~01:35) — full unattended boot-to-VR pipeline shipped and verified end-to-end with real hardware; four real bugs found and fixed in one night. Read `docs/pruebas.jsonl` T108-T141.
+>
+> **The headline result: this machine now boots, diagnoses its own hardware, and lands
+> in a real VR session with zero manual steps beyond turning the headset/controllers on
+> and picking Auto at a boot prompt** — no forced full-desktop login, no manual script
+> invocation. Chain, each link independently verified live tonight: bare-console boot
+> selector (tty1, SDDM never even starts if Auto is picked and the "not ready" verdict
+> holds) → `power-on.py --pre-login`'s 5-step hardware gate → SDDM **autologin**
+> straight into "GNOME on Wayland" (no password prompt in Auto mode anymore — Manual
+> mode still shows the normal login) → the visible console auto-switches to tty4
+> (`chvt 4`) → a picker of the 12 confirmed-working titles from `docs/23`, filtered live
+> against what's actually installed → a real Steam VR session that survives the picker
+> process exiting. User-confirmed physically working end to end more than once tonight,
+> including after a cold reboot with controllers already on (no manual intervention at
+> all): "corrio bien, todo de 10."
+>
+> **Four real, independent bugs were found and fixed to get there — worth remembering
+> as a pattern, not just individually:**
+>
+> 1. **Controllers used to hard-block the whole pipeline; now only the headset itself
+>    can.** A missing/off VR controller used to produce `TE NECESITO` and stop
+>    everything. Since this project's own controller **hot-add doesn't exist**
+>    (confirmed weeks earlier) and Windows-style hot-plug tolerance is aspirational
+>    here, not real — the fix was to stop pretending it's blocking: `power-on.py` now
+>    warns and continues, and passes a `controllers_ok` flag through to the tty4 picker
+>    so it can fall back to an ordinary desktop (no forced VR menu) instead of forcing a
+>    broken session.
+> 2. **`jack-in-wayland.sh` needs `XDG_SESSION_TYPE=wayland` explicitly** — a real,
+>    non-cosmetic sanity check inside the script that a bare `runuser`/`systemd-run`
+>    invocation (no login shell) never provides. Found by reproducing the exact failing
+>    invocation with `env -i` instead of guessing from the (StandardOutput=tty-hidden)
+>    symptom alone.
+> 3. **`runuser` was silently killing Monado/Steam the instant the launcher script that
+>    started them exited.** `runuser` wraps its command in a PAM/logind **login session**
+>    scope, and systemd/logind explicitly tears that whole scope down — killing every
+>    process still in it, `setsid` or not — the moment the tracked leader process exits.
+>    Since the launcher is *designed* to exit right after handing off ("lanzado en
+>    background, no espera"), this killed the VR session every single time, confirmed by
+>    watching `monado-service` log a clean `Server exiting: '0'` at the exact same
+>    second `runuser`'s PAM session closed in the journal. Fixed with `systemd-run
+>    --scope` instead — a transient scope with no login-session ties, which systemd
+>    keeps alive as long as its cgroup isn't empty, not tied to whether the process that
+>    created it is still running. A follow-up guess (forcing group membership via
+>    `--property=SupplementaryGroups=`) turned out to be invalid syntax for a `--scope`
+>    unit ("Unknown assignment") and unnecessary — `systemd-run --scope --uid=<user>`
+>    already resolves full supplementary groups correctly on its own, verified directly
+>    rather than assumed.
+> 4. **A cable reseat mid-session needs a full Monado restart, not just
+>    `panel.py activate`.** `panel.py`'s HID panel-activation channel and Monado's DRM
+>    lease are two separate things — a physical reseat that happens *while Monado is
+>    already running* invalidates its lease without the running compositor ever finding
+>    out, so the panel stays dark even though the HID activation itself keeps reporting
+>    clean success. Full sequence now documented in `docs/22`'s newest section. **A real
+>    self-correction along the way, worth keeping as a pattern**: the first write-up of
+>    this assumed a visor-end reseat (this doc's own historically-proven fix); the user
+>    later clarified it was actually a PC-end USB reconnect that fixed it that time —
+>    corrected in the same doc rather than left wrong, and flagged as a genuinely open
+>    anomaly (the measured cable anatomy says DP and USB shouldn't be coupled that way)
+>    instead of quietly absorbed as if it were expected.
+>
+> **Debuggability lesson that paid for itself repeatedly tonight**: `StandardOutput=tty`
+> on the tty4 systemd service hid every error from `journalctl`, which slowed down each
+> of the fixes above. A permanent `2>>/tmp/vr-launcher-console-debug.log` redirect on the
+> launcher's stderr (cheap, harmless, already committed) turned the next bug
+> (`Unknown assignment`) into an instant, certain diagnosis instead of another guess.
+>
+> **Also shipped, lower-stakes**: a Matrix-style cosmetic pass on the boot console
+> (`setfont` to a larger bold font, bright-green accents — red/warn colors deliberately
+> untouched, cosmetics shouldn't blur a real fail signal); the tty4 picker's game catalog
+> expanded from just Aircar to all 12 titles confirmed in `docs/23`, filtered live
+> against `appmanifest_<id>.acf` so an uninstalled title can't show up as pickable;
+> verbose logging (`XR_LOADER_DEBUG=all`, `PROTON_LOG=1` + extended `WINEDEBUG`,
+> `DXVK_LOG_LEVEL`, `VKD3D_DEBUG`) turned on for every Steam/player launch, logs landing
+> in `~/vr/logs/` — surveyed first in `docs/27` before enabling anything, per the user's
+> own instruction not to disable/change logging sources without checking they're useless
+> first. **Confirmed live, in passing, that Aircar specifically needs a real
+> Xbox-360-shaped gamepad** (`045e:028e`) for its own input — the VR controllers alone
+> aren't enough for that title; hot-plugging the gamepad in mid-session worked fine with
+> no restart needed (unlike VR controllers, which still can't hot-add).
+>
+> **Parked, not started**: whether a bare `mutter --wayland` session (no `gnome-shell`
+> UI) could keep the DRM lease while shedding gnome-shell's own weight — mutter itself
+> implements the lease protocol, gnome-shell is a UI layer built on top of it as a
+> library, not a separate swappable backend, so this is plausible but genuinely
+> untested. See the parked idea note; don't touch the now-working GNOME+autologin+tty4
+> pipeline while investigating it.
+
 > ## NEW MILESTONE (2026-08-08, ~05:25) — 4 real games confirmed working end-to-end with real 6DoF head tracking; the "cable dying again" panic was a missing file, not hardware; a real xrizer patch shipped. Read `docs/pruebas.jsonl` T068-T081.
 >
 > **Biggest single finding: the night's recurring "USB2/DP is dying, cable is degrading
