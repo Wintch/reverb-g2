@@ -1,5 +1,74 @@
 # Next step
 
+> **UPDATE (2026-08-11, everyday system session, closing on a wear-pattern hardware
+> failure). Second machine (`brunduk`, X11+KDE, unpatched 550.163.01 -- separate box from
+> the lab, see `docs/29-source-map.md` for the topology) re-verifying the same 6DoF
+> constellation series described below.**
+>
+> **The black controller-tracking-camera-frame problem is confirmed cross-machine, not
+> lab-specific.** Same symptom exactly: `Controller Blob Cam N` panels stayed empty (zero
+> blobs, `constellation_tracker_camera_push_blobs` logged "0 blobs" continuously -- frames
+> ARE arriving, the pipeline isn't stalled, they just never contain a detectable blob).
+> Traced one real candidate mechanism in `wmr_camera.c`: `update_expgain()` only ever runs
+> from SLAM-tagged frames (`if (slam_tracking_frame) { ... update_expgain(cam, frames);
+> ... }`), and its own loop only actually *writes* new exposure/gain to hardware for
+> camera indices where `frames[i] != NULL` -- but on THIS machine `slam_cam_count ==
+> tcam_count == 4` (confirmed via `Basalt with cam_count=4` in the log), so that specific
+> index-gap theory does **not** explain the bug here the way `NEXT-STEP.md`'s "separate
+> hardware slots" framing suggested -- worth re-examining `wmr_camera_set_exposure_gain`'s
+> `location` parameter and whatever `WMR_CAMERAS`/frametype-specific addressing exists at
+> the USB protocol level instead of the cam-index array, since the count-based theory is
+> ruled out on this hardware. Set up `WMR_LOG=trace` to capture the real embedded
+> per-frame exposure value (`wmr_camera.c`'s existing `"Camera frame seq ... exposure
+> %u"` trace line, paired with the preceding `"... frame type %u"` line) correlated by
+> frametype, to settle whether controller-tagged frames genuinely read exposure=0 --
+> **never got a clean run with that logging on before the hardware gave out (see below)**,
+> so this remains the concrete next step, not yet executed.
+>
+> **Real jack-in.sh bugs found and fixed on the everyday system** (that script isn't
+> tracked in this repo, but worth knowing if `jack-in-wayland.sh` shares any of these
+> patterns): `wake_panel()`'s success check trusted `xrandr`'s `DP-0` status, which does
+> NOT reliably reflect a real direct-mode lease on this NVIDIA setup -- confirmed twice, a
+> probe reached "Started vblank event thread!" (a real working lease) while `xrandr` kept
+> reporting disconnected, so the old code declared failure and `kill -9`'d a working
+> service. Fixed to check the log instead. Also found and fixed: the portrait monitor's
+> output name had silently drifted from `DP-3` to `DP-1` at some point, so the rotation
+> reassert had been a no-op for a while; and `wake_panel()`'s own throwaway probe was
+> inheriting the caller's `XRT_DEBUG_GUI=1` and opening a real GUI window for a process
+> that gets killed seconds later, fixed by forcing `XRT_DEBUG_GUI=0` on just that probe.
+> Separately, confirmed a real kernel WARN in `nv_drm_revoke_modeset_permission`
+> (`nvidia_drm`, driver 550.163.01) triggered by `kill -9`ing a process that still holds
+> modeset permission from a failed `vkAcquireXlibDisplayEXT` -- non-fatal (driver/GPU stay
+> healthy) but worth a `dmesg -T` check if `jack-in-wayland.sh` ever hits a similar
+> kill-a-half-acquired-lease pattern. Full detail: `docs/22-cable-connector-diagnosis.md`'s
+> newest section.
+>
+> **Session ended on the exact wear pattern this project already documented, not a new
+> mystery.** After one full successful 6DoF session (SLAM + both controllers registered
+> with the constellation tracker, real camera images, zero regression) and several
+> service restarts to chase the exposure bug with heavier logging, the display lease
+> started failing consistently (`vkAcquireXlibDisplayEXT: VK_ERROR_UNKNOWN`, 5 times in a
+> row) with everything else clean: USB 5/5, brick 12V LED confirmed lit, WMR activation
+> report sent every time, a free CRTC confirmed via `xrandr --listproviders` (3 of 4 in
+> use). One attempt also logged a new, never-seen-before firmware-side error verbatim from
+> the headset itself (`hololens_handle_debug`, not Monado-generated):
+> `"ERROR: CommandSet st 0, cmd 0, reqCmd 23"` -- didn't recur on the next attempt, so
+> likely a symptom of the same degrading link rather than a separate bug. This matches
+> `docs/22`'s own established finding that **panel on/off power cycling is what wears the
+> marginal visor-end contact** -- this session did roughly 8-10 full service
+> starts/stops. Stopped cycling the hardware once the pattern was recognized rather than
+> continuing to chase it as a software bug. **Physical steps for whoever resumes this**:
+> let the hardware rest, then a plain PC-end USB reconnect or visor-end reseat per the
+> existing ladder before assuming anything code-side regressed.
+>
+> **External research, for the record (2026-08-11):** looked for prior art on G2 90Hz +
+> 6DoF while stuck -- see `docs/29-source-map.md`'s new "External leads checked, found
+> unreliable or inconclusive" section. Short version: nothing panned out. Project-VR's
+> 6DoF/EKF claim inherits this project's own pre-existing skepticism about that repo (no
+> photo/video evidence, same false-positive shape already caught here 9 times). An old
+> OpenHMD issue for a different WMR headset hit a strikingly similar unresolved firmware
+> error (same message-type number, 23) but was never solved there either.
+
 > **UPDATE (2026-08-11, ~05:15, closing a very long session). Read `docs/pruebas.jsonl`
 > T145-T148.**
 >
