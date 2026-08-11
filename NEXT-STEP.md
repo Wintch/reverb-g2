@@ -38,6 +38,19 @@
 > Cost about 15 minutes of "why is nothing happening" tonight before being caught.
 >
 > See `docs/pruebas.jsonl` T151 for the full trace and verification numbers.
+>
+> **Environment this was developed and verified on, stated explicitly so it isn't confused
+> with the lab's setup**: everyday system, Debian 13, **KDE Plasma on X11**, NVIDIA
+> `550.163.01` proprietary **unpatched**, headset panel at **60 Hz (the official/stock
+> rate)**, launched via this machine's own local `jack-in.sh`. The lab machine is a
+> *separate* Debian 13 install on the same physical box -- **GNOME on Wayland**, NVIDIA
+> `595.71.05` open-modules **patched**, headset panel at **90 Hz**, launched via
+> `jack-in-wayland.sh`. These four axes (X11/Wayland, KDE/GNOME, 60/90 Hz,
+> unpatched/patched driver) move together as one bundle between the two installs, not
+> independently -- everything in this update is confirmed on the 60Hz/X11/KDE/unpatched
+> combination only. Plan: run a simple real game here first (still 60Hz/X11), then revalidate
+> the whole 0012-0017 series on dev's 90Hz/Wayland/GNOME/patched combination before treating
+> either environment as fully proven for the other.
 
 > **UPDATE (2026-08-11, everyday-system session #2): 0015's controller exposure fix is now
 > correct and physically verified live -- real LED tracking, real RANSAC-PnP pose solves.

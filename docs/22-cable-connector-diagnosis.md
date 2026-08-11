@@ -7,6 +7,25 @@ from reseating one connector.** Everything below was measured that night, not re
 somewhere. The final resolution is at the end; the anatomy comes first because it's what
 makes the diagnosis mechanical instead of guesswork.
 
+This document has grown, session by session, into more measured detail about this specific
+unit's failure modes than the authors have found gathered anywhere else for a G2 — which is
+exactly why it stays this long and this specific instead of getting summarized down over
+time. If you only need to match today's symptom to a known cause and fix, start with the
+index below; the full sections underneath are where the evidence and the reasoning live.
+
+## Known fault signatures — quick index
+
+| Symptom | Root cause | Fix | Section |
+|---|---|---|---|
+| DP dead (no logo), USB still 5/5 | Visor-end connector marginal contact | Reseat visor-end connector | "The failure timeline, and the three wrong verdicts" |
+| USB2 branch dead, kernel says `error -71` / "Maybe the USB cable is bad?" | Same visor-end marginal contact, different pin subset | Reseat visor-end connector | "The measured anatomy", point 3 |
+| Companion enumerates but HID reads return `-1`, device number climbs fast | Marginal contact knocked loose specifically by panel activation's power transition | Reseat; minimize activation/panel-power cycling until the rev2A cable is in | "Recurrence, same night (T044, T043)" |
+| No logo at cold boot, but USB is a healthy 5/5 and nothing was touched | **Not a fault** — the G2 never raises DP hotplug at cold power-on on any OS; needs the WMR activation HID sequence first | Run `./scripts/panel.py activate` before concluding the panel is dead | "T046's verdict revised... (T047-T049)" |
+| Image glued to the face, video/audio otherwise perfect | A USB hiccup killed Monado's `wmr_run_thread` (IMU reader); Monado never restarts it | Restart the session; confirm with `grep "Exiting reading thread"` | "The tracking freeze (T045)" |
+| "Logo on, panel off" appearing **mid-session** after any physical reconnect | Monado's compositor is still holding a DRM lease invalidated by the reconnect — HID activation succeeds but nothing is scanned out | Full session restart (kill `monado-service` + fresh launch), not just `panel.py activate` | "Reseating mid-session (2026-08-10)" |
+| Audio cutting in/out, worse the more concurrent load (video+audio > video alone > idle) | Same marginal visor contact; PipeWire recreates the ALSA sink on every USB2 cycle | Same as the marginal-contact fixes above; no audio-specific fix needed | "Load correlates with disconnect frequency... (T052-T057)" |
+| `reqCmd 23` (`hololens_handle_debug`) and/or `non-desktop: 0` on the headset's RandR connector, correlating with heavy service-restart cycling | USB-C-to-USB-A adapter fault (validated single-session, 2026-08-11) — **a different physical part than the visor-end contact above** | Swap the USB-C-to-USB-A adapter, not a visor-end reseat | "Hardware change log for the reqCmd23/non-desktop:0 cluster" |
+
 ## The measured anatomy
 
 ```
@@ -484,3 +503,97 @@ data, so an incomplete or corrupted read would plausibly report `0` -- rather th
 unrelated new bugs. Not conclusively proven; worth checking `xrandr --prop`'s
 `non-desktop` value as a fast diagnostic the next time this cluster of symptoms recurs,
 before assuming a software regression.
+
+## Hardware change log for the reqCmd23/non-desktop:0 cluster above -- kept verbose on purpose, do not compress
+
+This section exists specifically so that every physical change made while chasing the
+`reqCmd 23`/`non-desktop:0` cluster above stays individually visible, with its own
+timestamp and its own evidence, instead of being folded into a summary paragraph that
+loses the "what changed, exactly when, and what happened right after" thread. New entries
+get appended here, oldest first; nothing above gets shortened to make room.
+
+**2026-08-11, ~evening, same everyday-system session that first logged the cluster above.**
+Change: the USB-C-to-USB-A adapter/connector between the PC and the breakout box was
+physically swapped for a different unit -- the cheapest-parts-first step in the recovery
+order this doc already established (adapter/connector, then the power brick, then the
+rev2A cable, in that order; see the elimination chain elsewhere in this doc for why the
+brick was already ruled out on 2026-08-07). User explicitly flagged the exact moment of
+the swap in the session transcript before doing anything else, which is what makes
+"tracked from there" a clean before/after boundary rather than a guess about when the new
+part actually went in.
+
+From that exact point forward, the same session ran a long, restart-heavy 6DoF
+controller-tracking development block: at least 4 full `monado-service` restarts,
+including two that followed a clean `ninja` rebuild (full relink of `drv_wmr` and the
+constellation tracker), plus one run that drove real `get_tracked_pose` calls via
+`hello_xr` for ~20 seconds. This specific restart-and-rebuild cadence is the same kind of
+cycling the `non-desktop:0` entry above names as the trigger ("after several service
+restarts to chase an unrelated bug") -- so the post-swap period was not a quiet idle
+stretch, it repeated the exact conditions that produced the fault before.
+
+**Result: zero recurrence.** Across every individual run checked (each `jack-in.log` was
+truncated before the next relaunch to keep debug captures clean, so this is several
+separate clean-run checks rather than one continuous multi-hour log, stated plainly as a
+methodology limit) -- no `reqCmd 23`, no `non-desktop:0`, no USB2 branch drop, no hub
+reset, no `LIBUSB_ERROR`, nothing matching any of this cluster's known signatures. Tracking
+itself stayed live and stable the whole time (constellation samples climbing past #11000
+on one controller in the last run alone, reprojection error mostly 0.10-0.18px).
+
+**Status: validated for this specific fault signature, not yet declared permanently
+closed.** One session, however restart-heavy, is not the same evidentiary bar as the
+multi-day/multi-session confirmations this doc holds itself to elsewhere (see the
+T046-T049 sequence above, where a one-session "dead power rail" verdict was corrected the
+very next session). Practical read: **the adapter is the current best explanation for the
+reqCmd23/non-desktop:0 cluster, and the next time this specific session's conditions recur
+(heavy restart cycling) is the real test.** If it recurs anyway, the next suspect in the
+recovery order is still the visor-end connector/cable per the rest of this document, not
+back to the brick (already independently ruled out 2026-08-07) and not this adapter again
+without new evidence against it.
+
+### Conclusions, stated explicitly (not left implicit in the narrative above)
+
+1. **Root cause, best current evidence**: the USB-C-to-USB-A adapter/connector was very
+   likely at least a major contributor to the `reqCmd 23`/`non-desktop:0` cluster logged
+   earlier in this section. This is a **distinct fault class** from the visor-end
+   connector's marginal contact documented in the rest of this doc -- that one produces a
+   different signature (DP dead + USB2 `error -71` + hub resets scaling with panel/HID
+   load) and has its own separately-confirmed fix (reseat). Two independently confirmed
+   physical fault classes on the same unit, not one story with two names.
+2. **Fix, current status**: replacing that adapter. Validated once, under conditions
+   (restart-heavy 6DoF dev session, including full rebuilds) that reliably reproduced the
+   fault before. Strong single-session evidence, not yet cross-session-confirmed.
+3. **Practical consequence for the recovery order**: for the `reqCmd 23`/`non-desktop:0`
+   signature specifically, check/swap the USB-C-to-USB-A adapter **first**, before
+   reaching for a visor-end reseat -- reseating is still the correct first move for the
+   *other* signature (DP dead, USB2 `error -71`, companion/audio dropouts under load).
+   Don't apply one fault class's fix to the other's symptoms; they've now been shown to
+   need different physical parts replaced.
+4. **What would falsify this**: `reqCmd 23` or `non-desktop:0` recurring under a similarly
+   restart-heavy session on the new adapter. If that happens: do not re-suspect the brick
+   (independently ruled out 2026-08-07) and do not swap this same adapter again without
+   new evidence against it specifically -- move to the visor-end connector/cable per the
+   order already established in the rest of this document.
+
+### Updated diagnostic procedure for this signature
+
+Add to the diagnostic ladder near the top of this document: if the symptom is specifically
+`reqCmd 23` (`hololens_handle_debug` in the kernel/dmesg log) or `non-desktop: 0` on the
+headset's own RandR connector (`xrandr --prop`) -- **not** the DP-dead/USB2-`error -71`
+signature the rest of the ladder targets -- the fast first check is which
+USB-C-to-USB-A adapter is currently in use, and whether it's the one validated in this
+section. If it's an older/different adapter, swap it before touching the visor-end
+connector at all; the visor-end reseat procedure elsewhere in this document is for the
+other signature and has not been shown to fix this one.
+
+**Lesson, project rule material, alongside the anomaly-thread lesson earlier in this
+doc**: this fix was a few-dollar adapter, and it likely closed a fault that had already
+cost a full diagnostic session's worth of time (finding, characterizing, and then setting
+aside the `reqCmd 23`/`non-desktop:0` cluster the session before this one). The "cheapest
+parts first" order this doc already uses for hardware recovery isn't just about not
+overspending -- on this project, the cheap part has now paid for itself in saved
+diagnostic time twice (the visor-end reseat cost nothing and replaced a whole night's
+"buy a rev2A cable" verdict; this adapter cost little and replaced what could have become
+another multi-session software-side goose chase). When a cheap, easy-to-swap component
+sits between the machine and a hard-to-reproduce intermittent fault, swap it early and
+rule it out (or in) before spending more diagnostic hours -- don't save the cheap step for
+last just because it feels like the least technically interesting one to try.
