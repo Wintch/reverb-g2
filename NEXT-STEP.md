@@ -1,5 +1,83 @@
 # Next step
 
+> **UPDATE (2026-08-11) — Patch 0014 written, built clean and VERIFIED LIVE the same night.
+> Verbose tracking logs are on. The floor/height question is answered, and it is not what
+> SteamVR does. Read `docs/pruebas.jsonl` T145-T146.**
+>
+> **What 0014 measured, in two clean runs (one restart between them, not a chain):** both
+> came up on attempt 1/3 at `4320x2160@90` with `Using builder wmr` and both controllers
+> registered; the tracker was created over 4 tracking cameras with no devices registered;
+> and the SLAM pose rate was **30.1 Hz without it and 30.0 Hz with it** — no regression,
+> which was the whole question, since the blobwatch chain feeding it runs inside the same
+> realtime USB callback as the SLAM path. Real 6DoF confirmed against a resting baseline:
+> 4.04 m of path and 0.95 m of displacement over 59 s of deliberate movement, versus 2-4 cm
+> of drift with the headset sitting on the table.
+>
+> **One real bug was found in 0014 and fixed before anything consumed it**: the per-camera
+> extrinsics were composed the wrong way round (both `tcams[i]->pose` and the stored
+> `P_ht0_me` needed inverting — `P_A_B` is the placement of B in A's frame). Caught by the
+> printed camera positions being geometrically impossible, not by hardware, and **then
+> confirmed fixed on the next run**: the four cameras now come out symmetric, slightly below
+> eye level and at **negative Z** (in front of the eyes, as OpenXR −Z is forward), with
+> `|pos0−pos1| = 0.1082 m` against the 0.1082 in the headset's own calibration, and
+> `|pos0−pos3| = 0.1369 m` against 0.1371. Before the fix all four sat within ~8 mm of each
+> other, behind the head.
+>
+> **Note on the indices, since the obvious check is wrong:** compare `pos0↔pos3` against
+> HT2 and `pos0↔pos2` against HT3, *not* index-for-index. This code deliberately applies the
+> same HT2/HT3 swap `wmr_hmd_fill_slam_cams_calibration()` already applies — the G2's
+> calibration json has those two extrinsics flipped relative to the order the third and
+> fourth images arrive over USB. An index-for-index check reads as a failure when everything
+> is right.
+>
+> **What to do first, next session, in this order:**
+> 1. Both controllers ON *before* the service starts, then `./preflight.sh` (3/3 or don't
+>    burn a launch).
+> 2. One clean `WMR_CONSTELLATION_CONTROLLERS=1 XRT_DEBUG_GUI=1 ./jack-in-wayland.sh 1
+>    6dof` and check the camera distances above against the config. That closes 0014.
+> 3. **Then: patch 0015** — build the G2's LED model from `wcb->config.leds[]` (parsed
+>    today and thrown away) and register both controllers with
+>    `t_constellation_tracker_add_device`.
+>
+> **Do not chain `monado-service` restarts to "just check again"** — standing rule from the
+> user, and this project's own history (T074) says restart-cycling is itself a trigger for
+> the USB2 fault. One clean run per question.
+>
+> **`det(Q1Jl) == 0` is NOT the divergence signature.** It appeared 859 and 630 times
+> across these two runs with zero divergence in either — max step 3.0 cm in one, and in the
+> other the only large steps were consecutive samples at a normal 33 ms interval, i.e. a
+> fast real movement. Earlier sessions read that message as "Basalt diverged". Check the
+> trajectory for an actual discontinuity before believing it.
+>
+> **Floor/height calibration — the real mechanism, read from the source.** Monado has no
+> floor calibration. The WMR driver does not set `supported.stage`, so
+> `b_space_overseer_legacy_setup()` makes `STAGE == root` (the tracking origin, i.e.
+> wherever the headset was when Basalt initialised), `LOCAL == root + 1.6m` in Y and
+> `LOCAL_FLOOR == root` — with that `1.6` a literal constant in
+> `target_builder_helpers.c`. The floor is *assumed* to sit exactly 1.6 m below the headset
+> at startup. The only knob today is `XRT_TRACKING_ORIGIN_OFFSET_{X,Y,Z}`:
+>
+>     XRT_TRACKING_ORIGIN_OFFSET_Y = (real headset height at startup) - 1.6
+>
+> Two procedures that need no code change: measure the headset height with a tape and set
+> the difference (it must be at that height when `monado-service` starts, since root is
+> pinned there), or run `XRT_DEBUG_GUI=1`, rest the headset on the floor, read Y off the
+> HMD's "Tracked Pose" panel and use its negation — `wh->offset` is exposed as an editable
+> "Pose Offset" in the same GUI, so it can be trimmed live before being fixed as an env
+> var. **Putting the controllers on the floor cannot work until 0017** — they have no
+> position at all before that.
+>
+> **Correction to the 0017 note further down, which says the placeholder has "a hardcoded
+> `y=1.2`":** the real values in this tree are `(-0.2, 1.3, -0.5)` / `(0.2, 1.3, -0.5)` for
+> the controllers and `(0, 1.6, 0)` for head and eyes, in `u_builder_helpers.c`, applied
+> whenever `tracking_origin->type == XRT_TRACKING_TYPE_NONE` — and the *only* assignment of
+> that field anywhere in the tree is the default `NONE` in `u_device.c:341`, so it is active
+> on the WMR path even in 6DoF. This also fully explains the old "controllers appear offset
+> by several metres and only rotate in place" symptom: they are pinned relative to **root**,
+> not to the head, so with SLAM running the apparent error grows with how far you have
+> walked from the SLAM origin. Check this against the fused result in 0017 before blaming
+> the solver.
+
 > **UPDATE (2026-08-09, closing this session) — Patch 0013 PHYSICALLY VERIFIED. The T046
 > connector fault below was transient this time: reconnecting the 12V power brick alone
 > (no visor-end reseat needed) eventually brought connector 137 back up.** With

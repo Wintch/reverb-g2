@@ -124,6 +124,38 @@ else
 fi
 if [ "$DP_UP" = 1 ]; then
     echo "  HMD connector (non-desktop=1) up."
+    # SECOND gate, added 2026-08-11 (T145): the kernel seeing the connector is NOT the
+    # same event as mutter offering it for lease, and Monado only ever asks the
+    # compositor. comp_window_direct_wayland.c does one roundtrip, then accepts the
+    # lease device's first "done" event as final -- if mutter hasn't finished
+    # processing the hotplug at that instant it sends "done" with zero connectors and
+    # Monado gives up immediately ("Found no connectors available for direct mode").
+    # The old 3-attempt retry below was supposed to cover this, but the unattended
+    # boot chain failed all 3 attempts in a row this night with the connector provably
+    # up (drmprops green) -- so poll the compositor side directly instead of retrying
+    # blind. Same query check-lease.sh already uses; counts the bare "connector:" line
+    # (see the note there: grepping "connector: " with a trailing space always gives 0).
+    if command -v wayland-info >/dev/null 2>&1 && [ -n "${WAYLAND_DISPLAY:-}" ]; then
+        LEASE_OK=0
+        for _i in $(seq 1 30); do
+            if wayland-info 2>/dev/null \
+                | awk '/wp_drm_lease_device_v1/{inblk=1} inblk && /^[[:space:]]*connector:[[:space:]]*$/{found=1} /^interface:/ && !/wp_drm_lease_device_v1/{inblk=0} END{exit !found}'; then
+                LEASE_OK=1
+                break
+            fi
+            sleep 0.5
+        done
+        if [ "$LEASE_OK" = 1 ]; then
+            echo "  Compositor offers the connector for lease."
+        else
+            echo "  !! The connector is up in the kernel but the compositor offers ZERO of them" >&2
+            echo "     after 15s -- Monado will fail with 'Found no connectors available'." >&2
+            echo "     KWin does this permanently (never use it); on GNOME/mutter it means the" >&2
+            echo "     hotplug wasn't picked up. Starting Monado anyway so the log records it." >&2
+        fi
+    else
+        echo "  (wayland-info missing or no WAYLAND_DISPLAY -- skipping the compositor-side check)"
+    fi
 else
     echo "  !! The HMD's own connector never came up after activation (waited 10s) --" >&2
     echo "     starting Monado anyway, it will report 'Found no connectors available'" >&2
@@ -135,6 +167,46 @@ if [ "$TRACKING" = "6dof" ]; then
     TRACKING_ENV=(WMR_SLAM=1 "VIT_SYSTEM_LIBRARY_PATH=$BASALT_LIB")
 else
     TRACKING_ENV=(WMR_SLAM=0 WMR_CAMERAS=0)
+fi
+
+# --- Verbose tracking logging (2026-08-11) ------------------------------------------
+# Requested to confirm real movement/tracking rather than inferring it from a session
+# that merely starts. Every name below was read out of this tree's own
+# DEBUG_GET_ONCE_* declarations, not guessed:
+#
+#   XRT_LOG                 global default is WARN -- without this, most of the runtime
+#                           is silent even when something interesting happens.
+#   WMR_LOG                 the G2 driver itself (u_logging.c level names: trace/debug/
+#                           info/warn/error).
+#   SLAM_LOG                Basalt/VIT integration in t_tracker_slam.cpp.
+#   SLAM_WRITE_CSVS +       the objective instrument: writes real pose/timing CSVs. A log
+#   SLAM_CSV_PATH           line saying "tracking started" is not evidence of movement;
+#                           a CSV of poses is. Per-run directory so runs never overwrite
+#                           each other (upstream's default is a bare "evaluation/"
+#                           RELATIVE to the CWD, which would scatter files wherever the
+#                           launcher happened to be).
+#   CONSTELLATION_TRACKER_LOG   no-op until patch 0014 wires a tracker up; set now so the
+#                           first run that HAS one is already verbose.
+#
+# Deliberately NOT enabled here: SLAM_UI=1 (opens its own extra window, only useful with
+# XRT_DEBUG_GUI and can steal focus), CONSTELLATION_TRACKER_RERUN_ENABLE (wants an
+# external rerun.io viewer), and XRT_TRACING (perfetto). Set VR_VERBOSE=0 to turn the
+# whole block off if log volume is ever suspected of perturbing the realtime USB
+# callback -- that would be a real measurement, so keep the switch.
+VERBOSE="${VR_VERBOSE:-1}"
+LOG_ENV=()
+if [ "$VERBOSE" = 1 ]; then
+    SLAM_CSV_DIR="$VR/logs/slam-$(date +%Y%m%d-%H%M%S)"
+    mkdir -p "$SLAM_CSV_DIR"
+    LOG_ENV=(
+        XRT_LOG=debug
+        WMR_LOG=debug
+        SLAM_LOG=debug
+        CONSTELLATION_TRACKER_LOG=debug
+        SLAM_WRITE_CSVS=1
+        "SLAM_CSV_PATH=$SLAM_CSV_DIR/"
+    )
+    echo "Verbose tracking logs ON. Pose CSVs: $SLAM_CSV_DIR"
 fi
 
 echo "Starting Monado (mode $MODE, tracking $TRACKING) via DRM lease... log: $LOG"
@@ -180,6 +252,7 @@ while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
         XRT_COMPOSITOR_LOG=debug \
         XRT_NO_STDIN=1 \
         "${TRACKING_ENV[@]}" \
+        "${LOG_ENV[@]}" \
         WMR_DISPLAY_INIT_SLEEP_SECONDS=2 \
         setsid stdbuf -oL -eL "$SERVICE" < /dev/null > "$LOG" 2>&1 &
 

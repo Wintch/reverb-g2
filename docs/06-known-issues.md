@@ -1,5 +1,49 @@
 # 06 — Known issues and why we're NOT chasing them (with evidence)
 
+## The second environment runs at 60 Hz, and that is CORRECT — don't debug it (2026-08-11)
+
+There are now **two Linux installs on two SSDs, swapped into the same physical machine**.
+They are not equivalent, and the difference is entirely in `patches/nvidia/`:
+
+| | this lab SSD | the other SSD |
+|---|---|---|
+| NVIDIA driver | 595-open **with** `patches/nvidia/0001-0004` | stock binaries, **unpatched** |
+| desktop | GNOME on Wayland | KDE |
+| display path | Wayland DRM lease (`jack-in-wayland.sh`) | X11 direct-mode (`jack-in.sh`) |
+| refresh | **90 Hz** | **60 Hz** |
+
+**The 60 Hz over there is the expected, correct result, not a symptom, and nobody should
+spend a minute debugging it.** Two of the four patches are load-bearing for exactly this:
+
+- **`0004` (bpc)** is the entire 90 Hz fix. Without it the driver clamps the G2 to 6 bpc
+  and the panel stays dark at 90 Hz — that is the whole saga in `docs/13` and `docs/19`.
+  An unpatched driver *cannot* light 90 Hz. 60 Hz is the only mode that will ever work
+  there.
+- **`0002`** is what publishes `wp_drm_lease_device_v1` for HMDs and marks the connector
+  `non-desktop=1`. Without it there is no Wayland lease path at all — and KWin never
+  offers connectors even *with* the patch (measured repeatedly, see `check-lease.sh`).
+  X11 direct-mode is the only possible path on that SSD, which is exactly what is used.
+
+**Corollary, so a red light there is not misread as hardware:** `check-lease.sh`,
+`drmprops`' `non-desktop=1` check, step 3 of `preflight.sh` and all of
+`jack-in-wayland.sh` **cannot** work on the unpatched SSD. They will report failure by
+construction. Do not diagnose the headset with them there.
+
+What the second environment *is* good for: everything that does not touch the display
+path. The 6DoF work (SLAM head tracking, and the constellation/LED controller tracking in
+`patches/monado/0012`+) is cameras over USB plus Monado plus Basalt — driver-agnostic — so
+it can be developed and exercised there at 60 Hz without disturbing the one install where
+90 Hz is validated. Before trusting any result from that machine, check the two things
+this project has already been burned by: that `~/vr/monado` is built from a clean `git am`
+of `patches/monado/` (the drift trap, `docs/pruebas.jsonl` T068) and that
+`~/vr/basalt/build/libbasalt.so` actually exists (T060).
+
+Applying `patches/nvidia/` over there would give it 90 Hz and the lease path too, but it
+is a deliberate decision, not a default: it means replacing the driver with 595-open
+(`bootstrap-lab.sh` refuses to run when a different driver is loaded — the stacks are
+mutually exclusive), and `docs/20` documents that a connected headset can take the KDE
+desktop down with it.
+
 ## Annoying "USB Audio" popup reconnecting every ~30s: silenced, not fixed (2026-08-06)
 
 The headset audio (see below, next section) is still cycling disconnect/reconnect roughly

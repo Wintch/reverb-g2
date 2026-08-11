@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Credits — HP Reverb G2 at 90 Hz on Linux</title>
+<style>
+  :root {
+    --bg: #fbfaf8;
+    --surface: #ffffff;
+    --border: #e2ded7;
+    --ink: #1c1a17;
+    --ink-soft: #56514a;
+    --ink-faint: #857e74;
+    --accent: #1d6f4a;
+    --accent-soft: #eaf3ee;
+    --code-bg: #f2efea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14161a;
+      --surface: #1b1e24;
+      --border: #2c313a;
+      --ink: #e8e6e3;
+      --ink-soft: #b0aca6;
+      --ink-faint: #837e77;
+      --accent: #5bd394;
+      --accent-soft: #17301f;
+      --code-bg: #232830;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14161a;
+    --surface: #1b1e24;
+    --border: #2c313a;
+    --ink: #e8e6e3;
+    --ink-soft: #b0aca6;
+    --ink-faint: #837e77;
+    --accent: #5bd394;
+    --accent-soft: #17301f;
+    --code-bg: #232830;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.65 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .wrap { max-width: 52rem; margin: 0 auto; padding: 4rem 1.25rem 6rem; }
+
+  header { margin-bottom: 3.5rem; }
+  .eyebrow {
+    font-size: .78rem; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--accent); font-weight: 600; margin: 0 0 .9rem;
+  }
+  h1 {
+    font-size: clamp(1.9rem, 5vw, 2.7rem); line-height: 1.15;
+    margin: 0 0 1.1rem; letter-spacing: -.02em; font-weight: 700;
+  }
+  .lede { font-size: 1.09rem; color: var(--ink-soft); margin: 0 0 1rem; max-width: 40rem; }
+
+  h2 {
+    font-size: 1.35rem; margin: 3.2rem 0 1rem; letter-spacing: -.01em;
+    padding-bottom: .5rem; border-bottom: 1px solid var(--border);
+  }
+  h3 { font-size: 1.05rem; margin: 0 0 .35rem; }
+  p { margin: 0 0 1rem; }
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 1.4rem 1.5rem; margin-bottom: 1rem;
+  }
+  .card h3 a { text-decoration: none; }
+  .card h3 a:hover { text-decoration: underline; }
+  .meta {
+    font-size: .8rem; color: var(--ink-faint); margin: 0 0 .8rem;
+    display: flex; flex-wrap: wrap; gap: .4rem .9rem;
+  }
+  .meta code {
+    background: var(--code-bg); padding: .1rem .4rem; border-radius: 4px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .95em;
+  }
+  .used {
+    background: var(--accent-soft); border-left: 3px solid var(--accent);
+    padding: .7rem .9rem; border-radius: 0 6px 6px 0; margin: .9rem 0 0;
+    font-size: .93rem; color: var(--ink-soft);
+  }
+  .used strong { color: var(--ink); font-weight: 600; }
+  .people { font-size: .88rem; color: var(--ink-faint); margin: .9rem 0 0; }
+  .people b { color: var(--ink-soft); font-weight: 600; }
+
+  .note {
+    border: 1px dashed var(--border); border-radius: 10px;
+    padding: 1.1rem 1.3rem; font-size: .9rem; color: var(--ink-soft);
+    margin-top: 1.4rem;
+  }
+  .note code {
+    background: var(--code-bg); padding: .1rem .35rem; border-radius: 4px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .92em;
+  }
+  footer {
+    margin-top: 4rem; padding-top: 1.4rem; border-top: 1px solid var(--border);
+    font-size: .85rem; color: var(--ink-faint);
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">Credits &amp; thanks</p>
+  <h1>None of this is ours alone.</h1>
+  <p class="lede">
+    This project got an HP Reverb G2 running at 90 Hz on Linux, with real 6DoF head
+    tracking and working games. Almost all of the hard parts were already solved by other
+    people, in the open, for free. This page says who, and — specifically — what of theirs
+    we leaned on.
+  </p>
+  <p class="lede">
+    Every name and number below was read out of the actual source trees and patch files,
+    not from memory. How, exactly, is at the bottom.
+  </p>
+</header>
+
+<h2>The runtime</h2>
+
+<div class="card">
+  <h3><a href="https://gitlab.freedesktop.org/monado/monado">Monado</a></h3>
+  <p class="meta"><span>Collabora and contributors</span> <span><code>BSL-1.0</code></span> <span>gitlab.freedesktop.org/monado/monado</span></p>
+  <p>The open-source OpenXR runtime. It is the entire reason a Windows Mixed Reality
+     headset can be spoken to from Linux at all.</p>
+  <div class="used">
+    <strong>What we used:</strong> the <code>wmr</code> driver — HID protocol, camera
+    streaming, display activation, controller input — plus the compositor's Wayland
+    direct-mode path, which is what actually leases the headset's DRM connector and
+    takes the 90 Hz mode. Our fourteen patches are changes <em>to</em> this, not a
+    replacement for any of it.
+  </div>
+  <p class="people"><b>Most changes to the WMR driver, upstream:</b> Jan Schmidt,
+     Jakob Bornecrantz, Mateo de Mayo, Rylie Pavlik, Nima01, Christoph Haag, Moshi Turner,
+     Linus Lüssing, Simon Zeni, Beyley Cardellio, Dan Weatherford, Nova King.</p>
+</div>
+
+<div class="card">
+  <h3><a href="https://gitlab.freedesktop.org/monado/monado/-/tree/main/src/xrt/tracking/constellation">Constellation tracking</a></h3>
+  <p class="meta"><span>in-tree in Monado</span> <span><code>BSL-1.0</code></span></p>
+  <p>Optical tracking of a controller's LED constellation using the headset's own cameras
+     — blob detection, correspondence search, pose solving.</p>
+  <div class="used">
+    <strong>What we used:</strong> all of it. Our 6DoF-controller work is wiring this
+    existing tracker to the G2's cameras and LED model; we are writing the plumbing, not
+    the tracker.
+  </div>
+  <p class="people"><b>Written by:</b> Beyley Cardellio, with a contribution from
+     Christoph Haag. The idea of applying it to WMR specifically comes from Jan Schmidt's
+     <code>dev-constellation-controller-tracking</code> work.</p>
+</div>
+
+<div class="card">
+  <h3><a href="https://gitlab.freedesktop.org/mateosss/basalt">Basalt</a> <span style="font-weight:400;color:var(--ink-faint)">(Monado fork)</span></h3>
+  <p class="meta"><span>fork by Mateo de Mayo</span> <span>original by Vladyslav Usenko and Nikolaus Demmel (TUM)</span> <span><code>BSD-3-Clause</code></span></p>
+  <p>Visual-inertial SLAM. The fork adds the VIT interface Monado talks to.</p>
+  <div class="used">
+    <strong>What we used:</strong> every bit of real 6DoF head tracking in this project.
+    Measured on our hardware: 4.04&nbsp;m of coherent trajectory over 59&nbsp;s of
+    movement, against 2–4&nbsp;cm of drift with the headset sitting still.
+  </div>
+  <p class="people"><b>Most changes:</b> Vladyslav Usenko, Mateo de Mayo, Nikolaus Demmel,
+     Mattis Krauch, Bruno Zanotti, David Schubert.</p>
+</div>
+
+<h2>The application layer</h2>
+
+<div class="card">
+  <h3><a href="https://github.com/KhronosGroup/OpenXR-SDK-Source">OpenXR-SDK-Source</a></h3>
+  <p class="meta"><span>The Khronos Group</span> <span><code>Apache-2.0</code></span> <span>github.com/KhronosGroup/OpenXR-SDK-Source</span></p>
+  <p>The OpenXR loader, and <code>hello_xr</code> — the reference sample.</p>
+  <div class="used">
+    <strong>What we used:</strong> <code>hello_xr</code> is the skeleton our 360°/VR180
+    photo and video player grew out of. Thirteen patches deep, its session handling,
+    action bindings and Vulkan plumbing are still doing the work underneath.
+  </div>
+  <p class="people"><b>Most changes to hello_xr:</b> Rylie Pavlik, utzcoz, Bryce Hutchings,
+     Christoph Haag, Yin Li, Aaron Franke.</p>
+</div>
+
+<div class="card">
+  <h3><a href="https://github.com/Supreeeme/xrizer">xrizer</a></h3>
+  <p class="meta"><span>Supreeeme and contributors</span> <span><code>GPL-3.0</code></span> <span>github.com/Supreeeme/xrizer</span></p>
+  <p>OpenVR reimplemented on top of OpenXR, in Rust.</p>
+  <div class="used">
+    <strong>What we used:</strong> this is what lets real OpenVR games run against Monado
+    without SteamVR. Every game session this project has ever had went through it.
+  </div>
+  <p class="people"><b>Most changes:</b> Shawn Wallace, Sapphire, knah, Mats Huesmann,
+     galister, Orion Moonclaw.</p>
+</div>
+
+<h2>The display path</h2>
+
+<div class="card">
+  <h3><a href="https://github.com/NVIDIA/open-gpu-kernel-modules">NVIDIA open-gpu-kernel-modules</a></h3>
+  <p class="meta"><span>NVIDIA</span> <span><code>MIT / GPL-2.0</code></span> <span>github.com/NVIDIA/open-gpu-kernel-modules</span></p>
+  <p>The open kernel modules. Being able to read <em>and patch</em> the display driver is
+     the only reason the 90 Hz bug was findable at all — on a closed driver this project
+     would have ended at "it doesn't work, we don't know why".</p>
+  <div class="used">
+    <strong>What we used:</strong> the whole modesetting path, and specifically
+    <code>nvkms</code>'s EDID handling, where the colour-depth clamp that kept the panel
+    dark at 90 Hz turned out to live.
+  </div>
+</div>
+
+<div class="card">
+  <h3>The Project-VR patches for 595-open</h3>
+  <p class="meta"><span>Ashish Kumar Singh</span></p>
+  <p>Three patches this project builds directly on top of: DisplayID/DSC/VSDB
+     spec-correctness fixes, <strong>enabling Wayland DRM-lease of VR HMDs</strong>, and
+     forcing the maximum DP link config for the G2.</p>
+  <div class="used">
+    <strong>Why it matters here:</strong> the DRM-lease patch is load-bearing. Without it
+    there is no Wayland lease path at all — no <code>wp_drm_lease_device_v1</code>, no
+    <code>non-desktop=1</code> connector, and the entire launch chain this project
+    automates would not exist. Our own contribution to the display path is one further
+    patch on top of these.
+  </div>
+</div>
+
+<h2>And the ones without a repository line</h2>
+
+<div class="card">
+  <p>The <a href="https://forums.developer.nvidia.com/">NVIDIA developer forum</a> and the
+     <strong>Linux VR Adventures</strong> community read a long bug report and pushed back
+     on it. One of those corrections caught a claim that was simply wrong — that an
+     upstream pull request had been merged when it was still open. Being contradicted in
+     public is a gift; it is in this project's history as a correction, not a footnote.</p>
+  <p>Every person who filed a Reverb G2 bug against Monado, posted a kernel log of a dying
+     cable, or answered a question about DRM leasing in a mailing-list thread that ended
+     up in a search result at 3 in the morning. There is no way to enumerate you. It was
+     still your work.</p>
+</div>
+
+<h2>How these lists were made</h2>
+
+<div class="note">
+  <p>Contributor names come from <code>git shortlog -sn</code> run against the specific
+     subdirectory each project contributed to — the WMR driver, the constellation tracker,
+     <code>hello_xr</code> — at the upstream commit our work branches from, so our own
+     commits are excluded. Ordering is by number of commits, which measures volume and
+     nothing else: it is not a ranking of importance, and plenty of decisive work is one
+     commit long. Licenses were read from each tree's own <code>LICENSE</code> file or
+     <code>SPDX-License-Identifier</code> headers.</p>
+  <p>Names are listed as they appear in git authorship. If yours is wrong, misspelled, or
+     you would rather not be listed, open an issue and it gets fixed.</p>
+  <p>Being named here does not mean endorsing this project, reviewing it, or having any
+     connection to it beyond the work of yours that we used.</p>
+</div>
+
+<footer>
+  <p>Part of the <a href="https://github.com/Wintch/reverb-g2">reverb-g2</a> lab notebook —
+     an HP Reverb G2 running at 90 Hz on Linux. Patches, measurements and every wrong turn
+     are in the repository.</p>
+</footer>
+
+</div>
+</body>
+</html>

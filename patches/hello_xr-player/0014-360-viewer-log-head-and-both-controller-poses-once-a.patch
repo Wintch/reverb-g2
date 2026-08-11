@@ -1,0 +1,117 @@
+From f2a8e581fd730de026176987d68c5298f7f0dbd4 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Tue, 11 Aug 2026 04:11:52 -0300
+Subject: [PATCH] 360 viewer: log head and both controller poses once a second
+
+Adds a one-line-per-second log of the head pose (midpoint of the two eye
+poses, not view 0) and both controller poses in app space, with the
+POSITION_VALID and POSITION_TRACKED flags spelled out.
+
+On by default; HELLO_XR_POSE_LOG=0 opts out. Deliberately not opt-in:
+the recurring cost here has been arriving at a question with no data for
+the run that already happened, not having too much log.
+
+The motivating use is watching controller tracking WITHOUT wearing the
+headset, which on this hardware means not moving a cable whose connector
+has a history of marginal contact.
+
+The flags carry as much information as the numbers: an untracked
+controller still reports a perfectly plausible position, because Monado
+pins untracked devices at a fixed offset from the tracking origin, so a
+bare XYZ triplet cannot be told apart from a tracked one.
+
+Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
+---
+ src/tests/hello_xr/openxr_program.cpp | 59 +++++++++++++++++++++++++++
+ 1 file changed, 59 insertions(+)
+
+diff --git a/src/tests/hello_xr/openxr_program.cpp b/src/tests/hello_xr/openxr_program.cpp
+index 2980a86..6448d34 100644
+--- a/src/tests/hello_xr/openxr_program.cpp
++++ b/src/tests/hello_xr/openxr_program.cpp
+@@ -1350,12 +1350,18 @@ struct OpenXrProgram : IOpenXrProgram {
+             }
+         }
+ 
++        // Kept for the pose log below: the loop's own copies go out of scope, and the log has to
++        // report a hand that is NOT tracked just as clearly as one that is -- that is precisely
++        // the state worth seeing.
++        XrSpaceLocation handLocation[Side::COUNT] = {{XR_TYPE_SPACE_LOCATION}, {XR_TYPE_SPACE_LOCATION}};
++
+         // Render a 10cm cube scaled by grabAction for each hand. Note renderHand will only be
+         // true when the application has focus.
+         for (auto hand : {Side::LEFT, Side::RIGHT}) {
+             XrSpaceLocation spaceLocation{XR_TYPE_SPACE_LOCATION};
+             res = xrLocateSpace(m_input.handSpace[hand], m_appSpace, predictedDisplayTime, &spaceLocation);
+             CHECK_XRRESULT(res, "xrLocateSpace");
++            handLocation[hand] = spaceLocation;
+             if (XR_UNQUALIFIED_SUCCESS(res)) {
+                 if ((spaceLocation.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0 &&
+                     (spaceLocation.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0) {
+@@ -1373,6 +1379,46 @@ struct OpenXrProgram : IOpenXrProgram {
+             }
+         }
+ 
++        // Head + both controllers, once a second, in app space. HELLO_XR_POSE_LOG=1.
++        //
++        // Added 2026-08-11 so controller tracking can be watched WITHOUT anyone wearing the
++        // headset: on this hardware every session put on and taken off means moving a cable
++        // whose connector has a long history of marginal contact (docs/22), so a check that
++        // needs a human's head is a check with a real hardware cost. This one runs off the
++        // poses the frame loop already locates.
++        //
++        // The head is the midpoint of the two eye poses, not m_views[0], so it does not sit
++        // 3cm off to the left of where anyone would expect "the head" to be.
++        //
++        // The flags matter as much as the numbers: a controller with no positional tracking
++        // still reports a perfectly plausible-looking position (Monado pins untracked devices
++        // at a fixed offset from the tracking origin), so a bare XYZ triplet cannot be told
++        // apart from a real one. POS/-- and TRK/-- are what distinguish them.
++        if (m_poseLogEnabled) {
++            const auto now = std::chrono::steady_clock::now();
++            if (now - m_lastPoseLog >= std::chrono::seconds(1)) {
++                m_lastPoseLog = now;
++
++                XrVector3f head{0, 0, 0};
++                for (uint32_t i = 0; i < viewCountOutput; i++) {
++                    head.x += m_views[i].pose.position.x / (float)viewCountOutput;
++                    head.y += m_views[i].pose.position.y / (float)viewCountOutput;
++                    head.z += m_views[i].pose.position.z / (float)viewCountOutput;
++                }
++
++                auto describe = [](const XrSpaceLocation& loc) {
++                    const bool posValid = (loc.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0;
++                    const bool posTracked = (loc.locationFlags & XR_SPACE_LOCATION_POSITION_TRACKED_BIT) != 0;
++                    return Fmt("(%+6.3f %+6.3f %+6.3f) pos:%s trk:%s", loc.pose.position.x, loc.pose.position.y,
++                               loc.pose.position.z, posValid ? "OK" : "--", posTracked ? "OK" : "--");
++                };
++
++                Log::Write(Log::Level::Info, Fmt("POSE head (%+6.3f %+6.3f %+6.3f) | left %s | right %s", head.x,
++                                                 head.y, head.z, describe(handLocation[Side::LEFT]).c_str(),
++                                                 describe(handLocation[Side::RIGHT]).c_str()));
++            }
++        }
++
+         // Render view to the appropriate part of the swapchain image.
+         for (uint32_t i = 0; i < viewCountOutput; i++) {
+             // Each view has a separate swapchain which is acquired, rendered to, and released.
+@@ -1447,6 +1493,19 @@ struct OpenXrProgram : IOpenXrProgram {
+     std::vector<Swapchain> m_depthSwapchains;
+     std::map<XrSwapchain, ISwapchainImageData*> m_swapchainImages;
+     std::vector<XrView> m_views;
++
++    // Periodic head/controller pose log, see the block that uses these. ON by default, opt
++    // OUT with HELLO_XR_POSE_LOG=0.
++    //
++    // Deliberately not opt-in. One line per second is nothing next to what this project has
++    // repeatedly paid for a missing line: the cost here has never been too much log, it has
++    // always been arriving at a question with no data for the run that already happened, and
++    // then having to reproduce it on hardware whose connector does not enjoy being handled.
++    const bool m_poseLogEnabled{[] {
++        const char* v = std::getenv("HELLO_XR_POSE_LOG");
++        return v == nullptr || (v[0] != '0' && v[0] != '\0');
++    }()};
++    std::chrono::steady_clock::time_point m_lastPoseLog{};
+     int64_t m_colorSwapchainFormat{-1};
+     int64_t m_depthSwapchainFormat{-1};
+ 

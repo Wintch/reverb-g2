@@ -87,6 +87,36 @@ GAMES = [
 DEFAULT_GAME = "Aircar"
 
 
+JACKIN_OUT_LOG = LOG_DIR / "jack-in-launcher.log"
+
+
+def _save_jackin_output(stdout, stderr, rc):
+    """Persist jack-in-wayland.sh's OWN output (not Monado's log -- that one
+    already lands in ~/vr/jack-in-wayland.log).
+
+    Real gap found 2026-08-11 (T145): this launcher runs jack-in-wayland.sh with
+    capture_output=True and only echoes it to tty4, which nothing records. When the
+    boot chain failed that night with "Found no connectors available for direct
+    mode", the ONE piece of evidence that would have discriminated between "the
+    panel/DP never came up" and "the connector was up but mutter didn't offer it
+    for lease yet" was jack-in-wayland.sh's own pre-flight lines ("HMD connector
+    (non-desktop=1) up." vs. the "!!" warnings) -- printed to a VT that had already
+    been overwritten by agetty by the time anyone looked. /tmp/vr-launcher-console-
+    debug.log stayed empty precisely because capture_output=True swallows this
+    stream before it can reach that redirect. Same lesson as the tty-hides-stderr
+    trap in vr-launcher-console.sh: cheap file, harmless, keep it permanently."""
+    try:
+        stamp = subprocess.run(["date", "-Iseconds"], capture_output=True, text=True).stdout.strip()
+        with open(JACKIN_OUT_LOG, "a") as f:
+            f.write(f"\n===== {stamp}  mode={MODE} tracking={TRACKING} rc={rc} =====\n")
+            f.write(stdout or "")
+            if stderr:
+                f.write("----- stderr -----\n")
+                f.write(stderr)
+    except OSError as e:
+        print(f"(could not save the jack-in log: {e})")
+
+
 def bring_up_monado():
     print("=== subiendo Monado ===")
     IPC_SOCKET.unlink(missing_ok=True)  # SIGKILL de una corrida anterior no limpia esto
@@ -104,8 +134,10 @@ def bring_up_monado():
         )
     except subprocess.TimeoutExpired as e:
         print(f"jack-in-wayland.sh no termino en 180s -- abortando y limpiando.")
-        if e.stdout:
-            print(e.stdout if isinstance(e.stdout, str) else e.stdout.decode(errors="replace"))
+        partial = e.stdout if isinstance(e.stdout, (str, type(None))) else e.stdout.decode(errors="replace")
+        _save_jackin_output(partial, "(timeout a los 180s)", "timeout")
+        if partial:
+            print(partial)
         # pgrep + kill, not pkill -- matches jack-in-wayland.sh's own convention
         # elsewhere in this project (pkill isn't consistently available/safe here).
         pids = subprocess.run(["pgrep", "-f", "monado[-]service"], capture_output=True, text=True).stdout.split()
@@ -113,6 +145,7 @@ def bring_up_monado():
             subprocess.run(["kill", "-9", pid])
         IPC_SOCKET.unlink(missing_ok=True)
         return False
+    _save_jackin_output(r.stdout, r.stderr, r.returncode)
     print(r.stdout)
     if r.returncode != 0 or not IPC_SOCKET.exists():
         print("jack-in-wayland.sh no dejo el socket de Monado listo.")
