@@ -1,4 +1,4 @@
-From 2f6b3e9d4969ff27cef17e414344f65466d98209 Mon Sep 17 00:00:00 2001
+From e191cca3f03cedb3a3447101e99184dd3f707c81 Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Tue, 11 Aug 2026 04:52:49 -0300
 Subject: [PATCH] 360 viewer: draw a cube at each tracked pose again
@@ -13,24 +13,41 @@ after the 360 background with depth test. It shares the existing
 VkPipelineLayout: the push-constant block is declared identically and
 only the leading mvp is read, so no second layout is needed. The cube
 geometry and its buffers were already being uploaded -- the skybox uses
-the same vertex buffer.
+the same vertex buffer. compile_glsl derives the shader stage from the
+file name and so allows only one file per stage; the new pair gets
+explicit rules, the same way yuv_frag.glsl already does.
 
-compile_glsl derives the shader stage from the file name and so allows
-only one file per stage; the new pair gets explicit rules, the same way
-yuv_frag.glsl already does.
+Two things had to be fixed before anything was visible on hardware:
 
-This is the in-headset instrument for controller tracking. Until a real
-controller position is fused, the controller cubes are expected to sit
-still in space while the head moves around them -- Monado pins untracked
-devices at a fixed offset from the tracking origin.
+The 360 background wrote gl_Position.z = 0.0, the NEAREST depth, with
+depth writes enabled. It filled the depth buffer with the minimum value
+and every cube drawn afterwards failed the LESS test and was silently
+discarded. A background belongs at the far plane; it is now 0.9999, just
+under the 1.0 the depth buffer is cleared to, since exactly 1.0 would
+fail against the clear value and the background itself would stop
+drawing.
 
-Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
+The sample also draws a 25 cm cube per reference space, and in a 3dof
+session the head sits exactly at the Local origin -- so that cube lands
+centred on the viewer's face, and with cullMode NONE its inner faces
+render too, sealing the viewer inside an opaque box that hides
+everything else. Those cubes are now off by default behind
+HELLO_XR_SPACE_CUBES=1.
+
+Verified on hardware: controller cubes visible, and they stay fixed in
+space while the head rotates around them.
+
+Known limitation: the 360 background has its own recenter (a yaw offset
+applied to its pose) and the cubes use the runtime pose directly, so a
+recenter rotates the background but not the cubes.
 ---
  src/tests/hello_xr/CMakeLists.txt             |  27 +++++
  src/tests/hello_xr/graphicsplugin_vulkan.cpp  | 100 +++++++++++++++---
+ src/tests/hello_xr/openxr_program.cpp         |  16 ++-
  .../hello_xr/vulkan_shaders/cube_frag.glsl    |  18 ++++
  .../hello_xr/vulkan_shaders/cube_vert.glsl    |  33 ++++++
- 4 files changed, 165 insertions(+), 13 deletions(-)
+ src/tests/hello_xr/vulkan_shaders/vert.glsl   |  10 +-
+ 6 files changed, 189 insertions(+), 15 deletions(-)
  create mode 100644 src/tests/hello_xr/vulkan_shaders/cube_frag.glsl
  create mode 100644 src/tests/hello_xr/vulkan_shaders/cube_vert.glsl
 
@@ -284,6 +301,40 @@ index 036f8f2..2d1a6f1 100644
      ShaderProgram m_computeShaderProgram{SHADER_PROGRAM_TYPE_COMPUTE};
      CmdBuffer m_cmdBuffer{};
      PipelineLayout m_pipelineLayout{};
+diff --git a/src/tests/hello_xr/openxr_program.cpp b/src/tests/hello_xr/openxr_program.cpp
+index 6448d34..c3b73d7 100644
+--- a/src/tests/hello_xr/openxr_program.cpp
++++ b/src/tests/hello_xr/openxr_program.cpp
+@@ -1336,7 +1336,15 @@ struct OpenXrProgram : IOpenXrProgram {
+         // For each locatable space that we want to visualize, render a 25cm cube.
+         std::vector<Cube> cubes;
+ 
+-        for (XrSpace visualizedSpace : m_visualizedSpaces) {
++        // Reference-space cubes (ViewFront, Local, Stage, ...) are OFF by default; set
++        // HELLO_XR_SPACE_CUBES=1 to get the original sample's behaviour back.
++        //
++        // In a 3dof session the head sits exactly at the Local origin, so the Local cube lands
++        // centred on the viewer's face -- and since the pipeline draws with cullMode NONE, its
++        // inner faces render too and the viewer ends up sealed inside an opaque box that hides
++        // everything else, controller cubes included. Found the hard way: "estoy dentro de un
++        // cubo de colores, no veo los controles".
++        for (XrSpace visualizedSpace : (m_spaceCubesEnabled ? m_visualizedSpaces : std::vector<XrSpace>{})) {
+             XrSpaceLocation spaceLocation{XR_TYPE_SPACE_LOCATION};
+             res = xrLocateSpace(visualizedSpace, m_appSpace, predictedDisplayTime, &spaceLocation);
+             CHECK_XRRESULT(res, "xrLocateSpace");
+@@ -1511,6 +1519,12 @@ struct OpenXrProgram : IOpenXrProgram {
+ 
+     std::vector<XrSpace> m_visualizedSpaces;
+ 
++    //! See the loop that reads this. Opt-in: HELLO_XR_SPACE_CUBES=1.
++    const bool m_spaceCubesEnabled{[] {
++        const char* v = std::getenv("HELLO_XR_SPACE_CUBES");
++        return v != nullptr && v[0] != '\0' && v[0] != '0';
++    }()};
++
+     // Application's current lifecycle state according to the runtime
+     XrSessionState m_sessionState{XR_SESSION_STATE_UNKNOWN};
+     bool m_sessionRunning{false};
 diff --git a/src/tests/hello_xr/vulkan_shaders/cube_frag.glsl b/src/tests/hello_xr/vulkan_shaders/cube_frag.glsl
 new file mode 100644
 index 0000000..4ccc7db
@@ -347,3 +398,22 @@ index 0000000..fccdff5
 +    oColor.a = 1.0;
 +    gl_Position = ubuf.mvp * vec4(Position, 1);
 +}
+diff --git a/src/tests/hello_xr/vulkan_shaders/vert.glsl b/src/tests/hello_xr/vulkan_shaders/vert.glsl
+index 732ec08..1743a6d 100644
+--- a/src/tests/hello_xr/vulkan_shaders/vert.glsl
++++ b/src/tests/hello_xr/vulkan_shaders/vert.glsl
+@@ -17,5 +17,13 @@ void main()
+ {
+     vec2 pos[3] = vec2[](vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+     oNdc = pos[gl_VertexIndex];
+-    gl_Position = vec4(oNdc, 0.0, 1.0);
++    // Far plane, not near. This triangle is the 360 background: it must sit behind
++    // everything else so that geometry drawn afterwards (the tracked-pose cubes) passes the
++    // LESS depth test. Writing 0.0 here filled the depth buffer with the nearest possible
++    // value and silently discarded every cube.
++    //
++    // Just under 1.0 rather than exactly 1.0: the depth buffer is cleared to 1.0 and the
++    // compare op is LESS, so a depth of exactly 1.0 would fail against the clear value and
++    // this triangle itself would stop drawing.
++    gl_Position = vec4(oNdc, 0.9999, 1.0);
+ }
