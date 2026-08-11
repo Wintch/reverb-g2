@@ -1,0 +1,177 @@
+From b47316ad9d2bcf862f42726716d15ee112ed518e Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Tue, 11 Aug 2026 04:52:30 -0300
+Subject: [PATCH] d/wmr: Controller-frame exposure, and make the constellation
+ path opt-in
+
+Two related changes, both about the controller-tracking frame path.
+
+First, gate the controller-frame blobwatch chain added in the previous
+patches behind WMR_CONSTELLATION_CONTROLLERS, like the tracker itself.
+It ran unconditionally, which was wrong twice over: it is debug-only
+work, and it is debug-only work performed inside img_xfer_cb, the same
+realtime USB callback that feeds SLAM. It also made the flag useless as
+an A/B control precisely when one was needed to explain a SLAM
+divergence.
+
+Second, set exposure and gain for the controller-tracking frames, which
+live in a separate set of hardware slots from the SLAM ones that
+update_expgain() drives. Without this they keep whatever the sensor
+defaults to, which on a Reverb G2 is a completely black image even with
+the controllers' LEDs plainly lit and clearly visible in the SLAM
+stream.
+
+NOT VALIDATED, hence opt-in: with the mapping generalised to
++ tcam_count the controller stream stays black on a G2, so either the
+slot mapping is wrong or the frames are not arriving. thaytan's
+dev-constellation-controller-tracking branch, the reference for this,
+uses a hardcoded + 2 (right for a two-camera headset, would land on real
+SLAM cameras on the four-camera G2) and its own loop is
+`for (i = cam->tcam_count; i < cam->tcam_count; i++)`, which never
+executes -- so that mapping has almost certainly never run on any
+hardware either.
+
+Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
+---
+ src/xrt/drivers/wmr/wmr_camera.c | 52 ++++++++++++++++++++++++++++++++
+ src/xrt/drivers/wmr/wmr_source.c | 19 +++++++++---
+ 2 files changed, 66 insertions(+), 5 deletions(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_camera.c b/src/xrt/drivers/wmr/wmr_camera.c
+index ba3427010..e73cfb124 100644
+--- a/src/xrt/drivers/wmr/wmr_camera.c
++++ b/src/xrt/drivers/wmr/wmr_camera.c
+@@ -37,8 +37,13 @@ DEBUG_GET_ONCE_BOOL_OPTION(wmr_autoexposure, "WMR_AUTOEXPOSURE", true)
+ //! Specifies whether the user wants to use the same exp/gain values for all cameras
+ DEBUG_GET_ONCE_BOOL_OPTION(wmr_unify_expgain, "WMR_UNIFY_EXPGAIN", false)
+ 
++//! Mirrors the option of the same name in wmr_hmd.c -- this is unvalidated, opt-in only.
++DEBUG_GET_ONCE_BOOL_OPTION(wmr_constellation_controllers, "WMR_CONSTELLATION_CONTROLLERS", false)
++
+ static int
+ update_expgain(struct wmr_camera *cam, struct xrt_frame **frames);
++static int
++wmr_camera_set_ctrl_exposure_gain(struct wmr_camera *cam, uint8_t camera_id, uint16_t exposure, uint8_t gain);
+ 
+ /*
+  *
+@@ -61,6 +66,18 @@ update_expgain(struct wmr_camera *cam, struct xrt_frame **frames);
+ #define WMR_CAMERA_CMD_OFF 0x82
+ 
+ #define DEFAULT_EXPOSURE 6000
++/*
++ * Controller-tracking frames want a very short exposure and minimum gain: the point is to see
++ * the controllers' own (visible-light) LEDs as isolated bright points and essentially nothing
++ * else. Values from thaytan's dev-constellation-controller-tracking branch, which is the
++ * reference implementation for WMR constellation tracking.
++ *
++ * This is also why WMR controller tracking works in a dark room and why using these headsets
++ * in direct sunlight is advised against: the exposure is chosen so that only the LEDs stand
++ * out, so ambient light is irrelevant until it is bright enough to swamp them.
++ */
++#define DEFAULT_CTRL_EXPOSURE 0x0190
++#define DEFAULT_CTRL_GAIN 0x0001
+ #define DEFAULT_GAIN 127
+ 
+ #define WMR_FRAMETYPE_SLAM 0x0
+@@ -535,6 +552,34 @@ wmr_camera_open(struct wmr_camera_open_config *config)
+ 		ceg->aeg = u_autoexpgain_create(U_AEG_STRATEGY_TRACKING, enable_aeg, frame_delay);
+ 	}
+ 
++	/*
++	 * Exposure/gain for the controller-tracking frames, which is a SEPARATE set of hardware
++	 * slots from the SLAM ones set in update_expgain(). Without this the controller frames
++	 * keep whatever the sensor defaults to, which on a Reverb G2 is a completely black image
++	 * even with the controllers' LEDs plainly lit and clearly visible in the SLAM stream.
++	 *
++	 * The slot mapping is the uncertain part. thaytan's branch has this as `camera_id + 2`,
++	 * which is right for a two-camera headset (slots 0-1 SLAM, 2-3 controller) but would land
++	 * on real SLAM cameras on the four-camera G2. Generalised here to + tcam_count, which
++	 * reduces to thaytan's constant in the two-camera case. NOTE that his version of this loop
++	 * is `for (i = cam->tcam_count; i < cam->tcam_count; i++)`, which never executes, so the
++	 * mapping has almost certainly never run on any hardware -- treat it as a hypothesis under
++	 * test, not a port. Acceptance is visual and immediate: "Controller Tracking Streams" in
++	 * the debug GUI must stop being black and show the LED points, and "SLAM Tracking Streams"
++	 * must be unchanged. If the SLAM view degrades, the mapping is wrong: revert.
++	 */
++	if (debug_get_bool_option_wmr_constellation_controllers()) {
++		for (int i = 0; i < cam->tcam_count; i++) {
++			const struct wmr_camera_config *config = &cam->tcam_confs[i];
++			bool status = wmr_camera_set_ctrl_exposure_gain(cam, config->location, DEFAULT_CTRL_EXPOSURE,
++			                                               DEFAULT_CTRL_GAIN);
++			if (status != 0) {
++				WMR_CAM_ERROR(cam, "Failed to set controller-tracking exposure and gain for camera %d",
++				              i);
++			}
++		}
++	}
++
+ 	u_sink_debug_init(&cam->debug_sinks[WMR_DEBUG_SINK_SLAM]);
+ 	u_sink_debug_init(&cam->debug_sinks[WMR_DEBUG_SINK_CONTROLLER]);
+ 	u_var_add_root(cam, "WMR Camera", true);
+@@ -750,6 +795,13 @@ update_expgain(struct wmr_camera *cam, struct xrt_frame **frames)
+ 	return res;
+ }
+ 
++//! Same command, but addressing the controller-tracking exposure slots instead of the SLAM ones.
++static int
++wmr_camera_set_ctrl_exposure_gain(struct wmr_camera *cam, uint8_t camera_id, uint16_t exposure, uint8_t gain)
++{
++	return wmr_camera_set_exposure_gain(cam, camera_id + (uint8_t)cam->tcam_count, exposure, gain);
++}
++
+ int
+ wmr_camera_set_exposure_gain(struct wmr_camera *cam, uint8_t camera_id, uint16_t exposure, uint8_t gain)
+ {
+diff --git a/src/xrt/drivers/wmr/wmr_source.c b/src/xrt/drivers/wmr/wmr_source.c
+index f9fb4e38f..c6a6f8b40 100644
+--- a/src/xrt/drivers/wmr/wmr_source.c
++++ b/src/xrt/drivers/wmr/wmr_source.c
+@@ -74,6 +74,7 @@ struct wmr_source
+ 
+ 	// Controller-tracking (constellation) frames: blob detection only for now, debug-only, no tracker wired yet
+ 	struct u_sink_debug ctrl_blob_debug_sinks[WMR_MAX_CAMERAS]; //!< Sink to display detected LED blobs in UI
++	bool ctrl_blobs_enabled; //!< Whether the controller-frame blob chain was built at all
+ 
+ 	bool is_running;              //!< Whether the device is streaming
+ 	bool first_imu_received;      //!< Don't send frames until first IMU sample
+@@ -279,7 +280,9 @@ wmr_source_node_destroy(struct xrt_frame_node *node)
+ 	WMR_DEBUG(ws, "Destroying WMR source");
+ 	for (int i = 0; i < ws->config.tcam_count; i++) {
+ 		u_sink_debug_destroy(&ws->ui_cam_sinks[i]);
+-		u_sink_debug_destroy(&ws->ctrl_blob_debug_sinks[i]);
++		if (ws->ctrl_blobs_enabled) {
++			u_sink_debug_destroy(&ws->ctrl_blob_debug_sinks[i]);
++		}
+ 	}
+ 	m_ff_vec3_f32_free(&ws->gyro_ff);
+ 	m_ff_vec3_f32_free(&ws->accel_ff);
+@@ -337,10 +340,16 @@ wmr_source_create(struct xrt_frame_context *xfctx,
+ 
+ 	// Controller-tracking (frametype 0x2) frames: run LED blob detection per camera, show it in the debug
+ 	// GUI, and forward the blobs to the constellation tracker's sink for this camera when there is one.
+-	// ctrl_blob_sinks is NULL unless WMR_CONSTELLATION_CONTROLLERS is set, in which case the visualizer's
+-	// downstream sink stays NULL and this is exactly the previous debug-only behaviour.
++	//
++	// Gated behind WMR_CONSTELLATION_CONTROLLERS, like the tracker itself. When this was added it ran
++	// unconditionally, which was wrong twice over: it is debug-only work, and it is debug-only work
++	// performed inside img_xfer_cb, the same realtime USB callback that feeds SLAM. Blob detection on
++	// roughly two of every three camera transfers is not free, and an experiment that turned the
++	// constellation tracker "off" was still paying for all of it -- which made the flag useless as an
++	// A/B control precisely when one was needed to explain a SLAM divergence.
+ 	struct xrt_frame_sink *ctrl_cam_sinks[WMR_MAX_CAMERAS] = {NULL};
+-	for (int i = 0; i < cfg.tcam_count; i++) {
++	ws->ctrl_blobs_enabled = ctrl_blob_sinks != NULL;
++	for (int i = 0; ws->ctrl_blobs_enabled && i < cfg.tcam_count; i++) {
+ 		u_sink_debug_init(&ws->ctrl_blob_debug_sinks[i]);
+ 
+ 		struct t_blob_sink *blob_sink = ctrl_blob_sinks != NULL ? ctrl_blob_sinks[i] : NULL;
+@@ -397,7 +406,7 @@ wmr_source_create(struct xrt_frame_context *xfctx,
+ 		(void)snprintf(label, sizeof(label), "Camera %d", i);
+ 		u_var_add_sink_debug(ws, &ws->ui_cam_sinks[i], label);
+ 	}
+-	for (int i = 0; i < cfg.tcam_count; i++) {
++	for (int i = 0; ws->ctrl_blobs_enabled && i < cfg.tcam_count; i++) {
+ 		char label[] = "Controller Blob Cam NNNNNNNNNNN";
+ 		(void)snprintf(label, sizeof(label), "Controller Blob Cam %d", i);
+ 		u_var_add_sink_debug(ws, &ws->ctrl_blob_debug_sinks[i], label);
