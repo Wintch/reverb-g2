@@ -1,5 +1,81 @@
 # Next step
 
+> **UPDATE (2026-08-11, everyday-system session #2): the `WMR_LOG=trace` experiment the
+> previous entry left "not yet executed" is done -- controller-tagged frames genuinely
+> read back exposure=0, confirmed quantitatively, and there is already an unvalidated
+> patch in this repo attempting the exact fix.**
+>
+> New USB-C-to-USB-A adapter swapped in before this session (previous session closed on a
+> degrading-link pattern, `reqCmd 23` + `non-desktop:0`). Clean 5/5 enumeration the whole
+> session, zero `reqCmd 23`, zero USB2 branch drops -- the new adapter holds up. `lsusb`
+> and `dmesg -T` checked before/after power-on; see `docs/22-cable-connector-diagnosis.md`
+> for the established census if this needs re-checking later.
+>
+> **Bringup was noisier than usual**: 3 of the first 4 `jack-in.sh` launches failed
+> (`vkAcquireXlibDisplayEXT: VK_ERROR_UNKNOWN`, and separately `wake_panel()`'s probe
+> timing out at 25s with no error, just slow). One failed real-run process didn't exit on
+> its own and blocked the next launch's `service_pids` guard ("Already running" with
+> nothing actually presenting) -- had to `kill -TERM` it manually. Every failure recovered
+> with a clean stop + retry; none correlated with `reqCmd 23` or USB dropping, so this
+> reads as ordinary flakiness in the display-acquire race the script already documents,
+> not a repeat of the hardware wear pattern. Once up, controllers registered fine after
+> power-on + service restart (`left`/`right` show real names, 32 LEDs each in the
+> constellation tracker).
+>
+> **The exposure measurement, finally captured**: set `WMR_LOG=trace`, let it run a few
+> seconds, then paired each frame's `"... frame type %u"` trace line with the following
+> `"... exposure %u"` line (both logged back-to-back from the same `img_xfer_cb` call in
+> `wmr_camera.c`). Result over ~2400 frames: **frame type 2 (controller) -> exposure 0 in
+> 2363/2374 cases (99.5%); frame type 0 (SLAM) -> exposure 450 in 1187/1187 (100%)**. The
+> 11 outlier controller-frames reading 450 are consistent with brief carryover right after
+> a SLAM frame, before the next controller frame's own (unset) exposure register is read
+> back. This settles the question the previous entry raised: yes, controller-tagged frames
+> read exposure=0, not just "no visible blobs" -- the sensor is not integrating light at
+> all for that frametype, so zero detections is the only possible outcome regardless of
+> LED brightness, controller distance/angle, or room lighting.
+>
+> Also ruled out tonight, independently, in case they were confounds: 30 seconds of active
+> two-controller movement in front of the tracking cameras (0/17000+ blob observations,
+> `constellation_tracker_camera_push_blobs` trace), and a separate 30-second measurement
+> with the room's visible light off (0/9832) -- neither ambient light nor controller
+> positioning explains the zero, consistent with the exposure=0 finding being sufficient
+> on its own.
+>
+> **This project already has an unvalidated patch for exactly this**:
+> `patches/monado/0015-d-wmr-Controller-frame-exposure-and-make-the-constel.patch`
+> (committed 2026-08-11 earlier today as part of `266b90a`, lab machine). It adds
+> `wmr_camera_set_ctrl_exposure_gain()`, addressing the controller-tracking hardware slots
+> at `camera_id + tcam_count` (generalising thaytan's reference implementation's hardcoded
+> `+2`, which only fits a two-camera headset), gated behind `WMR_CONSTELLATION_CONTROLLERS`
+> (default off). The patch's own commit message says it was tried and **"the controller
+> stream stays black on a G2, so either the slot mapping is wrong or the frames are not
+> arriving"** -- i.e. already tested on the lab hardware and inconclusive between two
+> different failure modes. **This patch is NOT applied to the everyday-system monado
+> checkout** (confirmed: `grep -n WMR_CONSTELLATION_CONTROLLERS wmr_camera.c` finds
+> nothing there), so tonight's exposure=0 reading is the clean unpatched baseline, exactly
+> matching what the patch describes starting from.
+>
+> **Concrete next step, not yet done**: apply `0015` on a machine with `WMR_LOG=trace`
+> wired up (this one, now), run with `WMR_CONSTELLATION_CONTROLLERS=1`, and re-check the
+> same frametype/exposure pairing. Two distinguishable outcomes settle the open question
+> from the patch's own commit message: if exposure now reads ~400 (`0x0190`) on
+> frametype-2 frames but blobs are still zero, the slot mapping *is* landing on the right
+> hardware register and the remaining gap is downstream (blob threshold, gain, LED
+> visibility) -- narrow there next. If exposure still reads 0, the `camera_id + tcam_count`
+> addressing itself is being ignored or rejected by the camera firmware, and the mapping
+> hypothesis in the patch's own commit message is confirmed wrong -- worth trying
+> `camera_id` unmodified next (i.e. the controller slots might not be offset from the SLAM
+> ones at all on a 4-camera G2), or capturing the raw USB gain-command bytes to see if the
+> device NAKs an out-of-range `camera_id`.
+>
+> **Separate, likely-unrelated oddity worth a note**: with the debug GUI's constellation
+> tracker panel set to `Trace` log level, `Camera 0`'s "Blob Debug Sink (Fast)" and "(Slow)"
+> panels both render as a solid, uniform magenta square -- not black, not a camera image.
+> Classic missing/unbound-texture fill color in most graphics debug conventions. Did not
+> investigate further; flagging in case it's informative once the exposure fix lands (a
+> magenta sink after a real fix would mean the visualization path itself has a separate,
+> independent bug from the exposure one).
+
 > **UPDATE (2026-08-11, everyday system session, closing on a wear-pattern hardware
 > failure). Second machine (`brunduk`, X11+KDE, unpatched 550.163.01 -- separate box from
 > the lab, see `docs/29-source-map.md` for the topology) re-verifying the same 6DoF
