@@ -1,5 +1,60 @@
 # Next step
 
+> **UPDATE (2026-08-11, ~05:15, closing a very long session). Read `docs/pruebas.jsonl`
+> T145-T148.**
+>
+> **FIRST, THE HARDWARE.** The headset's USB2 branch dropped at 04:59 — `error -71` in
+> `journalctl -k`, and `lsusb` left with only the SuperSpeed side. The known trigger is
+> repeated `monado-service` restarts and this session ran about ten of them. Before doing
+> anything else next time: `./preflight.sh`, and if the companion `03f0:0580` is missing,
+> follow `docs/22`'s ladder (let it rest, then a PC-end replug, then the visor end) — do
+> not restart the service repeatedly to "check again", that is what caused this.
+>
+> **THE CHECK THAT WOULD HAVE SAVED THREE RESTARTS:** when the controllers come up as
+> `left: <none> right: <none>`, run `grep "Using builder" ~/vr/jack-in-wayland.log`
+> **first**. With the companion gone, Monado falls back to the legacy builder's *Simulated
+> HMD*, which still leases the connector, still logs `found display mode` and still prints
+> `Socket ready`. Three restarts were spent diagnosing the T051 controller race when there
+> was no WMR headset in the session at all.
+>
+> **What is verified and done:**
+> - **0014** — constellation tracker over the 4 cameras, verified live, no regression
+>   (30.1 → 30.0 Hz), extrinsics confirmed against the headset's own calibration.
+> - **Player cubes** (hello_xr 0015) — verified on hardware, fixed in world space under head
+>   rotation. Two real render bugs fixed to get there (background writing nearest depth;
+>   the reference-space cube sealing the viewer inside a box). This is the in-headset
+>   instrument for 0017.
+> - **Always-on pose log** — head + both controllers, once a second, with `pos:`/`trk:`
+>   flags. It is what made the untracked-controller placeholder visible without wearing the
+>   headset.
+>
+> **The two open problems, in priority order:**
+>
+> 1. **SLAM runs away with the headset static** — 25 cm from the origin somewhere between
+>    2.2 s and 50.8 s, then super-quadratic growth (`./scripts/pose-measure.py`). Ambient
+>    light and missing frames are both ruled out by measurement; attribution to our own
+>    patches failed twice, once because the A/B's "off" arm still ran the code under test,
+>    once because a 12× effect claimed from one sample was refuted by the full six-run
+>    table. **This blocks the height calibration** — any height reading is the real height
+>    plus an unknown drift. Since T060-T061 (2026-08-07) documented 6DoF at rest without
+>    divergence, a bisect over 0011-0015 is available and is the cheapest next move.
+>
+> 2. **Controller-tracking camera frames are black** — the upstream `Controller Tracking
+>    Streams` panel, which predates all our patches, shows nothing while `SLAM Tracking
+>    Streams` is perfect and the LED rings are plainly lit. This is why every blob panel is
+>    black and why 0015's LED model would have fed a solver black images. The gap is
+>    exposure: controller frames live in separate hardware slots and nothing sets them.
+>    Patch 0015 adds the command but does not fix it, so it is opt-in.
+>    **Do not keep guessing the slot mapping one restart at a time.** Build the two
+>    instruments first: a one-shot per-frametype frame counter (settles whether the frames
+>    arrive at all) and a live `u_var` control for the controller exposure slot (sweeps the
+>    mapping with no restarts). A third candidate is not excluded:
+>    `t_led_sync_refinement.c` exists because the constellation LEDs *strobe*, so a correct
+>    short exposure landing outside the pulse still captures darkness.
+>
+> **Operational note:** the controllers fall asleep on their own when left still and their
+> LEDs go out with them. Any optical test needs them held or moving.
+
 > **UPDATE (2026-08-11) — Patch 0014 written, built clean and VERIFIED LIVE the same night.
 > Verbose tracking logs are on. The floor/height question is answered, and it is not what
 > SteamVR does. Read `docs/pruebas.jsonl` T145-T146.**
