@@ -1,5 +1,44 @@
 # Next step
 
+> **UPDATE (2026-08-11, everyday-system session #2, continued): the "device-specific" clock
+> bug the previous entry left as the concrete next step is closed. It was never
+> device-specific -- it was `container_of` applied to an array element instead of a
+> whole-struct field, a real bug in tonight's own `receive_ctrl_cam` fix. 6DoF constellation
+> controller tracking is now fully working end to end: `get_tracked_pose` reports
+> `position_tracked=yes` for both controllers consistently. New patch `0017`.**
+>
+> `container_of(sink, struct wmr_source, ctrl_ts_fix_sinks)` only recovers the right `ws`
+> pointer when `sink` is the *start* of the named field. `sink` was actually
+> `&ws->ctrl_ts_fix_sinks[i]`, the i-th array element -- for `i==0` that coincides with the
+> array's own address so it happened to work, for `i>0` it silently read `ws` offset by
+> `i*sizeof(xrt_frame_sink)` bytes into the real struct, and (by the same broken math)
+> `cam_id = sink - ws->ctrl_ts_fix_sinks` always resolved to exactly `0` regardless of the
+> real `i`. A temporary trace confirmed it: 12947/12948 calls to `receive_ctrl_cam` logged
+> `cam_id=0`, literally never anything else, across 4 physical cameras. Since the two
+> controllers are seen predominantly by different physical cameras, this reliably looked
+> like a "works for controller A, not controller B" bug rather than a camera-indexing one --
+> which is exactly what got documented (wrongly) as "device-specific" earlier tonight.
+>
+> Fixed by giving each camera its own `struct wmr_ctrl_ts_fix_sink` (the `xrt_frame_sink` as
+> first member, plus explicit `ws`/`downstream` pointers set once at wiring time), so
+> `container_of` recovers the correct instance regardless of array index. Verified live
+> twice, including a full clean rebuild + relaunch to rule out stale state: `pushPose`'s
+> `cam_sample_ts` now lands 5-40ms behind `os_monotonic_get_ns()` for every device/camera
+> combination sampled, comfortably inside the 200ms freshness window. Ran `hello_xr` to
+> drive real `get_tracked_pose` calls: both controllers report `position_tracked=yes`
+> consistently, with distinct stable positions per device, not intermittently and not for
+> only one controller. New patch `patches/monado/0017` (this repo's own sequential
+> numbering -- unrelated to whatever the actual `g2-constellation-x11kde` branch's commit
+> messages informally call their own next unfiled patch; see the sync-gap note below).
+>
+> **Also found, while investigating**: `jack-in.sh` does not export
+> `WMR_CONSTELLATION_CONTROLLERS`, so a bare relaunch silently runs with the whole
+> controller-tracking path disabled -- has to be set manually
+> (`WMR_CONSTELLATION_CONTROLLERS=1 ./jack-in.sh`) until it's wired into the script itself.
+> Cost about 15 minutes of "why is nothing happening" tonight before being caught.
+>
+> See `docs/pruebas.jsonl` T151 for the full trace and verification numbers.
+
 > **UPDATE (2026-08-11, everyday-system session #2): 0015's controller exposure fix is now
 > correct and physically verified live -- real LED tracking, real RANSAC-PnP pose solves.
 > A separate clock-domain fix for get_tracked_pose is only partially closed, with a new,
