@@ -1,5 +1,82 @@
 # Next step
 
+> **UPDATE (2026-08-11, everyday-system session #2): 0015's controller exposure fix is now
+> correct and physically verified live -- real LED tracking, real RANSAC-PnP pose solves.
+> A separate clock-domain fix for get_tracked_pose is only partially closed, with a new,
+> unexplained bug found in the same session. New patch `0016` supersedes `0015`.**
+>
+> New USB-C-to-USB-A adapter (swapped after the previous session's degrading-link ending)
+> held up clean all session: 5/5 USB the whole time, zero `reqCmd 23`, zero USB2 drops --
+> not the remaining bottleneck. Bringup itself was flakier than usual (3 of the first 4
+> launches failed on the ordinary `vkAcquireXlibDisplayEXT` race or a slow `wake_panel()`
+> probe), all recovered with clean stop+retry, unrelated to hardware wear.
+>
+> **0015, corrected.** The previous entry left `WMR_LOG=trace` as the concrete next step to
+> settle whether controller-tagged frames really read exposure=0 -- done: 99.5% of ~2400
+> controller frames read exposure=0, 100% of SLAM frames read 450, confirming it's a real
+> exposure condition (also ruled out ambient light and controller positioning as confounds).
+> Then found 0015's own two wrong guesses, in order: the `camera_id + tcam_count` slot
+> mapping sends its exposure/gain command successfully but the frame's own embedded exposure
+> readback stays 0 regardless (ruling in "wrong slot", ruling out "frames not arriving" --
+> the open question 0015's commit message left). Switched to a flat `+2` (thaytan's original
+> constant -- this hardware's real camera location IDs are 0,1,4,5, not contiguous, so `+2`
+> and `+tcam_count` land on different slots) and the readback immediately became nonzero and
+> linearly controllable (400->20, 6000->300, both exactly /20). Nonzero wasn't enough by
+> itself: thaytan's reference exposure/gain (400/1) still produced a black panel on this
+> hardware; raised to 6000/100 and got real images. Result, user-confirmed live multiple
+> times ("si! los veo!", "veo que trackean!"): `Controller Blob Cam 0/1` went from solid
+> black to real LED blobs tracking controller movement, and `CONSTELLATION_TRACKER_LOG=trace`
+> showed RANSAC-PnP actually recovering poses continuously (sample #2070,
+> pos=(-0.039,-0.012,-0.130), reprojection error 0.04-0.10px, stable across 2000+ samples).
+> New patch `patches/monado/0016` supersedes `0015` with both corrections.
+>
+> **Clock-domain fix, added, only partially closes the loop.** Even with real pose solves
+> happening, `get_tracked_pose` still reported `position_tracked=no` with a constant ~44.5
+> million ms (~12.4 hour) delta. Root cause: the SLAM `cam_sinks` path
+> (`receive_cam0..3` in `wmr_source.c`) has always applied `xf->timestamp += ws->cam_hw2mono`
+> to convert the WMR hardware clock into Monado's host monotonic clock, but the
+> controller-tracking frame path never had this -- unrelated to the previous session's
+> `d6b84cda1` freshness-check `abs()` fix, which was correctly rejecting the resulting
+> always-stale delta the whole time. Added `receive_ctrl_cam`, mirroring the SLAM
+> correction. Confirmed via temporary tracing that it reaches `CameraSample` and
+> `Camera::pushPose` correctly -- but found a SECOND, unexplained bug in the same run: at
+> the `push_sample` call site, the timestamp is deterministically correct for one
+> `device_id` and deterministically raw for the other, across an entire session, despite
+> both devices reaching the identical code path from the identical
+> `camera_sample.timestamp_ns` field. Not a race, not transient, not explained by the sink
+> wiring (checked -- symmetric across all 4 cameras). `get_tracked_pose` still reports
+> `position_tracked=no` for at least one controller as a result. Documented in place
+> (`t_constellation_tracker.cpp`) and in `docs/pruebas.jsonl` T149 as the concrete next
+> step: instrument `Camera::pushPose` per-device (not per-call, which has its own throttle
+> bug described below) and find what actually differs between the two devices at that
+> point, since the code path is provably identical.
+>
+> **Incidental fix**: `wmr_controller_base_get_tracked_pose`'s own diagnostic log (added
+> last session, `9c78bc346`) used a function-local `static` throttle counter shared across
+> BOTH controllers, so it only ever logged whichever device's calls happened to land on the
+> modulo-90 boundary -- silently hiding the other controller's output all session, and
+> nearly hiding the device-specific bug above too. Fixed to gate on the device's own
+> `sample_count` instead.
+>
+> **Sync gap found and flagged**: `git log` on this monado checkout's actual
+> `g2-constellation-x11kde` branch shows real committed history well past what
+> `patches/monado/` exports as loose `.patch` files -- a "Fuse constellation position into
+> the controller's output pose" commit (`332a57f27`) and several logging/freshness-check
+> commits already exist there, referred to as "0017" work in their own commit messages, none
+> exported yet. Noted in `patches/monado/README.md` so future sessions check `git log`
+> directly rather than trusting the exported numbering is current.
+>
+> **Light-level calibration started, not concluded**: user began raising room light
+> gradually from dark while checking blob tracking, aiming to compare against the known-good
+> light level on Windows. Tracking held up through a small amount of added light and a
+> controller standby cycle, but the session ended before finding the actual failure
+> threshold -- pick this back up before assuming the current exposure values are final.
+>
+> Patch `0016` is committed locally on the everyday-system monado checkout only -- no fork
+> remote configured there, so it hasn't been pushed anywhere. The `.patch` file is in this
+> repo's `patches/monado/` already; applying it to the lab machine's tree is a manual
+> `git am` away if useful there before the local commit gets pushed properly.
+
 > **UPDATE (2026-08-11, everyday-system session #2): the `WMR_LOG=trace` experiment the
 > previous entry left "not yet executed" is done -- controller-tagged frames genuinely
 > read back exposure=0, confirmed quantitatively, and there is already an unvalidated

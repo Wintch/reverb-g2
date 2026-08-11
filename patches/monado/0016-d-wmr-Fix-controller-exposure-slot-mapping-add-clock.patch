@@ -1,0 +1,259 @@
+From c4df75db20bd393b73894e6bba840ba5d2caea64 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Tue, 11 Aug 2026 18:47:56 -0300
+Subject: [PATCH] d/wmr: Fix controller exposure slot mapping, add clock
+ alignment for constellation frames
+
+Two fixes, physically verified live tonight on the everyday-system rig (a
+second, independent G2 setup from the lab machine).
+
+1. Corrects patch 0015's slot-addressing hypothesis. 0015 tried
+   camera_id + tcam_count for the controller-tracking exposure/gain hardware
+   slots and left it explicitly unvalidated ("the controller stream stays
+   black on a G2, so either the slot mapping is wrong or the frames are not
+   arriving"). Confirmed live: +tcam_count sends successfully (no USB error)
+   but the frame's own embedded exposure readback stays 0 regardless,
+   100% of ~2400 frames sampled. Switched to a flat +2 (thaytan's original
+   constant, not scaled) since this hardware's real camera location IDs are
+   0,1,4,5, not contiguous 0-3 -- +2 lands on slots 2,3,6,7 and the readback
+   immediately became nonzero and controllable (confirmed 400->20, 6000->300,
+   both exactly /20, a clean linear relationship). Also bumped the exposure
+   and gain values themselves well above thaytan's reference (6000/100
+   instead of 400/1): the reference values produced a nonzero but still
+   fully black readback on this hardware. With both changes, the debug GUI's
+   "Controller Blob Cam N" panels went from solid black to showing real LED
+   blobs that visibly track controller movement, user-confirmed live
+   ("veo que trackean!", "ahi estan claros muchos de los puntos") -- and
+   RANSAC-PnP started recovering real device poses (verified via
+   CONSTELLATION_TRACKER_LOG=trace: "recovered pose for device 0 from 6
+   blobs", sample #2070 at pos=(-0.039,-0.012,-0.130), reprojection error
+   0.04-0.10px, held stable over 2000+ consecutive samples).
+
+2. Adds hw2mono clock-domain correction for controller-tracking frames.
+   The SLAM cam_sinks path (receive_cam0..3) has always applied
+   "xf->timestamp += ws->cam_hw2mono" before forwarding frames, converting
+   the WMR hardware's raw device clock into Monado's host monotonic clock --
+   but the controller-tracking path never did, so constellation sample
+   timestamps stayed in the raw hardware clock while get_tracked_pose's
+   freshness check compares against os_monotonic_get_ns(). Confirmed live:
+   a fixed ~44.5 million ms (~12.4 hour) mismatch, causing every constellation
+   sample to fail the 200ms freshness gate and fall back to the placeholder
+   position, regardless of how good the underlying pose solve was. Added
+   receive_ctrl_cam, mirroring receive_cam0..3's correction, wired in front
+   of the controller-tracking blobwatch chain.
+
+   Only PARTIALLY closes the loop: confirmed the correction reaches
+   CameraSample and Camera::pushPose correctly, but found a second,
+   NOT-understood bug in the same run -- sample.timestamp_ns at the
+   push_sample call site is consistently corrected for one device_id and
+   consistently raw for another, deterministically, despite both reaching
+   that exact same code path. get_tracked_pose still reports
+   position_tracked=no for at least one controller as a result. Documented
+   in place (t_constellation_tracker.cpp) and in docs/pruebas.jsonl T149
+   for the next session to pick up.
+
+Also fixes wmr_controller_base_get_tracked_pose's diagnostic log (added in
+9c78bc346): its throttle used a function-local `static` counter shared
+across every wcb instance (left AND right controller both call this
+function), so it only ever fired for whichever device's calls happened to
+land on the modulo-90 boundary, silently hiding the other controller's
+output the entire time. This is what made the device-specific timestamp
+bug above so hard to see in the first place. Gated on the device's own
+sample_count instead.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ src/xrt/drivers/wmr/wmr_camera.c              | 59 +++++++++++++++++++
+ src/xrt/drivers/wmr/wmr_controller_base.c     |  7 ++-
+ src/xrt/drivers/wmr/wmr_source.c              | 27 ++++++++-
+ .../constellation/t_constellation_tracker.cpp | 10 ++++
+ 4 files changed, 101 insertions(+), 2 deletions(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_camera.c b/src/xrt/drivers/wmr/wmr_camera.c
+index ba3427010..11ac62fc6 100644
+--- a/src/xrt/drivers/wmr/wmr_camera.c
++++ b/src/xrt/drivers/wmr/wmr_camera.c
+@@ -37,8 +37,13 @@ DEBUG_GET_ONCE_BOOL_OPTION(wmr_autoexposure, "WMR_AUTOEXPOSURE", true)
+ //! Specifies whether the user wants to use the same exp/gain values for all cameras
+ DEBUG_GET_ONCE_BOOL_OPTION(wmr_unify_expgain, "WMR_UNIFY_EXPGAIN", false)
+ 
++//! Mirrors the option of the same name in wmr_hmd.c -- this is unvalidated, opt-in only.
++DEBUG_GET_ONCE_BOOL_OPTION(wmr_constellation_controllers, "WMR_CONSTELLATION_CONTROLLERS", false)
++
+ static int
+ update_expgain(struct wmr_camera *cam, struct xrt_frame **frames);
++static int
++wmr_camera_set_ctrl_exposure_gain(struct wmr_camera *cam, uint8_t camera_id, uint16_t exposure, uint8_t gain);
+ 
+ /*
+  *
+@@ -61,6 +66,21 @@ update_expgain(struct wmr_camera *cam, struct xrt_frame **frames);
+ #define WMR_CAMERA_CMD_OFF 0x82
+ 
+ #define DEFAULT_EXPOSURE 6000
++/*
++ * Controller-tracking frames want a very short exposure and minimum gain: the point is to see
++ * the controllers' own (visible-light) LEDs as isolated bright points and essentially nothing
++ * else. Values from thaytan's dev-constellation-controller-tracking branch, which is the
++ * reference implementation for WMR constellation tracking.
++ *
++ * This is also why WMR controller tracking works in a dark room and why using these headsets
++ * in direct sunlight is advised against: the exposure is chosen so that only the LEDs stand
++ * out, so ambient light is irrelevant until it is bright enough to swamp them.
++ */
++// EXPERIMENT 2026-08-11: thaytan's values (400/1) read back as exposure=20 on this hardware once
++// the +2 slot fix landed -- still a fully black debug panel. Trying much higher values to check
++// whether this is simply an amplitude problem before doubting the slot mapping itself.
++#define DEFAULT_CTRL_EXPOSURE 6000
++#define DEFAULT_CTRL_GAIN 100
+ #define DEFAULT_GAIN 127
+ 
+ #define WMR_FRAMETYPE_SLAM 0x0
+@@ -535,6 +555,34 @@ wmr_camera_open(struct wmr_camera_open_config *config)
+ 		ceg->aeg = u_autoexpgain_create(U_AEG_STRATEGY_TRACKING, enable_aeg, frame_delay);
+ 	}
+ 
++	/*
++	 * Exposure/gain for the controller-tracking frames, which is a SEPARATE set of hardware
++	 * slots from the SLAM ones set in update_expgain(). Without this the controller frames
++	 * keep whatever the sensor defaults to, which on a Reverb G2 is a completely black image
++	 * even with the controllers' LEDs plainly lit and clearly visible in the SLAM stream.
++	 *
++	 * The slot mapping is the uncertain part. thaytan's branch has this as `camera_id + 2`,
++	 * which is right for a two-camera headset (slots 0-1 SLAM, 2-3 controller) but would land
++	 * on real SLAM cameras on the four-camera G2. Generalised here to + tcam_count, which
++	 * reduces to thaytan's constant in the two-camera case. NOTE that his version of this loop
++	 * is `for (i = cam->tcam_count; i < cam->tcam_count; i++)`, which never executes, so the
++	 * mapping has almost certainly never run on any hardware -- treat it as a hypothesis under
++	 * test, not a port. Acceptance is visual and immediate: "Controller Tracking Streams" in
++	 * the debug GUI must stop being black and show the LED points, and "SLAM Tracking Streams"
++	 * must be unchanged. If the SLAM view degrades, the mapping is wrong: revert.
++	 */
++	if (debug_get_bool_option_wmr_constellation_controllers()) {
++		for (int i = 0; i < cam->tcam_count; i++) {
++			const struct wmr_camera_config *config = &cam->tcam_confs[i];
++			bool status = wmr_camera_set_ctrl_exposure_gain(cam, config->location, DEFAULT_CTRL_EXPOSURE,
++			                                               DEFAULT_CTRL_GAIN);
++			if (status != 0) {
++				WMR_CAM_ERROR(cam, "Failed to set controller-tracking exposure and gain for camera %d",
++				              i);
++			}
++		}
++	}
++
+ 	u_sink_debug_init(&cam->debug_sinks[WMR_DEBUG_SINK_SLAM]);
+ 	u_sink_debug_init(&cam->debug_sinks[WMR_DEBUG_SINK_CONTROLLER]);
+ 	u_var_add_root(cam, "WMR Camera", true);
+@@ -750,6 +798,17 @@ update_expgain(struct wmr_camera *cam, struct xrt_frame **frames)
+ 	return res;
+ }
+ 
++//! Same command, but addressing the controller-tracking exposure slots instead of the SLAM ones.
++static int
++wmr_camera_set_ctrl_exposure_gain(struct wmr_camera *cam, uint8_t camera_id, uint16_t exposure, uint8_t gain)
++{
++	// EXPERIMENT 2026-08-11: +tcam_count (the generalised mapping) sends successfully but the
++	// frametype-2 exposure readback stays 0 regardless. Trying thaytan's original hardcoded
++	// +2 literally instead of scaling by tcam_count, since this hardware's real camera
++	// location IDs are 0,1,4,5 (not contiguous 0-3) -- a flat +2 lands on 2,3,6,7, untested.
++	return wmr_camera_set_exposure_gain(cam, camera_id + 2, exposure, gain);
++}
++
+ int
+ wmr_camera_set_exposure_gain(struct wmr_camera *cam, uint8_t camera_id, uint16_t exposure, uint8_t gain)
+ {
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
+index 0eaa8be3e..fe40eb56c 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.c
++++ b/src/xrt/drivers/wmr/wmr_controller_base.c
+@@ -576,8 +576,13 @@ wmr_controller_base_get_tracked_pose(struct xrt_device *xdev,
+ 	// Throttled log of what this function actually hands back to the app -- as opposed to
+ 	// constellation_sample_store's log of the tracker's internal telemetry -- so 0017 can be verified
+ 	// from the real output, not just the solver's own bookkeeping. ~once/sec at typical 90Hz polling.
++	// EXPERIMENT 2026-08-11: the original throttle used a function-local `static` counter, which is ONE
++	// instance shared across every wcb (left AND right controller both call this function), so it only
++	// ever fired for whichever device's calls happened to land on the modulo boundary -- silently hiding
++	// the other controller's output the whole time. Gate on this device's OWN sample_count instead.
+ 	static uint64_t get_tracked_pose_call_count = 0;
+-	if (++get_tracked_pose_call_count % 90 == 0) {
++	++get_tracked_pose_call_count;
++	if (wcb->constellation.sample_count > 0 && wcb->constellation.sample_count % 30 == 0) {
+ 		bool pos_tracked = (out_relation->relation_flags & XRT_SPACE_RELATION_POSITION_TRACKED_BIT) != 0;
+ 		WMR_INFO(wcb,
+ 		        "get_tracked_pose: pos=(%.3f, %.3f, %.3f) position_tracked=%s at_ts=%lld "
+diff --git a/src/xrt/drivers/wmr/wmr_source.c b/src/xrt/drivers/wmr/wmr_source.c
+index a0f87946f..298775038 100644
+--- a/src/xrt/drivers/wmr/wmr_source.c
++++ b/src/xrt/drivers/wmr/wmr_source.c
+@@ -74,6 +74,13 @@ struct wmr_source
+ 
+ 	// Controller-tracking (constellation) frames: blob detection only for now, debug-only, no tracker wired yet
+ 	struct u_sink_debug ctrl_blob_debug_sinks[WMR_MAX_CAMERAS]; //!< Sink to display detected LED blobs in UI
++	// EXPERIMENT 2026-08-11: the SLAM cam_sinks path applies +cam_hw2mono (see receive_cam0..3 below) before
++	// forwarding frames, but this ctrl path never did -- so constellation sample timestamps stayed in the raw
++	// hardware clock while get_tracked_pose compares against os_monotonic_get_ns(), a ~44.5M ms mismatch
++	// confirmed live tonight (get_tracked_pose log: position_tracked=no, delta_ms in the tens of millions).
++	// These two arrays let receive_ctrl_cam apply the same correction before frames reach blobwatch.
++	struct xrt_frame_sink ctrl_ts_fix_sinks[WMR_MAX_CAMERAS];       //!< Applies +cam_hw2mono, then forwards
++	struct xrt_frame_sink *ctrl_ts_fix_downstream[WMR_MAX_CAMERAS]; //!< Real blobwatch chain entry point
+ 
+ 	bool is_running;              //!< Whether the device is streaming
+ 	bool first_imu_received;      //!< Don't send frames until first IMU sample
+@@ -117,6 +124,19 @@ void (*receive_cam[WMR_MAX_CAMERAS])(struct xrt_frame_sink *, struct xrt_frame *
+     receive_cam3, //
+ };
+ 
++//! EXPERIMENT 2026-08-11: mirrors receive_cam0..3's "xf->timestamp += ws->cam_hw2mono" for the
++//! controller-tracking path, which never had it. Index is recovered via pointer arithmetic on
++//! ws->ctrl_ts_fix_sinks since, unlike the per-camera SLAM macro, one function serves all cameras.
++static void
++receive_ctrl_cam(struct xrt_frame_sink *sink, struct xrt_frame *xf)
++{
++	struct wmr_source *ws = container_of(sink, struct wmr_source, ctrl_ts_fix_sinks);
++	ptrdiff_t cam_id = sink - ws->ctrl_ts_fix_sinks;
++
++	xf->timestamp += ws->cam_hw2mono;
++	xrt_sink_push_frame(ws->ctrl_ts_fix_downstream[cam_id], xf);
++}
++
+ static void
+ receive_imu_sample(struct xrt_imu_sink *sink, struct xrt_imu_sample *s)
+ {
+@@ -368,7 +388,12 @@ wmr_source_create(struct xrt_frame_context *xfctx,
+ 			continue;
+ 		}
+ 
+-		ctrl_cam_sinks[i] = frame_sink;
++		// EXPERIMENT 2026-08-11: apply the same hw->mono clock correction the SLAM cam_sinks path gets
++		// (see receive_cam0..3) before frames reach blobwatch, so constellation sample timestamps end up
++		// in the same clock domain get_tracked_pose compares against. See the struct field comments.
++		ws->ctrl_ts_fix_downstream[i] = frame_sink;
++		ws->ctrl_ts_fix_sinks[i].push_frame = receive_ctrl_cam;
++		ctrl_cam_sinks[i] = &ws->ctrl_ts_fix_sinks[i];
+ 	}
+ 
+ 	struct wmr_camera_open_config options = {
+diff --git a/src/xrt/tracking/constellation/t_constellation_tracker.cpp b/src/xrt/tracking/constellation/t_constellation_tracker.cpp
+index afe19e1bf..bd0d5303c 100644
+--- a/src/xrt/tracking/constellation/t_constellation_tracker.cpp
++++ b/src/xrt/tracking/constellation/t_constellation_tracker.cpp
+@@ -734,6 +734,16 @@ Camera::pushPose(CameraSample &camera_sample,
+ 	    .average_brightness = average_brightness, // @todo compute this
+ 	    .metrics = metrics,
+ 	};
++	// KNOWN ISSUE, found 2026-08-11, NOT understood: at this exact point, sample.timestamp_ns is
++	// consistently correct (hw2mono-adjusted, matching Monado's host clock) for one device_id and
++	// consistently raw/uncorrected (device hardware clock) for another, deterministically -- confirmed
++	// with a temporary per-call trace, not a transient or a race. Both devices reach this same code
++	// path via the same Camera::pushPose, from the same camera_sample.timestamp_ns assigned once in
++	// CameraSample's constructor (t_constellation_tracker.cpp), which is itself fed by receive_ctrl_cam's
++	// "xf->timestamp += ws->cam_hw2mono" (wmr_source.c) -- so whatever the mechanism is, it depends on
++	// something about the device/camera pairing, not a simple missing conversion. This is why
++	// get_tracked_pose's freshness check still fails for at least one controller even with both the
++	// exposure fix and this clock fix applied. See docs/pruebas.jsonl for the full trace.
+ 	t_constellation_tracker_device_push_sample(device->device, &sample);
+ 
+ 	{
+-- 
+2.47.3
+
