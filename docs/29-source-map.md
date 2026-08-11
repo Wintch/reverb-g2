@@ -110,3 +110,37 @@ live back-and-forth, this file only tracks the URLs.
 - **`docs/27-verbose-logging-survey.md`** / **`docs/28-log-map.md`** -- what verbose
   logging exists across the stack (Steam/Proton/engines/OpenXR loader) and where to find
   it, so a new debugging session doesn't re-survey logging options from scratch.
+
+## External leads checked, found unreliable or inconclusive -- don't re-chase without new evidence
+
+- **`github.com/AshishKumar4/Project-VR`** claims a working 90Hz G2 + full 6-DoF
+  controller tracking (LED constellation + a 15-error-state EKF fusing optical/IMU) --
+  read about via a web search 2026-08-11 while stuck on our own controller-tracking
+  exposure bug. **Already investigated and found unreliable by this project itself**, see
+  `docs/06-known-issues.md`'s "CAUTION: Project-VR is NOT a verified positive case"
+  section (2026-08-04): 0 stars/forks/issues/PRs, zero external mentions anywhere, a
+  single initial-dump commit, never validated on Ampere (only Ada/RTX 4080), zero
+  images or video across 177 files, and its "evidence" is a successful OpenXR
+  session/log -- exactly the false-positive class this project already caught 9 times
+  (API happily reports 90fps with a dead panel). Its DSC-as-cause theory for 90Hz was
+  separately ruled out too (same doc, next section down). The 6-DoF/EKF claim inherits
+  the same skepticism by extension -- no photo/video proof exists for that either. Only
+  reason to revisit: if the author (or anyone) posts actual video proof.
+- **`github.com/OpenHMD/OpenHMD` issue #295** -- a different headset (HP Reverb
+  Professional/VR1000, not G2) and a different reverse-engineered driver stack (OpenHMD,
+  not Monado), but a strikingly similar symptom: DisplayPort never powers the panel while
+  USB/rotational tracking works fine, with firmware-side errors including `"unknown
+  message type: 23"` -- notable because our own 2026-08-11 firmware debug error
+  (`hololens_handle_debug` in `wmr_hmd.c`, verbatim text from the headset's own firmware,
+  not Monado-generated) was `"ERROR: CommandSet st 0, cmd 0, reqCmd 23"` -- same number,
+  possibly the same underlying WMR-family protocol command, unconfirmed. **That OpenHMD
+  thread has no resolution either** -- the reporter offered hardware/patch testing
+  collaboration and nothing came of it publicly. Command/message-type 23 being an
+  apparent sticking point across two independent reverse-engineering efforts (OpenHMD and
+  whatever informs Monado's own WMR driver) is worth remembering if this recurs, but
+  isn't an answer by itself.
+- **NVIDIA driver "565.77.01 required for G2 on Linux"** -- surfaced once in an AI web
+  search summary while researching the above, **could not be confirmed by a follow-up
+  search** (no changelog or forum post found mentioning this). Treat as unverified/likely
+  a search-summarization artifact, not a real claim -- don't act on it without finding a
+  primary source first.
