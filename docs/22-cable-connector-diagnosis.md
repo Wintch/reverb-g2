@@ -409,3 +409,51 @@ panel re-activation -- the two failure classes ("panel never got the HID command
 need different fixes. Don't assume `panel.py activate` alone settles a backlight-dark
 report without first checking whether a session was already active when the physical
 event happened.
+
+## Connector doesn't enumerate at all vs. reports disconnected -- and a `kill -9` kernel WARN found on the everyday system (2026-08-11)
+
+**Machine**: the everyday system (`brunduk`, X11+KDE, driver 550.163.01, unpatched --
+separate box from `iashur`/the lab elsewhere in this doc). Hit while trying to bring the
+stack up for a 6DoF constellation-tracking re-verification session, using that machine's
+own local `jack-in.sh` copy (not `jack-in-wayland.sh`).
+
+**New diagnostic technique, extends anatomy point 10 above.** Point 10 already says the
+DP connector name changes per machine and to scan `/sys/class/drm/card*-DP-*` instead of
+hardcoding it. What wasn't established yet: **a connector that reports `disconnected` is
+not the same signal as a connector that doesn't exist at all.** On this machine, with the
+visor-end cable not actually linked, the kernel enumerates exactly 4 connectors under
+`/sys/class/drm/card0-*` -- `DP-1`, `DP-2`, `HDMI-A-1`, `HDMI-A-2`, matching the 3 desktop
+monitors plus one spare. No 5th connector shows up for the headset at all; it isn't
+`disconnected`, it's simply absent. Meanwhile NVKMS/`xrandr`'s own internal `DP-0` slot
+(the naming mismatch documented elsewhere in this repo's history) still nominally exists
+in that state and reports `disconnected` regardless -- indistinguishable, from that layer
+alone, from a real but transient link-training failure. Counting real DRM connectors
+against a known desktop-only baseline is a free, pre-service check that tells the two
+apart. Also confirmed while investigating this: **NVIDIA's driver does not expose a
+`non-desktop` sysfs attribute per connector on this setup** (checked directly, the file
+doesn't exist under `/sys/class/drm/card0-*/`) -- querying that property, if ever needed
+here, would require going through libdrm's connector-properties ioctl, not a sysfs read.
+
+**Real kernel bug found, worth checking for on the lab side too.** Two clean attempts
+(`jack-in.sh`'s `wake_panel()`, which starts the service once, waits for `DP-0` to read
+`connected`, then `kill -9`s it) both failed identically with
+`vkAcquireXlibDisplayEXT: VK_ERROR_UNKNOWN` -- consistent with the connector never having
+been there to acquire, per the finding above. Both times, the `kill -9` itself triggered
+a real kernel WARN inside `nv_drm_revoke_modeset_permission` (`nvidia_drm`, driver
+550.163.01), confirmed via `dmesg -T`: a WARN-class oops (not a panic), stack trace
+through `drm_file_free` -> `drm_release` -> `__fput`, hit while tearing down a process
+that still held DRM modeset permission from its own failed Vulkan acquire attempt.
+Non-fatal both times -- `nvidia_drm`/`nvidia_modeset`/`nvidia` stayed loaded with sane
+refcounts, `nvidia-smi` stayed responsive, GPU stayed at a normal idle `P8` pstate -- but
+real, reproducible, and pointless to keep re-triggering once the connector-enumeration
+check above has already told you the link isn't there. If `jack-in-wayland.sh` has any
+similar "start briefly, `kill -9`, check status" sequence, it's worth one `dmesg -T`
+check after a failed wake attempt there too -- this may not be everyday-system-specific,
+just never looked for before.
+
+**Fix applied locally** (everyday system's own `jack-in.sh`, not yet ported here since
+that script isn't the one tracked in this repo): the connector-enumeration check now runs
+before the service is ever started, and on failure prints the physical diagnosis (reseat
+the visor-end cable, then check the 12V brick) and exits instead of burning an attempt
+that reliably reproduces the same kernel WARN for no new information. Cable reseat
+requested from the user; not yet retried after that as of this note.
