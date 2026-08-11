@@ -457,3 +457,30 @@ before the service is ever started, and on failure prints the physical diagnosis
 the visor-end cable, then check the 12V brick) and exits instead of burning an attempt
 that reliably reproduces the same kernel WARN for no new information. Cable reseat
 requested from the user; not yet retried after that as of this note.
+
+**CORRECTION, same session, a few hours later: the fix above was wrong and has been
+reverted.** Root cause of that whole failed sequence turned out to be the 12V brick
+switched off, not the cable/connector -- once powered back on, a real launch succeeded
+(reached "Started vblank event thread!") while `/sys/class/drm/card0-*` **still only
+showed the same 4 desktop-only connectors the whole time**, proving connector count was
+never a valid signal for this NVIDIA setup in the first place. Left in this doc as a
+record of a dead end, not a working technique -- don't reintroduce it.
+
+**A better signal, found later the same session: the RandR `non-desktop` property,
+queried with `xrandr --prop`.** On a working setup this reads `1` for the headset's
+connector; Monado's `comp_window_direct_randr_init` needs at least one output with this
+property set, and fails with "No non-desktop output available" (a distinct, more specific
+error than the generic `vkAcquireXlibDisplayEXT: VK_ERROR_UNKNOWN` seen elsewhere in this
+doc) when none exists. Mid-session, after several service restarts to chase an unrelated
+bug, this property was observed reading `non-desktop: 0` on every connector including the
+one otherwise behaving like the headset (`connected`, no desktop monitor's EDID) --
+correlating with a cluster of other physical-layer symptoms in the same window: the USB2
+branch dropping to 2/5 devices after a PC-side-only reseat (recovered only after a
+visor-end reseat, this doc's own established fix), and a firmware-side error
+(`hololens_handle_debug`: `"ERROR: CommandSet st 0, cmd 0, reqCmd 23"`) recurring
+intermittently, absent on some attempts. Read together, this looks like a degrading EDID
+read on a marginal link -- the non-desktop bit lives in the panel's own EDID/DisplayID
+data, so an incomplete or corrupted read would plausibly report `0` -- rather than three
+unrelated new bugs. Not conclusively proven; worth checking `xrandr --prop`'s
+`non-desktop` value as a fast diagnostic the next time this cluster of symptoms recurs,
+before assuming a software regression.
