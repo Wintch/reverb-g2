@@ -66,11 +66,18 @@
 > exported yet. Noted in `patches/monado/README.md` so future sessions check `git log`
 > directly rather than trusting the exported numbering is current.
 >
-> **Light-level calibration started, not concluded**: user began raising room light
-> gradually from dark while checking blob tracking, aiming to compare against the known-good
-> light level on Windows. Tracking held up through a small amount of added light and a
-> controller standby cycle, but the session ended before finding the actual failure
-> threshold -- pick this back up before assuming the current exposure values are final.
+> **Light-level calibration result**: user raised room light gradually from dark while
+> checking blob tracking, aiming to compare against the known-good light level on Windows.
+> Tracking held up through a small amount of added light and a controller standby cycle.
+> At normal full living-room light (not dim), tracking still worked on standby-wake, but
+> real false-positive blobs appeared near bright ambient light sources (lamps) -- consistent
+> with the design tradeoff already known from thaytan's reference (short exposure/low gain
+> isolates LEDs from ambient light, but sufficiently bright *other* sources can cross the
+> same `pixel_threshold` blob detector uses and register as spurious blobs). Not tuned
+> tonight -- deliberately left as a note, not a fix, since tuning `pixel_threshold` /
+> `blob_required_threshold` (`wmr_source.c`'s `RIFT_BLOBWATCH_PIXEL_THRESHOLD_CV1` etc.) is
+> its own separate pass, better done once the device-specific clock-domain bug above is
+> resolved and there's an actual tracked pose to judge false positives against.
 >
 > Patch `0016` is committed locally on the everyday-system monado checkout only -- no fork
 > remote configured there, so it hasn't been pushed anywhere. The `.patch` file is in this
