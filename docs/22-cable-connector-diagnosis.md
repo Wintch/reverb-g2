@@ -532,6 +532,16 @@ sessions, the practical implication is that the official L56522-002 adapter, at 
 specific unit, is the actual root of the cluster -- not "HP-branded parts are inherently
 more trustworthy than third-party ones" the way the earlier trust in it assumed.
 
+**A USB 3.1 Gen2 (10Gbps) adapter would not help, checked directly via `lsusb -t`**: the
+PC's own xHCI root hub on this port negotiates at `10000M` (10Gbps, so the host side has
+headroom), but the G2's own onboard USB3 hub chip (`04b4:6504`) negotiates at exactly
+`5000M` (5Gbps, USB 3.0 / USB 3.1 Gen1 speed) regardless, and everything downstream of it
+(HoloLens sensors, etc.) inherits that same 5000M ceiling. The bottleneck is inside the
+headset's own hardware, not the adapter or the cable run to it -- any adapter that reaches
+at least 5Gbps (which the Nisuta NSADU30UC confirmed does, currently negotiated at 5000M
+in the live topology) gives the full bandwidth this headset can ever use. No reason to
+shop for a higher-spec adapter on bandwidth grounds.
+
 From that exact point forward, the same session ran a long, restart-heavy 6DoF
 controller-tracking development block: at least 4 full `monado-service` restarts,
 including two that followed a clean `ninja` rebuild (full relink of `drv_wmr` and the
