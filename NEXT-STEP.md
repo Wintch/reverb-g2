@@ -1,5 +1,26 @@
 # Next step
 
+> # CLARIFICATION (2026-08-12, ~11:50, lab machine) — "6DoF" below means TWO different subsystems, and only one of them was the stale bundle
+>
+> The update immediately below root-causes "6DoF looked broken on the lab" as a stale
+> handoff bundle. That is correct **for 6DoF controller tracking** (the constellation path,
+> `patches/monado/0016`/`0017`, `position_tracked=yes` for the controllers). It is **not**
+> the explanation for 6DoF *head* tracking, which was measured on the lab machine the same
+> morning and has an unrelated root cause:
+>
+> - The head-SLAM runaway reproduces on the lab's own binary (`lab-90hz-0017`), which never
+>   had `g2-constellation-x11kde` checked out — the bundle was fetched into `~/vr/monado`
+>   at 08:44 and `HEAD` never moved off `lab-90hz-0017`. Verified in the reflog.
+> - Everything `0016`/`0017` fix lives in `receive_ctrl_cam` / the controller-frame exposure
+>   path. Neither touches the head SLAM pipeline.
+> - The actual cause was Basalt holding 0.0–0.9 landmarks per camera because its default
+>   detection settings are its EuRoC settings. Fixed via `scripts/basalt-g2-config.json`
+>   plus `patches/monado/0019–0023` and `patches/basalt/0001`. Full chain in
+>   `docs/pruebas.jsonl` T162 and the milestone at the top of `CLAUDE.md`.
+>
+> So both findings stand, they just answer different questions. The controller-side claim
+> below is still **not re-verified building on the lab** — that remains its own next step.
+
 > # UPDATE (2026-08-12, everyday system, community/comms session): why 6DoF "didn't work" on the lab found — the handoff bundle was stale, not the code
 >
 > Checked the actual source of `patches/monado/0016`/`0017` (the everyday system's own
