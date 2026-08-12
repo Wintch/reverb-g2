@@ -16,10 +16,23 @@
 # their slot entirely and being shown one refresh later -- that is the artefact above. A
 # median well below one period is jitter, which is a different (and milder) problem.
 #
-# WARM-UP TRAP, learned the hard way on Aircar the same day: the first minute of a Proton
-# title measures DXVK shader compilation and asset streaming, not steady state. The same
-# session read 3.44% late frames early and 0.13% once warm, with nothing changed in
-# between. Let the title settle before believing a number, and say so when reporting one.
+# WARM-UP TRAP, and it is not a one-off -- confirmed on three independent titles the same
+# day: Aircar 3.44% -> 0.13%, Emergence 2.56% -> 0.41%, VersaillesVR from a user-reported
+# 2 fps to perfect. In every case the render scale and everything else were unchanged; it
+# was DXVK finishing its shader compilation. The first minute of a Proton title measures
+# warm-up, not steady state. Let the title settle before believing a number, and say so
+# when reporting one.
+#
+# WHAT THE PERCENTAGES FEEL LIKE. The 1% threshold below is not an industry rule -- it is
+# calibrated against this user's own reports on this hardware, which lined up with the
+# measurements three times:
+#
+#   0.13 %   imperceptible          -- "casi perfecto"
+#   2.56 %   noticeable, playable   -- "se nota que un poquito apenas se pierde, pero bien igual"
+#   3.44 %   noticeable, unpleasant -- felt as a micro-snap on head turns, mildly nauseating
+#
+# Treat those as this rig's scale, not as universal numbers, and re-calibrate if the
+# hardware or the user changes.
 #
 # Requires the pacing instrumentation, which jack-in-wayland.sh turns on by default
 # (VR_PACING=1). This script checks for it rather than silently reporting zero.
@@ -71,8 +84,15 @@ ELAPSED="$(( $(date +%s) - START ))"
 LATE="$(( AFTER - BEFORE ))"
 
 # Distribution over the frames observed in THIS window only: take the last $LATE entries.
-DIST="$(grep -oE "late by [0-9.]+ms" "$LOG" | tail -n "$((LATE > 0 ? LATE : 1))" \
-        | awk '{gsub(/ms/,"",$3); print $3}' | sort -n)"
+# With LATE=0 there is nothing from this window, and asking for `tail -1` would report a
+# stale entry from an earlier run as if it belonged here -- a false reading in a tool whose
+# whole job is to be trusted. Emit nothing instead.
+if [ "$LATE" -gt 0 ]; then
+    DIST="$(grep -oE "late by [0-9.]+ms" "$LOG" | tail -n "$LATE" \
+            | awk '{gsub(/ms/,"",$3); print $3}' | sort -n)"
+else
+    DIST=""
+fi
 
 echo
 awk -v late="$LATE" -v el="$ELAPSED" -v hz="$HZ" -v per="$PERIOD_MS" '

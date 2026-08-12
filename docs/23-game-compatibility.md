@@ -29,6 +29,51 @@ bug, and isn't repeated in every row.
 | Dead Herring VR | [1498490](https://steamdb.info/app/1498490/) | ✓ | Real VR image and gameplay reached; user was mispositioned (same diverging-SLAM session as Google Earth — needs a clean-session retest for a final verdict, but the game itself renders and runs). Curiosity: has a 2D debug mode showing a map on the desktop window in 3D. |
 | Tank Mechanic Simulator VR | [1463010](https://steamdb.info/app/1463010/) | ✓ | Confirmed working, 2026-08-09 — user: "perfecto! 3dof en los joy. Imagen excelente." Shows a generic "does not appear to support headset" warning on first launch (same harmless whitelist-check pattern as Dark Room VR) — click through it, doesn't block anything real. |
 | SafeZoneVR | [1701090](https://steamdb.info/app/1701090/) | ✓ | Image/gameplay confirmed working (2026-08-09), but head-tracking drifted left during both attempts, including a fresh-SLAM restart — **not the usual `det(Q1Jl)==0` numerical-divergence signature** (zero such warnings in the log either time, unlike Aircar/Google Earth VR), so likely plain SLAM/VIO drift rather than the known divergence bug. The global recenter shortcut (hold menu 3s) never fired during either SafeZoneVR attempt (`xrizer.txt` shows zero "menu button held" lines that session, which itself exited on its own after only ~61s, clean `STOPPING→IDLE→EXITING`, not a crash). **Confirmed NOT a general recenter regression**: immediately re-tested on VRSailing (same session, same xrizer build) and it fired twice, ~3.0s hold each time, exactly as designed. So the SafeZoneVR case is either that the ~61s session never gave a full 3s of continuous hold a real chance, or something specific to that game/session — not root-caused further this session, redo with a longer SafeZoneVR run if it recurs. |
+| Interkosmos | [579110](https://steamdb.info/app/579110/) | ✓ | Confirmed working 2026-08-12 (T161) — 3DoF hands, video perfect. Sound not verified (none reached the user in the opening section; may appear further in). |
+| Emergence | [1337820](https://steamdb.info/app/1337820/) | ✓ | Confirmed working 2026-08-12 (T161) — plays well with the VR sticks. **0.41% late frames** once warm. Audio needed routing to the headset by hand (see the audio note below the tables). |
+| Blast the Past | [943170](https://steamdb.info/app/943170/) | ✓ | Confirmed working 2026-08-12 (T161) — hands in 3DoF and responding. **The cleanest pacing result measured so far: ZERO late frames in 30 s** (0.00–0.09%). |
+| Audio Factory | [722590](https://steamdb.info/app/722590/) | ✓ | Confirmed working 2026-08-12 (T161). Two observations that are **not this title's fault**: the user sat too high (Monado assumes a flat 1.6 m floor below the headset at startup, T146, project-wide) and one controller was 3DoF-only (the paused controller position tracking, `docs/03`). |
+| VersaillesVR \| The Palace is yours | [1098190](https://steamdb.info/app/1098190/) | ✓ | Confirmed working 2026-08-12 (T161) — sound in the headset, both sticks visible and registering movement. **0.37% late frames** once warm. Started at ~2 fps and settled on its own: the most extreme warm-up case measured (see the warm-up note below). |
+| Steam 360 Video Player | [613220](https://steamdb.info/app/613220/) | ✓ | Reaches VR with controllers visible, but renders black **for lack of content** — the project's own test media is down to a single equirect JPG. Structurally fine; verification incomplete rather than failed (2026-08-12, T161). |
+
+> **Correction to a conclusion in `CLAUDE.md` (2026-08-12, T161).** That file records Funhouse,
+> InCell VR and InMind VR as "each fail for their own unrelated reason … **not a shared bug**".
+> That does not hold. InCell and InMind share one cause exactly (the missing Oculus
+> `OVRPlugin`), and Funhouse was separately unable to reach the runtime at all because its
+> launch options were incomplete. Three different crash signatures, two shared causes, and
+> none of the three was ever observed under a working configuration.
+
+## Runs in 2D but never enters VR — opens an XR session and abandons it
+
+A distinct failure class, named 2026-08-12 (T161), previously lumped in with "doesn't work".
+These titles **do** talk to OpenVR: they create a session and then drop it inside the same
+millisecond, while the process stays alive and plays perfectly flat on the desktop. Identical
+signature in all three:
+
+```
+OpenXR session state changed: SYNCHRONIZED -> STOPPING -> IDLE -> EXITING
+```
+
+That is neither a crash nor a plumbing gap. The likely cause is a missing per-title launch
+flag; **`steam -applaunch <id> <args>` does NOT forward arguments** (verified — the game's
+cmdline ends at the .exe), so it has to go in the launch options as `%command% -vr` or
+whatever the title expects, which needs Steam closed. Untested as a batch.
+
+| Game | AppID | SteamDB | Notes |
+|---|---|---|---|
+| Dagon | [1481400](https://steamdb.info/app/1481400/) | ✓ | Runs perfectly in 2D; the user recalls having played it in VR before and could find no in-game way to switch. |
+| Back to Dinosaur Island | [412940](https://steamdb.info/app/412940/) | ✓ | Runs fine in 2D, never takes the headset. CryEngine, like its sequel — but this one does not crash. |
+| Amoreon NightClub | [701100](https://steamdb.info/app/701100/) | ✓ | 2D only, appears to run fine. |
+
+## Blocked by a named gap in our own stack
+
+Not compatibility problems — each is a specific missing piece, located with file and line.
+
+| Game | AppID | SteamDB | Notes |
+|---|---|---|---|
+| fpsVR | [908520](https://steamdb.info/app/908520/) | ✓ | **xrizer does not support OpenVR overlay applications at all**: `Unsupported application type: Overlay` from `xrizer::clientcore`. No overlay app can work — not fpsVR, not OVR Toolkit, none. A missing feature, not a misconfiguration. Its first failure was the launch-options gap (`ERROR_RUNTIME_UNAVAILABLE`); fixing that only revealed the real blocker (2026-08-12, T161). |
+| Microsoft Maquette | [967490](https://steamdb.info/app/967490/) | ✓ | Reaches `FOCUSED` with both controllers, then its readiness checklist fails on "controllers on" and "controllers tracking". **The log points at the chaperone, not at tracking**: `GetPlayAreaSize` and `GetPlayAreaRect` unimplemented at `src/chaperone.rs:65` and `:58`. Separately, several right-hand bindings are rejected — `/user/hand/right/input/x/click`, `/y/click`, `/trigger/value` — because X/Y are **left-hand only** on the `oculus/touch_controller` profile (the right hand has A/B), the same class as SUPERHOT's Menu button (2026-08-12, T161). |
+| Back to Dinosaur Island 2 | [452640](https://steamdb.info/app/452640/) | ✓ | Crashes outright on launch: the user saw CryEngine's "crash handler not found" followed by "bug submission failed" — the reporter failing after the game had already died. The XR session opens and exits in the same millisecond (2026-08-12, T161). |
 
 ## Broken — real, reproducible xrizer/Monado bugs
 
@@ -46,9 +91,9 @@ bug, and isn't repeated in every row.
 
 | Game | AppID | SteamDB | Notes |
 |---|---|---|---|
-| NVIDIA® VR Funhouse | [468700](https://steamdb.info/app/468700/) | ✓ | Fails before VR even initializes — a Proton/PhysX/CUDA error. |
-| InCell VR | [396030](https://steamdb.info/app/396030/) | ✓ | Reproducible xrizer `VR_InitInternal`/`dlclose` crash, but on a native (non-Proton) process — a build/packaging issue on the game's own native Linux port, not the WMR/xrizer input or compositor path. |
-| InMind VR | [343740](https://steamdb.info/app/343740/) | ✓ | Unrelated Mono runtime crash before ever touching VR. |
+| NVIDIA® VR Funhouse | [468700](https://steamdb.info/app/468700/) | ✓ | **Verdict suspect, needs a retest (2026-08-12, T161).** This title's launch options were **missing `PRESSURE_VESSEL_FILESYSTEMS_RW`**, so it could not see Monado's socket from inside pressure-vessel and could not have reached VR regardless of PhysX. The recipe is now complete; the Proton/PhysX/CUDA verdict above was recorded under the broken configuration and should not be trusted until it is run again. |
+| InCell VR | [396030](https://steamdb.info/app/396030/) | ✓ | **Root cause corrected 2026-08-12 (T161).** The game is a **native Linux Unity build** that calls Oculus's `OVRPlugin` before anything else (`OVRSwitcher.GetVRActiveDevice`). `libOVRPlugin.so` has never existed on Linux — Oculus dropped the platform in 2015 — so Mono throws `DllNotFoundException` and the process aborts in under a second. **Nothing here ever reached VR**, so the earlier `VR_InitInternal` verdict described a stage the game could not get to. `tools/ovrplugin-stub/` fixes that: a 78-symbol stub answering "no HMD" (install into `InCell_Data/Plugins/x86_64/` — **not** `Mono/x86_64/`, which is only the fallback path the log advertises). With it the stub's trace shows `ovrp_GetStatus` being called and the stack continuing through `SteamVR.CreateInstance` → `OpenVR.Init` → `OpenVRInterop.InitInternal`, where it now dies — so the old verdict was right about WHERE, one stage later than anyone could previously observe. **Next suspect**: the game bundles its own OpenVR 1.0.x-era `libopenvr_api.so` in `Plugins/x86_64/`; an ABI mismatch against xrizer would explain a crash this early (xrizer never opens its log). Not investigated. |
+| InMind VR | [343740](https://steamdb.info/app/343740/) | ✓ | **Same root cause as InCell VR, corrected 2026-08-12 (T161)** — same studio (Nival VR), same native Linux Unity build, same `DllNotFoundException: OVRPlugin` (`OVRManager.Update` → `OVRPlugin.get_hasVrFocus`). The "unrelated Mono crash" recorded earlier is the *symptom* of a missing native library, not a cause. The stub in `tools/ovrplugin-stub/` applies here too but **has not been tried on this title yet**. Context that pointed the way: the user recalls both titles running on a DK2, which makes a genuine performance or complexity failure implausible. |
 | Surgeon Simulator VR: Meet The Medic | [457420](https://steamdb.info/app/457420/) | ✓ | Crash-loop: 4 rapid connect/disconnect cycles from `SurgeonVR.exe` before giving up (T073, log-only, never looked at physically). |
 | World of Guns: VR | [1111760](https://steamdb.info/app/1111760/) | ✓ | Never gets past the initial steam/wineopenxr probe stage at all — fails earlier than every other title tried (T073, log-only). |
 | Overkill VR | [518720](https://steamdb.info/app/518720/) | ✓ | Confirmed physically (was log-only "inconclusive" in T073): xrizer shows a throwaway session cycle at launch (READY→EXITING in 18ms, same shape as VRChat/Overkill's own harmless probe) then goes silent — no second real session ever opens, even after waiting well past the process's own high-CPU "loading" window. Desktop mirror shows a plain white screen, headset shows nothing. Not the slow-Unity-boot theory T073 floated — it just never gets further. |
