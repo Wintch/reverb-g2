@@ -8,6 +8,10 @@
 #                                          2 = 4320x2160@60  (the only one that works today in X11)
 #                                    tracking: 3dof = IMU only, rotation only (default)
 #                                              6dof = real SLAM via Basalt (position + rotation)
+#                                              ctrl = head 3dof, but cameras ON and constellation
+#                                                     tracking of the CONTROLLERS enabled. Isolates
+#                                                     controller position from Basalt's CPU load;
+#                                                     see WMR_CONSTELLATION_CONTROLLERS below.
 #
 # Why this is MUCH simpler than jack-in.sh: in X11 you have to fight X for the display
 # (free DP-0, cycle the CRTC, restore the portrait rotation). With DRM lease the
@@ -26,8 +30,8 @@ case "$MODE" in
 esac
 TRACKING="${2:-3dof}"
 case "$TRACKING" in
-    3dof|6dof) ;;
-    *) echo "invalid tracking: '$TRACKING' (3dof or 6dof)" >&2; exit 1 ;;
+    3dof|6dof|ctrl) ;;
+    *) echo "invalid tracking: '$TRACKING' (3dof, 6dof or ctrl)" >&2; exit 1 ;;
 esac
 VR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 [ -d "$HOME/vr/monado" ] && VR="$HOME/vr"
@@ -205,8 +209,33 @@ EOF
         TRACKING_ENV+=("SLAM_CONFIG=$SLAM_CONFIG" "SLAM_CONFIG_PIPELINE_ONLY=${SLAM_CONFIG_PIPELINE_ONLY:-1}")
         echo "  SLAM pipeline config: $SLAM_CONFIG (from the environment)"
     fi
+elif [ "$TRACKING" = "ctrl" ]; then
+    # Cameras streaming, Basalt not loaded: the controllers' constellation solve gets the whole
+    # camera and CPU budget, so "do the controllers report a real position" is answered without
+    # Basalt's load in the way. T162 measured that CPU load perturbs IMU sample arrival, which
+    # moves the clock fit -- the same clock the constellation samples are stamped against.
+    TRACKING_ENV=(WMR_SLAM=0 WMR_CAMERAS=1)
 else
     TRACKING_ENV=(WMR_SLAM=0 WMR_CAMERAS=0)
+fi
+
+# Constellation (LED) positional tracking of the CONTROLLERS -- patches/monado/0012-0017, the
+# other thing this project calls "6DoF" and a different subsystem from head SLAM entirely.
+# Default: on for "ctrl", off elsewhere, overridable from the environment for an A/B.
+#
+# ALWAYS pass it explicitly rather than relying on the default. The option is declared TWICE
+# with DIFFERENT defaults -- wmr_hmd.c has `true`, wmr_camera.c has `false` -- so leaving it
+# unset creates the tracker (hmd) while the camera path never assigns the controller exposure
+# slots that feed it, i.e. a tracker that is silently starved rather than off.
+if [ "$TRACKING" = "3dof" ]; then
+    CONSTELLATION="${WMR_CONSTELLATION_CONTROLLERS:-0}"   # no cameras: it could only starve
+else
+    CONSTELLATION="${WMR_CONSTELLATION_CONTROLLERS:-$([ "$TRACKING" = ctrl ] && echo 1 || echo 0)}"
+fi
+TRACKING_ENV+=("WMR_CONSTELLATION_CONTROLLERS=$CONSTELLATION")
+if [ "$CONSTELLATION" = 1 ]; then
+    echo "  Controller constellation tracking: ON (WMR_CONSTELLATION_CONTROLLERS=0 disables)"
+    echo "    verify with: grep -E 'get_tracked_pose:|position_tracked' $LOG"
 fi
 
 # --- Verbose tracking logging (2026-08-11) ------------------------------------------

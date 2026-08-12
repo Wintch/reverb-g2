@@ -37,6 +37,34 @@ branch; check `git log` there before assuming something past 0016 doesn't exist.
 | 0022 | (unfiled, verified live 2026-08-12) | Stops `receive_imu_sample` throwing away IMU samples whose converted timestamp did not advance. The comment there says it happens for "one or two" samples after an unclean shutdown; on a Reverb G2 it was **5301 samples in 216 s, ~10% of the whole stream**, because `hw2mono` is re-fitted per sample from arrival time and USB jitter moves the fit (backwards steps: p50 3.3 ms, p99 14.7 ms, max 17.3 ms). Steps under 20 ms now floor the timestamp past the last accepted one and keep the sample; everything is counted (floored, dropped, burst lengths) with throttled logging and running totals, which doubles as a cheap link-health signal. The old log printed one line per dropped sample with an unsigned-underflow "diff". **Contains a documented negative result**: swapping in `m_clock_windowed_skew_tracker` (in-tree, used by the Rift driver) took dropped samples to zero and made drift *worse* — 0.7-1.0 m to 243 m and 1002 m on two runs. Don't re-apply it on the strength of the drop counters. See `docs/pruebas.jsonl` T162. Applies on top of 0021. |
 | 0023 | (unfiled, verified live 2026-08-12) | Divergence auto-reset (`SLAM_AUTO_RESET`, on by default, `SLAM_AUTO_RESET_MAX_SPEED` in m/s, integer-only env var) — `flush_poses` calls `tracker_reset` when the implied speed between consecutive poses exceeds 10 m/s, after a session jumped 2459 m in one step and then froze on that value for 90 s. Needs a real `dt` floor (5 ms): two of the first three resets fired on `dt = 0.000 s` where 5 mm reads as 21 m/s. **Known cost, not fixed**: a reset re-anchors at the origin without telling the application, so the world anchor teleports. Also adds `SLAM_FILTER=one_euro|moving_average|exponential|none` — all three output filters are off upstream and GUI-only, so the pose the application gets is raw; measured in-game the one euro filter takes rotation between poses from p99 12.03°/max 32.35° to p99 1.13°/max 5.54°. **The jitter is rotational**: changing `SLAM_PREDICTION_TYPE` to gyro-only changed nothing. See `docs/pruebas.jsonl` T162. Applies on top of 0022. |
 
+> ## 0024-0027 ARE ON A DIFFERENT BASE (2026-08-12, T163) — read this before trying to `git am` them
+>
+> `0024`-`0027` were developed and verified on the lab machine's `lab-full` branch, **not** on
+> top of `0001`-`0023`. `lab-full` is `g2-constellation-x11kde` (`7cb73701b` — the branch with
+> the full controller-tracking history, which is finer-grained than and diverged from this
+> directory's `0012`-`0017`) with six head/SLAM commits cherry-picked on top: the 90 Hz patch
+> plus `0019`-`0023`. All six applied clean. `lab-full` HEAD after these four is `2a6e64d6e`.
+>
+> They are numbered to continue this directory's sequence because they came next in time, not
+> because they apply after `0023`. To reproduce the binary these were measured on, build
+> `lab-full`, not this series. Untangling the two lineages is still open — same knot the box
+> below describes.
+>
+> | patch | what |
+> |---|---|
+> | 0024 | `WMR_CONSTELLATION_CONTROLLERS` was declared twice with **different defaults** (`true` in `wmr_hmd.c`, `false` in `wmr_camera.c`). Unset, the HMD created a constellation tracker while the camera path never assigned the controller exposure slots feeding it — a starved tracker rather than a disabled one, which reads exactly like "constellation doesn't work". Both `false`; the launcher passes the value explicitly. |
+> | 0025 | The camera mosaic had no `tracking_origin`, so `CameraMosaic::getTrackingOriginPose` returned `XRT_POSE_IDENTITY` and the tracker assumed the headset never moves or turns. Controller positions came out in a frame bolted to the IMU's initial orientation. **User-verified before and after**: tracked and displaced in all three axes but along visibly wrong axes → axes correct. |
+> | 0026 | Upstream bug, not ours: both callers of `Camera::pushPose` gate on `POSE_MATCH_GOOD`, but that score predates the RANSAC-PnP refinement *inside* `pushPose`, whose recomputed score was only used for metrics. Poses the tracker's own criterion had rejected were still published — including `matched_blob_count == 0`. Max step for a motionless controller 1.607/0.937 m → 0.560/0.432 m. |
+> | 0027 | Constellation samples now go through an `m_relation_history` (interpolated/predicted to the requested timestamp) instead of "last sample, else placeholder", and `t_constellation_tracker_device_params.tracking_source` — the tracker's own prior, previously `NULL` — reads it. Motionless-controller p99 step 0.435/0.413 m → **0.194/0.007 m**; poses rejected by the tracker 271 → 27. |
+>
+> **Still open after 0027, measured and stated as measured**: one controller shows a bistable
+> flip, two clusters **0.189 m** apart, both with ~8 matched blobs and a good fit. The prior
+> cannot break that tie because the orientation it carries is the constellation solve's own —
+> the ambiguous quantity itself. The IMU is the independent evidence, but the two are not in
+> the same frame: **the gravity direction alone disagrees by 104-161°**, bimodally, matching
+> the two clusters. An IMU-backed prior needs the fixed transform between the LED model frame
+> and the IMU frame derived from the factory calibration first. It is not a drop-in.
+
 > ## THE SERIES IS BROKEN — 0016 and 0017 DO NOT APPLY (measured 2026-08-12, T157)
 >
 > This section used to read *"All seventeen apply with plain `git am` onto the pinned SHA
