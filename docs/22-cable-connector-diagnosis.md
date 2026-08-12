@@ -522,6 +522,16 @@ the swap in the session transcript before doing anything else, which is what mak
 "tracked from there" a clean before/after boundary rather than a guess about when the new
 part actually went in.
 
+**Exact parts, for the record**: the OLD adapter (the one suspected of causing the
+`reqCmd 23`/`non-desktop:0` cluster) was the **official HP unit that shipped with this G2,
+part number L56522-002** -- worth noting specifically because "it's the official part" was
+part of why it had been trusted this long despite the recurring symptom cluster; being
+first-party doesn't rule out an individual unit degrading. The NEW adapter it was swapped
+for is a **Nisuta NSADU30UC** (third-party, not HP). If this fix holds up across future
+sessions, the practical implication is that the official L56522-002 adapter, at least this
+specific unit, is the actual root of the cluster -- not "HP-branded parts are inherently
+more trustworthy than third-party ones" the way the earlier trust in it assumed.
+
 From that exact point forward, the same session ran a long, restart-heavy 6DoF
 controller-tracking development block: at least 4 full `monado-service` restarts,
 including two that followed a clean `ninja` rebuild (full relink of `drv_wmr` and the
