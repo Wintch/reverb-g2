@@ -1,5 +1,21 @@
 # Next step
 
+> # UPDATE (2026-08-12, everyday system, community/comms session): why 6DoF "didn't work" on the lab found — the handoff bundle was stale, not the code
+>
+> Checked the actual source of `patches/monado/0016`/`0017` (the everyday system's own
+> `monado` checkout, branch `g2-constellation-x11kde`, 28 commits ahead of that checkout's
+> `main` with zero drift) against the bundle that was handed off to the lab. **The bundle
+> was made 2026-08-11 and never regenerated after the two commits that actually finish
+> 6DoF landed the same night** — including `7cb73701b`, the `container_of` fix that makes
+> `position_tracked=yes` report correctly for both controllers. A lab build from that stale
+> bundle would have the exposure fix but not the fix that makes it actually report as
+> tracked, which matches "we saw it, it's not quite there" far better than a real code bug
+> would. Regenerated the bundle, overwrote the stale copy in place, left a second copy on
+> the lab disk directly. Full detail and the general handoff protocol this led to:
+> `docs/30-machine-handoff-protocol.md`, and the recovery command in
+> `patches/monado/README.md`. **Not yet re-verified building on the lab machine** — that's
+> the concrete next step for whoever picks this up there.
+
 > # UPDATE (2026-08-12, lab machine, long session). Read `docs/pruebas.jsonl` T156-T159.
 >
 > ## THE HEADLINE: a graphical session that is not the ACTIVE VT loses its `uaccess` ACLs, and the failures are SILENT

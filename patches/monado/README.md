@@ -67,6 +67,36 @@ branch; check `git log` there before assuming something past 0016 doesn't exist.
 Patches 0001–0015 and 0018 apply with plain `git am` onto the pinned SHA and build with
 zero warnings. 0016 and 0017 do not — see the box above.
 
+> ## UPDATE (2026-08-12): a second, unrelated cause of "6DoF isn't working on the lab" found — the handoff bundle itself was stale
+>
+> Separately from the loose-`.patch`-file divergence documented above, the **actual
+> commits** for 0016/0017 live cleanly on the everyday system's own `monado` checkout,
+> branch `g2-constellation-x11kde` — confirmed 28 commits ahead of that checkout's own
+> `main` with **zero drift** between them (no rebase conflicts on that side at all). The
+> durable handoff bundle
+> (`~/Documents/linux_vr_base/g2-constellation-x11kde.bundle` on the everyday system) used
+> to get this branch onto the lab machine was created 2026-08-11 and **never regenerated
+> after the two commits that actually fix the bug landed later that same night** — so a
+> lab build from that bundle would have had the exposure fix but not the `container_of`
+> fix that makes `position_tracked=yes` report correctly. That reads exactly like "we saw
+> it, it's not quite there" rather than "nothing happened", which is what was reported.
+>
+> The bundle has been regenerated and the stale copy overwritten in place, plus a fresh
+> copy left on the lab disk directly. **Recommended recovery path — fetch the branch as
+> real commit objects instead of hand-applying `.patch` files**, which sidesteps the
+> divergent-history problem above entirely (a bundle carries the actual objects, not text
+> hunks that need a matching parent to apply):
+>
+> ```bash
+> git fetch /path/to/g2-constellation-x11kde.bundle g2-constellation-x11kde:g2-constellation-x11kde
+> git checkout g2-constellation-x11kde
+> git log -1 --oneline   # should show 7cb73701b "Fix container_of misuse in receive_ctrl_cam..."
+> ```
+>
+> **Not yet verified this builds clean on the lab machine** — the bundle being complete is
+> necessary but the fetch-and-build step hasn't been re-attempted since the fix. See
+> `docs/30-machine-handoff-protocol.md` for the general protocol this incident led to.
+
 **A twelfth patch existed briefly (2026-08-07) and was retracted (2026-08-08).** It "fixed"
 an AND/OR bug in 0003's bounded controller-status wait, reproduced 9/9 times in a real
 session. Turned out the bug only existed in a hand-edited lab build that had drifted from
