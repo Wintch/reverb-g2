@@ -1,5 +1,18 @@
 # Next step
 
+> **UPDATE (2026-08-11, everyday-system session #2, final): head-tracking jitter measured
+> quantitatively after tonight's work -- real, not fully explained, two probably-separate
+> causes not yet isolated from each other.** User noticed noticeable jitter viewing the
+> static-image player. `HELLO_XR_POSE_STATS=1` confirmed it: 4-40x the documented baseline
+> (docs/22 T045) while ~18 leftover Steam/Proton processes and `WMR_CONSTELLATION_CONTROLLERS`
+> were both active. Closing Steam helped (~50%, user's read) but didn't fully fix it.
+> Restarting the service WITHOUT constellation tracking, controllers off, user motionless,
+> got MOST windows back to the exact documented baseline (max 0.056 deg, byte-identical) --
+> but real isolated spikes (up to 2.14 deg) still occurred with nothing touched, cause
+> unknown. Separately, the user directly observed a bigger, controller-standby-wake-
+> correlated "ajuste" that wasn't isolated with a clean single-variable measurement. Not
+> root-caused -- concrete next step and full numbers in `docs/pruebas.jsonl` T153.
+
 > **UPDATE (2026-08-11, everyday-system session #2, continued further): tried to validate
 > 6DoF in a real game (Aircar via a freshly-built xrizer) -- xrizer builds and runs on this
 > machine for the first time, but Aircar itself stays in flat 2D. Real progress, not a dead
