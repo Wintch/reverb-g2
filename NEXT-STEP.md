@@ -1,5 +1,37 @@
 # Next step
 
+> **UPDATE (2026-08-11, everyday-system session #3): a SECOND already-lab-verified title
+> (Aliens Attack VR, 932190) reproduces Aircar's exact non-connection signature on this
+> machine -- points toward a general everyday-system/KDE xrizer regression, not an
+> Aircar-specific bug. Zero new `client_connected` in Monado's log, zero `xrizer.txt`
+> anywhere on disk, panel powered but blank, despite the Proton-side bridge
+> (`C:\vrclient\bin\vrclient_x64.dll`) already correctly present from the Aircar bring-up.
+> A `PROTON_LOG=1` relaunch to compare traces against Aircar's (T152) is queued but not yet
+> actually captured -- the first relaunch attempt silently failed to pick up the env vars
+> (confirmed via `/proc/<pid>/environ`), corrected and re-queued. Full detail in
+> `docs/pruebas.jsonl` T154.**
+>
+> **Same session: external research (not project-specific) turned up three open, unresolved
+> public bug reports for NVIDIA + Proton + OpenXR** -- none symptom-for-symptom identical to
+> ours (all three describe a visible crash/hang; ours is silent with a clean process exit),
+> but real precedent that this exact combination is independently fragile, shifting the
+> prior toward "this machine's driver/Proton/OpenXR stack", not "our own xrizer patches or
+> Monado build". Sources: `ValveSoftware/steam-runtime#782` (pressure-vessel's
+> `graphics-drivers-openxr-1.c` silently strips vendor-specific OpenXR runtime json fields,
+> reporter's own example shows a Monado-specific field, `MND_libmonado_path`, vanishing --
+> though the exact trigger env var isn't one we set), `ValveSoftware/Proton#7228` (stack
+> overflow loading `libopenxr_loader.so.1` on NVIDIA 535.113.01, Proton 8.0+), and an NVIDIA
+> Developer Forums thread (driver 550.76, one version-family from this rig's own
+> 550.163.01 -- "entire graphics stack crashes" on Proton+OpenXR titles, reproduced with
+> both SteamVR and Monado, absent on AMD). Concrete next step if this is picked up again:
+> inspect the OpenXR runtime json as the process sees it *inside* the pressure-vessel
+> sandbox, not just the original file on disk. Full detail in `docs/pruebas.jsonl` T155.
+>
+> **Standing plan, explicit**: if the pending PROTON_LOG trace for Aliens Attack VR matches
+> Aircar's load/unload-then-exit pattern, stop chasing this on the everyday/KDE machine and
+> resume validation on the dev/lab machine (GNOME/Wayland/90Hz/patched), where the full
+> game sweep is already confirmed working.
+
 > **UPDATE (2026-08-11, everyday-system session #2, final): head-tracking jitter measured
 > quantitatively after tonight's work -- real, not fully explained, two probably-separate
 > causes not yet isolated from each other.** User noticed noticeable jitter viewing the
