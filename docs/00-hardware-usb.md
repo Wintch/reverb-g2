@@ -44,8 +44,16 @@ The table above says all 4 rear USB3 ports share the same controller — true, b
 doesn't mean they're identical. The user's own recollection (not yet backed by logged
 incidents): of the 4, 2 have historically been reliable for the headset and 2 haven't,
 independent of the cable/connector issues tracked in `docs/22`. The cable is connected via
-a fixed (non-reversible) USB-C-to-USB3-A adapter, so cable-orientation flipping —
-speculated elsewhere as a contributing factor — isn't a variable here.
+a USB-C-to-USB3-A adapter.
+
+> **CORRECTION (2026-08-12): this used to say the adapter was "fixed (non-reversible)" and
+> concluded that cable-orientation flipping "isn't a variable here". Do not rely on that.**
+> The adapter has since been **replaced** (HP `L56522-002` → Nisuta `NSADU30UC`) as the
+> suspected fix for the `reqCmd 23`/`non-desktop:0` cluster — see `docs/22`'s hardware change
+> log. Whether the current unit is orientation-reversible is unrecorded, and the claim always
+> sat badly against `docs/06`, which reports that rotating the USB-C connector 180° inside the
+> adapter *did* help once. Check the physical adapter before treating orientation as a
+> non-variable.
 
 `find-port.sh` can't distinguish this: it only tells you which *controller* a port
 belongs to, and all 4 are on `07:00.3`. Confirming a real per-port difference needs

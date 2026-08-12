@@ -30,7 +30,7 @@ index below; the full sections underneath are where the evidence and the reasoni
 
 ```
  [PC GPU] ──DP──┐                                ┌──────────── VISOR ────────────┐
- [PC USB] ──USB─┤  breakout box  ═══ cable ═══   │ visor-end connector (!)       │
+ [PC USB] ─[C→A]┤  breakout box  ═══ cable ═══   │ visor-end connector (!)       │
  [brick 12V] ───┘  (LED, DP        (all groups   │  ├─ USB3 hub 04b4:6504        │
                     repeater)       in one        │  │   └─ HoloLens 045e:0659   │
                                     jacket)       │  ├─ USB2 hub 04b4:6506       │
@@ -39,6 +39,13 @@ index below; the full sections underneath are where the evidence and the reasoni
                                                   │  └─ ANX7530 bridge → panels  │
                                                   └───────────────────────────────┘
 ```
+
+> **`[C→A]` is the USB-C-to-USB-A adapter, and it was missing from this diagram until
+> 2026-08-12** — even after it earned its own row in the fault-signature index above. The
+> headset's USB leg does not reach the PC directly, and a passive adapter carrying every USB
+> conductor is a contact point like any other: it belongs in the reseat ladder. Exact parts
+> and the before/after boundary are in "Hardware change log for the reqCmd23/non-desktop:0
+> cluster" below (HP `L56522-002` → Nisuta `NSADU30UC`).
 
 Facts established by direct measurement (each one earned the hard way that night):
 

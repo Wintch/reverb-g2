@@ -1,0 +1,39 @@
+From 828038485fe2b98319649178c0822669d5e54b5e Mon Sep 17 00:00:00 2001
+From: Ashish Kumar Singh <ashishkmr472@gmail.com>
+Date: Fri, 15 May 2026 21:50:49 -0400
+Subject: [PATCH] d/wmr: Set 90 Hz nominal frame interval on WMR HMD screens
+
+u_extents_2d_split_side_by_side() does not set
+screens[0].nominal_frame_interval_ns, so it stays 0. A downstream
+consumer (the SteamVR driver bridge) then computes the refresh rate as
+1/0 = infinite and falls back to 60 Hz, mis-pacing frames against the
+90 Hz WMR panel and causing judder. WMR panels (Reverb G1/G2, Odyssey,
+Odyssey+, ...) all run at 90 Hz; set the interval explicitly.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ src/xrt/drivers/wmr/wmr_hmd.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/src/xrt/drivers/wmr/wmr_hmd.c b/src/xrt/drivers/wmr/wmr_hmd.c
+index 6a2024988..d3e1948f4 100644
+--- a/src/xrt/drivers/wmr/wmr_hmd.c
++++ b/src/xrt/drivers/wmr/wmr_hmd.c
+@@ -2093,6 +2093,14 @@ wmr_hmd_create(enum wmr_headset_type hmd_type,
+ 	exts.h_pixels = (uint32_t)wh->config.eye_params[0].display_size.y;
+ 	u_extents_2d_split_side_by_side(&wh->base, &exts);
+ 
++	// WMR panels (Reverb G1/G2, Odyssey, Odyssey+, ...) run at 90 Hz.
++	// u_extents_2d_split_side_by_side() does not set the frame interval, so
++	// without this it stays 0 — and a downstream consumer (the SteamVR driver
++	// bridge) computes refresh = 1/0 = infinite and falls back to 60 Hz,
++	// which mis-paces frames against the 90 Hz panel and causes judder.
++	wh->base.hmd->screens[0].nominal_frame_interval_ns =
++	    (uint64_t)(1000000000.0 / 90.0);
++
+ 	// Fill in blend mode - just opqaue, unless we get Hololens support one day.
+ 	size_t idx = 0;
+ 	wh->base.hmd->blend_modes[idx++] = XRT_BLEND_MODE_OPAQUE;
+-- 
+2.47.3
+

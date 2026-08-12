@@ -1,5 +1,94 @@
 # Next step
 
+> # UPDATE (2026-08-12, lab machine, long session). Read `docs/pruebas.jsonl` T156-T159.
+>
+> ## THE HEADLINE: a graphical session that is not the ACTIVE VT loses its `uaccess` ACLs, and the failures are SILENT
+>
+> **Xwayland spent this entire boot in SOFTWARE rendering** and nothing ever said so out loud.
+> Three lines in the journal at 00:30:54:
+>
+> ```
+> wayland-egl: could not open /dev/dri/renderD128 (Permission denied)
+> EGL setup failed, disabling glamor
+> Failed to initialize glamor, falling back to sw
+> ```
+>
+> The chain: the user was **not in the `render` group** → the only access to the render node
+> is logind's `uaccess` ACL, granted to the **active** session of seat0 → at boot the GNOME
+> session was on tty3 while the visible VT was tty2 → no ACL → glamor off, permanently, for
+> that Xwayland's lifetime.
+>
+> **It explains everything measured that night**: every Proton VR title at 13-18 fps, Quake II
+> RTX at ~15 fps and its **OpenGL mode at 70-90 fps where a 3060 Ti should give thousands**, the
+> DXVK submit thread pegged at 85-92% of one core while the GPU idled at 4-45%. That is
+> CPU-side compositing, not a GPU limit. And it explains the one result that fit nothing else:
+> **`hello_xr` ran perfectly at 90 Hz with 3024×3024 per eye** — because it reaches the headset
+> through Monado's direct DRM lease and **never touches Xwayland**. The one path that bypassed
+> Xwayland was the one path that was fast.
+>
+> **Same mechanism as T143** (hidraw's ACL revoked when the session stops being active), on a
+> different device node. And the boot pipeline *deliberately* moves the visible VT (`chvt 4`
+> for the picker), so this condition is designed into this system, not exotic.
+>
+> **Fix applied**: `sudo usermod -aG render iam` — validated (`render:x:992:iam`). Group
+> membership does not care which VT is active. **Acceptance test, NOT YET RUN**: reboot, then
+> re-measure Quake II RTX (native, no headset needed — the cheapest instrument for this).
+>
+> **Standing rule from this**: anything the VR stack needs from a `uaccess`-controlled device
+> node must be secured by **group membership**, never left to depend on which console happens
+> to be in front of the user. The other nodes the stack touches are worth auditing the same way.
+>
+> **WITHDRAWN**: T158's leading hypothesis — that the 2026-08-09 kernel 6.12.101 + NVIDIA DKMS
+> rebuild caused the collapse — is wrong. It came from timeline elimination and was reasonable
+> on what was known, but the evidence above is direct and mechanistic. **The planned A/B reboot
+> into 6.12.100 is cancelled.** Also withdrawn: display mode, render scale, PowerMizer, background
+> load, verbose logging, Proton version, xrizer, per-title causes. Each was worth measuring; none
+> was the cause.
+>
+> **How it was found**: the user reported Quake II RTX — *native Vulkan, no Proton, no DXVK, no
+> VR* — was also slow. The whole investigation until then was scoped to the Proton/VR path and
+> could not have found this. One measurement from outside the assumed scope collapsed a night of
+> hypotheses.
+>
+> ## Verified live this session (user wearing the headset)
+>
+> - **90 Hz, no flicker** on the rebuilt binary — "no parpadea nada, 90hz clavados"
+> - **3dof solid**; the **controller axis gizmos seen for the first time** (T148 had them as
+>   "built but NOT seen")
+> - **Headset audio works, channels correct** (low tone left / high tone right), test material
+>   verified by measurement first (−21 dB live channel, −inf silent channel)
+> - **Aircar runs here** — 3D + tracking + audio. This **closes the standing plan**: the
+>   Aircar/xrizer failure is specific to the everyday/KDE machine, not a general bug. Stop
+>   chasing it there.
+> - **VR-controller stick drift fixed** with `WMR_STICK_DEADZONE=0.15` — first live hardware
+>   validation of patch 0008 for this. *The user diagnosed this, the agent had wrongly blamed
+>   the Xbox pad.*
+>
+> ## Other findings worth their own lines
+>
+> - **Reconfiguring the monitors silently resets PowerMizer to adaptive** — SM clock fell back
+>   to 555 MHz of 2115 with nothing reporting it. Check `clocks.sm` first on any "it used to run
+>   better" report. **`nvidia-settings` lies**: after a successful assignment it still queries as
+>   `0`, and `nvidia-smi` still shows `P3`, while the clock has plainly doubled. Trust `clocks.sm`.
+> - **Monado supersamples 140% by default** (`XRT_COMPOSITOR_SCALE_PERCENTAGE`,
+>   `comp_settings.c:34`) — 2160² native becomes 3024² per eye. Driven by the panel, **not** by
+>   the display mode, which is why lowering the video mode does not reduce render cost.
+> - **Monado has no FOV-crop option.** All 240 `DEBUG_GET_ONCE` options checked: only the two
+>   uniform scalers exist. SteamVR's tangent-multiplier peripheral crop has no equivalent. The
+>   FOV is assembled at `wmr_hmd.c:2114` — clear place for a patch. Real gap, not filed.
+> - **Trap**: `pw-play --target` accepts the target, **exits 0 and routes nowhere** (sink never
+>   leaves `SUSPENDED`). `paplay --device=` works. Three silent "successful" playbacks were
+>   blamed on hardware before this was found. Confirm the sink state changed; never trust exit 0.
+> - **`patches/monado/` cannot build the lab binary** — 0016/0017 do not apply (divergent
+>   history, three independent proofs in T157). **Do not hand-apply them**; that is what caused
+>   T068. Needs a clean re-export from the checkout where they were written.
+> - **The 90 Hz patch was missing from every clean rebuild since 2026-08-08** because it lived
+>   only as a README footnote. Now exported as `patches/monado/0018`.
+> - **Adapter/Nisuta watch**: four full `monado-service` restart cycles plus several Proton
+>   launches — **zero `error -71`, zero USB2 drops**, and `reqCmd 23` exactly once on first
+>   start, never again. First restart-heavy session since the swap. Evidence for the fix, not
+>   yet enough to close it.
+
 > **UPDATE (2026-08-11, everyday-system session #3): a SECOND already-lab-verified title
 > (Aliens Attack VR, 932190) reproduces Aircar's exact non-connection signature on this
 > machine -- points toward a general everyday-system/KDE xrizer regression, not an
