@@ -39,6 +39,7 @@ bug, and isn't repeated in every row.
 | War Robots VR: The Skirmish | [672640](https://steamdb.info/app/672640/) | ✓ | Calibrates fine, then drops to backlight-only with an un-skippable "put on your VR helmet" prompt. Root cause spans two repos: xrizer never implements HMD presence/worn detection (`ShouldApplicationPause`/`IsInputAvailable` in `src/system.rs` are hardcoded stubs), and Monado's `wmr_hmd.c` already reads the real proximity sensor but never wires it into Monado's own working `XR_EXT_user_presence` support. Scoped, not started — see `patches/xrizer/README.md`. |
 | IL DIVINO - Michelangelo's Sistine Ceiling in VR | [1165850](https://steamdb.info/app/1165850/) | ✓ | Menu renders 2D-only on the desktop; entering the experience gives audio in the headset but **no image** (backlight only). Session reached `FOCUSED` with both controllers registered, launch options confirmed applied — the failure is in the render path, cause not investigated (2026-08-09, one attempt). |
 | Meditation VR | [1301850](https://steamdb.info/app/1301850/) | ✓ | All-black in the headset, nothing ever shows. Log-clean: `FOCUSED`, controllers on `oculus/touch_controller`, one harmless `IVRExtendedDisplay_001` unknown-interface probe (same benign category as the `IVRCompositor_013` lesson). Same "session healthy, renders nothing visible" shape as the player's own LoadPhotoTexture trap — not investigated further (2026-08-09, one attempt). |
+| Aircar, **on the everyday system specifically** | [1073390](https://steamdb.info/app/1073390/) | ✓ | **Not a contradiction of the ✓ working row above** — that verdict is from the lab machine (GNOME/Wayland/90Hz/patched); this is a fresh xrizer build on the everyday system (KDE/X11/60Hz/unpatched, see `docs/pruebas.jsonl` T152 for the environment note), never tested there before 2026-08-11. Stays in flat 2D through several launch-plumbing fixes (canonical launch options, Steam-wide env export, `-vr` flag) — `PROTON_LOG=1` proved the game's own `openvr_api.dll` DOES load and DOES reach `vrclient_x64.dll` (xrizer's real bridge), cycling load/unload 4 times before the process exits on its own after ~9s. So the OpenVR init handshake is being attempted and failing, not skipped — genuinely different symptom from anything else in this table. Not root-caused; needs narrower `WINEDEBUG` channels or a second already-lab-verified Proton title (SUPERHOT, Propagation VR) tried here to check if this is Aircar-specific (older OpenVR SDK 1.0.16) or a general regression on this machine's xrizer build. |
 
 ## Failed — unrelated to xrizer/Monado (Proton/engine-specific)
 
@@ -92,6 +93,29 @@ environment of the process that launches it (Steam), not just what's baked into 
 game's Launch Options. This means every *future* title can skip the manual
 Properties-dialog step from now on, as long as Steam itself is started with these three
 vars already exported — no per-game setup needed at all.
+
+## Trap: Steam silently re-adds SteamVR to openvrpaths.vrpath on every startup (2026-08-11)
+
+Found setting up xrizer fresh on the everyday system (see `docs/pruebas.jsonl` T152).
+Pointing `~/.config/openvr/openvrpaths.vrpath`'s `runtime` array at xrizer's build
+directory (per xrizer's own README) works — until the next time the Steam client itself
+starts. On every Steam startup, it silently re-adds `.../steamapps/common/SteamVR` to
+the front of the `runtime` array (confirmed by diffing the file before/after a restart),
+without removing the xrizer entry, but present as a second item — a real risk if OpenVR's
+loader logic ever prefers the first listed runtime, or if a game specifically probes for a
+`SteamVR` string in the path. **Fix: only edit `openvrpaths.vrpath` after Steam is already
+running and stable, never edit it and then restart Steam** — restarting undoes exactly the
+part of the edit Steam considers its own. This compounds with a second, separate
+Proton-side cache: `steamapps/compatdata/<appid>/pfx/drive_c/vrclient/` (a directory
+Proton creates containing `vrclient.dll`/`vrclient_x64.dll`) and a **per-title** copy of
+openvrpaths at
+`compatdata/<appid>/pfx/drive_c/users/steamuser/AppData/Local/openvr/openvrpaths.vrpath`
+— both regenerate from whatever the Linux-side file said at the moment of that specific
+game's *last* launch, not necessarily the current file content, so a stale prefix-side
+cache can silently keep pointing at an old runtime even after the Linux-side file and
+Steam's own env are both correct. If a fresh openvrpaths edit doesn't seem to take effect
+for a Proton title specifically, delete both of those prefix-local paths before the next
+launch to force a clean regeneration.
 
 ## Trap: overlapping VR game launches + background Steam downloads can hang the whole
 ## desktop (2026-08-09)

@@ -1,5 +1,19 @@
 # Next step
 
+> **UPDATE (2026-08-11, everyday-system session #2, continued further): tried to validate
+> 6DoF in a real game (Aircar via a freshly-built xrizer) -- xrizer builds and runs on this
+> machine for the first time, but Aircar itself stays in flat 2D. Real progress, not a dead
+> end: `PROTON_LOG=1` proved the game's own OpenVR init genuinely reaches xrizer's Proton
+> bridge (`vrclient_x64.dll` loads/unloads 4 times) before the process exits after ~9s --
+> so the launch plumbing (which consumed most of the investigation: Steam's own
+> `openvrpaths.vrpath` silently re-adding SteamVR on every startup, a stale per-title
+> Proton-prefix cache, `VR_OVERRIDE` getting filtered by pressure-vessel) is not the
+> remaining blocker. What's left is inside the actual OpenVR init handshake itself, and
+> needs narrower `WINEDEBUG` tracing to isolate -- stopped here by explicit choice in favor
+> of validating 6DoF visually via `hello_xr` instead tonight. Full trace and the concrete
+> next diagnostic step in `docs/pruebas.jsonl` T152 and the new trap section in
+> `docs/23-game-compatibility.md`.
+
 > **UPDATE (2026-08-11, everyday-system session #2, continued): the "device-specific" clock
 > bug the previous entry left as the concrete next step is closed. It was never
 > device-specific -- it was `container_of` applied to an array element instead of a
