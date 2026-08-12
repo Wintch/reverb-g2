@@ -1,0 +1,167 @@
+From 77c70c73c8eece41b086d6c7e07fd9c23c718e86 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Wed, 12 Aug 2026 11:50:52 -0300
+Subject: [PATCH 23/23] a/tracking: Divergence auto-reset, and make the output
+ filters selectable headlessly
+
+Two things the SLAM tracker needed to be usable in a real session, both
+measured on a Reverb G2 on 2026-08-12 (docs/pruebas.jsonl T162).
+
+DIVERGENCE AUTO-RESET (SLAM_AUTO_RESET, on by default). A session that had
+been holding sub-metre drift for two minutes jumped 2459 m in a single step
+and then reported that same position, to the centimetre, for the next 90
+seconds: the tracker had lost it and was not coming back, and the wearer was
+stranded 2.5 km from where they stood with no recovery short of killing the
+service. flush_poses now checks the implied speed between consecutive poses
+and calls tracker_reset above SLAM_AUTO_RESET_MAX_SPEED (default 10 m/s; a
+human head peaks around 2-3 m/s, so 36 km/h cannot be real motion).
+
+Details that were found by running it, not by reading it:
+  - dt needs a real floor, not just > 0. Two of the first three resets fired
+    on dt = 0.000 s, where 5 mm of difference reads as 21 m/s. Poses can
+    arrive with near-identical timestamps and a spurious reset costs exactly
+    the tracking this guard protects. Floor is 5 ms.
+  - After a reset the tracker returns near the origin, which looks like
+    another divergence, so checking stays quiet for 2 s while it re-localises.
+  - SLAM_AUTO_RESET_MAX_SPEED goes through DEBUG_GET_ONCE_NUM_OPTION, which
+    parses integers only: a fractional value silently becomes 0 and then
+    everything "diverges". Noted at the declaration.
+
+KNOWN COST, not fixed here: a reset re-anchors the tracker at the origin and
+the application is not told, so the world anchor moves to wherever the wearer
+was standing. In a game that reads as being teleported. It is a much better
+deal than a permanently frozen pose, but the real fix is to carry the reset
+offset through to the output pose so the anchor survives.
+
+SLAM_FILTER=one_euro|moving_average|exponential|none. All three output filters
+are off upstream and only reachable from the debug GUI, so the pose handed to
+the application is raw. This is what the wearer feels: measured in-game,
+rotation between consecutive poses was p99 12.03 deg / max 32.35 deg raw
+against p99 1.13 deg / max 5.54 deg with the one euro filter. The jitter is
+rotational -- changing SLAM_PREDICTION_TYPE to gyro-only, on the theory that
+linear dead reckoning over a gappy IMU stream was the source, changed nothing.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ src/xrt/auxiliary/tracking/t_tracker_slam.cpp | 84 +++++++++++++++++++
+ 1 file changed, 84 insertions(+)
+
+diff --git a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+index dc95464d1..dbbc478d9 100644
+--- a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
++++ b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+@@ -89,6 +89,9 @@ DEBUG_GET_ONCE_NUM_OPTION(slam_prediction_type, "SLAM_PREDICTION_TYPE", long(SLA
+ DEBUG_GET_ONCE_BOOL_OPTION(slam_write_csvs, "SLAM_WRITE_CSVS", false)
+ DEBUG_GET_ONCE_BOOL_OPTION(slam_features_enable, "SLAM_FEATURES_ENABLE", false)
+ DEBUG_GET_ONCE_BOOL_OPTION(slam_config_pipeline_only, "SLAM_CONFIG_PIPELINE_ONLY", false)
++DEBUG_GET_ONCE_BOOL_OPTION(slam_auto_reset, "SLAM_AUTO_RESET", true)
++DEBUG_GET_ONCE_OPTION(slam_filter, "SLAM_FILTER", nullptr)
++DEBUG_GET_ONCE_NUM_OPTION(slam_auto_reset_max_speed, "SLAM_AUTO_RESET_MAX_SPEED", 10)
+ DEBUG_GET_ONCE_BOOL_OPTION(euroc_record, "EUROC_RECORD", false)
+ DEBUG_GET_ONCE_OPTION(euroc_record_path, "EUROC_RECORD_PATH", nullptr)
+ DEBUG_GET_ONCE_OPTION(slam_csv_path, "SLAM_CSV_PATH", "evaluation/")
+@@ -290,6 +293,18 @@ struct TrackerSlam
+ 	timepoint_ns last_imu_ts;                     //!< Last received IMU sample timestamp
+ 	vector<timepoint_ns> last_cam_ts;             //!< Last received image timestamp per cam
+ 	bool dropping_bundle = false;                 //!< Drop the rest of a non-monotonic frame bundle
++
++	//! Divergence guard: a VIO that loses tracking can emit a physically impossible jump and
++	//! then sit there. Catch it by implied speed and restart the tracker.
++	//! NOTE SLAM_AUTO_RESET_MAX_SPEED goes through DEBUG_GET_ONCE_NUM_OPTION, which parses
++	//! integers only -- a fractional value silently becomes 0 and then everything "diverges".
++	struct
++	{
++		bool enabled;
++		double max_speed;        //!< m/s, above which the jump cannot be a real head motion
++		timepoint_ns quiet_until; //!< Don't re-check until this timestamp (post-reset settling)
++		uint64_t count;           //!< Resets performed this session
++	} auto_reset;
+ 	int dropped_bundles = 0;                      //!< Consecutive bundles dropped for that reason
+ 	struct xrt_hand_masks_sample last_hand_masks; //!< Last received hand masks info
+ 	Mutex last_hand_masks_mutex;                  //!< Mutex for @ref last_hand_masks
+@@ -803,6 +818,44 @@ flush_poses(TrackerSlam &t)
+ 		SLAM_TRACE("Dequeued SLAM pose ts=%ld p=[%f,%f,%f] r=[%f,%f,%f,%f]", //
+ 		           nts, data.px, data.py, data.pz, data.ox, data.oy, data.oz, data.ow);
+ 
++		// Divergence guard. Measured on a Reverb G2 on 2026-08-12: a session that had been
++		// holding sub-metre drift for two minutes jumped to 2459 m in one step and then
++		// reported that same position, to the centimetre, for the next 90 seconds -- the
++		// tracker had lost it and was not coming back, and the wearer was stranded 2.5 km
++		// from where they were standing with no way to recover short of killing the service.
++		// A jump like that is not a head: the threshold is in m/s and a human head peaks
++		// around 2-3 m/s, so 10 m/s (36 km/h) cannot be anything but divergence.
++		//
++		// Restarting the tracker costs a second of re-localisation. That is a far better
++		// deal than the session being over, so this defaults to on.
++		//
++		// dt has to clear a real floor, not just be positive. Measured live: two of the first
++		// three resets fired on dt = 0.000 s, where a 5 mm difference reads as 21 m/s. Poses
++		// can arrive with near-identical timestamps, and a spurious reset costs exactly the
++		// tracking this guard exists to protect. A third of a 30 Hz frame is a safe floor.
++		if (t.auto_reset.enabled && lts != 0 && nts > t.auto_reset.quiet_until && dt > 0.005 &&
++		    dt < 0.5) {
++			xrt_vec3 lpos = lr.pose.position;
++			double dx = npos.x - lpos.x, dy = npos.y - lpos.y, dz = npos.z - lpos.z;
++			double speed = sqrt(dx * dx + dy * dy + dz * dz) / dt;
++			if (speed > t.auto_reset.max_speed) {
++				t.auto_reset.count++;
++				SLAM_WARN("Tracker diverged: %.3f m in %.3f s (%.2f m/s) at ts=%" PRId64
++				          ". Resetting (reset #%" PRIu64 " this session).",
++				          sqrt(dx * dx + dy * dy + dz * dz), dt, speed, nts,
++				          t.auto_reset.count);
++				vit_result_t rres = t.vit.tracker_reset(t.tracker);
++				if (rres != VIT_SUCCESS) {
++					SLAM_ERROR("Failed to reset the diverged tracker (%d)", rres);
++				}
++				// The tracker comes back near the origin, which looks exactly like
++				// another divergence. Stay quiet while it re-localises.
++				t.auto_reset.quiet_until = nts + 2LL * U_TIME_1S_IN_NS;
++				t.vit.pose_destroy(pose);
++				break;
++			}
++		}
++
+ 		// Compute new relation based on new pose and velocities since last pose
+ 		xrt_space_relation rel{};
+ 		rel.relation_flags = XRT_SPACE_RELATION_BITMASK_ALL;
+@@ -1607,6 +1660,37 @@ t_slam_create(struct xrt_frame_context *xfctx,
+ 
+ 	t.pred_type = config->prediction;
+ 
++	// The three output filters below are off by default upstream and only reachable from the
++	// debug GUI, so the pose handed to the application is raw SLAM output. Measured on a
++	// Reverb G2 on 2026-08-12, in-game: consecutive poses differ by 0.89 mm at the median but
++	// 152 mm at p99 and up to 582 mm -- occasional large jumps rather than smooth noise, which
++	// is exactly what the wearer reports as jitter. SLAM_FILTER makes them selectable without
++	// the GUI so the effect can be measured (raw trajectory lands in tracking.csv, the filtered
++	// one the application actually receives lands in filtering.csv).
++	const char *filter_name = debug_get_option_slam_filter();
++	if (filter_name != NULL) {
++		if (strcmp(filter_name, "one_euro") == 0) {
++			t.filter.use_one_euro_filter = true;
++		} else if (strcmp(filter_name, "moving_average") == 0) {
++			t.filter.use_moving_average_filter = true;
++		} else if (strcmp(filter_name, "exponential") == 0) {
++			t.filter.use_exponential_smoothing_filter = true;
++		} else if (strcmp(filter_name, "none") != 0) {
++			SLAM_WARN("Unknown SLAM_FILTER '%s' (one_euro|moving_average|exponential|none)",
++			          filter_name);
++		}
++		SLAM_INFO("Output filter: %s", filter_name);
++	}
++
++	t.auto_reset.enabled = debug_get_bool_option_slam_auto_reset();
++	t.auto_reset.max_speed = (double)debug_get_num_option_slam_auto_reset_max_speed();
++	t.auto_reset.quiet_until = 0;
++	t.auto_reset.count = 0;
++	if (t.auto_reset.enabled) {
++		SLAM_INFO("Divergence auto-reset on, threshold %.0f m/s (integer env var; SLAM_AUTO_RESET=0 disables)",
++		          t.auto_reset.max_speed);
++	}
++
+ 	m_filter_euro_vec3_init(&t.filter.pos_oe, t.filter.min_cutoff, t.filter.min_dcutoff, t.filter.beta);
+ 	m_filter_euro_quat_init(&t.filter.rot_oe, t.filter.min_cutoff, t.filter.min_dcutoff, t.filter.beta);
+ 
+-- 
+2.47.3
+

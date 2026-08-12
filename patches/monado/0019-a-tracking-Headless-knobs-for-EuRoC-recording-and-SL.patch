@@ -1,0 +1,90 @@
+From 991e820cd6366de430175649e54dfb2f5b0eaff3 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Wed, 12 Aug 2026 10:07:21 -0300
+Subject: [PATCH] a/tracking: Headless knobs for EuRoC recording and SLAM
+ feature counts
+
+Two pieces of SLAM instrumentation were reachable only through the debug
+GUI, which meant they could not be used on a headless bring-up or scripted
+into a measurement run:
+
+  - the EuRoC dataset recorder (euroc_recorder_create was hardcoded to
+    record_from_start = false, and its start button lives in the "SLAM
+    Tracker" u_var window)
+  - the per-frame, per-camera feature counts (the pose-features tracker
+    extension, enabled by a toggle button in the same window)
+
+Both are now also settable from the environment, defaults unchanged:
+
+  EUROC_RECORD=1                start recording immediately
+  EUROC_RECORD_PATH=<dir>       path prefix for the recording
+  SLAM_FEATURES_ENABLE=1        enable the pose-features extension, which
+                                makes t_slam write features.csv when
+                                SLAM_WRITE_CSVS=1 is also set
+
+This is what made the 2026-08-12 6DoF investigation measurable: with the
+headset on a table and the SLAM images looking perfect in the debug GUI,
+features.csv showed Basalt was holding a mean of 0.0-0.9 landmarks per
+camera, which is what turned "the pose runs away" into a located failure
+in the visual front-end instead of a symptom.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ src/xrt/auxiliary/tracking/t_tracker_slam.cpp | 27 ++++++++++++++++++-
+ 1 file changed, 26 insertions(+), 1 deletion(-)
+
+diff --git a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+index 0560e4aaa..77a0641e1 100644
+--- a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
++++ b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+@@ -87,6 +87,9 @@ DEBUG_GET_ONCE_BOOL_OPTION(slam_submit_from_start, "SLAM_SUBMIT_FROM_START", fal
+ DEBUG_GET_ONCE_NUM_OPTION(slam_openvr_groundtruth_device, "SLAM_OPENVR_GROUNDTRUTH_DEVICE", 0)
+ DEBUG_GET_ONCE_NUM_OPTION(slam_prediction_type, "SLAM_PREDICTION_TYPE", long(SLAM_PRED_DEAD_RECKONING))
+ DEBUG_GET_ONCE_BOOL_OPTION(slam_write_csvs, "SLAM_WRITE_CSVS", false)
++DEBUG_GET_ONCE_BOOL_OPTION(slam_features_enable, "SLAM_FEATURES_ENABLE", false)
++DEBUG_GET_ONCE_BOOL_OPTION(euroc_record, "EUROC_RECORD", false)
++DEBUG_GET_ONCE_OPTION(euroc_record_path, "EUROC_RECORD_PATH", nullptr)
+ DEBUG_GET_ONCE_OPTION(slam_csv_path, "SLAM_CSV_PATH", "evaluation/")
+ DEBUG_GET_ONCE_BOOL_OPTION(slam_timing_stat, "SLAM_TIMING_STAT", true)
+ DEBUG_GET_ONCE_BOOL_OPTION(slam_features_stat, "SLAM_FEATURES_STAT", true)
+@@ -590,6 +593,25 @@ features_ui_setup(TrackerSlam &t)
+ 	}
+ 
+ 	u_var_add_curves(&t, &t.features.fcs_ui, "Feature count");
++
++	// SLAM_FEATURES_ENABLE=1 turns the per-frame feature counts on without the debug GUI, so
++	// "is the visual front-end tracking anything at all?" can be answered from features.csv.
++	if (debug_get_bool_option_slam_features_enable()) {
++		if (!t.exts.has_pose_features) {
++			SLAM_WARN("SLAM_FEATURES_ENABLE set but the tracker has no pose-features extension");
++		} else {
++			vit_result_t vres =
++			    t.vit.tracker_enable_extension(t.tracker, VIT_TRACKER_EXTENSION_POSE_FEATURES, true);
++			if (vres != VIT_SUCCESS) {
++				SLAM_ERROR("Failed to enable the tracker features extension (%d)", vres);
++			} else {
++				t.features.enabled = true;
++				snprintf(t.features.enable_btn.label, sizeof(t.features.enable_btn.label), "%s",
++				         "[ON] Disable features info");
++				SLAM_INFO("Feature counts enabled via SLAM_FEATURES_ENABLE");
++			}
++		}
++	}
+ }
+ 
+ static vector<int>
+@@ -1521,7 +1543,10 @@ t_slam_create(struct xrt_frame_context *xfctx,
+ 
+ 	xrt_frame_context_add(xfctx, &t.node);
+ 
+-	t.euroc_recorder = euroc_recorder_create(xfctx, NULL, t.cam_count, false);
++	// EUROC_RECORD=1 starts the EuRoC dataset recorder without needing the debug GUI, so a
++	// dataset can be captured headlessly and replayed later through the euroc driver.
++	t.euroc_recorder = euroc_recorder_create(xfctx, debug_get_option_euroc_record_path(), t.cam_count,
++	                                         debug_get_bool_option_euroc_record());
+ 
+ 	t.last_imu_ts = INT64_MIN;
+ 	t.last_cam_ts = vector<timepoint_ns>(t.cam_count, INT64_MIN);
+-- 
+2.47.3
+

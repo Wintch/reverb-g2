@@ -1,5 +1,74 @@
 # Context for the 90Hz lab agent
 
+> ## NEW MILESTONE (2026-08-12, ~11:50) — 6DoF SLAM went from "runs away to kilometres" to playable in a real game. Five patches, two measured dead ends, one self-inflicted cost. Read `docs/pruebas.jsonl` T162.
+>
+> **The headline: 6DoF was never actually working on this project, and nobody knew** —
+> T060/T061 (2026-08-07) recorded "SLAM works well here" but measured **only rotation
+> jitter**; `pose-measure.py` did not exist until T147. In a 360 photo viewer the sphere is
+> at infinity, so a position leaving for kilometres is invisible. Treat that entry as
+> never-worked, not a regression. Measured properly on 2026-08-12: motionless headset,
+> 25 cm in 2.66 s, **1963 m at 79 s**, exponent t^3.8.
+>
+> **Root cause: a starved visual front-end.** Everything else was fine and verified, not
+> assumed — per-camera images visually perfect (screenshotted straight from the debug GUI
+> with `import -window`), camera timing 30.04 Hz with 0.2 ms stdev and zero gaps over
+> 385 s, raw IMU `|accel| = 9.8118 ± 0.0124 m/s²`, calibration delivered with no parse
+> warnings, and stride/distortion-struct-layout/intrinsics-denormalisation/`rpmax`
+> semantics all checked in the source. The instrument that cracked it was
+> `SLAM_FEATURES_ENABLE=1` (patch `0019`, one of two telemetry knobs that existed but were
+> GUI-only): **Basalt was holding a mean of 0.0-0.9 landmarks per camera.** A healthy VIO
+> holds 50-150. **Basalt's default detection settings are also its EuRoC settings**
+> (`data/default_config.json` and `data/euroc/euroc_config.json` are byte-for-byte
+> identical) — tuned for 752x480 pinhole at 20 Hz, not the G2's 640x480 fisheye at 30 Hz.
+> `grid_size 30 / num_points_cell 3 / min_threshold 3` → static drift **0.72 m at 60 s**,
+> and worn+walking the position stays bounded and *returns* (0.99 m at 180 s, 0.51 m at
+> 220 s). A runaway never comes back. Now the default via `scripts/basalt-g2-config.json`.
+> It is a **threshold, not one wrong knob**: alone, each of the three gives 4613 m, 1791 m
+> and 865 m at 60 s.
+>
+> **Two crash/failure bugs found along the way, both fixed**: `t_slam` detected camera
+> frames with non-monotonic timestamps, warned, **and pushed them anyway** — Basalt aborts
+> the process on those, and it killed `monado-service` three times in one session with
+> three unrelated triggers (disk I/O, CPU load, and a `CamerasDmaReset` burst from the
+> headset). Patch `0021` drops the whole bundle instead, and measured after the fix, **the
+> guard fires ~195 times per session** with backwards jumps of 10-106 ms: the G2's camera
+> clock hiccups constantly. Separately `receive_imu_sample` was dropping **~10% of the
+> entire IMU stream** (5301 samples in 216 s) as "from the past", where the upstream
+> comment expects "one or two" — patch `0022` keeps them.
+>
+> **In-game (Aircar), user wearing it: works, with real caveats.** A session held 0.8 m for
+> 600 s, then jumped 2211 m in one step and **froze on that value for 90 s** — the wearer
+> stranded 2.5 km away. Patch `0023` adds a divergence auto-reset (implied speed > 10 m/s).
+> **Its cost is self-inflicted and not fixed**: a reset re-anchors at the origin without
+> telling the application, so the world anchor teleports. "Estoy lejos de la nave" happened
+> with the tracker reporting a healthy 0.19 m. The real fix is to carry the reset offset
+> through to the output pose.
+>
+> **The jitter is ROTATIONAL, and an hour went into measuring the wrong axis.** Position
+> steps looked bad (p99 152 mm), so the output stage got blamed twice — one euro filter,
+> then gyro-only prediction. User verdicts: "el jittering no cambió casi, la posición más
+> bien", then "igual mucho jitter". Measuring **rotation** settled it in one command: raw
+> Basalt p99 **12.03°**, max 32.35° (970°/s — impossible for a head) against p99 1.13°
+> filtered. So the one euro filter, nearly written off as useless, is the biggest win in
+> the output path, and the jitter itself is Basalt's, upstream of everything being tuned.
+> `SLAM_FILTER=one_euro` is now the 6dof default.
+>
+> **Two measured dead ends, both documented in the code so they are not rediscovered:**
+> (1) `m_clock_windowed_skew_tracker` — in-tree, used by the Rift driver, documented as
+> microsecond-accurate under 10s of ms of jitter — took dropped IMU samples to **zero** and
+> made drift **worse**: 243 m and 1002 m on two consecutive runs against 0.7-1.0 m. The
+> dropped samples were never what limited accuracy; do not re-apply it on the strength of
+> the drop counters. (2) Inverting the camera extrinsics: 0.9 → 2.6 features, nothing.
+>
+> **Open, and stated as open**: 0.72 m of static drift in 60 s is ordinary VIO drift, not
+> zero; denser detection (`detect_plus`) is better on every static metric but drops 4x the
+> IMU samples under real game load — CPU ↔ clock ↔ tracking is one feedback loop and past
+> this point every lever pushes the problem around it; the user's reported left/CCW roll
+> drift **has no number** (the Euler decomposition hit gimbal lock at pitch -88°, and
+> measuring roll while the wearer moves is confounded — it needs the headset static on a
+> flat surface with the gravity direction tracked); and this morning's boot-time lease
+> failure has no confirmed cause (the `chvt` A/B needs a password and was never run).
+
 > ## NEW MILESTONE (2026-08-10, ~01:35) — full unattended boot-to-VR pipeline shipped and verified end-to-end with real hardware; four real bugs found and fixed in one night. Read `docs/pruebas.jsonl` T108-T141.
 >
 > **The headline result: this machine now boots, diagnoses its own hardware, and lands

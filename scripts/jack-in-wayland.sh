@@ -165,6 +165,46 @@ fi
 
 if [ "$TRACKING" = "6dof" ]; then
     TRACKING_ENV=(WMR_SLAM=1 "VIT_SYSTEM_LIBRARY_PATH=$BASALT_LIB")
+
+    # Basalt's default pipeline settings are also its EuRoC settings (data/default_config.json
+    # and data/euroc/euroc_config.json are byte-for-byte identical), and they are far too
+    # sparse for the G2's four 640x480 fisheye cameras. Measured 2026-08-12 (T162), motionless
+    # headset, images visually perfect and calibration correct: Basalt held a mean of 0.0-0.9
+    # landmarks per camera, so the visual term contributed nothing and the pose was pure IMU
+    # dead reckoning -- thousands of metres of runaway. With basalt-g2-config.json's denser
+    # detection the same measurement gives 0.72 m at 60 s, and worn+walking it reaches a mean
+    # of ~20 landmarks per camera with the position bounded and returning (real tracking, not
+    # drift). No single one of the three parameters is enough on its own; it is a threshold.
+    #
+    # Needs patches/monado/0020 (SLAM_CONFIG_PIPELINE_ONLY) + patches/basalt/0001, which let a
+    # config file carry pipeline settings only and keep the driver's calibration. Without them
+    # this would be ignored at best. Set SLAM_CONFIG yourself to override; set
+    # SLAM_G2_CONFIG=0 to fall back to Basalt's defaults for an A/B.
+    # The one euro filter on t_slam's output is off upstream and only reachable from the debug
+    # GUI. Measured in-game 2026-08-12 (T162), rotation between consecutive poses: raw Basalt
+    # p99 12.03 deg / max 32.3 deg, filtered p99 1.13 deg / max 5.54 deg. That is the jitter
+    # the wearer actually feels, and it is rotational -- position filtering and prediction-type
+    # changes moved nothing. SLAM_FILTER=none for an A/B.
+    TRACKING_ENV+=("SLAM_FILTER=${SLAM_FILTER:-one_euro}")
+
+    G2_SLAM_JSON="$(dirname "${BASH_SOURCE[0]}")/basalt-g2-config.json"
+    if [ "${SLAM_G2_CONFIG:-1}" = "1" ] && [ -z "${SLAM_CONFIG:-}" ] && [ -f "$G2_SLAM_JSON" ]; then
+        G2_SLAM_TOML="${TMPDIR:-/tmp}/basalt-g2-$$.toml"
+        cat > "$G2_SLAM_TOML" <<EOF
+show-gui=0
+config-path="$G2_SLAM_JSON"
+marg-data=""
+print-queue=0
+use-double=0
+deterministic=0
+num-threads=1
+EOF
+        TRACKING_ENV+=("SLAM_CONFIG=$G2_SLAM_TOML" SLAM_CONFIG_PIPELINE_ONLY=1)
+        echo "  SLAM pipeline config: $G2_SLAM_JSON (denser detection; SLAM_G2_CONFIG=0 disables)"
+    elif [ -n "${SLAM_CONFIG:-}" ]; then
+        TRACKING_ENV+=("SLAM_CONFIG=$SLAM_CONFIG" "SLAM_CONFIG_PIPELINE_ONLY=${SLAM_CONFIG_PIPELINE_ONLY:-1}")
+        echo "  SLAM pipeline config: $SLAM_CONFIG (from the environment)"
+    fi
 else
     TRACKING_ENV=(WMR_SLAM=0 WMR_CAMERAS=0)
 fi
