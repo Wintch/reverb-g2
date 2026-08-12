@@ -30,9 +30,19 @@
 > different device node. And the boot pipeline *deliberately* moves the visible VT (`chvt 4`
 > for the picker), so this condition is designed into this system, not exotic.
 >
-> **Fix applied**: `sudo usermod -aG render iam` — validated (`render:x:992:iam`). Group
-> membership does not care which VT is active. **Acceptance test, NOT YET RUN**: reboot, then
-> re-measure Quake II RTX (native, no headset needed — the cheapest instrument for this).
+> **Fix applied**: `sudo usermod -aG render iam` — group membership does not care which VT is
+> active. **CONFIRMED after reboot (T160)**, three ways:
+>
+> | check | before | after |
+> |---|---|---|
+> | Xwayland's GL renderer | software (glamor disabled) | **NVIDIA GeForce RTX 3060 Ti** |
+> | Quake II RTX, OpenGL mode | 70–90 fps | **1000 fps** |
+> | GPU pstate under load | P3, 555 MHz | **P0, 1665 MHz, 68 W** — unforced |
+>
+> The 1000 is **id Tech 2's own ceiling** (whole-millisecond frame timing), so the real result
+> is "the GPU is no longer the limiting factor at all", not "the GPU delivers 1000". And the
+> earlier P3 lock now reads as a *symptom* of the GPU being starved of work — which is why
+> forcing PowerMizer helped a little and then decayed.
 >
 > **Standing rule from this**: anything the VR stack needs from a `uaccess`-controlled device
 > node must be secured by **group membership**, never left to depend on which console happens

@@ -209,6 +209,39 @@ if [ "$VERBOSE" = 1 ]; then
     echo "Verbose tracking logs ON. Pose CSVs: $SLAM_CSV_DIR"
 fi
 
+# --- Frame pacing instrumentation (2026-08-12, T161) --------------------------------
+# ALWAYS ON, deliberately, and separate from the VR_VERBOSE block above.
+#
+# A dropped frame is felt in VR long before it is visible on a counter: a frame that
+# misses its slot makes the compositor re-show the previous one, so the view snaps back
+# to the old pose for a beat. The user reports this as a "microajuste" when turning the
+# head, and reports it as nauseating even at low rates -- which is why this is measured
+# on EVERY title from now on, not enabled on demand when something already feels wrong.
+#
+# What it costs: one log line per late frame. Measured on Aircar, that is ~3 lines/s at
+# its worst (during DXVK shader warm-up) and 0.12 lines/s once warm -- against the
+# ~49 KB/s the VR_VERBOSE block writes. It is not a meaningful load, and it was measured
+# rather than assumed.
+#
+#   XRT_APP_FRAME_LAG_LOG_AS_LEVEL   the APP missing its deadline (default DEBUG, hidden)
+#   XRT_COMP_FRAME_LAG_LOG_AS_LEVEL  the COMPOSITOR missing its deadline (default WARN)
+#   U_PACING_APP_LOG / U_PACING_COMPOSITOR_LOG   the two pacers (both default WARN)
+#   U_PACING_LIVE_STATS              per-frame pacing statistics (default false)
+#
+# Read it with ./scripts/frame-pacing.sh -- do not eyeball the log.
+# Set VR_PACING=0 to turn it off; there is no known reason to.
+PACING="${VR_PACING:-1}"
+PACING_ENV=()
+if [ "$PACING" = 1 ]; then
+    PACING_ENV=(
+        XRT_APP_FRAME_LAG_LOG_AS_LEVEL=info
+        XRT_COMP_FRAME_LAG_LOG_AS_LEVEL=info
+        U_PACING_APP_LOG=info
+        U_PACING_COMPOSITOR_LOG=info
+        U_PACING_LIVE_STATS=true
+    )
+fi
+
 echo "Starting Monado (mode $MODE, tracking $TRACKING) via DRM lease... log: $LOG"
 
 # Keep the previous run's log. Truncating on every start destroyed the one log that could
@@ -253,6 +286,7 @@ while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
         XRT_NO_STDIN=1 \
         "${TRACKING_ENV[@]}" \
         "${LOG_ENV[@]}" \
+        "${PACING_ENV[@]}" \
         WMR_DISPLAY_INIT_SLEEP_SECONDS=2 \
         setsid stdbuf -oL -eL "$SERVICE" < /dev/null > "$LOG" 2>&1 &
 
