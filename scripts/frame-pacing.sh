@@ -100,3 +100,52 @@ END {
     else
         print "  VERDICT: no late frames in this window."
 }' <<< "$DIST"
+
+# --- record the measurement with the environment it was taken against ----------------
+# A dropped-frame figure means nothing alone: it becomes evidence only when it can be
+# compared against another measurement on a known-different driver, Monado build or render
+# resolution. Appending here makes "did this change with the driver?" a query instead of an
+# argument -- the 2026-08-09 kernel/DKMS boundary cost a whole session precisely because no
+# such record existed and it had to be reconstructed from file timestamps.
+RECORD="$VR/logs/frame-pacing.jsonl"
+mkdir -p "$(dirname "$RECORD")"
+TITLE="$(ps -eo args --no-headers 2>/dev/null | grep -oE "[^/\\]+\.exe" \
+         | grep -viE "^(steam|services|explorer|winedevice|plugplay|svchost|rpcss|conhost|tabtip|iscriptevaluator|xalia)\.exe$" \
+         | head -1)"
+[ -n "$TITLE" ] || { pgrep -f "hello_xr" >/dev/null 2>&1 && TITLE="hello_xr"; }
+[ -n "$TITLE" ] || TITLE="unknown"
+RES="$(grep -oE "CREATE [^ ]+ [0-9]+x[0-9]+" "$LOG" | tail -1 | grep -oE "[0-9]+x[0-9]+")"
+
+python3 - "$RECORD" "$TITLE" "$ELAPSED" "$LATE" "$HZ" "${RES:-unknown}" "$VR" <<'PY'
+import json, sys, os, subprocess, datetime
+rec, title, elapsed, late, hz, res, vr = sys.argv[1:8]
+elapsed, late, hz = int(elapsed), int(late), float(hz)
+
+def sh(cmd):
+    try:
+        return subprocess.run(cmd, shell=True, capture_output=True, text=True,
+                              timeout=5).stdout.strip() or None
+    except Exception:
+        return None
+
+expected = elapsed * hz
+entry = {
+    "when": datetime.datetime.now().isoformat(timespec="seconds"),
+    "title": title,
+    "window_s": elapsed,
+    "late_frames": late,
+    "rate_per_s": round(late / elapsed, 3),
+    "share_pct": round(late / expected * 100, 3) if expected else None,
+    "refresh_hz": hz,
+    "render_per_eye": res,
+    "kernel": os.uname().release,
+    "nvidia": sh("sed -n '1p' /proc/driver/nvidia/version"),
+    "monado_head": sh(f"git -C '{vr}/monado' log --oneline -1"),
+    "monado_built": sh(f"stat -c %y '{vr}/monado/build/src/xrt/targets/service/monado-service' | cut -d. -f1"),
+    "xrizer_built": sh(f"stat -c %y '{vr}/xrizer/target/release/libxrizer.so' | cut -d. -f1"),
+    "proton": sh("cat '/home/iam/.steam/debian-installation/steamapps/common/Proton - Experimental/version'"),
+}
+with open(rec, "a", encoding="utf-8") as f:
+    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+print(f"\n  recorded -> {rec}   (title: {title})")
+PY
