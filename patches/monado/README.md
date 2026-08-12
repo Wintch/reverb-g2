@@ -93,9 +93,14 @@ zero warnings. 0016 and 0017 do not — see the box above.
 > git log -1 --oneline   # should show 7cb73701b "Fix container_of misuse in receive_ctrl_cam..."
 > ```
 >
-> **Not yet verified this builds clean on the lab machine** — the bundle being complete is
-> necessary but the fetch-and-build step hasn't been re-attempted since the fix. See
-> `docs/30-machine-handoff-protocol.md` for the general protocol this incident led to.
+> **Update, same day**: the branch is now already fetched into the lab machine's own
+> `~/vr/monado` checkout (as local ref `g2-constellation-x11kde`, confirmed tip
+> `7cb73701b`) — done via the mounted disk from the everyday system, without touching the
+> lab checkout's then-current branch (`lab-90hz-0017`) or working tree. Whoever picks this
+> up on the lab side just needs `git checkout g2-constellation-x11kde && ./build.sh` (or
+> the project's usual build invocation) — **the build itself is still not verified**, that
+> remains the concrete next step. See `docs/30-machine-handoff-protocol.md` for the
+> general protocol this incident led to.
 
 **A twelfth patch existed briefly (2026-08-07) and was retracted (2026-08-08).** It "fixed"
 an AND/OR bug in 0003's bounded controller-status wait, reproduced 9/9 times in a real

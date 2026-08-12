@@ -11,10 +11,14 @@
 > bundle would have the exposure fix but not the fix that makes it actually report as
 > tracked, which matches "we saw it, it's not quite there" far better than a real code bug
 > would. Regenerated the bundle, overwrote the stale copy in place, left a second copy on
-> the lab disk directly. Full detail and the general handoff protocol this led to:
+> the lab disk directly, and (via the mounted disk) fetched the branch straight into the
+> lab's own `~/vr/monado` checkout as local ref `g2-constellation-x11kde` (tip
+> `7cb73701b`) without touching its then-current branch (`lab-90hz-0017`) or working tree.
+> Full detail and the general handoff protocol this led to:
 > `docs/30-machine-handoff-protocol.md`, and the recovery command in
-> `patches/monado/README.md`. **Not yet re-verified building on the lab machine** — that's
-> the concrete next step for whoever picks this up there.
+> `patches/monado/README.md`. **The build itself is still not verified** — `git checkout
+> g2-constellation-x11kde` and building it is the concrete next step for whoever picks
+> this up on the lab side.
 
 > # UPDATE (2026-08-12, lab machine, long session). Read `docs/pruebas.jsonl` T156-T159.
 >
