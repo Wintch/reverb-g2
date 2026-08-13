@@ -89,10 +89,22 @@ PERIOD_MS="$(awk -v hz="$HZ" 'BEGIN{printf "%.2f", 1000/hz}')"
 echo "Measuring for ${WINDOW}s at ${HZ} Hz (one frame = ${PERIOD_MS} ms)..."
 echo "Play normally, and include the movement that provokes it -- head turns show it best."
 
-BEFORE="$(grep -c "Frame late by" "$LOG" 2>/dev/null || echo 0)"
+# `grep -c` prints 0 AND exits non-zero when there are no matches, so the old
+# `|| echo 0` fired as well and the variable ended up holding "0\n0" -- the arithmetic
+# below then died with a syntax error and the script produced no number at all. It only
+# triggered when the count was ZERO, i.e. exactly when the answer was "perfect", which is
+# the worst possible time for a measurement tool to fall over quietly. Found 2026-08-13
+# (T178) on a session that genuinely had no late frames.
+count_late() {
+    local n
+    n="$(grep -c "Frame late by" "$LOG" 2>/dev/null || true)"
+    n="${n%%$'\n'*}"
+    echo "${n:-0}"
+}
+BEFORE="$(count_late)"
 START="$(date +%s)"
 sleep "$WINDOW"
-AFTER="$(grep -c "Frame late by" "$LOG" 2>/dev/null || echo 0)"
+AFTER="$(count_late)"
 ELAPSED="$(( $(date +%s) - START ))"
 [ "$ELAPSED" -gt 0 ] || ELAPSED=1
 

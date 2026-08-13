@@ -20,7 +20,8 @@ to" column before quoting a number.
 | `scripts/frame-pacing.sh` | What share of frames miss their slot, and by how much | **Latency.** A change that trades judder for a stale pose looks like a pure win here |
 | `scripts/pose-lag.py` | How many ms of lag each stage of the output pose pipeline adds (tracking → filtering → prediction) | Camera-exposure→SLAM delay and scanout — it measures *between* stages, not photon-to-pose |
 | `scripts/pose-measure.py` | Absolute position drift over time (the 6DoF runaway question) | Rotation |
-| `scripts/drift-measure.py` | Orientation drift, including the gravity-referenced roll/pitch number | Position |
+| `scripts/drift-measure.py` | **CONTROLLER** orientation drift, on a fixed settle/capture protocol with audible phase cues | **The headset.** Asked a headset question it returns zeros with `trk 0%` — corrected here 2026-08-13 after this very table said otherwise and cost a measurement |
+| (no tool yet) | **HEADSET** orientation drift against gravity | Done by hand from `tracking.csv`/`filtering.csv` (quaternion → up-vector tilt, least-squares slope). 2026-08-13, headset still, 97 s: **+0.47 °/min raw, +0.51 °/min delivered**, yaw −0.28/−0.24. Raw and delivered agreeing is the finding: the drift is Basalt's, not our output path. Deserves to become a script |
 | `scripts/panel.py` | Is the panel powered and does it answer HID? (`activate` / status) | Whether anything is being scanned out |
 | `scripts/drmprops.c` | Is the connector really the G2? EDID fingerprint, `non-desktop`, available modes | USB |
 | `scripts/check-lease.sh` | Does this compositor offer the headset's connector for lease? | Only meaningful once the panel has been woken this boot |
@@ -98,3 +99,32 @@ streams*, and which of them is the output is a fact about the code, not about th
 After patch 0044 moved the filter ahead of prediction, the same measurement on the same rig
 reads **−5.0 ms** (the delivered pose now leads raw SLAM slightly), residual 0.01%. A swing
 of 47.5 ms, matching what the wearer reported independently.
+
+## What each tool is blind to — the running list
+
+Added 2026-08-13 (T178) after the same instrument misled twice in one session. This is the
+column that matters when quoting a number.
+
+| Tool | Blind to | How it bit |
+|---|---|---|
+| `frame-pacing.sh` | **Latency** | Pipelined pacing read as a clean 13x win while a brand-new ghost appeared in the headset (T175) |
+| `frame-pacing.sh` | **The app's actual frame rate** | Reported 0.00% late of 2700 expected while the wearer was looking at 30 fps. It counts slots the *compositor* missed; an app delivering 30 fps punctually misses none |
+| Monado's `App timing → GPU time` | **Actual GPU work** | It is `gpu_done_ns - delivered_ns`, so it includes queue wait behind the compositor and pins near one frame period. Halving the pixel count moved it by 0.02 ms. Use `nvidia-smi` power draw instead: 180 W → 85 W for the same change |
+| Steam's FPS overlay | **The headset** | Reports something other than the delivered VR frame rate; it said 45 while the app delivered 29 and the compositor 90 |
+| `drift-measure.py` | **The headset** | It measures CONTROLLER orientation drift — its first line says so. Run against a headset question it returns zeros with `trk 0%` |
+| `pose-lag.py` | Absolute photon-to-pose latency | Measures *between* recorded stages only; which stage is the output is a fact about the code, not the CSVs |
+| Any of them | **Window focus** | Unreal and DXVK throttle when the game window is not focused. Two measurements minutes apart are not comparable unless both state their focus state |
+
+**The real app frame rate**, until a script wraps it:
+
+```bash
+# with U_PACING_APP_LOG=debug, one line per delivered app frame
+a=$(grep -c "Delivered frame" ~/vr/jack-in-wayland.log); sleep 20
+b=$(grep -c "Delivered frame" ~/vr/jack-in-wayland.log); echo $(( (b-a)/20 )) fps
+```
+
+**Pose CSVs are no longer tied to `VR_VERBOSE`** (T178). They used to live inside that
+block, so silencing the driver's 268 empty-poll log lines per second also silenced the only
+offline instrument in the project — and the stale file left behind looked exactly like a
+CSV writer dying mid-session, which was investigated as a regression before the environment
+was checked. `VR_POSE_CSVS=0` turns them off on their own now.

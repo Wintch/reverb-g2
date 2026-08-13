@@ -1,0 +1,155 @@
+From b62a17de25b0794b0412002a0abf098b8e543ad9 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Thu, 13 Aug 2026 19:39:43 -0300
+Subject: [PATCH] t_slam: position deadband with tracking, at the output stage
+
+Asked for by the wearer while looking at a few centimetres of position that
+"se reacomoda todo el tiempo" with the headset sitting still, and framed by him
+as something to USE and to rule things out with rather than as a fix. Hence off
+by default: every offline measurement in this project reads the delivered pose
+stream, and a deadband would quietly flatten exactly the jitter being
+quantified. When it is on, the tracker says so at startup.
+
+It is a deadband WITH TRACKING, not a naive threshold. A naive one freezes the
+output while the error accumulates underneath and releases it all at once on
+crossing -- trading continuous shimmer for an occasional jump, which in VR is
+usually worse. Here the held point is dragged along so it stays exactly one
+threshold behind the input: below it nothing moves, above it the output moves
+continuously from where it already is. The cost is a bounded position offset,
+never a discontinuity.
+
+It has to live at the OUTPUT stage, and that is the interesting part. It was
+tried first at the SLAM ingest, by analogy with the one euro reorder in 0044,
+and did nothing at all: with SLAM_PRED_DEAD_RECKONING the delivered position is
+the SLAM position PLUS accelerometer integration since that pose, so freezing
+the input leaves prediction free to move the output anyway. The wearer proved
+it in one attempt by setting the threshold to 30 metres and seeing no change
+whatsoever -- a value absurd enough that the absence of an effect admitted no
+interpretation.
+
+The asymmetry is worth keeping in mind because it is not obvious: ROTATION
+gains from being filtered before prediction, because gyro integration
+faithfully restores what the filter delayed; POSITION does not, because
+accelerometer double integration re-injects noise instead of restoring signal.
+Same pattern, opposite results, and both are now documented at their use sites.
+
+Verified live: 0.005 m "bastante bien" against the resting shimmer, 0.5 m
+visibly frozen -- which also turns out to be a usable seated mode, orientation
+alive and position pinned.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ src/xrt/auxiliary/tracking/t_tracker_slam.cpp | 69 +++++++++++++++++++
+ 1 file changed, 69 insertions(+)
+
+diff --git a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+index 7d9974671..bc2c66754 100644
+--- a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
++++ b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+@@ -95,6 +95,7 @@ DEBUG_GET_ONCE_FLOAT_OPTION(slam_filter_pos_min_cutoff, "SLAM_FILTER_POS_MIN_CUT
+ DEBUG_GET_ONCE_FLOAT_OPTION(slam_filter_rot_min_cutoff, "SLAM_FILTER_ROT_MIN_CUTOFF", M_PI)
+ DEBUG_GET_ONCE_FLOAT_OPTION(slam_filter_min_dcutoff, "SLAM_FILTER_MIN_DCUTOFF", 1)
+ DEBUG_GET_ONCE_FLOAT_OPTION(slam_filter_beta, "SLAM_FILTER_BETA", 0.16)
++DEBUG_GET_ONCE_FLOAT_OPTION(slam_pos_deadzone, "SLAM_POS_DEADZONE_M", 0)
+ DEBUG_GET_ONCE_OPTION(slam_filter, "SLAM_FILTER", nullptr)
+ DEBUG_GET_ONCE_NUM_OPTION(slam_auto_reset_max_speed, "SLAM_AUTO_RESET_MAX_SPEED", 10)
+ DEBUG_GET_ONCE_BOOL_OPTION(euroc_record, "EUROC_RECORD", false)
+@@ -436,6 +437,32 @@ struct TrackerSlam
+ 		//! against a filtered one. See the use site.
+ 		struct xrt_pose last_raw = XRT_POSE_IDENTITY;
+ 		bool have_last_raw = false;
++
++		/*!
++		 * @name Position deadband, off by default.
++		 *
++		 * The wearer's idea (2026-08-13, T178) after the rotational ghost was fixed and
++		 * the remaining complaint was a few centimetres of position that "se reacomoda
++		 * todo el tiempo" while sitting still. Framed by him as a tool to USE and to rule
++		 * things out with, not as a fix -- which is the right framing, hence off by
++		 * default: every offline measurement in this project reads the delivered stream,
++		 * and a deadband would quietly flatten exactly the jitter we are trying to
++		 * quantify.
++		 *
++		 * It is a deadband WITH TRACKING, not a naive threshold. A naive one holds the
++		 * output frozen while the error accumulates underneath and then releases it all at
++		 * once when the threshold is crossed -- trading continuous shimmer for an
++		 * occasional jump, which in VR is usually worse. Here the held point is dragged
++		 * along so it stays exactly `deadzone` behind the input: below the threshold
++		 * nothing moves, above it the output moves continuously from where it already is.
++		 * The cost is an honest, bounded position offset of at most `deadzone` in the
++		 * direction of travel, never a discontinuity.
++		 * @{
++		 */
++		float pos_deadzone_m = 0.0f;
++		struct xrt_vec3 deadzone_held = XRT_VEC3_ZERO;
++		bool have_deadzone_held = false;
++		/*! @} */
+ 		m_filter_euro_vec3 pos_oe;     //!< One euro position filter
+ 		m_filter_euro_quat rot_oe;     //!< One euro rotation filter
+ 		/*!
+@@ -1226,6 +1253,39 @@ filter_pose(TrackerSlam &t, timepoint_ns when_ns, struct xrt_space_relation *out
+ 		}
+ 	}
+ 
++	// Position deadband with tracking, at the OUTPUT stage -- and it has to be here, unlike
++	// the one euro reorder above. Tried first at the SLAM ingest by analogy with the
++	// rotation fix, and it did nothing at all: with SLAM_PRED_DEAD_RECKONING the position
++	// handed out is the SLAM position PLUS accelerometer integration since that pose, so
++	// freezing the input position leaves the prediction free to move the output anyway.
++	// The wearer proved it in one try by setting the threshold to 30 metres and seeing no
++	// change whatsoever. The asymmetry is real and worth keeping in mind: ROTATION gains
++	// from being filtered before prediction, because gyro integration faithfully restores
++	// what the filter delayed; POSITION does not, because accelerometer double integration
++	// re-injects noise instead of restoring signal.
++	if (t.filter.pos_deadzone_m > 0.0f &&
++	    (out_relation->relation_flags & XRT_SPACE_RELATION_POSITION_VALID_BIT)) {
++		xrt_vec3 &p = out_relation->pose.position;
++		if (!t.filter.have_deadzone_held) {
++			t.filter.deadzone_held = p;
++			t.filter.have_deadzone_held = true;
++		}
++		xrt_vec3 h = t.filter.deadzone_held;
++		double dx = p.x - h.x, dy = p.y - h.y, dz = p.z - h.z;
++		double dist = sqrt(dx * dx + dy * dy + dz * dz);
++		double dzm = t.filter.pos_deadzone_m;
++		if (dist > dzm && dist > 1e-9) {
++			// Drag the held point along so it trails the input by exactly the
++			// threshold: continuous motion, never a release-all-at-once jump.
++			double k = (dist - dzm) / dist;
++			h.x += (float)(dx * k);
++			h.y += (float)(dy * k);
++			h.z += (float)(dz * k);
++			t.filter.deadzone_held = h;
++		}
++		p = t.filter.deadzone_held;
++	}
++
+ 	t.filter.last_filtered = *out_relation;
+ 	t.filter.have_last_filtered = true;
+ }
+@@ -1274,6 +1334,9 @@ setup_ui(TrackerSlam &t)
+ 	// Live-toggleable on purpose: it is the A/B this was written for, and a wearer can
+ 	// flip it mid-session and say which one ghosts, which beats any offline metric here.
+ 	u_var_add_bool(&t, &t.filter.one_euro_before_predict, "One euro BEFORE prediction");
++	// Sweepable live, which is the whole point: the usable threshold is a comfort
++	// judgement only the wearer can make, and 0 (off) must stay one drag away.
++	u_var_add_f32(&t, &t.filter.pos_deadzone_m, "Position deadband (m, 0 = off)");
+ 	u_var_add_f32(&t, &t.filter.pos_oe.base.fc_min, "Position minimum cutoff");
+ 	u_var_add_f32(&t, &t.filter.pos_oe.base.beta, "Position beta speed");
+ 	u_var_add_f32(&t, &t.filter.pos_oe.base.fc_min_d, "Position minimum delta cutoff");
+@@ -1933,6 +1996,12 @@ t_slam_create(struct xrt_frame_context *xfctx,
+ 	t.filter.rot_min_cutoff = debug_get_float_option_slam_filter_rot_min_cutoff();
+ 	t.filter.min_dcutoff = debug_get_float_option_slam_filter_min_dcutoff();
+ 	t.filter.beta = debug_get_float_option_slam_filter_beta();
++	t.filter.pos_deadzone_m = debug_get_float_option_slam_pos_deadzone();
++	if (t.filter.pos_deadzone_m > 0.0f) {
++		SLAM_INFO("Position deadband ON: %.1f mm (SLAM_POS_DEADZONE_M) -- measurements taken "
++		          "through this are NOT raw",
++		          (double)t.filter.pos_deadzone_m * 1000.0);
++	}
+ 	SLAM_INFO("One euro: pos cutoff %.2f Hz, rot cutoff %.2f Hz, beta %.2f, dcutoff %.2f Hz",
+ 	          (double)t.filter.pos_min_cutoff, (double)t.filter.rot_min_cutoff, (double)t.filter.beta,
+ 	          (double)t.filter.min_dcutoff);
+-- 
+2.47.3
+

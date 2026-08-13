@@ -348,17 +348,33 @@ fi
 VERBOSE="${VR_VERBOSE:-1}"
 LOG_ENV=()
 if [ "$VERBOSE" = 1 ]; then
-    SLAM_CSV_DIR="$VR/logs/slam-$(date +%Y%m%d-%H%M%S)"
-    mkdir -p "$SLAM_CSV_DIR"
     LOG_ENV=(
         XRT_LOG=debug
         WMR_LOG=debug
         SLAM_LOG=debug
         CONSTELLATION_TRACKER_LOG=debug
+    )
+    echo "Verbose tracking logs ON."
+fi
+
+# The pose CSVs are SEPARATE from the verbose logs above, and default ON (2026-08-13, T178).
+# They used to live inside that block, so VR_VERBOSE=0 -- which is how you silence the
+# driver's debug chatter -- silently also turned off the only offline instrument this
+# project has. That cost real time the day it was found: a whole measurement session ran
+# with no CSVs at all, and the stale file left over from an earlier run looked exactly like
+# "the CSV writer died mid-session", which was investigated as a regression before the
+# environment was checked. They do not share a cost either: the 31 KB/s and 268 lines/s
+# that motivate VR_VERBOSE=0 are the driver's per-poll debug lines, while the CSVs are a
+# few hundred KB over a long session. VR_POSE_CSVS=0 turns them off on their own.
+CSV_ENV=()
+if [ "${VR_POSE_CSVS:-1}" = 1 ]; then
+    SLAM_CSV_DIR="$VR/logs/slam-$(date +%Y%m%d-%H%M%S)"
+    mkdir -p "$SLAM_CSV_DIR"
+    CSV_ENV=(
         SLAM_WRITE_CSVS=1
         "SLAM_CSV_PATH=$SLAM_CSV_DIR/"
     )
-    echo "Verbose tracking logs ON. Pose CSVs: $SLAM_CSV_DIR"
+    echo "Pose CSVs: $SLAM_CSV_DIR"
 fi
 
 # --- Frame pacing instrumentation (2026-08-12, T161) --------------------------------
@@ -388,9 +404,17 @@ if [ "$PACING" = 1 ]; then
     PACING_ENV=(
         XRT_APP_FRAME_LAG_LOG_AS_LEVEL=info
         XRT_COMP_FRAME_LAG_LOG_AS_LEVEL=info
-        U_PACING_APP_LOG=info
-        U_PACING_COMPOSITOR_LOG=info
-        U_PACING_LIVE_STATS=true
+        # Externally-set values win. These used to be hardcoded, so exporting
+        # U_PACING_APP_LOG=debug in front of this script silently did nothing --
+        # `env VAR=x` after the array still loses to the array itself. That matters
+        # because debug is the ONLY way to get one log line per DELIVERED app frame,
+        # which is the app's real frame rate: frame-pacing.sh counts slots the
+        # compositor missed and is blind to an app that delivers 30 fps punctually
+        # (demonstrated live 2026-08-13 -- 0 late frames of 2700 while the wearer
+        # was looking at 30 fps).
+        U_PACING_APP_LOG="${U_PACING_APP_LOG:-info}"
+        U_PACING_COMPOSITOR_LOG="${U_PACING_COMPOSITOR_LOG:-info}"
+        U_PACING_LIVE_STATS="${U_PACING_LIVE_STATS:-true}"
     )
 fi
 
@@ -462,6 +486,7 @@ while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
         XRT_NO_STDIN=1 \
         "${TRACKING_ENV[@]}" \
         "${LOG_ENV[@]}" \
+        "${CSV_ENV[@]}" \
         "${HEIGHT_ENV[@]}" \
         "${PACING_ENV[@]}" \
         WMR_DISPLAY_INIT_SLEEP_SECONDS=2 \
