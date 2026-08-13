@@ -7,11 +7,19 @@ rule (`CLAUDE.md`, "the single most important rule"), a title isn't "working" un
 saw it, and several early sweep results below are marked accordingly as log-only, not
 physically verified.
 
-**Shared limitation across every WORKING title below**: controller **position** tracking
-(constellation, camera-based) is paused pending upstream Monado reviewer feedback
-(`docs/03-controllers.md`). All 6DoF sessions are head-only — controllers rotate correctly
-but stay positionally offset from wherever they started. This is expected, not a per-game
-bug, and isn't repeated in every row.
+**This changed on 2026-08-12 (T163) and every "controllers are 3DoF" note below predates
+it**: controller **position** tracking (constellation, via the headset's own cameras) now
+works and was verified with the headset on. Rows written before that date describe
+controllers rotating in place at a fixed offset, which was correct then and is not the
+current state. Needs `WMR_CONSTELLATION_CONTROLLERS=1` and cameras running — see
+`patches/monado/0024`–`0029` and `scripts/jack-in-wayland.sh`'s `ctrl` mode.
+
+Still imperfect and measured as such: one controller can flip between two pose hypotheses
+0.189 m apart, both good optical fits. Details and the reason the obvious fix (the IMU as a
+prior) is not a drop-in are in `patches/monado/README.md`.
+
+**A title only validates this if it draws the controllers.** Aircar — this rig's reference
+title — does not, so none of the above is visible in it. Use one that renders hands.
 
 ## Working
 
@@ -25,6 +33,7 @@ bug, and isn't repeated in every row.
 | VRChat | [438100](https://steamdb.info/app/438100/) | ✓ | Confirmed working, reached `FOCUSED`, real gameplay, EasyAntiCheat loads clean under Proton (T082-session, same day). First attempt showed nothing — traced to an unrelated DP/panel dropout from heavy session churn that session, not a VRChat bug; a clean retest worked immediately. |
 | Propagation VR | [1363430](https://steamdb.info/app/1363430/) | ✓ | Best signal of the whole non-original sweep — "works just perfect", including exiting the game from inside via the controllers (menu/quit works out of the box, no patch needed unlike SUPERHOT). First launch had controllers powered off (Monado has no controller hot-add — confirmed `<none>`/`<none>` in the log), retested clean after a full jack-in-wayland.sh restart with controllers on beforehand. |
 | Aircar | [1073390](https://steamdb.info/app/1073390/) | ✓ | **RECOMMENDED — the reference title for this rig (re-verified 2026-08-12, T161).** User verdict: "100% funcional con sticks VR o Xbox 360 por igual, buen performance, sonido en casco". Works with either input device, interchangeably. Measured in the same session: **89-90 fps** at `4320x2160@90` with the default 140% render scale (3024x3024 per eye), and **0.13% late frames** (0.12/s) once warmed up. **Warm-up caveat that applies to every Proton title, not just this one**: the first measurement of the same session read 3.44% late frames (3.10/s) with the render scale *unchanged* -- that window caught DXVK shader compilation and asset streaming, not steady state. Its `DXVK_state_cache` directory is empty, so first-run compilation is heavy. **Do not judge a Proton title's pacing in its first minute.** Audio routes to the headset and PipeWire's stream-restore remembers it per-application across Monado restarts. VR-controller stick drift needs `WMR_STICK_DEADZONE=0.15` (patch 0008) -- WMR controllers carry no stick centre calibration at all; without it the drift is plainly felt and was initially, wrongly, blamed on the Xbox pad. Earlier verdict: "first game I'd call 99%" — real VR, full controller input, excellent GPU utilization. First launch fell to 2D-only via the localconfig launch-options trap (see the note below this table). Two session-level issues observed, neither the game's fault: a pronounced CCW **roll drift** on the long-uptime 6DoF/SLAM session (horizon re-tilts right after every recenter — recenter is yaw-only by design), and on the fresh-SLAM session a wrong start position ("outside the vehicle") from the origin anchoring where the headset sat. See T106 for the SLAM-divergence follow-up. |
+| Aircar — 2026-08-12 late session (T163) | | | **Performance in 6dof is the finding, and it is the SLAM's cost, not a regression from the controller work.** Measured with the frame-pacing instrumentation: 6dof shows **7.2–11.6% late frames** against **2.8%** for the same title in 3dof, and the user reads it directly as **50–70 fps in 6dof vs 80–90 in 3dof**. Mechanism found with `ps -L`: Basalt runs single-threaded and pins **one whole core at 99.4%** (of six physical, on a Ryzen 5 5600X) while the machine sits at 26% overall. **Giving it more threads is WORSE, measured, not assumed**: `num-threads=3` produced four monado threads at 94–99% each and 10.8–11.6% late frames across three consecutive windows. `num-threads=1` stays the default, now as a documented variable rather than a literal (`SLAM_THREADS`). **Constellation controller tracking is NOT the cost** — with it off, the same config measured 3.44% and 7.22% in back-to-back windows, i.e. the run-to-run variance is wider than the effect. Three windows minimum per data point. **The wearer's "the camera snaps back to a previous position about once a second, only when turning" is the dropped frames**, not a tracking bug: a frame that misses its slot makes the compositor re-show the previous one, which is invisible with the head still and obvious mid-turn. |
 | Google Earth VR | [348250](https://steamdb.info/app/348250/) | ✓ | **Works perfectly on a 3dof session** — user: "funciona perfecto… todos sus controles andan perfecto, eso se ve en el modelo 3d adentro" (the in-game controller model confirms every input works). On the same night's *diverging* 6DoF/SLAM session it was unusable (head jitter + view flying away — Basalt numerical divergence, `det(Q1Jl)==0` cascades in the log; light on didn't help, recenter didn't either). Controller *position* missing is the known project-wide 3DoF-controllers limitation, not a game issue. First launch attempt also hit the localconfig trap ("OpenVR failed to initialize / InterfaceNotFound" was the visible symptom). |
 | Dead Herring VR | [1498490](https://steamdb.info/app/1498490/) | ✓ | Real VR image and gameplay reached; user was mispositioned (same diverging-SLAM session as Google Earth — needs a clean-session retest for a final verdict, but the game itself renders and runs). Curiosity: has a 2D debug mode showing a map on the desktop window in 3D. |
 | Tank Mechanic Simulator VR | [1463010](https://steamdb.info/app/1463010/) | ✓ | Confirmed working, 2026-08-09 — user: "perfecto! 3dof en los joy. Imagen excelente." Shows a generic "does not appear to support headset" warning on first launch (same harmless whitelist-check pattern as Dark Room VR) — click through it, doesn't block anything real. |
@@ -110,6 +119,8 @@ VR's dialog, since resolved).
 
 | Item | AppID | SteamDB | Notes |
 |---|---|---|---|
+| SteamVR | [250820](https://steamdb.info/app/250820/) | ✓ | **Installed, and deliberately not used.** This whole project replaces it: xrizer reimplements OpenVR on top of OpenXR precisely because SteamVR's `vrmonitor` does not work here (`docs/06`). Steam also silently re-adds it to `openvrpaths.vrpath` on every startup — there is a trap entry for that below. Nothing to test; if it ever runs, something is misconfigured. |
+| Windows Mixed Reality for SteamVR | [719950](https://steamdb.info/app/719950/) | ✓ | **Installed, and not applicable on Linux.** It is the WMR *driver plugin for SteamVR*, i.e. Microsoft's Windows-only path for talking to this headset. Monado's own `drv_wmr` does that job natively here. Listed only so the question "did we ever try it?" has an answer. |
 | fpsVR | [908520](https://steamdb.info/app/908520/) | ✓ | A SteamVR performance-overlay tool, not a VR title. First real attempt 2026-08-09: blocked by the launch-options trap below ("VR HMD not found" dialog, `ERROR_RUNTIME_UNAVAILABLE` in xrizer). Worth retrying with UI-set options: xrizer's `overlay.rs` implements `IVROverlay` seriously (1600+ lines, up to `IVROverlay028`), so the prognosis isn't hopeless — still pending. |
 
 ## Trap: Steam launch options edited on disk don't exist (2026-08-09)

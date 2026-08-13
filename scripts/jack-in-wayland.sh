@@ -191,6 +191,28 @@ if [ "$TRACKING" = "6dof" ]; then
     # changes moved nothing. SLAM_FILTER=none for an A/B.
     TRACKING_ENV+=("SLAM_FILTER=${SLAM_FILTER:-one_euro}")
 
+    # Basalt's worker threads. This was the literal 1 until 2026-08-12, and that literal was
+    # expensive: measured with a game running, ONE monado thread sat at 99.4% CPU -- a whole
+    # core of six on this box -- while the machine idled at 26% overall, and the user felt it
+    # as 50-70 fps where 3dof gives 80-90. Aircar showed 7.2-7.7% late frames in 6dof against
+    # 2.8% with SLAM off.
+    #
+    # THE ANSWER IS 1, AND IT IS MEASURED, NOT INHERITED. Giving Basalt more threads was
+    # tried the same session on the theory that one saturated core was the bottleneck, and it
+    # is a REGRESSION: with num-threads=3 there were four monado threads at 94-99% each (of
+    # six physical cores on this box) and Aircar went to 10.8-11.6% late frames across three
+    # consecutive windows, against 3.4-7.7% with a single thread. The user felt it as ~50 fps.
+    # Basalt does not get faster with more workers here, it just takes the cores the game and
+    # the compositor need.
+    #
+    # It stays a variable rather than a literal for the reason a literal was wrong in the
+    # first place: nothing in the tree said what it depended on, and a value chosen on a
+    # 6-core/12-thread box is an unexamined assumption on an 8-thread one. Override with
+    # SLAM_THREADS and re-measure with scripts/frame-pacing.sh -- do not change the default
+    # without three windows of evidence, the per-window variance is wide (3.44% and 7.22%
+    # were measured back to back in an identical configuration).
+    SLAM_THREADS="${SLAM_THREADS:-1}"
+
     G2_SLAM_JSON="$(dirname "${BASH_SOURCE[0]}")/basalt-g2-config.json"
     if [ "${SLAM_G2_CONFIG:-1}" = "1" ] && [ -z "${SLAM_CONFIG:-}" ] && [ -f "$G2_SLAM_JSON" ]; then
         G2_SLAM_TOML="${TMPDIR:-/tmp}/basalt-g2-$$.toml"
@@ -201,8 +223,9 @@ marg-data=""
 print-queue=0
 use-double=0
 deterministic=0
-num-threads=1
+num-threads=$SLAM_THREADS
 EOF
+        echo "  SLAM worker threads: $SLAM_THREADS (of $(nproc) available; measured best at 1, SLAM_THREADS= overrides)"
         TRACKING_ENV+=("SLAM_CONFIG=$G2_SLAM_TOML" SLAM_CONFIG_PIPELINE_ONLY=1)
         echo "  SLAM pipeline config: $G2_SLAM_JSON (denser detection; SLAM_G2_CONFIG=0 disables)"
     elif [ -n "${SLAM_CONFIG:-}" ]; then

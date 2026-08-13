@@ -1,5 +1,40 @@
 # Next step
 
+> # PLANNED (2026-08-12, T163) — a real benchmark suite, and a machine that never varies underneath it
+>
+> Asked for directly by the user this session, after a night where the same title in the same
+> configuration measured 3.44% and 7.22% late frames in **back-to-back windows** — a spread
+> wide enough that it nearly produced two wrong conclusions in a row (that constellation
+> tracking cost performance, and that more Basalt threads helped). Neither survived a third
+> window. Everything below exists because single measurements on this rig are not evidence.
+>
+> **1. Pin the machine before measuring anything.** `scripts/vr-power-setup.sh` (written this
+> session) reports and, with `--apply`, removes the variables: CPU governor `powersave` →
+> `performance`, amd-pstate EPP `balance_performance` → `performance`, PCIe ASPM `default` →
+> `performance`, GPU to its full 250 W, headset USB autosuspend off (already off here, kept
+> explicit because a suspended companion looks exactly like the marginal-cable fault in
+> `docs/22`). **Not yet applied or measured** — it needs root, and the before/after is itself
+> a benchmark to run.
+>
+> **2. The GPU watts question, as an experiment rather than a setting.** NVIDIA cards can hold
+> identical frame timing across a wide power range. `--gpu-limit 80` caps it; re-measure three
+> windows; if pacing is unchanged the watts were buying nothing, then try 70%. Card floor here
+> is 100 W of a 250 W max, currently sitting at 240 W.
+>
+> **3. A benchmark suite worth the name, to catch regressions from updates.** The pieces already
+> exist and are already stamped with the environment that produced them
+> (`~/vr/logs/frame-pacing.jsonl` records kernel, NVIDIA version, monado commit, xrizer build,
+> Proton, render scale). What is missing is the discipline around them: a fixed set of titles,
+> a fixed warm-up, three windows per point, and both tracking modes — because 6dof and 3dof are
+> different machines from the frame budget's point of view (7.2–11.6% vs 2.8% late frames on
+> Aircar). `scripts/machine-specs.sh --save` captures the hardware side.
+>
+> **Why the hardware profile matters beyond this box**: `num-threads=1` sat in
+> `jack-in-wayland.sh` as a literal with nothing saying what it depended on. It is the right
+> value here and measurably so, but "right on 6 cores / 12 threads" is an unexamined assumption
+> on an 8-thread machine, and this rig is meant to run unattended. Derive from the machine or
+> at minimum name the dependency.
+
 > # CLARIFICATION (2026-08-12, ~11:50, lab machine) — "6DoF" below means TWO different subsystems, and only one of them was the stale bundle
 >
 > The update immediately below root-causes "6DoF looked broken on the lab" as a stale
