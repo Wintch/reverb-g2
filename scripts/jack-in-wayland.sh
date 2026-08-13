@@ -197,21 +197,30 @@ if [ "$TRACKING" = "6dof" ]; then
     # as 50-70 fps where 3dof gives 80-90. Aircar showed 7.2-7.7% late frames in 6dof against
     # 2.8% with SLAM off.
     #
-    # THE ANSWER IS 1, AND IT IS MEASURED, NOT INHERITED. Giving Basalt more threads was
-    # tried the same session on the theory that one saturated core was the bottleneck, and it
-    # is a REGRESSION: with num-threads=3 there were four monado threads at 94-99% each (of
-    # six physical cores on this box) and Aircar went to 10.8-11.6% late frames across three
-    # consecutive windows, against 3.4-7.7% with a single thread. The user felt it as ~50 fps.
-    # Basalt does not get faster with more workers here, it just takes the cores the game and
-    # the compositor need.
+    # 2, and it took measuring BOTH SIDES to get here -- the first pass measured only frame
+    # pacing, concluded "more threads are worse", and was wrong. The user pushed back
+    # ("venía andando bien... con multihilo"), and the pose CSVs settled it:
     #
-    # It stays a variable rather than a literal for the reason a literal was wrong in the
-    # first place: nothing in the tree said what it depended on, and a value chosen on a
-    # 6-core/12-thread box is an unexamined assumption on an 8-thread one. Override with
-    # SLAM_THREADS and re-measure with scripts/frame-pacing.sh -- do not change the default
-    # without three windows of evidence, the per-window variance is wide (3.44% and 7.22%
-    # were measured back to back in an identical configuration).
-    SLAM_THREADS="${SLAM_THREADS:-1}"
+    #   threads   pose rate   rotation p99   rotation max   late frames
+    #   1          9.8 Hz      11.4-23.6 deg   159.8 deg      3.7 %
+    #   2         13.8 Hz       7.52 deg        30.0 deg      8.2 %
+    #   3         19.9 Hz       7.18 deg        25.1 deg     10.8-11.6 %
+    #
+    # More threads cost frame pacing and buy tracking. 2 gets essentially all of 3's tracking
+    # quality for less of its cost, and the user's verdict wearing it was "mejoró MUCHO"
+    # against 1 thread -- which is the criterion that decides it here, per CLAUDE.md. That
+    # 159.8-degree step at 1 thread is not a head movement; it is the tracker losing it.
+    #
+    # NOTE, measured and surprising: this knob does NOT cap Basalt's total threads. At both 2
+    # and 3 there are FOUR monado threads at 94-99% CPU; only at 1 is there a single saturated
+    # one. Whatever it governs is an internal pool, so do not read it as a core budget.
+    #
+    # Still a variable, not a literal, for the original reason: tuned on a 6-core/12-thread
+    # box, unexamined on an 8-thread one, and this rig runs unattended. Re-measure BOTH sides
+    # when changing it -- scripts/frame-pacing.sh for pacing, the tracking.csv pose rate and
+    # inter-pose rotation for tracking -- with three windows each; per-window pacing variance
+    # here is wide (3.44% and 7.22% back to back in an identical configuration).
+    SLAM_THREADS="${SLAM_THREADS:-2}"
 
     G2_SLAM_JSON="$(dirname "${BASH_SOURCE[0]}")/basalt-g2-config.json"
     if [ "${SLAM_G2_CONFIG:-1}" = "1" ] && [ -z "${SLAM_CONFIG:-}" ] && [ -f "$G2_SLAM_JSON" ]; then
@@ -225,7 +234,7 @@ use-double=0
 deterministic=0
 num-threads=$SLAM_THREADS
 EOF
-        echo "  SLAM worker threads: $SLAM_THREADS (of $(nproc) available; measured best at 1, SLAM_THREADS= overrides)"
+        echo "  SLAM worker threads: $SLAM_THREADS (of $(nproc) available; 2 is the measured default, SLAM_THREADS= overrides)"
         TRACKING_ENV+=("SLAM_CONFIG=$G2_SLAM_TOML" SLAM_CONFIG_PIPELINE_ONLY=1)
         echo "  SLAM pipeline config: $G2_SLAM_JSON (denser detection; SLAM_G2_CONFIG=0 disables)"
     elif [ -n "${SLAM_CONFIG:-}" ]; then
