@@ -74,6 +74,32 @@ branch; check `git log` there before assuming something past 0016 doesn't exist.
 > where Basalt is not running at all. `docs/23` and `docs/pruebas.jsonl` T162 both attributed
 > the user's roll/yaw drift to long 6DoF sessions; that attribution was wrong.
 >
+> ## 0032-0035 — the resting-controller "drift" was three stacked mechanisms, closed end to end (2026-08-13, T165)
+>
+> The arc that ends with a resting controller measuring **+0.00 °/min, residual 0.00°** where
+> it measured 31-72 °/min the night before. Base: `lab-full`, HEAD after these `2286029f8`.
+>
+> | patch | what |
+> |---|---|
+> | 0032 | Two same-day corrections: `m_imu_3dof_reset()` silently killed the auto bias estimator (it cached the enable flag in a second bool that `U_ZERO` wiped — deleted the duplicate state, the flag is read at the use site); and `WMR_CONTROLLER_IMU_TO_DEVICE` defaults **off** — it never fixed the symptom it was written for, the symptom later moved to the other hand (a fixed mirrored-calibration error cannot do that), and a frame review argues it double-applies. Kept as a knob because the unused transform is a real gap. |
+> | 0033 | The estimator smooths (EMA α=0.25 over 1 s averages) instead of adopting each noisy estimate whole — raw estimates of the same motionless device scattered 34.5-63.9 °/min; smoothed they hold 65.5-65.9. Also per-instance log labels, after an unlabeled shared counter produced a wrong "only one device estimates" reading. |
+> | 0034 | Prediction horizon capped at 100 ms; a device silent >1 s reports its last fused pose with **zero velocities**. Uncapped, a silent controller extrapolated its frozen angular velocity forever: 31-47 °/min at R²=1.000, pure arithmetic. |
+> | 0035 | **The keystone.** ~30 s after a G2 controller stops moving, its firmware keeps the 44-byte packet stream alive but **zeroes the six IMU count fields**. The calibration pipeline then fabricates data: `0 × mix_matrix + bias_offsets` = each device's factory bias vector — measured as `|accel|` frozen at exactly 0.171 / 0.121 m/s² per device (impossible for a real resting sensor) and a fake constant gyro of 0.006-0.021 rad/s = **the whole night's 20-70 °/min "drift"**. Detection on the raw counts (six exact zeros can't come from a live sensor); fusion skipped, staleness then trips 0034's cap. `wmr_controller_og.c` almost certainly needs the same fix — untouched, no OG hardware to verify. |
+>
+> **Why it took three patches**: each earlier fix was necessary and provably insufficient — the
+> estimator can't fire during idle (its stillness gate wants `|accel| ≈ g`, idle reads ~0.15),
+> and the prediction cap never engaged (packets kept arriving, staleness never grew). Only the
+> per-link instrumentation separated them: fires-per-instance counters, the stillness
+> diagnostic with real values, and `scripts/drift-measure.py`'s fixed protocol — built after
+> three ad-hoc measurements of the same resting controller disagreed by up to 5x, which
+> itself turned out to be mechanism, not noise (each idle onset integrates `factory_offset −
+> that_session's_estimate`).
+>
+> **What 0032-0035 do NOT close**: drift while the controller is actually IN HAND (micro-motion
+> keeps real samples flowing; the estimator only converges during stillness windows), the
+> head's own bias (measurably ~65 °/min, now auto-corrected while resting — matches the 3dof
+> roll-drift reports), and everything already listed under 0027/0031.
+>
 > **Still open after 0027, measured and stated as measured**: one controller shows a bistable
 > flip, two clusters **0.189 m** apart, both with ~8 matched blobs and a good fit. The prior
 > cannot break that tie because the orientation it carries is the constellation solve's own —

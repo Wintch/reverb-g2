@@ -1,0 +1,99 @@
+From 7336d308d2133eed3c39f3ceab069f67e2edec1c Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Wed, 12 Aug 2026 23:47:13 -0300
+Subject: [PATCH 32/35] math/wmr: Fix the estimator that reset() silently
+ killed, and stop applying P_imu_me by default
+
+Two corrections to the same day's work, both from review rather than from a new symptom.
+
+1. m_imu_3dof kept gyro_bias.auto_enabled as a second copy of a flag bit, and
+   m_imu_3dof_reset() -- which U_ZERO()s the struct and restores only the ring buffers and
+   flags -- never re-derived it. One 3DoF/SLAM toggle in the debug GUI (wmr_hmd.c:1656) and
+   automatic gyro-bias estimation was off for the rest of the session, silently. Fixed by
+   deleting the duplicate state and reading the flag at the use site, so the next field added
+   here cannot repeat it.
+
+2. WMR_CONTROLLER_IMU_TO_DEVICE now defaults OFF. It was added default-on earlier today to
+   explain "the left controller points at me". It did not fix that -- the cause was gyro
+   drift -- and the decisive evidence came from the wearer: later in the same session it was
+   the RIGHT controller pointing at them. A fixed mirrored-calibration error cannot move
+   hands; drift can. Independently, a frame review argues the rotation is double-applied:
+   with eye_params=NULL, P_imu_me collapses to P_imu_ht0, and the controller IMU path mirrors
+   the HMD's plain 3dof path (wmr_hmd.c:1123, which does not apply it), not its SLAM path
+   (:1184, where it is legitimate because Basalt receives raw samples). No measurement has
+   ever shown it helping, and it is a 105-degree rotation.
+
+   The knob stays rather than being reverted: the transform genuinely is computed for
+   controllers and used by nothing, which is a real gap. It just should not be switched on by
+   default on the strength of a hypothesis that has now failed twice.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ src/xrt/auxiliary/math/m_imu_3dof.c       |  9 +++++++--
+ src/xrt/auxiliary/math/m_imu_3dof.h       |  2 --
+ src/xrt/drivers/wmr/wmr_controller_base.c | 12 +++++++++++-
+ 3 files changed, 18 insertions(+), 5 deletions(-)
+
+diff --git a/src/xrt/auxiliary/math/m_imu_3dof.c b/src/xrt/auxiliary/math/m_imu_3dof.c
+index d87871560..ca1c5f981 100644
+--- a/src/xrt/auxiliary/math/m_imu_3dof.c
++++ b/src/xrt/auxiliary/math/m_imu_3dof.c
+@@ -36,7 +36,6 @@ m_imu_3dof_init(struct m_imu_3dof *f, int flags)
+ 	m_ff_vec3_f32_alloc(&f->gyro_ff, 1000);
+ 
+ 	f->flags = flags;
+-	f->gyro_bias.auto_enabled = (flags & M_IMU_3DOF_USE_GYRO_BIAS_AUTO) != 0;
+ }
+ 
+ void
+@@ -226,7 +225,13 @@ gravity_correction(struct m_imu_3dof *f,
+ static void
+ gyro_bias_auto(struct m_imu_3dof *f, uint64_t timestamp_ns, float gyro_length, float accel_length)
+ {
+-	if (!f->gyro_bias.auto_enabled) {
++	// Read the flag, do not cache it in a second bool. The first version of this kept
++	// gyro_bias.auto_enabled, and m_imu_3dof_reset() -- which U_ZERO()s the struct and restores
++	// only the ring buffers and flags -- silently switched the estimator off for the rest of the
++	// session on the first 3DoF/SLAM toggle (wmr_hmd.c:1656). Deriving it here removes the
++	// duplicate state rather than adding another line to reset() that the next field would also
++	// need.
++	if ((f->flags & M_IMU_3DOF_USE_GYRO_BIAS_AUTO) == 0) {
+ 		return;
+ 	}
+ 
+diff --git a/src/xrt/auxiliary/math/m_imu_3dof.h b/src/xrt/auxiliary/math/m_imu_3dof.h
+index 6391141d8..3663ea9b8 100644
+--- a/src/xrt/auxiliary/math/m_imu_3dof.h
++++ b/src/xrt/auxiliary/math/m_imu_3dof.h
+@@ -84,8 +84,6 @@ struct m_imu_3dof
+ 		struct xrt_vec3 value;
+ 		bool manually_fire;
+ 
+-		//! See M_IMU_3DOF_USE_GYRO_BIAS_AUTO.
+-		bool auto_enabled;
+ 		//! When the device was first seen to be still in the current stretch, 0 if moving.
+ 		uint64_t still_since_ns;
+ 		//! When the estimate last ran, so a long still stretch re-estimates periodically.
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
+index 74337325b..bdf830f4f 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.c
++++ b/src/xrt/drivers/wmr/wmr_controller_base.c
+@@ -36,7 +36,17 @@
+ 
+ //! Apply the factory IMU-to-device rotation to the controller's fused orientation, as the HMD
+ //! already does for itself. Set to 0 to compare against the old behaviour. See the use site.
+-DEBUG_GET_ONCE_BOOL_OPTION(wmr_controller_imu_to_device, "WMR_CONTROLLER_IMU_TO_DEVICE", true)
++// DEFAULT OFF as of 2026-08-12, having been added default-on the same day. Three things point
++// the same way: (1) it did not fix the symptom it was written for -- "the left controller points
++// at me" turned out to be gyro drift, and the give-away is that the SAME session later had the
++// RIGHT one pointing at the wearer instead, which a fixed mirrored-calibration error could never
++// do; (2) a frame-algebra review argues it double-applies -- with eye_params=NULL, P_imu_me
++// collapses to P_imu_ht0, and the controller IMU path mirrors the HMD's PLAIN 3DOF path
++// (wmr_hmd.c:1123, which does not apply it), not its SLAM path (:1184, where it is legitimate
++// because Basalt is handed raw un-rotated samples); (3) no measurement has ever shown it helping.
++// Kept, not deleted: the transform really is computed and unused, which is a genuine gap worth
++// resolving properly rather than by leaving a 105-degree rotation switched on by default.
++DEBUG_GET_ONCE_BOOL_OPTION(wmr_controller_imu_to_device, "WMR_CONTROLLER_IMU_TO_DEVICE", false)
+ 
+ //! How stale a constellation sample may be before the controller falls back to the placeholder
+ //! pose. See the use site: 200 ms was shorter than the interval samples actually arrive at.
