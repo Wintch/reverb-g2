@@ -11,6 +11,7 @@
 #
 #   ./vr-state.sh          one snapshot
 #   ./vr-state.sh -w       repeat every 3 s until interrupted
+#   ./vr-state.sh --close-title   close any running title (never touches monado-service)
 #
 # The rule this exists to enforce: NEVER restart monado-service while a game is running
 # (it kills the session -- Unreal titles die with "GameThread timed out waiting for
@@ -117,6 +118,41 @@ snapshot() {
 		echo "     launch another title until it is closed.${C_OFF}"
 	fi
 }
+
+# Close whatever title is running, without the caller having to build a pgrep pattern.
+# This exists because the obvious way is a trap: `pgrep -f "[B]R9732.exe"` looks safe, but
+# the bracket trick only protects you when the pattern appears ONCE in your own command
+# line -- if the same string also appears elsewhere in the command (say, in the proton
+# invocation you are about to run), pgrep matches the agent's own shell and kills it.
+# That cost three dead shells (exit 144) on 2026-08-12 alone. Resolving PIDs here, from
+# ps output that never contains this script's own arguments, removes the whole class.
+kill_titles() {
+	# Match on the executable NAME (comm), never on the argument list. Matching args is the
+	# trap this function was written to remove and then fell into itself: the caller's own
+	# shell carries those strings in its command line, so `ps -eo args | grep <exe>` finds
+	# the shell and kills it. comm is the kernel's name for the binary; a bash process is
+	# "bash", never "BR9732.exe".
+	local pids
+	pids="$(ps -eo pid=,comm= 2>/dev/null |
+	        awk '$2 ~ /\.exe$/ || $2 == "wineserver" || $2 == "reaper" {print $1}')"
+	if [ -z "$pids" ]; then
+		echo "no title running"
+		return 0
+	fi
+	echo "closing pids: $(echo "$pids" | tr '\n' ' ')"
+	for p in $pids; do kill "$p" 2>/dev/null; done
+	sleep 6
+	# Never touch monado-service here. Restarting the runtime under a live title is what
+	# kills Unreal games ("GameThread timed out waiting for RenderThread") and panics xrizer.
+	echo "done -- monado-service deliberately left alone"
+}
+
+if [ "${1:-}" = "--close-title" ]; then
+	kill_titles
+	echo
+	snapshot
+	exit 0
+fi
 
 if [ "${1:-}" = "-w" ]; then
 	while true; do clear; snapshot; sleep 3; done
