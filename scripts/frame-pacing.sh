@@ -11,6 +11,13 @@
 # framerate number does not capture it -- this does. Per the user's instruction, every
 # title gets measured, not just the ones that already feel wrong.
 #
+# CONTROL THE WINDOW FOCUS, and say which state you measured in (user's catch, 2026-08-13).
+# The title's desktop window being unfocused is not a neutral condition: Unreal throttles
+# when it is not the foreground app, and the whole Proton/DXVK stack can follow. Two
+# measurements taken minutes apart are not comparable unless both were taken in the same
+# focus state, and nothing in this script detects it. Standard from here on: measure with
+# the game window FOCUSED, and note it next to the number.
+#
 # WHAT THIS TOOL CANNOT SEE, and it bit on 2026-08-13 (T175): it counts frames that MISS
 # THEIR SLOT. It is blind to LATENCY. Turning on pipelined app pacing took Aircar from
 # 12.37% to 0.69-0.94% here -- a clean 13x by this measure -- while the wearer immediately

@@ -77,6 +77,19 @@ EVENTS = {
     "left":       (1, 880.0, "left controller found"),
     "right":      (1, 880.0, "right controller found"),
     "nocontrols": (1, 330.0, "no controllers"),
+    # drift-measure.py's protocol cues (2026-08-13). That script exists because three
+    # opportunistic drift measurements of the same motionless controller disagreed by up
+    # to 5x (71.7 -> 9.4 -> 51.5 deg/min): each was taken over a log that kept growing
+    # while conditions changed underneath it. The fix was a fixed settle window (120 s)
+    # plus fixed capture windows (120 s x N) during which NOBODY may touch anything -- but
+    # those windows are silent and minutes long, so without a cue the operator either
+    # babysits this terminal for the whole run or looks away and contaminates a window
+    # without noticing. Distinct tones per phase so the ear alone (no screen) can tell
+    # settle from capture from done.
+    "drift_settle":       (1, 349.23, "settling, do not touch"),
+    "drift_run_complete": (1, 440.0,  "run complete"),
+    "drift_moved":        (3, 220.0,  "you moved"),
+    "drift_complete":     (2, 987.77, "measurement complete, you can take it off"),
 }
 
 _cache = {}
@@ -250,6 +263,20 @@ def event(key):
     if not available() or key not in EVENTS:
         return
     beeps, freq, phrase = EVENTS[key]
+    _play(_tone_file([freq] * beeps, beep_ms=80, gap_ms=40))
+    _speak(phrase)
+
+
+def event_text(phrase, freq=523.25, beeps=2):
+    """Like event(), but for a phrase built at the call site instead of looked up
+    in EVENTS -- for the one cue that needs per-invocation data spliced in (e.g.
+    "measuring, run 2, hold still"), which a static key -> phrase table can't
+    express without one entry per possible run count. Same tone/voice/sink
+    pipeline as event(), so behaviour (silent without a player, never the USB
+    sink) is identical; only the phrase, frequency and beep count are
+    caller-supplied."""
+    if not available():
+        return
     _play(_tone_file([freq] * beeps, beep_ms=80, gap_ms=40))
     _speak(phrase)
 

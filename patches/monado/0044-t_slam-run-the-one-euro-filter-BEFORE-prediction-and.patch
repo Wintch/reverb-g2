@@ -1,0 +1,251 @@
+From ae25430451a079a1bd95cb93d8bd7bec95459f82 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Thu, 13 Aug 2026 17:51:04 -0300
+Subject: [PATCH] t_slam: run the one euro filter BEFORE prediction, and make
+ its parameters settable
+
+The output path was `predict_pose() -> filter_pose() -> app`, which makes the low
+pass the LAST stage: its group delay lands whole on the application and nothing
+downstream can pay it back. Measured on an HP Reverb G2 with a purpose-written
+cross-correlation over the tracker's own CSV streams, the pose the application
+receives lagged raw SLAM by +42.5 ms. The wearer sees that as a ghost image whose
+separation from the real one grows with head rotation speed, which is the
+signature of a fixed time lag (angular separation = angular velocity x lag).
+
+It survived every parameter: beta 0.16 -> 60 only shrank it, and raising the
+derivative cutoff 1 -> 15 did nothing, because no gain applied to an output-stage
+low pass can remove that stage's own delay. SLAM_FILTER=none removed the ghost
+entirely and brought back the 12 deg p99 rotational jitter the filter exists to
+suppress. The two were mutually exclusive because the filter WAS the continuous
+motion path.
+
+Filtering the SLAM poses as they arrive breaks that. The jitter is filtered where
+it is generated, and dead reckoning then integrates the IMU from that pose's
+timestamp up to the queried time, which is what cancels the delay. Same filter,
+same jitter suppression, without the lag. Measured after the change on the same
+rig: the delivered pose went from +42.5 ms behind raw SLAM to 5.0 ms ahead of it,
+with the wearer confirming the ghost is gone and the resting jitter still
+suppressed. It changes the filter's sample rate from the query rate (~90 Hz) to
+the SLAM pose rate (~30 Hz); one euro is built for irregular sampling and uses the
+real dt, so this is legitimate, but it is a behaviour change and it was measured.
+
+Two things the reorder breaks if done naively, both fixed here:
+
+  * The previous pose is read back from the relation history, which now holds
+    FILTERED poses, while the incoming one is raw. Both consumers -- the
+    finite-difference angular velocity that feeds prediction, and the divergence
+    guard's speed check -- would then be measuring raw-minus-filtered, i.e. mostly
+    the filter's own lag, inflating exactly when the head moves fast. The last raw
+    pose is kept separately so both stay independent of the filter.
+  * The trajectory CSV and the EuRoC recorder would silently start recording
+    filtered poses, which redefines the baseline every offline tool compares
+    against. They keep receiving the raw pose.
+
+SLAM_FILTER_BEFORE_PREDICT=0 restores the previous order, and the flag is also
+exposed live in the debug GUI so a wearer can A/B it mid-session.
+
+The one euro parameters stop being compile-time constants
+(SLAM_FILTER_{POS,ROT}_MIN_CUTOFF, SLAM_FILTER_BETA, SLAM_FILTER_MIN_DCUTOFF),
+with position and orientation getting separate minimum cutoffs. With the reorder
+in place the filter only has to soften SLAM corrections rather than carry the
+motion, so it tolerates far less smoothing: the wearer swept the orientation
+cutoff live and settled on 20 Hz (~8 ms of group delay, under one 90 Hz frame),
+where the correction step stops being visible and only a few pixels of shimmer
+remain. Defaults are unchanged.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ src/xrt/auxiliary/tracking/t_tracker_slam.cpp | 127 ++++++++++++++++--
+ 1 file changed, 118 insertions(+), 9 deletions(-)
+
+diff --git a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+index 290e1fdba..7d9974671 100644
+--- a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
++++ b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+@@ -90,6 +90,11 @@ DEBUG_GET_ONCE_BOOL_OPTION(slam_write_csvs, "SLAM_WRITE_CSVS", false)
+ DEBUG_GET_ONCE_BOOL_OPTION(slam_features_enable, "SLAM_FEATURES_ENABLE", false)
+ DEBUG_GET_ONCE_BOOL_OPTION(slam_config_pipeline_only, "SLAM_CONFIG_PIPELINE_ONLY", false)
+ DEBUG_GET_ONCE_BOOL_OPTION(slam_auto_reset, "SLAM_AUTO_RESET", true)
++DEBUG_GET_ONCE_BOOL_OPTION(slam_filter_before_predict, "SLAM_FILTER_BEFORE_PREDICT", true)
++DEBUG_GET_ONCE_FLOAT_OPTION(slam_filter_pos_min_cutoff, "SLAM_FILTER_POS_MIN_CUTOFF", M_PI)
++DEBUG_GET_ONCE_FLOAT_OPTION(slam_filter_rot_min_cutoff, "SLAM_FILTER_ROT_MIN_CUTOFF", M_PI)
++DEBUG_GET_ONCE_FLOAT_OPTION(slam_filter_min_dcutoff, "SLAM_FILTER_MIN_DCUTOFF", 1)
++DEBUG_GET_ONCE_FLOAT_OPTION(slam_filter_beta, "SLAM_FILTER_BETA", 0.16)
+ DEBUG_GET_ONCE_OPTION(slam_filter, "SLAM_FILTER", nullptr)
+ DEBUG_GET_ONCE_NUM_OPTION(slam_auto_reset_max_speed, "SLAM_AUTO_RESET_MAX_SPEED", 10)
+ DEBUG_GET_ONCE_BOOL_OPTION(euroc_record, "EUROC_RECORD", false)
+@@ -398,11 +403,64 @@ struct TrackerSlam
+ 
+ 		// One euro filter
+ 		bool use_one_euro_filter = false;
++
++		/*!
++		 * Run the one euro filter on the SLAM poses as they arrive, BEFORE prediction,
++		 * instead of on the final predicted pose.
++		 *
++		 * Found 2026-08-13 (T177). The output path is
++		 * `predict_pose() -> filter_pose() -> app`, so the low pass is the LAST stage and
++		 * its group delay lands whole on the application with nothing downstream able to
++		 * pay it back. Measured on this rig with pose-lag.py: the filtered stream the app
++		 * actually receives lags raw SLAM by +42.5 ms. The wearer sees that as a ghost
++		 * whose separation from the real image grows with head rotation speed (angular
++		 * separation = angular velocity x lag), and it survived every parameter we tried:
++		 * beta 0.16 -> 60 only shrank it, and raising the derivative cutoff 1 -> 15 did
++		 * nothing, because no gain on an output-stage low pass can remove its own delay.
++		 * Turning the filter off entirely (SLAM_FILTER=none) removed the ghost completely
++		 * and brought back the 12 deg p99 rotational jitter it exists to suppress.
++		 *
++		 * With this on, the jitter is filtered where it is actually generated -- the SLAM
++		 * poses -- and dead reckoning then integrates the IMU from that pose's own
++		 * timestamp up to the queried time, which is exactly what cancels the group delay.
++		 * Same filter, same jitter suppression, without the lag.
++		 *
++		 * Note it changes the filter's sample rate from the query rate (~90 Hz) to the SLAM
++		 * pose rate (~30 Hz). One euro is designed for irregular sampling and uses the real
++		 * dt, so this is legitimate, but it is a behaviour change and was measured, not
++		 * assumed.
++		 */
++		bool one_euro_before_predict = false;
++
++		//! Last RAW SLAM pose, kept so velocity and the divergence guard never compare
++		//! against a filtered one. See the use site.
++		struct xrt_pose last_raw = XRT_POSE_IDENTITY;
++		bool have_last_raw = false;
+ 		m_filter_euro_vec3 pos_oe;     //!< One euro position filter
+ 		m_filter_euro_quat rot_oe;     //!< One euro rotation filter
+-		const float min_cutoff = M_PI; //!< Default minimum cutoff frequency
+-		const float min_dcutoff = 1;   //!< Default minimum cutoff frequency for the derivative
+-		const float beta = 0.16;       //!< Default speed coefficient
++		/*!
++		 * @name One euro parameters, no longer compile-time constants.
++		 *
++		 * Position and orientation get their own minimum cutoff because only the
++		 * ORIENTATION one was validated away from the default here: with
++		 * one_euro_before_predict on, the wearer swept it live and settled on 20 Hz
++		 * ("casi perfecto", a few pixels of residual shimmer), while position stayed at
++		 * the original M_PI. Shipping a single shared value would have silently changed a
++		 * second thing nobody looked at.
++		 *
++		 * Why 20 works now and did not before: at the output stage the filter WAS the
++		 * continuous motion path, so loosening it put jitter straight into the image. With
++		 * the reorder, dead reckoning carries continuous motion and the filter only has to
++		 * keep SLAM corrections from landing hard -- a much cheaper job that tolerates far
++		 * less smoothing. At 20 Hz its group delay is ~8 ms, under one 90 Hz frame, which
++		 * is why the correction step stopped being visible.
++		 * @{
++		 */
++		float pos_min_cutoff = M_PI;
++		float rot_min_cutoff = M_PI;
++		float min_dcutoff = 1; //!< Minimum cutoff frequency for the derivative
++		float beta = 0.16;     //!< Speed coefficient
++		/*! @} */
+ 
+ 	} filter;
+ 
+@@ -863,6 +921,20 @@ flush_poses(TrackerSlam &t)
+ 		t.slam_rels.get_latest(&lts, &lr);
+ 		xrt_quat lrot = lr.pose.orientation;
+ 
++		// ...but compare RAW against RAW. With one_euro_before_predict on, the relation
++		// sitting in slam_rels is a FILTERED pose, and both users of the previous pose
++		// below -- the finite-difference angular velocity and the divergence guard's speed
++		// check -- would then be measuring raw-minus-filtered, i.e. mostly the filter's own
++		// lag. That inflates exactly when the head moves fast: the angular velocity handed
++		// to prediction overshoots, and the guard sees a speed that never happened. Caught
++		// 2026-08-13 (T177) right after the reorder shipped, as "tracking errors when
++		// moving fast". Keeping the last raw pose costs one struct member and makes both
++		// consumers independent of whatever the filter is doing.
++		if (t.filter.have_last_raw) {
++			lrot = t.filter.last_raw.orientation;
++			lr.pose = t.filter.last_raw;
++		}
++
+ 		double dt = time_ns_to_s(nts - lts);
+ 
+ 		SLAM_TRACE("Dequeued SLAM pose ts=%ld p=[%f,%f,%f] r=[%f,%f,%f,%f]", //
+@@ -913,15 +985,35 @@ flush_poses(TrackerSlam &t)
+ 		rel.linear_velocity = nvel;
+ 		math_quat_finite_difference(&lrot, &nrot, dt, &rel.angular_velocity);
+ 
++		t.filter.last_raw = {nrot, npos};
++		t.filter.have_last_raw = true;
++
++		// Filter HERE, on the SLAM pose, so that prediction still gets to run afterwards
++		// and pay back the filter's group delay (see one_euro_before_predict). The
++		// angular/linear velocities above are deliberately left computed from the RAW
++		// poses: they feed prediction, and smoothing them would put the lag straight back
++		// in through the other door.
++		if (t.filter.use_one_euro_filter && t.filter.one_euro_before_predict) {
++			m_filter_euro_vec3_run(&t.filter.pos_oe, nts, &rel.pose.position, &rel.pose.position);
++			m_filter_euro_quat_run(&t.filter.rot_oe, nts, &rel.pose.orientation,
++			                       &rel.pose.orientation);
++		}
++
+ 		// Push to relationship history unless we are debugging prediction
+ 		if (t.dbg_pred_counter % t.dbg_pred_every == 0) {
+ 			t.slam_rels.push(rel, nts);
+ 		}
+ 		t.dbg_pred_counter = (t.dbg_pred_counter + 1) % t.dbg_pred_every;
+ 
+-		gt_ui_push(t, nts, rel.pose);
+-		t.slam_traj_writer->push({nts, rel.pose});
+-		xrt_pose_sample pose_sample = {nts, rel.pose};
++		// tracking.csv must keep meaning "raw SLAM output" -- it is the baseline every
++		// offline tool in this project compares against (docs/32, pose-lag.py). Filtering
++		// in the ingest path above silently redefined it, which would have made the next
++		// lag measurement compare the filter against itself and read a clean zero. Same
++		// for the EuRoC recorder: a dataset recorded through our filter is not a dataset.
++		xrt_pose raw_pose = {nrot, npos};
++		gt_ui_push(t, nts, raw_pose);
++		t.slam_traj_writer->push({nts, raw_pose});
++		xrt_pose_sample pose_sample = {nts, raw_pose};
+ 		xrt_sink_push_pose(t.euroc_recorder->gt, &pose_sample);
+ 
+ 		auto tss = timing_ui_push(t, pose, nts);
+@@ -1122,7 +1214,9 @@ filter_pose(TrackerSlam &t, timepoint_ns when_ns, struct xrt_space_relation *out
+ 		*out_relation = last;
+ 	}
+ 
+-	if (t.filter.use_one_euro_filter) {
++	// Skipped when the filter already ran on the incoming SLAM poses -- running it twice
++	// would stack two group delays, which is the exact thing this is trying to remove.
++	if (t.filter.use_one_euro_filter && !t.filter.one_euro_before_predict) {
+ 		xrt_pose &p = out_relation->pose;
+ 		if (out_relation->relation_flags & XRT_SPACE_RELATION_POSITION_VALID_BIT) {
+ 			m_filter_euro_vec3_run(&t.filter.pos_oe, when_ns, &p.position, &p.position);
+@@ -1177,6 +1271,9 @@ setup_ui(TrackerSlam &t)
+ 	u_var_add_bool(&t, &t.filter.use_exponential_smoothing_filter, "Enable exponential smoothing filter");
+ 	u_var_add_f32(&t, &t.filter.alpha, "Smoothing factor");
+ 	u_var_add_bool(&t, &t.filter.use_one_euro_filter, "Enable one euro filter");
++	// Live-toggleable on purpose: it is the A/B this was written for, and a wearer can
++	// flip it mid-session and say which one ghosts, which beats any offline metric here.
++	u_var_add_bool(&t, &t.filter.one_euro_before_predict, "One euro BEFORE prediction");
+ 	u_var_add_f32(&t, &t.filter.pos_oe.base.fc_min, "Position minimum cutoff");
+ 	u_var_add_f32(&t, &t.filter.pos_oe.base.beta, "Position beta speed");
+ 	u_var_add_f32(&t, &t.filter.pos_oe.base.fc_min_d, "Position minimum delta cutoff");
+@@ -1828,8 +1925,20 @@ t_slam_create(struct xrt_frame_context *xfctx,
+ 		          t.auto_reset.max_speed);
+ 	}
+ 
+-	m_filter_euro_vec3_init(&t.filter.pos_oe, t.filter.min_cutoff, t.filter.min_dcutoff, t.filter.beta);
+-	m_filter_euro_quat_init(&t.filter.rot_oe, t.filter.min_cutoff, t.filter.min_dcutoff, t.filter.beta);
++	t.filter.one_euro_before_predict = debug_get_bool_option_slam_filter_before_predict();
++	SLAM_INFO("One euro filter runs %s prediction (SLAM_FILTER_BEFORE_PREDICT=%d)",
++	          t.filter.one_euro_before_predict ? "BEFORE" : "after", t.filter.one_euro_before_predict);
++
++	t.filter.pos_min_cutoff = debug_get_float_option_slam_filter_pos_min_cutoff();
++	t.filter.rot_min_cutoff = debug_get_float_option_slam_filter_rot_min_cutoff();
++	t.filter.min_dcutoff = debug_get_float_option_slam_filter_min_dcutoff();
++	t.filter.beta = debug_get_float_option_slam_filter_beta();
++	SLAM_INFO("One euro: pos cutoff %.2f Hz, rot cutoff %.2f Hz, beta %.2f, dcutoff %.2f Hz",
++	          (double)t.filter.pos_min_cutoff, (double)t.filter.rot_min_cutoff, (double)t.filter.beta,
++	          (double)t.filter.min_dcutoff);
++
++	m_filter_euro_vec3_init(&t.filter.pos_oe, t.filter.pos_min_cutoff, t.filter.min_dcutoff, t.filter.beta);
++	m_filter_euro_quat_init(&t.filter.rot_oe, t.filter.rot_min_cutoff, t.filter.min_dcutoff, t.filter.beta);
+ 
+ 	t.gt.trajectory = new Trajectory{};
+ 
+-- 
+2.47.3
+

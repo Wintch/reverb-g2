@@ -190,6 +190,18 @@ if [ "$TRACKING" = "6dof" ]; then
     # the wearer actually feels, and it is rotational -- position filtering and prediction-type
     # changes moved nothing. SLAM_FILTER=none for an A/B.
     TRACKING_ENV+=("SLAM_FILTER=${SLAM_FILTER:-one_euro}")
+    # The one euro filter's ORIENTATION cutoff, raised from Monado's compiled-in M_PI
+    # (3.14 Hz) to 20 Hz, validated live by the wearer on 2026-08-13 (T177): "casi
+    # perfecto", a few pixels of residual shimmer. It is only safe together with
+    # SLAM_FILTER_BEFORE_PREDICT (the default in our build): with the filter at the output
+    # stage, as upstream has it, the filter IS the continuous motion path and loosening it
+    # like this puts Basalt's 12 deg p99 rotational jitter straight into the image. With
+    # the reorder, dead reckoning carries the motion and the filter only softens SLAM
+    # corrections, so 20 Hz -- ~8 ms of group delay, under one 90 Hz frame -- is enough.
+    # Measured end to end: the pose handed to the app went from +42.5 ms BEHIND raw SLAM
+    # to 5 ms ahead of it. Position is deliberately left at the original value: only the
+    # orientation cutoff was swept and confirmed by a human.
+    TRACKING_ENV+=("SLAM_FILTER_ROT_MIN_CUTOFF=${SLAM_FILTER_ROT_MIN_CUTOFF:-20}")
 
     # Basalt's worker threads. This was the literal 1 until 2026-08-12, and that literal was
     # expensive: measured with a game running, ONE monado thread sat at 99.4% CPU -- a whole

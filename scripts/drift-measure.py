@@ -48,6 +48,38 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+# Audible phase cues (2026-08-13). The settle window (default 120 s) and each capture
+# window (default 120 s x N) are the whole point of this script's existence -- see the
+# module docstring: three opportunistic measurements of the same motionless controller
+# disagreed by up to 5x because nobody enforced a silent, untouched window before. But
+# enforcing it in the protocol does nothing if the human running it has no feedback about
+# which phase is active -- they either hover over this terminal for minutes at a time or
+# walk away and contaminate a window without noticing. reseat_audio.py already solves
+# "make a sound reach a human who isn't looking at the screen, on a sink that isn't the
+# headset's own" for the reseat ladder; reused here instead of building a second audio
+# path. The import is defensive and every call site below is wrapped: a missing module, a
+# missing player (pw-play/paplay/ffplay), or a missing espeak-ng must only cost audibility,
+# never the measurement. reseat_audio.py's own directory is added to sys.path explicitly
+# (not just relying on argv[0]'s directory) because this script is meant to be invokable
+# from anywhere, not only as `./drift-measure.py` from inside scripts/.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    import reseat_audio as _audio
+except Exception:
+    _audio = None
+
+
+def _cue(fn, *args, **kwargs):
+    """Best-effort audio cue. Never let the sound path touch the measurement itself --
+    worst case on a lab box with no audio/espeak-ng is silence, not a crashed run."""
+    if _audio is None:
+        return
+    try:
+        fn(*args, **kwargs)
+    except Exception:
+        pass
+
+
 VR = Path.home() / "vr"
 MONADO_LOG = VR / "jack-in-wayland.log"
 OUT_JSONL = VR / "logs" / "drift-measure.jsonl"
@@ -275,6 +307,7 @@ def main():
 
     unwrap_base = now_sod()
     print(f"settling {args.settle} s (estimator convergence + thermal decay)...")
+    _cue(_audio.event, "drift_settle")
     time.sleep(args.settle)
 
     results = []
@@ -285,6 +318,7 @@ def main():
             if t0 < unwrap_base - 3600:
                 t0 += 86400
             print(f"run {run}/{args.runs}: capturing {args.capture} s...")
+            _cue(_audio.event_text, f"measuring, run {run}, hold still")
             time.sleep(args.capture)
             t1 = now_sod()
             if t1 < unwrap_base - 3600:
@@ -318,8 +352,21 @@ def main():
                 )
                 e = res["estimator"]
                 print(f"  estimator: {e['instances_active']} instances fired {e['fires_in_window']}")
+
+            # MOVEMENT is the only stillness/validity check this script already does (the
+            # position-spread test in analyze(), > 5 cm during the window). Until now it
+            # was only ever recorded -- printed to a terminal nobody is watching during a
+            # window whose entire point is "don't touch anything" -- so an invalidated
+            # window could go unnoticed until someone reads the JSONL afterwards. This
+            # does not add a new detector, only a cue for the one that already exists.
+            if res.get("left", {}).get("MOVEMENT") or res.get("right", {}).get("MOVEMENT"):
+                _cue(_audio.event, "drift_moved")
+
             if run < args.runs:
+                _cue(_audio.event, "drift_run_complete")
                 time.sleep(5)
+            else:
+                _cue(_audio.event, "drift_complete")
     finally:
         player.terminate()
 
