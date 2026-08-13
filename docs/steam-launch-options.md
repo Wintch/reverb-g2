@@ -14,7 +14,7 @@ launch options can be worth a large fraction of the framerate (the user's own ex
 Half-Life: Alyx, where forcing fog and LOD settings from the launcher is what made it
 playable). A title can "work" and still be leaving half its performance unclaimed.
 
-Snapshot: 2026-08-12 — 46 installed titles.
+Snapshot: 2026-08-13 — 46 installed titles.
 
 | Title | AppID | Base recipe | Extra options |
 |---|---|---|---|
