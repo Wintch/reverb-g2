@@ -16,6 +16,10 @@ specifically so the step structure and messages can become the shared core
 of a future Windows-equivalent checklist, per the project's diagnostic-
 toolkit direction (see agent memory / docs/26). Don't over-abstract that
 now; this file is still Linux-specific end to end.
+
+User-facing strings are deliberately Spanish for now; the English preset via
+vr_i18n.py (the project's i18n path, per the English-in-git rule) is still
+pending -- decided 2026-08-13, do it as its own pass, not piecemeal.
 """
 import json
 import os
@@ -170,6 +174,81 @@ def try_self_repair():
     return lsusb_output()
 
 
+def branch_flags(lsusb_text):
+    """The G2's five devices split into two electrically independent pin groups
+    (docs/22 anatomy): the USB2 branch (hub 6506 + companion 0580 + audio 4c15,
+    on the D+/D- pair) and the SuperSpeed branch (hub 6504 + sensors 0659 at
+    5 Gbps, on the SS pairs). 2026-08-13 (T171) showed a marginal C-plug/adapter
+    seat engages ONE group per seating -- so report them separately: which one
+    is missing decides which physical instruction actually helps."""
+    usb2 = all(d in lsusb_text for d in ("04b4:6506", "03f0:0580", "0bda:4c15"))
+    ss = "04b4:6504" in lsusb_text
+    return usb2, ss
+
+
+def reseat_instructions(usb2_ok, ss_ok):
+    """Exact physical steps, most-likely-fix first. Source: the 2026-08-13
+    seat-lottery diagnosis (docs/22 / T171). SS pins live at the tip of the
+    connector tongue, the USB2 pair mid-connector -- a slightly different
+    seating depth/angle engages a different subset, which is why 'rotate the
+    C plug 180 degrees inside the adapter' (docs/06) is a real fix and not
+    superstition. Order: port seat, then orientation, then other port, then
+    visor-end -- the docs/06 ladder, revalidated live."""
+    steps = []
+    if not usb2_ok and not ss_ok:
+        steps += [
+            "Desenchufá el USB del casco en la PC y volvé a meterlo DERECHO y A FONDO,",
+            "  sosteniendo el peso del cable con la otra mano (cuelga y hace palanca).",
+            "Usá un puerto USB3 TRASERO de la placa (los del CPU) -- los del frente no sirven.",
+        ]
+    elif not ss_ok:
+        steps += [
+            "Falta la rama SuperSpeed (las cámaras). SIN cambiar de puerto: sacá el plug",
+            "  USB-C del adaptador, GIRALO 180° y metelo de nuevo, firme y a fondo.",
+        ]
+    else:
+        steps += [
+            "Falta la rama USB2 (companion/audio). SIN cambiar de puerto: sacá el plug",
+            "  USB-C del adaptador, GIRALO 180° y metelo de nuevo, firme y a fondo.",
+        ]
+    steps += [
+        "¿Sigue igual? Probá OTRO puerto A trasero (cada puerto asienta distinto).",
+        "¿Nada? Reseat de la ficha del visor (detrás del gasket magnético) y después",
+        "  TODO junto: USB + DP + brick 12V afuera ~1 min, reconectar (docs/22).",
+    ]
+    return steps
+
+
+def wait_for_reseat(recheck, status_line):
+    """Interactive retry loop for a physical fix. Prints nothing by itself --
+    caller prints the instructions first. Polls recheck() every 3 s; the user
+    can press [Enter] to recheck immediately or [s]+[Enter] to give up on VR
+    and continue to the plain 2D desktop. Returns 'fixed' | 'skip' | 'giveup'.
+    Unattended (no TTY on stdin): polls for ~60 s then gives up, so the
+    pre-login boot path can never dead-end waiting for a human who isn't there."""
+    if not sys.stdin.isatty():
+        for _ in range(20):
+            time.sleep(3)
+            if recheck():
+                return "fixed"
+        return "giveup"
+    print()
+    warn("Esperando que reconectes -- [Enter] re-chequear ya | [s]+[Enter] seguir SIN VR (escritorio 2D)")
+    last_status = None
+    while True:
+        r, _, _ = select.select([sys.stdin], [], [], 3)
+        if r:
+            line = sys.stdin.readline().strip().lower()
+            if line == "s":
+                return "skip"
+        if recheck():
+            return "fixed"
+        status = status_line()
+        if status != last_status:
+            dim(status)
+            last_status = status
+
+
 class Failure:
     def __init__(self):
         self.reason = None
@@ -179,6 +258,9 @@ class Failure:
     def set(self, reason, kind, part=None):
         if self.reason is None:
             self.reason, self.kind, self.part = reason, kind, part
+
+    def clear(self):
+        self.reason, self.kind, self.part = None, None, None
 
 
 def main():
@@ -213,44 +295,74 @@ def main():
             time.sleep(5)
             run(["systemctl", "isolate", "graphical.target"], timeout=15)
 
+    def continue_2d():
+        """User pressed [s] in a reseat loop: abandon VR bring-up on purpose and
+        continue to an ordinary 2D desktop. Distinct from give_up(): this is a
+        choice, not a failure, so the verdict says so and nothing red is printed."""
+        log_stats("SIN_VR_2D", stats["step_reached"], {"reason": fail.reason or "user skip"})
+        print(f"\n{C_BOLD}=== Veredicto ==={C_RESET}")
+        print(f"{C_WARN}{C_BOLD}SIN VR POR AHORA.{C_RESET} Seguís al escritorio normal (2D).")
+        print("  Cuando quieras reintentar: reconectá el casco y corré este script de nuevo.")
+        if PRE_LOGIN:
+            READY_FILE.unlink(missing_ok=True)
+            time.sleep(2)
+            run(["systemctl", "isolate", "graphical.target"], timeout=15)
+        sys.exit(0)
+
     # ---- 1/5: USB census ----------------------------------------------
     stats["step_reached"] = 1
     step(1, "¿Está todo conectado?")
     lsusb_text = lsusb_output()
     count = headset_count(lsusb_text)
-    hub_dev = find_device_by_id("04b4", "6506") or find_device_by_id("04b4", "6504")
-    superspeed_hub_present = "04b4:6504" in lsusb_text
-    t126_signature = count == 4 and not superspeed_hub_present and "045e:0659" in lsusb_text
     if count >= 5:
         ok("5/5 piezas del casco responden (hub, cámaras, controlador, audio).")
-    elif t126_signature:
-        # T126 signature: everything except the SuperSpeed-only hub identifier --
-        # structurally the max reachable on a USB2-only port, not a generic failure.
-        warn("4/5 -- falta justo el hub SuperSpeed (04b4:6504): esto pasa cuando estás en")
-        warn("  un puerto que no tiene carriles USB3 en absoluto (visto en docs/pruebas.jsonl T126).")
-        dim("El paso 3 va a confirmar si las cámaras están limitadas de ancho de banda por esto.")
     else:
-        bad(f"Solo {count}/5 piezas responden.")
+        usb2_ok, ss_ok = branch_flags(lsusb_text)
+        bad(f"Solo {count}/5 piezas responden -- rama USB2 {'OK' if usb2_ok else 'AUSENTE'}, "
+            f"rama SuperSpeed {'OK' if ss_ok else 'AUSENTE'}.")
         for line in lsusb_text.splitlines():
             if any(dev in line for dev in DEV_IDS):
                 print(f"    {line}")
-        if os.geteuid() == 0:
-            dim("Corriendo como root -- intento arreglarlo solo antes de pedirte algo (reset de bus, sin tocar nada físico)...")
+        if count > 0 and os.geteuid() == 0:
+            dim("Intento primero un reset de bus por software (sin tocar nada físico)...")
             lsusb_text = try_self_repair()
             count = headset_count(lsusb_text)
-            if count >= 4:
-                ok(f"Se arregló solo -- {count}/5 ahora, sin que tuvieras que tocar nada.")
-            else:
-                bad("El reset de bus tampoco alcanzó.")
+        if count >= 5:
+            ok("Se arregló solo -- 5/5 ahora, sin que tuvieras que tocar nada.")
         else:
-            dim("Corré este script con sudo y voy a intentar un reset de bus por software solo, antes de pedirte algo.")
-        if count < 4:
+            # The software reset was already shown (T171, 2026-08-13) NOT to fix a
+            # marginal seat: a full xhci rebind reproduced the identical half-dead
+            # state. From here the fix is physical, so say exactly what to do and
+            # wait for it instead of dead-ending -- the docs/06 ladder, revalidated
+            # live that day: seat, then orientation, then other port, then visor.
             jlog = run(["journalctl", "-k", "--since", "2 min ago"])
             if re.search(r"error -71|Cannot enable", jlog.stdout):
-                warn("El kernel está reintentando solo y fallando (error -71) -- contacto marginal, no un cable roto del todo.")
-                fail.set("El cable está reconectando solo sin llegar a agarrar bien.", "physical")
+                dim("El kernel reintenta y falla (error -71): contacto marginal, no un cable roto del todo.")
+            usb2_ok, ss_ok = branch_flags(lsusb_text)
+            print()
+            warn("Hay que reconectar. Paso a paso, en orden de probabilidad (docs/22, T171):")
+            for s in reseat_instructions(usb2_ok, ss_ok):
+                print(f"    {C_WARN}»{C_RESET} {s}")
+
+            def _recheck_census():
+                nonlocal lsusb_text, count
+                lsusb_text = lsusb_output()
+                count = headset_count(lsusb_text)
+                return count >= 5
+
+            def _status_census():
+                u2, ss = branch_flags(lsusb_text)
+                return (f"ahora {count}/5 -- USB2 {'✓' if u2 else '✗'} | "
+                        f"SuperSpeed {'✓' if ss else '✗'}  (5/5 = listo)")
+
+            outcome = wait_for_reseat(_recheck_census, _status_census)
+            if outcome == "fixed":
+                ok("¡5/5! Reconexión correcta, seguimos.")
+            elif outcome == "skip":
+                return continue_2d()
             else:
-                fail.set("Nada responde y no hay reintentos -- el conector puede no estar bien asentado.", "physical")
+                fail.set("Faltan piezas del casco y la reconexión no llegó a tiempo.", "physical")
+    hub_dev = find_device_by_id("04b4", "6506") or find_device_by_id("04b4", "6504")
     if fail.reason:
         return give_up()
 
@@ -276,14 +388,44 @@ def main():
     # ---- 3/5: negotiated speed of the cameras (T126: enumerating != healthy)
     stats["step_reached"] = 3
     step(3, "¿Las cámaras tienen el ancho de banda que necesitan?")
-    cam_dev = find_device_by_id("045e", "0659")
-    if cam_dev and (cam_dev / "speed").exists():
-        speed = int((cam_dev / "speed").read_text().strip() or "0")
-        if speed >= 5000:
-            ok(f"Cámaras a SuperSpeed real ({speed}M) -- el 6DoF/SLAM va a tener el ancho de banda que necesita.")
+    def camera_speed():
+        # Re-find the device on every call: a reseat changes the sysfs path.
+        d = find_device_by_id("045e", "0659")
+        if d and (d / "speed").exists():
+            try:
+                return int((d / "speed").read_text().strip() or "0")
+            except (OSError, ValueError):
+                return 0
+        return 0
+
+    speed = camera_speed()
+    if speed >= 5000:
+        ok(f"Cámaras a SuperSpeed real ({speed}M) -- el 6DoF/SLAM va a tener el ancho de banda que necesita.")
+    elif speed > 0:
+        # Cameras attached through the USB2 face of the hub (seen live in T171):
+        # they enumerate and even stream a little, but SLAM/constellation need the
+        # 5 Gbps link. Same physical fix as a missing SS branch: the 180° flip.
+        bad(f"Cámaras enumeran pero solo a {speed}M (necesitan 5000M) -- la rama SuperSpeed no entró.")
+        warn("Fix probado (docs/06, T171): SIN cambiar de puerto, girá el plug USB-C 180°")
+        warn("  dentro del adaptador y metelo firme. Si no: otro puerto A trasero.")
+
+        def _recheck_speed():
+            # Require the full census too -- a reseat that trades USB2 for SS
+            # (the T171 lottery) must not count as fixed.
+            return headset_count(lsusb_output()) >= 5 and camera_speed() >= 5000
+
+        def _status_speed():
+            u2, ss = branch_flags(lsusb_output())
+            return (f"cámaras a {camera_speed()}M -- USB2 {'✓' if u2 else '✗'} | "
+                    f"SuperSpeed {'✓' if ss else '✗'}  (5/5 y 5000M = listo)")
+
+        outcome = wait_for_reseat(_recheck_speed, _status_speed)
+        if outcome == "fixed":
+            ok(f"Cámaras a SuperSpeed real ({camera_speed()}M) después de reconectar.")
+        elif outcome == "skip":
+            return continue_2d()
         else:
-            bad(f"Cámaras enumeran pero solo a {speed}M (necesitan 5000M) -- puerto sin carriles SuperSpeed.")
-            fail.set("Estás en un puerto USB2-only -- las cámaras 'están' pero no van a poder seguirte la cabeza bien.", "physical")
+            fail.set("Las cámaras quedaron sin ancho de banda SuperSpeed.", "physical")
     else:
         dim("Cámaras no detectadas todavía (se resuelve solo si el paso 1 se arregla).")
     if fail.reason:
@@ -320,8 +462,33 @@ def main():
         ok("Panel real del G2 confirmado (huella EDID, no solo 'conectado').")
     else:
         bad("El panel no despertó, o lo que hay conectado no es el G2.")
-        dim("El logo HP puede estar prendido igual -- eso es una señal separada, no alcanza sola.")
-        fail.set("El panel no responde -- probá reconectar el cable en el extremo del visor.", "physical")
+        dim("El logo HP puede estar prendido igual -- es power+HID, independiente del DP; no alcanza solo.")
+        warn("Hay que revisar la parte de video. En orden (docs/22):")
+        print(f"    {C_WARN}»{C_RESET} El DP del casco A FONDO en la GPU (puerto trasero de la placa de video).")
+        print(f"    {C_WARN}»{C_RESET} El brick de 12V enchufado y el barrel firme en la cajita del cable")
+        print(f"    {C_WARN}»{C_RESET}   (el LED de la cajita NO dice nada del 12V: solo marca 5V del USB).")
+        print(f"    {C_WARN}»{C_RESET} ¿Nada? Reseat de la ficha del visor (detrás del gasket magnético).")
+
+        def _recheck_panel():
+            # Re-send the activation each pass -- the panel auto-powers-off ~3 s
+            # after an activation with no video, and a reseat needs a fresh one.
+            if build_ok:
+                run([sys.executable, str(panel_py), "activate"])
+                for _ in range(5):
+                    check = run([str(drmprops_bin)])
+                    if "fingerprint matches" in check.stdout:
+                        return True
+                    time.sleep(0.5)
+            return False
+
+        outcome = wait_for_reseat(_recheck_panel, lambda: "panel todavía sin responder...")
+        if outcome == "fixed":
+            dp_ok = True
+            ok("Panel del G2 confirmado después de reconectar.")
+        elif outcome == "skip":
+            return continue_2d()
+        else:
+            fail.set("El panel no responde -- probá reconectar el cable en el extremo del visor.", "physical")
     if fail.reason:
         return give_up()
 

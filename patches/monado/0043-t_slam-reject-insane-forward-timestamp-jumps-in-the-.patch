@@ -1,0 +1,79 @@
+From a382cc7619e349b0b7177fa339b0c84901c53233 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Thu, 13 Aug 2026 13:19:48 -0300
+Subject: [PATCH] t_slam: reject insane forward timestamp jumps in the camera
+ monotonic guard
+
+The 0021 guard only rejected backwards jumps. One corrupted forward
+timestamp (3.6e18 ns, seen live 2026-08-13) gets accepted as the new
+high-water mark and then every sane frame is dropped as 'older' --
+forever, starving SLAM silently while the session stays up (11k+
+bundles dropped over 10 minutes, tracking blind, no crash, no recovery).
+
+Reject cam0 jumps more than 10 s ahead of the last accepted timestamp
+without updating the mark. A genuine clock re-baseline (resume after a
+long stall) is still accepted: if the next cam0 frame is consistent
+with the jumped clock (within 1 s of the rejected candidate), the jump
+is real and becomes the new baseline at the cost of a single bundle.
+Random garbage never repeats consistently, so it can no longer poison
+the guard.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/xrt/auxiliary/tracking/t_tracker_slam.cpp | 33 +++++++++++++++++++
+ 1 file changed, 33 insertions(+)
+
+diff --git a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+index 83d6369b2..290e1fdba 100644
+--- a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
++++ b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+@@ -306,6 +306,12 @@ struct TrackerSlam
+ 		uint64_t count;           //!< Resets performed this session
+ 	} auto_reset;
+ 	int dropped_bundles = 0;                      //!< Consecutive bundles dropped for that reason
++	//! Candidate timestamp of a rejected insane forward jump (INT64_MIN = none). A single
++	//! corrupted timestamp must never become last_cam_ts[0]: accepted once, every following
++	//! sane frame reads as "older" and the guard drops bundles forever (seen live 2026-08-13:
++	//! one 3.6e18 ns timestamp starved SLAM silently, 11k+ bundles). A jump is only accepted
++	//! as a real clock re-baseline if the NEXT cam0 frame is consistent with it.
++	timepoint_ns pending_fwd_jump_ts = INT64_MIN;
+ 	struct xrt_hand_masks_sample last_hand_masks; //!< Last received hand masks info
+ 	Mutex last_hand_masks_mutex;                  //!< Mutex for @ref last_hand_masks
+ 
+@@ -1477,6 +1483,33 @@ receive_frame(TrackerSlam &t, struct xrt_frame *frame, uint32_t cam_index)
+ 	// which is the crash. The stall is logged so it can never be silent.
+ 	if (cam_index == 0) {
+ 		bool drop = last_ts >= ts;
++		// The backwards check alone is poisonable: one insane FORWARD timestamp gets
++		// accepted (it is "newer"), becomes the high-water mark, and then every sane
++		// frame is dropped as old -- forever, with tracking silently blind. Reject
++		// forward jumps beyond any plausible frame gap without updating the mark; a
++		// real clock re-baseline (e.g. resume after a long stall) is recognized by the
++		// next frame being consistent with the jumped clock, at the cost of one frame.
++		constexpr timepoint_ns FWD_JUMP_LIMIT_NS = 10LL * U_TIME_1S_IN_NS;
++		constexpr timepoint_ns FWD_CONFIRM_WINDOW_NS = 1LL * U_TIME_1S_IN_NS;
++		if (!drop && last_ts != INT64_MIN && ts - last_ts > FWD_JUMP_LIMIT_NS) {
++			timepoint_ns since_candidate = ts - t.pending_fwd_jump_ts;
++			if (t.pending_fwd_jump_ts != INT64_MIN && since_candidate >= 0 &&
++			    since_candidate < FWD_CONFIRM_WINDOW_NS) {
++				SLAM_WARN("Camera clock re-baselined forward by %" PRId64
++				          " ns (confirmed by consecutive frames), accepting",
++				          ts - last_ts);
++				t.pending_fwd_jump_ts = INT64_MIN;
++			} else {
++				SLAM_WARN("Rejecting insane forward jump: cam0 frame (%" PRId64
++				          ") is %" PRId64 " ns ahead of last accepted (%" PRId64
++				          ") -- dropping bundle, keeping baseline",
++				          ts, ts - last_ts, last_ts);
++				t.pending_fwd_jump_ts = ts;
++				drop = true;
++			}
++		} else if (!drop) {
++			t.pending_fwd_jump_ts = INT64_MIN;
++		}
+ 		if (drop && !t.dropping_bundle) {
+ 			t.dropped_bundles = 0;
+ 		}
+-- 
+2.47.3
+

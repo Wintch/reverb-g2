@@ -25,6 +25,7 @@ index below; the full sections underneath are where the evidence and the reasoni
 | "Logo on, panel off" appearing **mid-session** after any physical reconnect | Monado's compositor is still holding a DRM lease invalidated by the reconnect — HID activation succeeds but nothing is scanned out | Full session restart (kill `monado-service` + fresh launch), not just `panel.py activate` | "Reseating mid-session (2026-08-10)" |
 | Audio cutting in/out, worse the more concurrent load (video+audio > video alone > idle) | Same marginal visor contact; PipeWire recreates the ALSA sink on every USB2 cycle | Same as the marginal-contact fixes above; no audio-specific fix needed | "Load correlates with disconnect frequency... (T052-T057)" |
 | `reqCmd 23` (`hololens_handle_debug`) and/or `non-desktop: 0` on the headset's RandR connector, correlating with heavy service-restart cycling | USB-C-to-USB-A adapter fault (validated single-session, 2026-08-11) — **a different physical part than the visor-end contact above** | Swap the USB-C-to-USB-A adapter, not a visor-end reseat | "Hardware change log for the reqCmd23/non-desktop:0 cluster" |
+| Exactly ONE of the two USB branches enumerates per seating (SS-only or USB2-only, never both), stable at rest, changes only on reseat; "headset not detected" on Windows too | Marginal seat of the C-plug/adapter engaging one pin subgroup per insertion — all conductor groups healthy (T171, 2026-08-13) | Rear (CPU) USB3 port, firm and straight; then **rotate the C plug 180° inside the adapter without changing port**; then the other rear port; then visor-end. Success = 5/5 | "The seat lottery (T171)" |
 
 ## The measured anatomy
 
@@ -624,3 +625,72 @@ another multi-session software-side goose chase). When a cheap, easy-to-swap com
 sits between the machine and a hard-to-reproduce intermittent fault, swap it early and
 rule it out (or in) before spending more diagnostic hours -- don't save the cheap step for
 last just because it feels like the least technically interesting one to try.
+
+## The seat lottery (T171, 2026-08-13) — one pin group per seating, every conductor healthy
+
+**Context**: the machines were physically rearranged (a second Windows system arrived; the
+lab SSD now boots on the x3600 with a single desktop monitor). The headset then failed to
+be detected on BOTH Windows systems, and on Linux showed the classic `error -71` /
+`Cannot enable. Maybe the USB cable is bad?` storm on the USB2 branch at boot. Ten
+seatings and one control experiment later, the verdict is **nothing is broken**: this is a
+marginal mechanical seat at the C-plug/adapter that engages a different subset of pin
+groups on every insertion.
+
+**The measured pattern that gives it away** (all on the x3600's CPU-fed controller
+`0000:09:00.3` except where noted):
+
+| Seat | Port | SS branch (6504+sensors) | USB2 branch (6506+companion+audio) |
+|---|---|---|---|
+| boot | rear A #1 (adapter) | ✅ 5000M | ❌ error -71 |
+| replug | rear A #2 (adapter) | ❌ | ✅ complete |
+| replug | rear A #1 (adapter) | — | ❌ (nothing) |
+| native C, both orientations, ×3 | mobo USB-C direct | ✅ 5000M | ❌ |
+| after visor reseat + mains cycle | mobo USB-C | ✅ | ❌ |
+| replug | rear A #2 (adapter) ×2 more | ❌ | ✅ complete |
+| chipset-controller port | front/other 3.0 | ❌ | ❌ |
+| **A #2 + 180° flip inside adapter** | rear A #2 | **✅ 5000M** | **✅ complete** |
+
+Key observations, in evidence order:
+
+1. **Every conductor group in the cable is alive.** SS enumerated perfectly in 6 seats,
+   USB2 in 3 others, and the winning seat got all 5/5 — nothing is electrically dead.
+   This is NOT the wholesale conductor-group death of T039-T040.
+2. **A software xhci rebind (full controller re-enumeration) reproduces the identical
+   half-dead state** — the fault is purely physical-contact, not stuck host state.
+3. **The state is rock-stable at rest**: a 5-minute journal watch on a half-dead seat
+   logged ZERO spontaneous events. No self-recovery, no flapping. Whatever a seating
+   engages is what you keep until the next physical manipulation.
+4. **A phone enumerated instantly on the same native-C port where the G2's USB2 pair had
+   failed 7 consecutive times** — port absolved, cable/plug seat condemned.
+5. **The `docs/06` ladder is revalidated verbatim**: "try the port first, the orientation
+   second." The winning move was the documented one — 180° rotation of the C plug INSIDE
+   the C-to-A adapter (Nisuta NSADU30UC), same port, after the port itself had already
+   been chosen for having the USB2 branch up.
+6. **User's standing rule confirmed again**: only rear, CPU-controller ports work at all;
+   the one chipset/front-port attempt enumerated nothing, and the native mobo USB-C never
+   carried the G2's USB2 pair in any orientation (it never has on any machine — per the
+   user, the C port has never worked for this headset).
+7. **Working hypothesis for the mechanism** (unproven but consistent with all 10 seats):
+   SS pins sit at the tip of the connector tongue, the USB2 pair mid-connector; worn
+   contacts mean seating depth/angle selects which group mates. That's why deep clean
+   seats (native C) got SS-only and one particular A-port's grip got USB2-only.
+
+**Why Windows failed on both systems**: WMR requires the SuperSpeed link and refuses
+otherwise; with the seat lottery landing on a partial branch every time, "headset not
+detected" on two different Windows machines was the same single fault seen from the other
+OS. The recipe for any Windows attempt is identical: rear CPU ports, aim for the full
+5-device enumeration (Device Manager should show both hub faces), rotate the plug inside
+the adapter if one branch is missing.
+
+**End-to-end verification after the fix, same session**: `panel.py activate` → DP-3
+hotplug with the healthy 384-byte EDID → `jack-in-wayland.sh 1 6dof` came up first try:
+mutter lease granted, `4320x2160@90`, builder wmr, BOTH controllers registered, Basalt
+SLAM started with the denser G2 config, camera tracking CSV growing (SS streaming under
+real load), zero USB errors in the kernel log.
+
+**Operational consequence, shipped the same day**: `scripts/power-on.py` now diagnoses
+WHICH branch is missing (`branch_flags()`), prints these exact reseat instructions in
+probability order (`reseat_instructions()`), and waits interactively for the fix instead
+of dead-ending — with `[s]` to skip VR and continue to the plain 2D desktop. Camera
+negotiated speed (step 3) got the same treatment, since "cameras enumerate at 480M through
+the hub's USB2 face" is exactly what a missing-SS seat looks like.

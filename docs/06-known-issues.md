@@ -119,6 +119,12 @@ G2 failure mode: the cable is extra long and leaves USB signal margins very tigh
 since then. Rotating the USB-C connector 180° inside the C-to-A adapter also helped on its
 own (it brought up the HoloLens sensors). Try the port first, the orientation second.
 
+> **Revalidated 2026-08-13 (T171), and generalized**: after a machine rearrangement the
+> seat lottery got extreme — exactly ONE of the two USB branches per seating, across 10
+> seats, on Linux and both Windows systems. The port-then-orientation ladder above was
+> again the exact fix, and `power-on.py` now walks it interactively, per missing branch.
+> Full pattern table and evidence: `docs/22`, "The seat lottery (T171)".
+
 ### Correct enumeration — all five have to be present
 
 ```
