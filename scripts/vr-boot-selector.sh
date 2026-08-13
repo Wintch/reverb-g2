@@ -114,13 +114,42 @@ case "$CHOICE" in
         # wrapper is the actual safety net if the script crashes before
         # reaching either -- recoverability shouldn't depend on power-on.py
         # behaving correctly. `timeout` (coreutils) is the hard ceiling on
-        # top of that -- 120s is generous (T129/T130's real runs took
-        # 10-38s) but guarantees this console can never hang indefinitely.
-        timeout 120 python3 "$HERE/power-on.py" --pre-login 1 3dof
-        rc=$?
+        # top of that, so this console can never hang indefinitely.
+        #
+        # THE CEILING WAS 120s AND IT WAS WRONG (T172, 2026-08-13). That number
+        # was sized for the fully automatic run (T129/T130 took 10-38s), but
+        # power-on.py grew an INTERACTIVE step the day before: when a USB branch
+        # is missing it prints the reseat ladder and waits for the human to fix
+        # the cable. The two safety mechanisms then fought each other -- the user
+        # was mid-reseat when `timeout` killed the diagnostic and the machine
+        # jumped to the login screen with no way back to the prompt. The human
+        # wait is now bounded by power-on.py itself (90s if nobody answers, 300s
+        # rearmed on every Enter), so this ceiling goes back to being what it was
+        # meant to be: an absurd-case backstop, not a normal-path guillotine.
+        # Worst realistic case is three interactive waits (census, cameras,
+        # panel) = ~15 min, hence 1200s.
+        #
+        # Logged through `script` rather than a plain `| tee`: StandardOutput=tty
+        # means none of this reaches the journal (the same debuggability hole
+        # that cost hours on the tty4 launcher, see CLAUDE.md), but a pipe would
+        # make power-on.py's stdout a non-tty and silently drop all its colors --
+        # and red/yellow carry real meaning there. `script` keeps a pty, so the
+        # console looks identical and the log gets everything.
+        BOOT_LOG=/var/log/vr-boot-selector.log
+        : >> "$BOOT_LOG" 2>/dev/null || BOOT_LOG=/tmp/vr-boot-selector.log
+        { echo; echo "=== $(date -Is) power-on.py --pre-login ==="; } >> "$BOOT_LOG" 2>/dev/null
+        if command -v script >/dev/null 2>&1; then
+            script -q -e -a "$BOOT_LOG" \
+                -c "timeout 1200 python3 -u '$HERE/power-on.py' --pre-login 1 3dof"
+            rc=$?
+        else
+            timeout 1200 python3 -u "$HERE/power-on.py" --pre-login 1 3dof
+            rc=$?
+        fi
         echo
         if [ "$rc" -eq 124 ]; then
-            echo "diagnostico se colgo (timeout de 120s, rc=124) -- forzado a login grafico."
+            echo "diagnostico se colgo (timeout de 1200s, rc=124) -- forzado a login grafico."
+            echo "log: $BOOT_LOG"
         else
             echo "diagnostico termino (rc=$rc). Subiendo a login grafico en 3s..."
         fi

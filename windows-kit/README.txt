@@ -2,6 +2,20 @@
   WINDOWS CAPTURE KIT  —  HP Reverb G2 / G2 support on Linux  (v3)
 ================================================================================
 
+READ FIRST IF YOU JUST WANT THE HEADSET TO WORK ON WINDOWS
+---------------------------------------------------------------------
+This kit is a CAPTURE tool for the 90 Hz investigation. If what you need is
+"make the G2 run on this Windows machine" (Windows 11 24H2 + Oasis driver +
+SteamVR), that's a different thing and it lives next to this file:
+
+    powershell -ExecutionPolicy Bypass -File .\power-on.ps1
+
+It checks the USB enumeration branch by branch, controller pairing, and the
+Oasis/SteamVR software state, and tells you what to physically fix. The
+manual behind it, including what SteamVR errors 108 and 422 actually mean,
+is docs/31-windows-bringup-and-errors.md.
+
+
 CURRENT STATUS: the USB/HID channel is already exhausted, that's not what's missing
 ---------------------------------------------------------------------
 On Linux, the headset at 90 Hz shows the HP logo and doesn't lock on (white

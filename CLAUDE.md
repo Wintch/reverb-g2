@@ -916,8 +916,10 @@ docs/19-nvidia-bug-5923212-followup.md  >>> THE RESOLUTION <<< how 90Hz actually
 docs/20-desktop-plasma-crash.md  the connected headset vs. the KDE desktop
 docs/21-project-retrospective.md  project retrospective
 docs/22-cable-connector-diagnosis.md  >>> LINK ANATOMY <<< piece-by-piece diagnosis of cable/connector/power
+docs/31-windows-bringup-and-errors.md  >>> WINDOWS MANUAL <<< Oasis on 24H2, and what errors 108/422 mean
 forum-attachments/          the thread's attachments, already assembled and ready to upload
 windows-kit/                Windows capture package (packaged into windows-kit.7z)
+windows-kit/power-on.ps1    Windows bring-up gate: USB census by branch, pairing, Oasis/SteamVR state (see docs/31)
 patches/nvidia/             the 3 Project-VR patches for 595-open + OUR 0004 bpc fix (the 90Hz solution)
 patches/monado/             7 of our patches (companion, controllers, WMR_CAMERAS)
 patches/hello_xr-player/    3 patches: the full 360/VR180 player

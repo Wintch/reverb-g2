@@ -25,6 +25,7 @@ import json
 import os
 import re
 import select
+import signal
 import subprocess
 import sys
 import time
@@ -219,11 +220,56 @@ def reseat_instructions(usb2_ok, ss_ok):
     return steps
 
 
+PRINTK = Path("/proc/sys/kernel/printk")
+_printk_saved = None
+
+
+def console_quiet(on):
+    """Mute/unmute kernel messages on the VT this script owns.
+
+    Found the hard way 2026-08-13 (T172): the very fault this script asks the
+    user to fix -- a marginal seat -- makes the kernel print
+    `usb usb3-port1: Cannot enable. Maybe the USB cable is bad?` about once a
+    second, straight to /dev/tty1 (console_loglevel 4 lets every KERN_ERR
+    through). While the user was reconnecting the cable, that wall of text
+    scrolled the reseat instructions and the prompt off the screen and the
+    console looked hung. Nothing is lost by muting it: printk still reaches the
+    journal, only the VT stops being written to. Always restored (finally +
+    SIGTERM handler) -- leaving the console muted for the rest of the boot
+    would be a worse bug than the one this fixes."""
+    global _printk_saved
+    if os.geteuid() != 0 or not PRINTK.exists():
+        return
+    try:
+        if on:
+            if _printk_saved is None:
+                _printk_saved = PRINTK.read_text().split()
+            fields = list(_printk_saved)
+            fields[0] = "1"  # console_loglevel: KERN_ALERT and worse only
+            PRINTK.write_text(" ".join(fields) + "\n")
+        elif _printk_saved is not None:
+            PRINTK.write_text(" ".join(_printk_saved) + "\n")
+            _printk_saved = None
+    except OSError:
+        pass
+
+
+# Two clocks, on purpose (T172). Before anyone has answered, this may well be an
+# unattended boot with the headset simply unplugged -- it must not hold the
+# console hostage. Once the user presses Enter even once, a human is provably
+# there with their hands in the cable, and cutting them off mid-reseat is
+# exactly the failure this pair of constants exists to prevent: every Enter
+# rearms the long clock.
+WAIT_NO_HUMAN_S = 90
+WAIT_HUMAN_S = 300
+
+
 def wait_for_reseat(recheck, status_line):
     """Interactive retry loop for a physical fix. Prints nothing by itself --
     caller prints the instructions first. Polls recheck() every 3 s; the user
-    can press [Enter] to recheck immediately or [s]+[Enter] to give up on VR
-    and continue to the plain 2D desktop. Returns 'fixed' | 'skip' | 'giveup'.
+    can press [Enter] to recheck immediately (which also rearms the wait) or
+    [s]+[Enter] to give up on VR and continue to the plain 2D desktop.
+    Returns 'fixed' | 'skip' | 'giveup'.
     Unattended (no TTY on stdin): polls for ~60 s then gives up, so the
     pre-login boot path can never dead-end waiting for a human who isn't there."""
     if not sys.stdin.isatty():
@@ -234,19 +280,43 @@ def wait_for_reseat(recheck, status_line):
         return "giveup"
     print()
     warn("Esperando que reconectes -- [Enter] re-chequear ya | [s]+[Enter] seguir SIN VR (escritorio 2D)")
-    last_status = None
-    while True:
-        r, _, _ = select.select([sys.stdin], [], [], 3)
-        if r:
-            line = sys.stdin.readline().strip().lower()
-            if line == "s":
-                return "skip"
-        if recheck():
-            return "fixed"
-        status = status_line()
-        if status != last_status:
-            dim(status)
-            last_status = status
+    dim("Cada Enter reinicia el reloj de espera. Mientras tanto silencio los mensajes del kernel")
+    dim("en esta consola (siguen yendo al journal) para que no te tapen estas instrucciones.")
+    console_quiet(True)
+    try:
+        deadline = time.monotonic() + WAIT_NO_HUMAN_S
+        last_status, last_print, answered = None, 0.0, False
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                print()
+                if answered:
+                    warn(f"Se acabó el tiempo de espera ({WAIT_HUMAN_S}s desde el último Enter).")
+                else:
+                    warn("Se acabó el tiempo de espera (nadie apretó nada).")
+                return "giveup"
+            r, _, _ = select.select([sys.stdin], [], [], min(3.0, left))
+            pressed = False
+            if r:
+                line = sys.stdin.readline()
+                if line == "":
+                    return "giveup"  # stdin closed under us: don't spin on EOF
+                if line.strip().lower() == "s":
+                    return "skip"
+                pressed = answered = True
+                deadline = time.monotonic() + WAIT_HUMAN_S
+            if recheck():
+                return "fixed"
+            status = status_line()
+            now = time.monotonic()
+            # Answer EVERY keypress, and repaint every 10 s even when nothing
+            # changed. Silence after an Enter is indistinguishable from a hang,
+            # and that is precisely what the user reported (T172).
+            if pressed or status != last_status or now - last_print >= 10:
+                dim(f"{status}   [{int(max(0, deadline - now))}s]")
+                last_status, last_print = status, now
+    finally:
+        console_quiet(False)
 
 
 class Failure:
@@ -280,7 +350,14 @@ def main():
         print(f"\n{C_BOLD}=== Veredicto ==={C_RESET}")
         if fail.kind == "physical":
             print(f"{C_WARN}{C_BOLD}TE NECESITO.{C_RESET} {fail.reason}")
-            print("  Esto no cuesta plata -- es reconectar algo. Volvé a correr este script después.")
+            print("  Esto no cuesta plata -- es reconectar algo.")
+            # Say HOW to retry, not just "retry": after this returns, the machine
+            # goes to the graphical login and this console disappears. Without the
+            # command there is no visible way back (T172, user: "ya no pude apretar
+            # enter para volver a reintentar ni nada").
+            print(f"  Para reintentar sin reiniciar: abrí una terminal y corré")
+            print(f"    {C_BOLD}{HERE / 'power-on.py'}{C_RESET}")
+            print("  (o Ctrl+Alt+F2 para una consola de texto, si el escritorio no llegó a arrancar).")
         else:
             print(f"{C_BAD}{C_BOLD}HAY QUE COMPRAR.{C_RESET} {fail.reason}")
             print(f"  Pieza: {fail.part} -- ver docs/26-diagnostic-toolkit-and-buying-guide.md para el link.")
@@ -302,7 +379,8 @@ def main():
         log_stats("SIN_VR_2D", stats["step_reached"], {"reason": fail.reason or "user skip"})
         print(f"\n{C_BOLD}=== Veredicto ==={C_RESET}")
         print(f"{C_WARN}{C_BOLD}SIN VR POR AHORA.{C_RESET} Seguís al escritorio normal (2D).")
-        print("  Cuando quieras reintentar: reconectá el casco y corré este script de nuevo.")
+        print("  Cuando quieras reintentar: reconectá el casco y corré")
+        print(f"    {C_BOLD}{HERE / 'power-on.py'}{C_RESET}")
         if PRE_LOGIN:
             READY_FILE.unlink(missing_ok=True)
             time.sleep(2)
@@ -599,4 +677,12 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # The wrapper (vr-boot-selector.sh) bounds this whole run with `timeout`, which
+    # means SIGTERM. Turn it into a normal unwind so wait_for_reseat's finally --
+    # the one that un-mutes the kernel console -- actually runs; a plain SIGTERM
+    # kill would leave the VT silent for the rest of the boot.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    try:
+        main()
+    finally:
+        console_quiet(False)
