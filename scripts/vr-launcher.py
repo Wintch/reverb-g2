@@ -154,6 +154,26 @@ def bring_up_monado():
     return True
 
 
+def check_controller_battery():
+    """Runs controller-battery-check.py right after Monado is up, before anything is
+    actually launched -- see docs/03-controllers.md's "Battery status" section and
+    patches/monado/0040 for why this can't happen earlier (in power-on.py, before
+    Monado exists) or via a lighter standalone HID query like controller-pair-check.py's.
+    Never blocks: same philosophy as the controller-presence check in power-on.py step
+    5 -- only the headset itself (jack-in-wayland.sh's own DP/USB checks) stops the
+    user, battery is informational. A missing/old libmonado build without the patch
+    just prints "no data" and moves on, it doesn't fail the launch."""
+    check_py = HERE / "controller-battery-check.py"
+    try:
+        r = subprocess.run([sys.executable, str(check_py)], timeout=10)
+        if r.returncode != 0:
+            print("(controller-battery-check.py salio con error -- no bloquea, sigo igual)")
+    except subprocess.TimeoutExpired:
+        print("(controller-battery-check.py no termino en 10s -- no bloquea, sigo igual)")
+    except OSError as e:
+        print(f"(no pude correr controller-battery-check.py: {e} -- no bloquea, sigo igual)")
+
+
 def find_steamapps_dir():
     """A handful of real, common install locations -- Steam itself has used
     different ones across distros/versions. None found -> None, callers must
@@ -246,6 +266,8 @@ def main():
     if not bring_up_monado():
         print("No lanzo nada -- Monado no quedo listo.")
         sys.exit(1)
+
+    check_controller_battery()
 
     name, appid = selected
     if name == "__player__":

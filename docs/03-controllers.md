@@ -175,7 +175,71 @@ read is correct.
 Source of the investigation: `docs/09-oasis-driver-re.md` (same disassembly method,
 applied to `unlock_wmr.exe` instead of `driver_oasis.dll`/`HololensSensors.dll`).
 
-## Battery status (investigated 2026-08-09)
+## Battery status (investigated 2026-08-09, wired 2026-08-13)
+
+**UPDATE 2026-08-13:** the "small, same-pattern fix" this section used to end on is now
+written — `patches/monado/0040` (not yet rebuilt/verified on real hardware; see the
+patches README entry). It wires the already-parsed `last_inputs.battery` byte into
+`xrt_device::get_battery_status`, so `libmonado`'s `mnd_root_get_device_battery_status`
+can query it without needing the OpenXR extension work described below at all — that
+extension is still not implemented and still not needed for this. Real motivation: a
+live session went unnoticed with a dying right-controller battery until its optical
+constellation tracking starved (dimmer LEDs, fewer detected blobs) and the wearer saw
+that hand anchored meters off, with no warning before the session started.
+`scripts/controller-battery-check.py` is the consumer side, run from `vr-launcher.py`
+right after Monado comes up and before the game/player launches. **The byte-to-fraction
+scale is explicitly unverified** — nothing found anywhere (this tree, the Windows HID
+capture in `docs/09`, any WMR community writeup) documents whether the raw byte is
+already a 0-100 percentage, a raw ADC count, or something else; `out_charge = raw / 255`
+is the least-committal reading, not a confirmed calibration, and the driver now logs
+every time the raw byte changes specifically so the real scale can be worked out later
+against a genuine charge/discharge cycle. The rest of this section, below, is the
+original investigation and is still accurate as background.
+
+**New lead on the scale question, same day, from a direct user question** ("hay un
+setting en Windows que indica si es pila 1.2V recargable o 1.5V comun -- sospecho que
+aparte de reflejarlo en % de carga no hace nada"). Searched this whole repo first for a
+prior note matching that -- found none (`docs/pruebas.jsonl` T104's battery
+investigation and `docs/02`'s roadmap entry are the only prior mentions, neither
+mentions battery chemistry), so if it was written down before, it isn't in this repo.
+Investigated directly instead, using a real local copy of the Windows Oasis driver
+(`/mnt/videos/SteamLibrary/steamapps/common/Oasis Driver for Windows Mixed Reality/
+bin/win64/`, same disassembly method as `docs/09-oasis-driver-re.md`, via
+`scripts/xref.py`):
+
+- `driver_oasis.dll` contains the literal config key string `using_1v2_batteries`
+  (a real Windows setting, not a guess), read via a generic config-lookup call right
+  next to the code that reads the controller's HID battery field. The disassembly
+  shows that boolean gating a choice between two different cached lookups (two
+  distinct GUID-shaped queries), whose result is multiplied (`mulss`) into the battery
+  reading before it's reported onward as a device property. **The user's suspicion is
+  confirmed to the extent this disassembly shows it**: nothing in the surrounding
+  function touches tracking, pairing, or haptics -- it reads as a battery-chemistry
+  *display calibration curve* (alkaline AA and NiMH rechargeable have different
+  voltage-discharge curves for the same remaining charge, so converting a raw
+  voltage/ADC reading to an accurate percentage needs to know which curve to apply),
+  not a functional setting. Caveat: this is `strings` + `objdump` + manual reading, no
+  decompiler -- confident, not 100% proven.
+- Same driver reads the value via the **standard USB HID usage** `Generic Device
+  Controls (page 0x06) / Battery Strength (usage 0x20)`
+  (`HID_USAGE_PAGE_GENERIC_DEVICE` / `HID_USAGE_GENERIC_DEVICE_BATTERY_STRENGTH` in the
+  strings), which the HID spec defines as a percentage -- a real, if indirect, hint
+  that the *scale* question in `patches/monado/0040`'s big caveat leans toward
+  already-normalized rather than a raw 0-255 ADC count. `HololensSensors.dll` (the
+  DLL that actually speaks the wire protocol, same one `docs/09` already used) has a
+  matching `COMMAND_SET_BATTERY_LEVEL 0x%x` trace string, very likely the same field
+  `wmr_controller_hp.c` calls `battery`, named "level" rather than "voltage" or "adc".
+- **Not chased further, deliberately**: pinning down the exact logical min/max the
+  device's own HID report descriptor declares for that field (which is what would
+  actually settle the scale) needs either the raw report-descriptor bytes or decoding
+  the two chemistry-curve constant blobs referenced above -- real next-session work if
+  the scale still matters once `patches/monado/0040` has a real charge/discharge log to
+  correlate against. `out_charge = raw / 255` in that patch is left as-is, not flipped
+  to `/100`, specifically because the failure mode of guessing wrong is asymmetric:
+  under-reporting (255-scale on a truly 0-100 field) makes the low-battery alert fire
+  EARLY, which is annoying but safe; over-reporting the other way would make it miss a
+  real low battery, which is the whole point of building this. Safer wrong guess, not a
+  confirmed one.
 
 **The raw data already exists — it's just never surfaced anywhere an application can see
 it.** Came up from a player-side feature idea (a colored light per controller — red/yellow/
@@ -212,10 +276,14 @@ to report.
 
 **What real work this would take, if picked up:** two changes, both in `~/vr/monado`, not
 `hello_xr`: (1) normalize the already-parsed `last_input.battery` byte into a real
-`get_battery_status` implementation for the WMR controller driver; (2) implement
-`XR_EXT_interaction_profile_battery_state_display` in Monado's OXR layer from scratch (it
-doesn't exist there today) so an application can actually query it. Only after both land
-does drawing anything in `hello_xr` become possible.
+`get_battery_status` implementation for the WMR controller driver — **done 2026-08-13,
+`patches/monado/0040`, not yet rebuilt/verified, see the update at the top of this
+section**; (2) implement `XR_EXT_interaction_profile_battery_state_display` in Monado's
+OXR layer from scratch (it doesn't exist there today) so an application (`hello_xr`, an
+in-game HUD light) can query it. (1) alone was enough for the startup-validator alert,
+since that goes through `libmonado` directly, not through an OpenXR extension — (2) is
+only needed if something in-headset (not just the pre-session console) should ever show
+battery. Only after both land does drawing anything in `hello_xr` become possible.
 
 **Deliberately bundled with real controller position (6DoF) tracking, not started now.**
 The player-side design (a light drawn AT the controller's actual position in space) is only

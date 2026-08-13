@@ -358,6 +358,16 @@ def main():
             dim("Se pueden prender/conectar después -- pero el hot-plug de controles VR todavía no anda en")
             dim("este stack (a diferencia de Windows): si los conectás con la sesión ya arrancada, Monado no")
             dim("los va a ver hasta la próxima vez que arranque.")
+        # No battery check here on purpose. This step's own 0x16/0x17 status query works
+        # standalone (any hidraw can be opened more than once), but the battery LEVEL only
+        # travels inside each controller's 44-byte streamed input report, which only starts
+        # flowing after Monado's own controller connection handshake (firmware config read,
+        # then "enable status reports"/"enable IMU" commands) -- sending that from here, with
+        # Monado not running yet, would mean re-implementing a chunk of that handshake with no
+        # live session to validate it against, for a byte whose scale isn't even confirmed yet
+        # (see docs/03-controllers.md). It's checked instead once Monado is actually up, via
+        # libmonado -- see vr-launcher.py's check_controller_battery() (still before the
+        # game/player itself launches) and patches/monado/0040.
             SKIP.add("controllers")
 
     # ---- Bonus: everything else on the USB bus, for context ---------------
