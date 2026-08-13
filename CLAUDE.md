@@ -1,5 +1,43 @@
 # Context for the 90Hz lab agent
 
+> ## START HERE NEXT SESSION (2026-08-13, ~20:40) — the constellation's bistability has a named fix, and the data for it is already parsed
+>
+> **First, the milestone: full 6DoF end to end — headset AND hands — ran in a real game
+> (Propagation VR), playable, the wearer started a match.** Controller positional tracking
+> had been parked since `docs/03`; every earlier session was 6dof head + 3dof hands.
+>
+> **The one open problem in it: the hands jump.** Measured, and the measurement reversed the
+> obvious explanation. With everything physically motionless the constellation *solutions
+> themselves* scatter — 32 mm median / 126 mm p90 on the clean cluster — while each fit
+> reports an excellent 0.15-0.45 px reprojection error. **A fit can be perfectly
+> self-consistent and in the wrong place**: 5-6 blobs matched out of 32 LEDs leaves the pose
+> under-determined. It is not the gap between fixes, and it is not fixable with a quality
+> gate — `wmr_controller_base.c` already documents that (2026-08-12: p99 step 0.41-0.44 m
+> with *healthy* metrics, 8 blobs at 0.06 px, 45 cm off) and today's numbers reproduce it.
+> **Do not write that gate; it is the second time the idea has come up.**
+>
+> **What to do instead, and the data is in hand.** The same comment says an IMU-backed prior
+> is "NOT a drop-in" because the solve and the IMU fusion live in different frames, and that
+> the fixed transform must come from the factory calibration first. **It is already parsed**:
+> `wmr_controller_config` carries the LED model and the inertial sensors from one
+> `CalibrationInformation` block, so `sensors.accel.pose` *is* the bridge. Patch `0046` logs
+> it — real G2 controllers read **105.3° / 85 mm** and **105.5° / 83 mm**, mirror images,
+> nowhere near identity. **And 105.3° is the low mode of the 104-161° constellation-vs-IMU
+> disagreement measured earlier, within a degree.** So: apply the transform, and the correct
+> pose's gravity-axis disagreement should collapse toward zero while the wrong one keeps
+> ~161° — that difference is the discriminator the tie has always needed.
+>
+> Also settled the same day and worth not re-deriving: **`SLAM_FILTER_BEFORE_PREDICT` (patch
+> 0044) is the default** and killed the rotational ghost (delivered pose went from +42.5 ms
+> behind raw SLAM to 5 ms ahead); the orientation cutoff is 20 Hz and is **only safe with
+> that reorder**. **Pipelined pacing is the default too.** The app's real frame rate is
+> **29 fps** and no tool we had could see it — `frame-pacing.sh` counts compositor slots and
+> reported a flawless 0.00% while the wearer looked at 30; count `"Delivered frame"` lines
+> with `U_PACING_APP_LOG=debug` instead. `XRT_COMPOSITOR_SCALE_PERCENTAGE` **defaults to 140**
+> (1.96x the pixels): 100 halves GPU power with no reported visual loss. Read
+> **`docs/32-measurement-toolkit.md`** before quoting any measurement — it lists what each
+> tool is *blind* to, which bit three times in one day.
+
 > ## NEW MILESTONE (2026-08-12, ~11:50) — 6DoF SLAM went from "runs away to kilometres" to playable in a real game. Five patches, two measured dead ends, one self-inflicted cost. Read `docs/pruebas.jsonl` T162.
 >
 > **The headline: 6DoF was never actually working on this project, and nobody knew** —
