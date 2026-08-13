@@ -1,0 +1,196 @@
+From cfa90eb84aa638edfc5e4cd2ad9b890f5ddb1f14 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Wed, 12 Aug 2026 23:38:10 -0300
+Subject: [PATCH 31/31] math: Estimate gyro bias automatically when the device
+ is still
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+m_imu_3dof has had a gyro bias estimator all along, and nothing has ever run it:
+gyro_biasing() returns immediately unless gyro_bias.manually_fire is set, and the only thing
+that sets it is a checkbox in the debug GUI. In a real session it is never touched, so the
+residual bias is integrated forever and the orientation simply rotates away.
+
+MEASURED on an HP Reverb G2, both controllers lying untouched on a desk, two independent
+windows agreeing within 1%:
+
+  left controller   72 deg/min   93% of steps monotonic
+  right controller  20 deg/min   63% monotonic
+
+Repeated with the controllers in a completely different resting orientation: 71.7 and 20.0
+deg/min. The rate does not depend on orientation, which rules out accelerometer misalignment
+or a scale error and leaves plain gyro bias.
+
+Gravity correction cannot rescue this. The accelerometer establishes vertical, so pitch and
+roll are pulled back over ~60 s, but YAW has no absolute reference and runs unbounded --
+which is why the wearer's reports were about yaw ("rotación constante a la izquierda") and
+why the left controller ended up pointing back at them.
+
+M_IMU_3DOF_USE_GYRO_BIAS_AUTO fires the existing estimator when the raw gyro stays under
+0.10 rad/s and |accel| within 0.5 of gravity for a continuous second, re-estimating every
+2 s. The threshold sits above the bias being measured (~0.021 rad/s at worst) and an order
+of magnitude below deliberate motion. Enabled for the WMR headset and controllers only --
+other drivers share this fusion and were not measured here.
+
+RESULT, measured frame-independently as the angle BETWEEN the two controllers, which no
+common rotation of the reference frame can affect:
+
+  before  18.8 deg/min
+  after    8.9 deg/min
+
+A 53% reduction, not a cure. The estimator's own log shows why: successive estimates of the
+same motionless device read 34.5, 63.9 and 47.9 deg/min. It averages 300 ms and then
+REPLACES the bias with that, so it adopts each noisy estimate wholesale. Smoothing the
+estimate instead of replacing it is the obvious next step and is not done here.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ src/xrt/auxiliary/math/m_imu_3dof.c | 71 ++++++++++++++++++++++++++++-
+ src/xrt/auxiliary/math/m_imu_3dof.h | 23 ++++++++++
+ 2 files changed, 93 insertions(+), 1 deletion(-)
+
+diff --git a/src/xrt/auxiliary/math/m_imu_3dof.c b/src/xrt/auxiliary/math/m_imu_3dof.c
+index 9602fc7be..d87871560 100644
+--- a/src/xrt/auxiliary/math/m_imu_3dof.c
++++ b/src/xrt/auxiliary/math/m_imu_3dof.c
+@@ -36,6 +36,7 @@ m_imu_3dof_init(struct m_imu_3dof *f, int flags)
+ 	m_ff_vec3_f32_alloc(&f->gyro_ff, 1000);
+ 
+ 	f->flags = flags;
++	f->gyro_bias.auto_enabled = (flags & M_IMU_3DOF_USE_GYRO_BIAS_AUTO) != 0;
+ }
+ 
+ void
+@@ -98,6 +99,8 @@ m_imu_3dof_add_vars(struct m_imu_3dof *f, void *root, const char *prefix)
+ 	u_var_add_ro_vec3_f32(root, &f->gyro_bias.value, tmp);
+ 	snprintf(tmp, sizeof(tmp), "%sgyro_bias.manually_fire", prefix);
+ 	u_var_add_bool(root, &f->gyro_bias.manually_fire, tmp);
++	snprintf(tmp, sizeof(tmp), "%sgyro_bias.auto_fire_count", prefix);
++	u_var_add_ro_u32(root, &f->gyro_bias.auto_fire_count, tmp);
+ }
+ 
+ static void
+@@ -206,6 +209,70 @@ gravity_correction(struct m_imu_3dof *f,
+ 	}
+ }
+ 
++/*!
++ * Decide whether the device is being held still, and if it has been for long enough, ask for a
++ * fresh bias estimate. See M_IMU_3DOF_USE_GYRO_BIAS_AUTO for why this is needed at all.
++ *
++ * "Still" is judged from the RAW gyro, deliberately: while the device is motionless the gyro is
++ * reading its own bias and nothing else, which is the whole basis of the estimate. The threshold
++ * therefore has to sit above the bias being measured and well below real motion. Measured on this
++ * hardware the bias is ~0.021 rad/s (72 deg/min, the worse of the two controllers) and deliberate
++ * hand motion is upwards of 0.5 rad/s, so 0.10 rad/s separates them with an order of magnitude of
++ * room on the low side.
++ *
++ * The accelerometer has to agree: a device in free fall or being accelerated in a straight line
++ * can show near-zero rotation while very much not being still.
++ */
++static void
++gyro_bias_auto(struct m_imu_3dof *f, uint64_t timestamp_ns, float gyro_length, float accel_length)
++{
++	if (!f->gyro_bias.auto_enabled) {
++		return;
++	}
++
++	//! Above the bias being measured, far below intentional motion. See the comment above.
++	const float STILL_GYRO_RAD_S = 0.10f;
++	//! Gravity only, to within a small margin. MATH_GRAVITY_M_S2 is 9.8066.
++	const float STILL_ACCEL_TOLERANCE = 0.5f;
++	//! Long enough that the 300 ms averaging window is entirely inside the still stretch.
++	const uint64_t STILL_REQUIRED_NS = 1000 * 1000 * 1000ULL;
++	//! While it stays still, keep refreshing at this interval -- bias moves with temperature.
++	const uint64_t REESTIMATE_EVERY_NS = 2000 * 1000 * 1000ULL;
++
++	bool still = gyro_length < STILL_GYRO_RAD_S &&
++	             fabsf(accel_length - MATH_GRAVITY_M_S2) < STILL_ACCEL_TOLERANCE;
++
++	if (!still) {
++		f->gyro_bias.still_since_ns = 0;
++		return;
++	}
++
++	if (f->gyro_bias.still_since_ns == 0) {
++		f->gyro_bias.still_since_ns = timestamp_ns;
++		return;
++	}
++
++	if (timestamp_ns - f->gyro_bias.still_since_ns < STILL_REQUIRED_NS) {
++		return;
++	}
++
++	if (f->gyro_bias.last_auto_ns != 0 && timestamp_ns - f->gyro_bias.last_auto_ns < REESTIMATE_EVERY_NS) {
++		return;
++	}
++
++	f->gyro_bias.last_auto_ns = timestamp_ns;
++	f->gyro_bias.auto_fire_count++;
++	f->gyro_bias.manually_fire = true; // reuse the existing estimator rather than duplicating it
++
++	// Say so out loud. A silent estimator is indistinguishable from one that never runs, and
++	// this whole change is only worth anything if it actually fires -- the first measurement
++	// after adding it was inconclusive precisely because there was no way to tell.
++	U_LOG_I("gyro bias auto-estimate #%u fired: bias now (%.5f, %.5f, %.5f) rad/s (%.2f deg/min)",
++	        f->gyro_bias.auto_fire_count, f->gyro_bias.value.x, f->gyro_bias.value.y,
++	        f->gyro_bias.value.z,
++	        (double)m_vec3_len(f->gyro_bias.value) * 180.0 / M_PI * 60.0);
++}
++
+ static void
+ gyro_biasing(struct m_imu_3dof *f, uint64_t timestamp_ns)
+ {
+@@ -289,7 +356,9 @@ m_imu_3dof_update(struct m_imu_3dof *f,
+ 	// Gravity correction.
+ 	gravity_correction(f, timestamp_ns, accel, &gyro_biased, dt, gyro_biased_length);
+ 
+-	// Gyro bias calculations.
++	// Gyro bias calculations. The automatic trigger runs first and simply asks the existing
++	// estimator to run, so both paths share one implementation.
++	gyro_bias_auto(f, timestamp_ns, gyro_length, accel_length);
+ 	gyro_biasing(f, timestamp_ns);
+ 
+ 	/*
+diff --git a/src/xrt/auxiliary/math/m_imu_3dof.h b/src/xrt/auxiliary/math/m_imu_3dof.h
+index 7674f7766..6391141d8 100644
+--- a/src/xrt/auxiliary/math/m_imu_3dof.h
++++ b/src/xrt/auxiliary/math/m_imu_3dof.h
+@@ -22,6 +22,20 @@ extern "C" {
+ #define M_IMU_3DOF_USE_GRAVITY_DUR_300MS (1 << 0)
+ #define M_IMU_3DOF_USE_GRAVITY_DUR_20MS (1 << 1)
+ 
++/*!
++ * Estimate the gyroscope bias automatically whenever the device is held still, instead of only
++ * when something sets @ref m_imu_3dof.gyro_bias.manually_fire -- which, in practice, is a
++ * checkbox in the debug GUI that nothing in a real session ever touches.
++ *
++ * Without it the residual bias is integrated forever and the orientation simply rotates away.
++ * Measured on an HP Reverb G2's controllers, 2026-08-12, both lying untouched on a desk, two
++ * independent windows agreeing within 1%: the LEFT controller drifted 72 deg/min and the right
++ * 20 deg/min, 93% and 63% of steps monotonic. Gravity correction cannot save this -- the
++ * accelerometer establishes vertical, so pitch and roll are pulled back but YAW has no absolute
++ * reference at all and runs unbounded. That is exactly the symptom the wearer reports.
++ */
++#define M_IMU_3DOF_USE_GYRO_BIAS_AUTO (1 << 2)
++
+ 
+ struct m_ff_vec3_f32;
+ 
+@@ -69,6 +83,15 @@ struct m_imu_3dof
+ 	{
+ 		struct xrt_vec3 value;
+ 		bool manually_fire;
++
++		//! See M_IMU_3DOF_USE_GYRO_BIAS_AUTO.
++		bool auto_enabled;
++		//! When the device was first seen to be still in the current stretch, 0 if moving.
++		uint64_t still_since_ns;
++		//! When the estimate last ran, so a long still stretch re-estimates periodically.
++		uint64_t last_auto_ns;
++		//! How many times the automatic path has fired, for the GUI and for measuring.
++		uint32_t auto_fire_count;
+ 	} gyro_bias;
+ };
+ 

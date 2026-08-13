@@ -76,17 +76,16 @@ snapshot() {
 		found=1
 	done < <(ps -eo args= 2>/dev/null | grep -o "AppId=[0-9]\+" | cut -d= -f2 | sort -u)
 
-	# The AppId only lives on Steam's `reaper` process. Kill that (or lose it any other way)
-	# and the title keeps running perfectly well while every AppId-based check reports
-	# "nothing running" -- which happened here on 2026-08-12 and produced two contradictory
-	# readings in a row. The .exe path under steamapps/common survives it, so check that too.
-	while read -r game; do
-		[ -z "$game" ] && continue
-		echo "  proton title    ${C_WARN}RUNNING${C_OFF}  $game  ${C_DIM}(no Steam reaper attached)${C_OFF}"
-		found=1
-	done < <(ps -eo args= 2>/dev/null | grep -o "steamapps/common/[^/]*/[^ ]*\.exe" |
-	         cut -d/ -f3 | sort -u)
-
+	# Deliberately NO args-based fallback here. Two attempts at one on 2026-08-12 both
+	# backfired: matching `ps -eo args` for the game path picks up Wine's own service processes
+	# (winedevice.exe and friends), which outlive a killed prefix and reported titles as running
+	# for many minutes after they exited -- and then the "fixed" version matched this script's own
+	# command line and printed fragments of its source as title names.
+	#
+	# The authoritative answer to "is something holding the headset" is the OpenXR client count
+	# above, which comes from the runtime's own log and cannot be confused by leftovers. The AppId
+	# lookup is only there to put a NAME on it, and when Steam's reaper is gone the session line
+	# still tells the truth.
 	[ "$found" = 0 ] && echo "  steam title     ${C_DIM}none${C_OFF}"
 
 	# --- Our own player ----------------------------------------------------------

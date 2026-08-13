@@ -62,6 +62,18 @@ branch; check `git log` there before assuming something past 0016 doesn't exist.
 >
 > `lab-full` HEAD after 0028–0029 is `cfebcd72b`.
 >
+> | 0030 | Four controller-path fixes from live sessions: hands at **floor level** (the controllers had adopted the constellation tracker's own origin, `initial_offset = IDENTITY`, where `u_builder_setup_tracking_origins` gives NONE-type origins y = 1.3 m — they now share the *head's* origin, which is correct once the mosaic has the head's pose; **user-verified**); hands **flying away** (a finite-but-absurd sample at −3.4M, −7.2M, −15.2M metres with 7 matched blobs, which the NaN guard could not catch); **position never reaching the application** (128 placeholder against 1 tracked while the tracker solved fine — the 200 ms freshness gate was shorter than the ~250 ms real sample interval, now `WMR_CONSTELLATION_MAX_AGE_MS`, default 500); and the **IMU-to-device rotation** `P_imu_me` finally applied to controllers as the HMD always did. |
+> | 0031 | **`m_imu_3dof` has always had a gyro-bias estimator that nothing ever ran** — `gyro_biasing()` returns immediately unless `gyro_bias.manually_fire` is set, and the only thing that sets it is a debug-GUI checkbox. So the residual bias integrates forever. Measured, both controllers untouched on a desk, two independent windows within 1%: **left 72 °/min, right 20 °/min**, and **71.7 / 20.0 °/min in a completely different resting orientation** — orientation-independent, which rules out accelerometer misalignment and scale error and leaves plain gyro bias. Gravity correction pulls pitch and roll back but has **no reference for yaw**, which is exactly the axis the wearer kept reporting. `M_IMU_3DOF_USE_GYRO_BIAS_AUTO` fires the existing estimator after a continuous second of stillness. Result, measured frame-independently as the angle *between* the two controllers (immune to any rotation of the reference frame): **18.8 → 8.9 °/min**. |
+>
+> **Why 0031 is a 53% reduction and not a cure**, from the estimator's own log: successive
+> estimates of the same motionless device read 34.5, 63.9 and 47.9 °/min. It averages 300 ms
+> and then *replaces* the bias with that, adopting each noisy estimate wholesale. Smoothing
+> rather than replacing is the next step and is deliberately not in this patch.
+>
+> **What 0031 also settles**: this drift is **not** a SLAM problem. It reproduces in 3dof,
+> where Basalt is not running at all. `docs/23` and `docs/pruebas.jsonl` T162 both attributed
+> the user's roll/yaw drift to long 6DoF sessions; that attribution was wrong.
+>
 > **Still open after 0027, measured and stated as measured**: one controller shows a bistable
 > flip, two clusters **0.189 m** apart, both with ~8 matched blobs and a good fit. The prior
 > cannot break that tie because the orientation it carries is the constellation solve's own —

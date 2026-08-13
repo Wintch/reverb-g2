@@ -1,0 +1,296 @@
+From b7c929c17f3db95bd6ed227f345b4e24c4a178dd Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Wed, 12 Aug 2026 23:38:10 -0300
+Subject: [PATCH 30/31] d/wmr: Put the controllers in the headset's tracking
+ origin, and stop trusting bad samples
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Four things the live sessions found, all in the controller path.
+
+1. HANDS AT FLOOR LEVEL. The controllers adopted the constellation tracker's own tracking
+   origin, whose initial_offset is XRT_POSE_IDENTITY, where u_builder_setup_tracking_origins
+   gives XRT_TRACKING_TYPE_NONE origins y = 1.3 m. Switching to it silently dropped them
+   1.3 m and the head-to-controller offset read a clean -1.59 m. Adopting that origin was
+   right while the camera mosaic had no tracking origin of its own; once the mosaic was given
+   the headset's pose, the solve already comes out in the head's world frame and a second
+   origin just misplaces it. They now share the head's. User-verified: "están acordes a la
+   altura real".
+
+2. HANDS FLYING AWAY. A sample arrived reading (-3432890, -7235085, -15194503) metres, with
+   7 matched blobs -- finite, so the NaN guard never saw it, and it would enter the relation
+   history and therefore the tracker's own prior. Rejected by range now. NOTE, and it is not
+   fixed: the check is against the origin, but a controller is an arm's length from the HEAD,
+   and the head can legitimately be metres from the origin. The threshold is loose for that
+   reason and the right check is head-relative.
+
+3. POSITION NEVER REACHING THE APPLICATION. Counted live in a real game: 128 placeholder
+   against 1 tracked, while the tracker was solving happily at 6-10 matched blobs. The
+   freshness gate was 200 ms and samples actually arrive around 250 ms apart per controller,
+   so it rejected nearly all of them. The wearer sees the hands anchored as if 3DoF, jumping
+   whenever one lands inside the window -- which is exactly what was reported, including that
+   the jump goes to the NEW position, not the initial one. Now WMR_CONSTELLATION_MAX_AGE_MS,
+   default 500. The real fix is more samples: 4/s per controller against 30 Hz cameras.
+
+4. The IMU-to-device rotation (P_imu_me) is now applied to the controllers' fused
+   orientation, as wmr_hmd.c has always done for the headset. The controllers computed it and
+   nothing used it. Measured from this headset's own calibration: left axis
+   (-0.449, +0.778, -0.440) angle 105.3 deg, right (-0.449, -0.782, +0.432) angle 105.5 --
+   same angle, mirrored axes, i.e. two physically mirrored devices. Behind
+   WMR_CONTROLLER_IMU_TO_DEVICE for A/B. HONESTLY: this did NOT visibly fix the "left
+   controller points at me" report, and the cause of that turned out to be gyro drift (see
+   the m_imu_3dof commit). The transform is still a real gap, but it is not that symptom.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ src/xrt/drivers/wmr/wmr_controller_base.c   | 125 ++++++++++++++++++--
+ src/xrt/drivers/wmr/wmr_controller_base.h   |   5 +-
+ src/xrt/drivers/wmr/wmr_hmd.c               |   5 +-
+ src/xrt/targets/common/target_builder_wmr.c |   6 +-
+ 4 files changed, 128 insertions(+), 13 deletions(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
+index 8e06ec291..74337325b 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.c
++++ b/src/xrt/drivers/wmr/wmr_controller_base.c
+@@ -34,6 +34,14 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ 
++//! Apply the factory IMU-to-device rotation to the controller's fused orientation, as the HMD
++//! already does for itself. Set to 0 to compare against the old behaviour. See the use site.
++DEBUG_GET_ONCE_BOOL_OPTION(wmr_controller_imu_to_device, "WMR_CONTROLLER_IMU_TO_DEVICE", true)
++
++//! How stale a constellation sample may be before the controller falls back to the placeholder
++//! pose. See the use site: 200 ms was shorter than the interval samples actually arrive at.
++DEBUG_GET_ONCE_NUM_OPTION(wmr_constellation_max_age_ms, "WMR_CONSTELLATION_MAX_AGE_MS", 500)
++
+ //! Radial thumbstick deadzone, applied by the per-model packet parsers. Off by default.
+ DEBUG_GET_ONCE_FLOAT_OPTION(wmr_stick_deadzone, "WMR_STICK_DEADZONE", 0.0f)
+ #include <string.h>
+@@ -550,7 +558,21 @@ wmr_controller_base_get_tracked_pose(struct xrt_device *xdev,
+ 	// i.e. the ordinary age of the last 30 Hz camera frame. Patch 0016's clock alignment fixed it.
+ 	// The absolute value is kept anyway -- it costs nothing and the failure it guards against is
+ 	// silent.
+-	static const int64_t WMR_CONSTELLATION_MAX_SAMPLE_AGE_NS = 200000000; // 200ms, ~6 frames at 30fps
++	// MEASURED 2026-08-12, and the 200 ms this used to be was simply wrong for this hardware:
++	// samples arrive at roughly 8/s across both controllers, i.e. ~250 ms per device, so the gate
++	// rejected nearly every one of them. Counted live in a real game session: 128 placeholder
++	// against 1 tracked, while the tracker was solving happily at 6-10 matched blobs. The wearer
++	// sees exactly that -- hands anchored as if 3DoF, jumping whenever a sample happens to land
++	// inside the window.
++	//
++	// 500 ms covers the real interval. The cost is honest and worth stating: a hand can now show a
++	// position up to half a second old, which reads as lag. That is still better than snapping to a
++	// fixed placeholder, but the REAL fix is more samples per second, not a wider window -- 4/s per
++	// controller against 30 Hz cameras is the number to attack. Override to measure alternatives.
++	// Not static: in C a static initialiser must be a constant expression, and this one reads an
++	// environment-backed option.
++	const int64_t WMR_CONSTELLATION_MAX_SAMPLE_AGE_NS =
++	    (int64_t)debug_get_num_option_wmr_constellation_max_age_ms() * 1000000;
+ 	int64_t constellation_sample_age_ns = at_timestamp_ns - wcb->constellation.last_timestamp_ns;
+ 	if (constellation_sample_age_ns < 0) {
+ 		constellation_sample_age_ns = -constellation_sample_age_ns;
+@@ -583,6 +605,28 @@ wmr_controller_base_get_tracked_pose(struct xrt_device *xdev,
+ 	// Copy data while holding the lock.
+ 	os_mutex_lock(&wcb->data_lock);
+ 	relation.pose.orientation = wcb->fusion.rot;
++
++	// Convert the IMU-frame orientation the fusion produces into the controller's own frame, the
++	// same conversion wmr_hmd.c:1184 applies to the headset with the same field. The controllers
++	// compute P_imu_me in wmr_controller_base_init and, until this, nothing ever used it.
++	//
++	// It is not a small correction and it is not symmetric. Measured on this G2's own factory
++	// calibration, 2026-08-12:
++	//
++	//   left   axis (-0.449, +0.778, -0.440)  angle 105.3 deg
++	//   right  axis (-0.449, -0.782, +0.432)  angle 105.5 deg
++	//
++	// Same angle, mirrored axes -- the signature of two physically mirrored devices. Both hands
++	// were therefore reporting orientations more than a hundred degrees off, in opposite
++	// directions, which is why the wearer saw the LEFT controller pointing back at them while the
++	// right looked merely odd: only one of the two mirrored errors happens to look plausible.
++	//
++	// Orientation only. The position comes from the constellation solve, which already works in the
++	// device's own frame, so applying the translation part here would double-count it.
++	if (debug_get_bool_option_wmr_controller_imu_to_device()) {
++		struct xrt_quat imu_to_device = wcb->config.sensors.transforms.P_imu_me.orientation;
++		math_quat_rotate(&relation.pose.orientation, &imu_to_device, &relation.pose.orientation);
++	}
+ 	relation.angular_velocity = wcb->last_angular_velocity;
+ 	last_imu_timestamp_ns = wcb->last_imu_timestamp_ns;
+ 	os_mutex_unlock(&wcb->data_lock);
+@@ -720,7 +764,12 @@ wmr_controller_base_init(struct wmr_controller_base *wcb,
+ 	wcb->base.supported.position_tracking = false;
+ 	wcb->base.supported.hand_tracking = false;
+ 
+-	m_imu_3dof_init(&wcb->fusion, M_IMU_3DOF_USE_GRAVITY_DUR_20MS);
++	// GYRO_BIAS_AUTO added 2026-08-12: without it the residual gyro bias is integrated forever and
++	// the controller's orientation simply rotates away -- measured on this hardware, both
++	// controllers lying untouched on a desk, 72 deg/min on the left and 20 deg/min on the right,
++	// reproduced in two independent windows. Gravity correction pulls pitch and roll back but has
++	// nothing to say about yaw, which is why yaw was the axis the wearer noticed.
++	m_imu_3dof_init(&wcb->fusion, M_IMU_3DOF_USE_GRAVITY_DUR_20MS | M_IMU_3DOF_USE_GYRO_BIAS_AUTO);
+ 
+ 	if (os_mutex_init(&wcb->conn_lock) != 0 || os_mutex_init(&wcb->data_lock) != 0) {
+ 		WMR_ERROR(wcb, "WMR Controller: Failed to init mutex!");
+@@ -754,6 +803,31 @@ wmr_controller_base_init(struct wmr_controller_base *wcb,
+ 
+ 	wmr_config_precompute_transforms(&wcb->config.sensors, NULL);
+ 
++	// MEASUREMENT 2026-08-12: P_imu_me converts an IMU-frame orientation into the device's own
++	// frame. The controllers compute it right here and then NOTHING uses it -- the only caller in
++	// the tree is wmr_hmd.c, for the headset. The controllers therefore report their raw IMU
++	// orientation, and because left and right WMR controllers are physically mirrored, that
++	// omission lands differently on each hand. Reported by the wearer: the LEFT controller points
++	// back at them while the right is fine.
++	//
++	// Print it as an axis and an angle before acting on it. If the two hands describe near-identical
++	// rotations, the mirroring is already handled upstream in P_oxr_acc/P_oxr_gyr and this is not the
++	// explanation; if they differ by something close to a reflection, it is.
++	{
++		const struct xrt_quat *q = &wcb->config.sensors.transforms.P_imu_me.orientation;
++		double angle_deg = 2.0 * acos(fmin(1.0, fabs((double)q->w))) * 180.0 / M_PI;
++		double s = sqrt(fmax(0.0, 1.0 - (double)q->w * q->w));
++		double ax = s > 1e-6 ? q->x / s : 0.0;
++		double ay = s > 1e-6 ? q->y / s : 0.0;
++		double az = s > 1e-6 ? q->z / s : 0.0;
++		WMR_INFO(wcb, "P_imu_me (%s): quat=(%.4f, %.4f, %.4f, %.4f) axis=(%.3f, %.3f, %.3f) angle=%.1f deg, pos=(%.4f, %.4f, %.4f) -- COMPUTED BUT NEVER APPLIED to this device",
++		         wcb->base.device_type == XRT_DEVICE_TYPE_LEFT_HAND_CONTROLLER ? "left" : "right",
++		         q->x, q->y, q->z, q->w, ax, ay, az, angle_deg,
++		         wcb->config.sensors.transforms.P_imu_me.position.x,
++		         wcb->config.sensors.transforms.P_imu_me.position.y,
++		         wcb->config.sensors.transforms.P_imu_me.position.z);
++	}
++
+ 	/* Enable the status reports, IMU and control status reports */
+ 	const unsigned char wmr_controller_status_enable_cmd[64] = {0x06, 0x03, 0x01, 0x00, 0x02};
+ 	wmr_controller_send_bytes(wcb, wmr_controller_status_enable_cmd, sizeof(wmr_controller_status_enable_cmd));
+@@ -779,6 +853,25 @@ constellation_sample_store(struct t_constellation_tracker_device *device, struct
+ 	struct wmr_controller_base *wcb =
+ 	    container_of(device, struct wmr_controller_base, constellation.device);
+ 
++	// A controller is on the end of an arm. Anything beyond a generous room away is not a bad
++	// measurement of where it is, it is a failed solve reporting a number -- observed live
++	// 2026-08-12 in a real game session: pos=(-3432890, -7235085, -15194503), i.e. thousands of
++	// kilometres, with 7 matched blobs. Finite, so the check below never sees it, and it would
++	// enter the history and therefore the tracker's own prior exactly like a NaN would.
++	static const float WMR_CONSTELLATION_MAX_RANGE_M = 5.0f;
++	const struct xrt_vec3 *sp = &sample->pose.position;
++	if (fabsf(sp->x) > WMR_CONSTELLATION_MAX_RANGE_M || fabsf(sp->y) > WMR_CONSTELLATION_MAX_RANGE_M ||
++	    fabsf(sp->z) > WMR_CONSTELLATION_MAX_RANGE_M) {
++		wcb->constellation.out_of_range_count++;
++		if (wcb->constellation.out_of_range_count == 1 ||
++		    (wcb->constellation.out_of_range_count % 100) == 0) {
++			WMR_DEBUG(wcb, "constellation sample %.0f m away, dropping it [%llu so far]",
++			          (double)fmaxf(fmaxf(fabsf(sp->x), fabsf(sp->y)), fabsf(sp->z)),
++			          (unsigned long long)wcb->constellation.out_of_range_count);
++		}
++		return;
++	}
++
+ 	// A non-finite sample must never reach the history, because the history is ALSO the tracker's
+ 	// prior (see constellation_tracking_source_get_tracked_pose): one NaN would be fed back into
+ 	// the solver, come out as another NaN, and poison every subsequent sample with no way back.
+@@ -879,7 +972,8 @@ constellation_tracking_source_get_tracked_pose(struct t_constellation_tracker_tr
+ 
+ void
+ wmr_controller_base_add_to_constellation_tracker(struct wmr_controller_base *wcb,
+-                                                 struct t_constellation_tracker *tracker)
++                                                 struct t_constellation_tracker *tracker,
++                                                 struct xrt_tracking_origin *head_origin)
+ {
+ 	if (tracker == NULL || wcb->config.led_count == 0) {
+ 		return;
+@@ -927,12 +1021,25 @@ wmr_controller_base_add_to_constellation_tracker(struct wmr_controller_base *wcb
+ 
+ 	wcb->constellation.tracker = tracker;
+ 
+-	// Adopt the tracker's own tracking origin (XRT_TRACKING_TYPE_CONSTELLATION), same as pssense/PSVR2
+-	// does for the same kind of camera-driven controller tracking. This is what makes the fused
+-	// position in wmr_controller_base_get_tracked_pose meaningful in the space graph instead of
+-	// composing against the generic placeholder origin u_builder_setup_tracking_origins hands out to
+-	// XRT_TRACKING_TYPE_NONE devices -- see that function for the y=1.3 placeholder this replaces.
+-	wcb->base.tracking_origin = t_constellation_tracker_get_tracking_origin(tracker);
++	// Share the HEADSET's tracking origin, not the tracker's own.
++	//
++	// This used to adopt t_constellation_tracker_get_tracking_origin(), copying pssense/PSVR2. That
++	// was right while the camera mosaic had no tracking origin and the solve came out in the
++	// tracker's own static frame. It stopped being right the moment the mosaic was given the
++	// headset's pose as its origin: the solve is now expressed in the HEAD's world frame already,
++	// so putting the controllers in a second origin means the space graph composes them against a
++	// different reference than the head.
++	//
++	// The symptom is specific and was reported live 2026-08-12: hands at FLOOR level. The
++	// constellation origin is created with initial_offset = XRT_POSE_IDENTITY, whereas
++	// u_builder_setup_tracking_origins gives XRT_TRACKING_TYPE_NONE origins y = 1.3 m
++	// (u_builder_helpers.c) -- so switching to it silently dropped the controllers 1.3 m, and the
++	// head-to-controller offset in the pose log was a clean -1.59 m.
++	//
++	// Falls back to the tracker's origin if the caller has no head origin to give, which keeps this
++	// no worse than before rather than leaving tracking_origin NULL.
++	wcb->base.tracking_origin =
++	    head_origin != NULL ? head_origin : t_constellation_tracker_get_tracking_origin(tracker);
+ 	wcb->base.supported.position_tracking = true;
+ 
+ 	u_var_add_gui_header(wcb, NULL, "Constellation tracking (telemetry only)");
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.h b/src/xrt/drivers/wmr/wmr_controller_base.h
+index 444f42048..1fc342785 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.h
++++ b/src/xrt/drivers/wmr/wmr_controller_base.h
+@@ -158,6 +158,8 @@ struct wmr_controller_base
+ 		struct t_constellation_tracker_sample_metrics last_metrics;
+ 		//! Samples received since registration, so "stuck at 0" is visible at a glance in the GUI.
+ 		uint64_t sample_count;
++		//! Samples rejected for placing the controller implausibly far away, see the range check.
++		uint64_t out_of_range_count;
+ 
+ 		/*!
+ 		 * Every constellation sample this controller receives, keyed by the sample's own
+@@ -186,7 +188,8 @@ struct wmr_controller_base
+  */
+ void
+ wmr_controller_base_add_to_constellation_tracker(struct wmr_controller_base *wcb,
+-                                                  struct t_constellation_tracker *tracker);
++                                                  struct t_constellation_tracker *tracker,
++                                                  struct xrt_tracking_origin *head_origin);
+ 
+ bool
+ wmr_controller_base_init(struct wmr_controller_base *wcb,
+diff --git a/src/xrt/drivers/wmr/wmr_hmd.c b/src/xrt/drivers/wmr/wmr_hmd.c
+index 7739fa171..a68c9ce4b 100644
+--- a/src/xrt/drivers/wmr/wmr_hmd.c
++++ b/src/xrt/drivers/wmr/wmr_hmd.c
+@@ -1900,7 +1900,10 @@ wmr_hmd_setup_trackers(struct wmr_hmd *wh, struct xrt_slam_sinks *out_sinks, str
+ 	wmr_hmd_fill_slam_calibration(wh);
+ 
+ 	// Initialize 3DoF tracker
+-	m_imu_3dof_init(&wh->fusion.i3dof, M_IMU_3DOF_USE_GRAVITY_DUR_20MS);
++	// See the same change in wmr_controller_base.c. The headset was not measured drifting the way
++	// the controllers were, but it runs the same fusion off the same kind of sensor, and the
++	// estimate only ever runs while the device is provably still.
++	m_imu_3dof_init(&wh->fusion.i3dof, M_IMU_3DOF_USE_GRAVITY_DUR_20MS | M_IMU_3DOF_USE_GYRO_BIAS_AUTO);
+ 
+ 	// Initialize SLAM tracker
+ 	struct xrt_slam_sinks *slam_sinks = NULL;
+diff --git a/src/xrt/targets/common/target_builder_wmr.c b/src/xrt/targets/common/target_builder_wmr.c
+index 5d1053549..b64c9842c 100644
+--- a/src/xrt/targets/common/target_builder_wmr.c
++++ b/src/xrt/targets/common/target_builder_wmr.c
+@@ -296,11 +296,13 @@ wmr_open_system_impl(struct xrt_builder *xb,
+ 	if (constellation_tracker != NULL) {
+ 		if (left != NULL) {
+ 			wmr_controller_base_add_to_constellation_tracker((struct wmr_controller_base *)left,
+-			                                                 constellation_tracker);
++			                                                 constellation_tracker,
++			                                                 head->tracking_origin);
+ 		}
+ 		if (right != NULL) {
+ 			wmr_controller_base_add_to_constellation_tracker((struct wmr_controller_base *)right,
+-			                                                 constellation_tracker);
++			                                                 constellation_tracker,
++			                                                 head->tracking_origin);
+ 		}
+ 	}
+ 

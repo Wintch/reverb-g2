@@ -270,6 +270,45 @@ if [ "$CONSTELLATION" = 1 ]; then
     echo "    verify with: grep -E 'get_tracked_pose:|position_tracked' $LOG"
 fi
 
+# --- Eye height / floor calibration (2026-08-12, T163) --------------------------------
+# Monado does not measure where the floor is. b_space_overseer_legacy_setup() places STAGE a
+# hardcoded 1.6 m below LOCAL (target_builder_helpers.c: T_stage_local.position.y = 1.6), so
+# every session assumes the wearer's eyes are exactly 1.6 m up at the moment tracking starts.
+# Seated, that is out by roughly half a metre, and the whole world sits at the wrong height.
+#
+# One number fixes it, and only one: the accelerometer already establishes which way is up, so
+# the sole unknown is the distance to the floor. XRT_TRACKING_ORIGIN_OFFSET_Y shifts every
+# tracking origin (u_builder_helpers.c applies it to all of them, whatever their type -- the
+# 1.3/1.6 defaults just above it are only for XRT_TRACKING_TYPE_NONE), hence:
+#
+#     offset = (real eye height) - 1.6
+#
+# What is wanted is EYE height at the moment the origin is anchored, not stature -- eyes sit
+# ~11 cm below the top of the head, and sitting down changes it far more than that. Two values
+# are kept for that reason; VR_POSTURE picks one.
+#
+# Read from a profile file so the unattended boot path never has to ask a question. Values in
+# metres. Env overrides win, for measuring.
+VR_PROFILE="${VR_PROFILE:-$VR/vr-profile.conf}"
+if [ -f "$VR_PROFILE" ]; then
+    # shellcheck disable=SC1090
+    . "$VR_PROFILE"
+fi
+VR_POSTURE="${VR_POSTURE:-standing}"
+case "$VR_POSTURE" in
+    standing) EYE_HEIGHT="${VR_EYE_HEIGHT_M:-${EYE_HEIGHT_STANDING_M:-1.6}}" ;;
+    seated)   EYE_HEIGHT="${VR_EYE_HEIGHT_M:-${EYE_HEIGHT_SEATED_M:-1.6}}" ;;
+    *) echo "invalid VR_POSTURE: '$VR_POSTURE' (standing or seated)" >&2; exit 1 ;;
+esac
+HEIGHT_ENV=()
+ORIGIN_OFFSET_Y="$(awk -v h="$EYE_HEIGHT" 'BEGIN { printf "%.3f", h - 1.6 }')"
+if [ "$ORIGIN_OFFSET_Y" != "0.000" ]; then
+    HEIGHT_ENV=("XRT_TRACKING_ORIGIN_OFFSET_Y=$ORIGIN_OFFSET_Y")
+    echo "  Eye height: ${EYE_HEIGHT} m ($VR_POSTURE) -> origin offset ${ORIGIN_OFFSET_Y} m"
+else
+    echo "  Eye height: 1.6 m assumed (no profile) -- set $VR_PROFILE to calibrate"
+fi
+
 # --- Verbose tracking logging (2026-08-11) ------------------------------------------
 # Requested to confirm real movement/tracking rather than inferring it from a session
 # that merely starts. Every name below was read out of this tree's own
@@ -387,6 +426,7 @@ while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
         XRT_NO_STDIN=1 \
         "${TRACKING_ENV[@]}" \
         "${LOG_ENV[@]}" \
+        "${HEIGHT_ENV[@]}" \
         "${PACING_ENV[@]}" \
         WMR_DISPLAY_INIT_SLEEP_SECONDS=2 \
         setsid stdbuf -oL -eL "$SERVICE" < /dev/null > "$LOG" 2>&1 &
