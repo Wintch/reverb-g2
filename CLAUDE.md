@@ -878,9 +878,19 @@ blocker.
   properly (second arg, default `3dof`) instead of hardcoding `WMR_SLAM=0
   WMR_CAMERAS=0` — it checks `~/vr/basalt/build/libbasalt.so` exists before promising
   6dof and sets `VIT_SYSTEM_LIBRARY_PATH` automatically.
+- **A game that launches with audio in the headset but a FLAT 2D image is almost certainly
+  `openvrpaths.vrpath`'s runtime ORDER, not the headset** (found 2026-08-13, T174).
+  OpenVR takes the **first** entry of `"runtime"` in `~/.config/openvr/openvrpaths.vrpath`.
+  T170's parked SteamVR-native experiment left `.../steamapps/common/SteamVR` ahead of
+  `~/vr/xrizer/target/release`, so every OpenVR title loaded SteamVR's `vrclient`, found no
+  session or lease, and silently fell back to flat rendering — `client_connected` stays at
+  0 in Monado's log while the game looks alive and even routes audio to the headset.
+  Check that file before debugging anything else; xrizer must be first (or alone).
 - **`pgrep -f` matches itself** in environments where the shell carries the pattern in its
   cmdline. Use `pgrep -f "monado[-]service"`. A PID that changes on every check is the
-  tell.
+  tell. **This bites when killing games too**: `kill $(pgrep -f "Aircar")` from this
+  agent's shell killed the shell itself (exit 144, chain aborted) on 2026-08-13 — bracket
+  the pattern (`AirCar[-]Win64`) for game processes as well, not just for monado.
 - **`pkill` is blocked** in the Claude Code environment (exit 144, aborts the chain).
   Use `kill` on PIDs from `pgrep`.
 - **Project-VR's Monado 90Hz patch** (`nominal_frame_interval_ns = 1e9/90`) **is already
@@ -932,6 +942,7 @@ scripts/check-lease.sh      does the Wayland compositor offer the headset's conn
 scripts/xref.py             string xrefs in PE binaries, using only binutils
 scripts/edid-tool.py        decodes the headset's EDID and generates variants (bpc, checksum)
 scripts/jack-in-wayland.sh  brings up the VR pipeline via DRM lease (Wayland; needs GNOME)
+scripts/reseat_audio.py     audible bring-up guide: speaks the census while your hands are on the connector
 scripts/drmprops.c          reads non-desktop/modes straight from the kernel connector
 scripts/capture-hid.sh      captures the companion's HID per mode (usbmon, needs root)
 scripts/analyze-hid.py      diffs HID captures: usbmon (Linux) and tshark TSV (Windows)
