@@ -11,6 +11,14 @@
 # framerate number does not capture it -- this does. Per the user's instruction, every
 # title gets measured, not just the ones that already feel wrong.
 #
+# WHAT THIS TOOL CANNOT SEE, and it bit on 2026-08-13 (T175): it counts frames that MISS
+# THEIR SLOT. It is blind to LATENCY. Turning on pipelined app pacing took Aircar from
+# 12.37% to 0.69-0.94% here -- a clean 13x by this measure -- while the wearer immediately
+# saw a NEW artefact: a ghost/trail whose separation from the real image grows with how
+# fast he turns his head, i.e. the frame was rendered against a pose predicted for a moment
+# that had already passed. Both readings were correct; neither was sufficient. If a change
+# improves this number, ask what it traded away and put the headset on somebody.
+#
 # WHAT THE NUMBERS MEAN. The interesting figure is the MEDIAN lateness. If it lands on one
 # full frame period (11.11 ms at 90 Hz) the frames are not "a bit late", they are missing
 # their slot entirely and being shown one refresh later -- that is the artefact above. A

@@ -382,6 +382,30 @@ if [ "$PACING" = 1 ]; then
     )
 fi
 
+# Pipelined app pacing is now the DEFAULT (2026-08-13, T175), not an opt-in you have to
+# remember. Patch 0042 exists precisely because the serial pacer requires the app's whole
+# cpu+draw+gpu sum to fit before its promised slot, so a title whose serial pipeline
+# exceeds 11.1 ms gets every other slot forever no matter how idle the machine is. It had
+# been measured in T169 and then left unwired, which is how this session ended up
+# reproducing the same fault from scratch: measured on Aircar with the headset held still,
+# serial 12.37% late frames with the median pinned at exactly one full period, against
+# 0.94 / 0.77 / 0.69% over three consecutive windows with this on. Same title, same cable
+# seat, nothing else changed. Same class of miss as Basalt's denser config: the fix
+# existed, was proven, and simply wasn't the default.
+#
+# THE COST IS REAL AND THE USER SEES IT, so it is written here rather than buried: in
+# pipelined mode he reports a ghost/trail whose separation grows with how fast he turns his
+# head -- the signature of latency, not of dropped frames. We traded judder for a stale
+# pose. His verdict was that the 6DoF nonetheless "se siente mucho mejor" and that this is
+# the new starting point, so it ships on. The next target is the pose prediction, not the
+# pacer. And note what this episode proves about the instrument: frame-pacing.sh counts
+# missed slots and is BLIND to latency, so this change reads as a pure 13x win in the tool
+# while the wearer watches a new artefact appear. Never accept that number alone.
+# VR_PIPELINED=0 goes back to the serial pacer.
+if [ "${VR_PIPELINED:-1}" = 1 ]; then
+    PACING_ENV+=(U_PACING_APP_PIPELINED=true)
+fi
+
 echo "Starting Monado (mode $MODE, tracking $TRACKING) via DRM lease... log: $LOG"
 
 # Keep the previous run's log. Truncating on every start destroyed the one log that could
