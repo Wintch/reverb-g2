@@ -1,42 +1,53 @@
 # Context for the 90Hz lab agent
 
-> ## START HERE NEXT SESSION (2026-08-13, ~20:40) — the constellation's bistability has a named fix, and the data for it is already parsed
+> ## START HERE NEXT SESSION (2026-08-13, ~22:05) — both jitters cracked at the source in one night; two wearer verdicts pending and one precisely-scoped open problem
 >
-> **First, the milestone: full 6DoF end to end — headset AND hands — ran in a real game
-> (Propagation VR), playable, the wearer started a match.** Controller positional tracking
-> had been parked since `docs/03`; every earlier session was 6dof head + 3dof hands.
+> **HEAD (T180, `patches/basalt/0002`): the delivered pose's 10-25 mm resting wander was a
+> 0.8-second-old dead-reckoning anchor** — Basalt's `input_img_queue` (capacity 10,
+> blocking push) sat permanently full because the optical flow tops out at ~26 fps against
+> the camera's 30. Not CPU (freeing 3 cores changed nothing), not `vio_enforce_realtime`
+> (drops downstream of the jam, measured no-op). Queue capped at 2 + drop-oldest: anchor
+> age p50 819→**109 ms**, delivered position residual at rest p50 9.8→**0.57 mm**, rotation
+> p99 0.146→0.107°. `SLAM_THREADS` 2→4 lifts pose rate 17→26 Hz idle but the launcher
+> default stays 2 until measured in-game; with 0002, threads buy rate, not freshness.
+> **Pending: the wearer.** Feel check static/moving/in-game, and the threads decision under
+> game load. `scripts/head-jitter.py` is the objective half (read its blind-to notes).
 >
-> **The one open problem in it: the hands jump.** Measured, and the measurement reversed the
-> obvious explanation. With everything physically motionless the constellation *solutions
-> themselves* scatter — 32 mm median / 126 mm p90 on the clean cluster — while each fit
-> reports an excellent 0.15-0.45 px reprojection error. **A fit can be perfectly
-> self-consistent and in the wrong place**: 5-6 blobs matched out of 32 LEDs leaves the pose
-> under-determined. It is not the gap between fixes, and it is not fixable with a quality
-> gate — `wmr_controller_base.c` already documents that (2026-08-12: p99 step 0.41-0.44 m
-> with *healthy* metrics, 8 blobs at 0.06 px, 45 cm off) and today's numbers reproduce it.
-> **Do not write that gate; it is the second time the idea has come up.**
+> **CONTROLLERS (T181, `patches/monado/0047`): the 0046 hypothesis is DEAD — `P_imu_me` is
+> NOT the solve↔IMU bridge in any composition; the 105°≈low-mode match was a coincidence.**
+> The real bridge was IDENTIFIED by motion (user waved the controllers 90 s; Wahba over
+> paired relative rotations, `scripts/constellation-frame-fit.py`): **Rx180 — the WMR y/z
+> axes flip `wmr_hmd.c` already corrects — 178.9°/178.8° on left/right**, identical on both
+> hands as a convention must be. The gravity gate built on it
+> (`WMR_CONSTELLATION_GRAVITY_GATE_DEG`, default 14°; true lobes p90 4.3/6.5° vs flip
+> ghosts p50 21/p90 89°) drops wrong-lobe samples before they reach the relation history,
+> so the tracker's prior stays on the true lobe. Validated live: every sampled drop a
+> 105-128° flip. **The orientation-flip class of hand-jumps (the 0.41-0.44 m
+> healthy-metrics one) is dead. What survives, measured: near-pure-yaw mis-assignments** —
+> gravity-blind by construction — still bounce position between stable clusters 20-30 cm
+> apart (3 on the right hand, all 0.07-0.08 px). Next lever: feed the prior into the
+> solver's assignment search or disambiguate pattern phase.
+> `scripts/constellation-gate-validate.py` is the before/after instrument. **In-game
+> verdict pending: Propagation VR with the wearer** (Aircar can't validate hands).
 >
-> **What to do instead, and the data is in hand.** The same comment says an IMU-backed prior
-> is "NOT a drop-in" because the solve and the IMU fusion live in different frames, and that
-> the fixed transform must come from the factory calibration first. **It is already parsed**:
-> `wmr_controller_config` carries the LED model and the inertial sensors from one
-> `CalibrationInformation` block, so `sensors.accel.pose` *is* the bridge. Patch `0046` logs
-> it — real G2 controllers read **105.3° / 85 mm** and **105.5° / 83 mm**, mirror images,
-> nowhere near identity. **And 105.3° is the low mode of the 104-161° constellation-vs-IMU
-> disagreement measured earlier, within a degree.** So: apply the transform, and the correct
-> pose's gravity-axis disagreement should collapse toward zero while the wrong one keeps
-> ~161° — that difference is the discriminator the tie has always needed.
+> **Hardware truths that cost time tonight, don't relearn them**: the G2 controllers
+> **power OFF after ~15 min motionless** (bit three times; LEDs-off signature = garbage
+> near-origin solves at 1.4-1.7 px fitting ambient IR blobs — the gate kills those too);
+> **re-attach of an already-registered controller after mid-session power-on WORKS, no
+> service restart** (twice observed; T043's no-hot-add is about unregistered devices at
+> startup); the USB2 branch flapped 3/5↔5/5 all night with a 55k-line companion
+> `os_hid_read -1` storm (docs/22 contact — controller tunnel rides the USB3 HoloLens
+> device per docs/03, so tracking survives it, but panel control/audio don't). Constellation
+> at good geometry solves at ~140/s and eats CPU (SLAM sank to 9.9 Hz); a solve-budget
+> throttle is a named future knob — with basalt 0002 the anchor stays fresh regardless.
+> `WMR_LOG=debug` is a firehose (per-blob per-frame); the constellation-vs-IMU telemetry is
+> INFO now, with device name and raw quaternions — that log line is what made the offline
+> identification possible.
 >
-> Also settled the same day and worth not re-deriving: **`SLAM_FILTER_BEFORE_PREDICT` (patch
-> 0044) is the default** and killed the rotational ghost (delivered pose went from +42.5 ms
-> behind raw SLAM to 5 ms ahead); the orientation cutoff is 20 Hz and is **only safe with
-> that reorder**. **Pipelined pacing is the default too.** The app's real frame rate is
-> **29 fps** and no tool we had could see it — `frame-pacing.sh` counts compositor slots and
-> reported a flawless 0.00% while the wearer looked at 30; count `"Delivered frame"` lines
-> with `U_PACING_APP_LOG=debug` instead. `XRT_COMPOSITOR_SCALE_PERCENTAGE` **defaults to 140**
-> (1.96x the pixels): 100 halves GPU power with no reported visual loss. Read
-> **`docs/32-measurement-toolkit.md`** before quoting any measurement — it lists what each
-> tool is *blind* to, which bit three times in one day.
+> **State**: `~/vr/monado` at 63b5317c8 (=0001-0047), `~/vr/basalt` at 76d71a8 (=0001-0002),
+> both binaries current and running. Repo committed at session close (see git log; push not
+> done). Earlier-today context (filter reorder, 20 Hz cutoff, pacing, scale 100, docs/32
+> discipline) unchanged and still true.
 
 > ## NEW MILESTONE (2026-08-12, ~11:50) — 6DoF SLAM went from "runs away to kilometres" to playable in a real game. Five patches, two measured dead ends, one self-inflicted cost. Read `docs/pruebas.jsonl` T162.
 >

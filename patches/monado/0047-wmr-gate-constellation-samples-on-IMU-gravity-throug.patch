@@ -1,0 +1,191 @@
+From 63b5317c87394bb93f6ba5c3df595d5727245ce5 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Thu, 13 Aug 2026 21:49:14 -0300
+Subject: [PATCH] wmr: gate constellation samples on IMU gravity through the
+ identified Rx180 frame bridge
+
+The constellation solve is bistable: with 5-6 blobs matched out of 32 LEDs,
+several blob-to-LED assignments reproject equally well, so wrong poses arrive
+with healthy metrics (measured twice: 8 blobs at 0.06 px, 45 cm from truth) and
+no threshold on the tracker's own numbers can reject them. The IMU is the
+outside information that can.
+
+The frame bridge between the solve and the fusion was IDENTIFIED, not assumed
+(2026-08-13, T181). The factory accel.pose (P_imu_me, 105.3/105.5 deg mirrored)
+measurably does NOT bridge the two orientations in any composition tried; what
+does is a rotation of 178.8/178.9 deg about X on right/left respectively -- the
+WMR y/z axes-swap convention, the same fix wmr_hmd.c applies -- found by waving
+both controllers and solving Wahba over paired relative rotations (the same
+physical rotation seen by the solve stream and the fusion stream in their own
+body frames; rotation-angle agreement p50 0.4-0.5 deg validates the rigid-body
+model).
+
+The gate: world-down in the solve's body frame vs world-down in the fusion's
+body frame through Rx180 must agree within WMR_CONSTELLATION_GRAVITY_GATE_DEG
+(default 14, 0 disables). Static two-controller validation: true-lobe solves
+read p90 4.3/6.5 deg, orientation-flipped ghosts p50 21 / p90 89 deg; live with
+the gate on, every sampled drop was a 105-128 deg flip and every accepted
+sample was under 7 deg.
+
+What this does NOT fix, measured the same night: assignments differing by a
+near-pure yaw keep gravity intact by construction and still bounce the position
+between stable clusters 20-30 cm apart (3 such clusters on the right controller,
+all at 0.07-0.08 px). That residual needs the position/orientation prior fed
+harder into the solver's assignment search, or pattern-phase disambiguation.
+
+Also: the constellation-vs-IMU telemetry line moved from DEBUG to INFO (reading
+it must not require WMR_LOG=debug, whose per-blob spam is its own hazard) and
+now logs the device name plus both raw quaternions, which is what made the
+offline identification above possible.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/xrt/drivers/wmr/wmr_controller_base.c | 104 +++++++++++++++++++++-
+ src/xrt/drivers/wmr/wmr_controller_base.h |   2 +
+ 2 files changed, 104 insertions(+), 2 deletions(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
+index b2d0fbec7..6f8faa903 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.c
++++ b/src/xrt/drivers/wmr/wmr_controller_base.c
+@@ -51,6 +51,7 @@ DEBUG_GET_ONCE_BOOL_OPTION(wmr_controller_imu_to_device, "WMR_CONTROLLER_IMU_TO_
+ //! How stale a constellation sample may be before the controller falls back to the placeholder
+ //! pose. See the use site: 200 ms was shorter than the interval samples actually arrive at.
+ DEBUG_GET_ONCE_NUM_OPTION(wmr_constellation_max_age_ms, "WMR_CONSTELLATION_MAX_AGE_MS", 500)
++DEBUG_GET_ONCE_FLOAT_OPTION(wmr_constellation_gravity_gate_deg, "WMR_CONSTELLATION_GRAVITY_GATE_DEG", 14.0f)
+ 
+ //! Radial thumbstick deadzone, applied by the per-model packet parsers. Off by default.
+ DEBUG_GET_ONCE_FLOAT_OPTION(wmr_stick_deadzone, "WMR_STICK_DEADZONE", 0.0f)
+@@ -921,6 +922,72 @@ constellation_sample_store(struct t_constellation_tracker_device *device, struct
+ 		return;
+ 	}
+ 
++	/*
++	 * IMU gravity gate -- the "outside information" the 2026-08-12 comment below asks for.
++	 *
++	 * The solve is bistable: with 5-6 blobs matched out of 32 LEDs several blob-to-LED
++	 * assignments reproject equally well, so a wrong-lobe pose arrives with HEALTHY metrics
++	 * (measured twice: 8 blobs at 0.06 px, 45 cm from truth) and no threshold on the
++	 * tracker's own numbers can reject it. The IMU can: gravity's direction in the device's
++	 * body frame is known from the fusion independently of the solve.
++	 *
++	 * The frame bridge was IDENTIFIED, not assumed (2026-08-13, T181): waving both
++	 * controllers and solving Wahba on paired relative rotations (solve stream vs fusion
++	 * stream sees the same physical rotation in two body frames) gives a rotation of 178.8
++	 * and 178.9 degrees about X for right and left respectively -- the WMR y/z axes flip
++	 * (the same "Correct swapped axes" convention wmr_hmd.c applies), identical on both
++	 * hands, NOT the mirrored 105-degree factory accel.pose (P_imu_me), which measurably
++	 * does not bridge these two frames in any composition tried.
++	 *
++	 * Validated on a 5-minute static two-controller capture: through Rx180 the world-down
++	 * directions agree to p90 4.3/6.5 deg (left/right) on true-lobe solves, while
++	 * wrong-lobe solves read p50 21 / p90 89 deg. The 14-degree default sits at twice the
++	 * true-lobe p90 and under the ghost p50. A ghost differing by a pure yaw slips through
++	 * here by construction -- gravity says nothing about yaw -- so this gate kills the
++	 * orientation FLIPS, and position continuity (the history prior) handles the rest.
++	 *
++	 * Samples are gated only while IMU data is actually flowing; before the first IMU
++	 * packet the fusion's orientation is meaningless and would reject everything,
++	 * preventing the initial lock. WMR_CONSTELLATION_GRAVITY_GATE_DEG=0 disables.
++	 */
++	float gravity_gate_deg = debug_get_float_option_wmr_constellation_gravity_gate_deg();
++	if (gravity_gate_deg > 0.0f) {
++		struct xrt_quat imu_rot;
++		int64_t imu_ts;
++		os_mutex_lock(&wcb->data_lock);
++		imu_rot = wcb->fusion.rot;
++		imu_ts = wcb->last_imu_timestamp_ns;
++		os_mutex_unlock(&wcb->data_lock);
++
++		if (imu_ts != 0) {
++			struct xrt_quat solve_inv, imu_inv;
++			math_quat_invert(&sample->pose.orientation, &solve_inv);
++			math_quat_invert(&imu_rot, &imu_inv);
++			struct xrt_vec3 down = {0.f, -1.f, 0.f};
++			struct xrt_vec3 down_led, down_imu;
++			math_quat_rotate_vec3(&solve_inv, &down, &down_led);
++			math_quat_rotate_vec3(&imu_inv, &down, &down_imu);
++			// Rx180, the identified LED-model <-> IMU-fusion frame bridge.
++			down_imu.y = -down_imu.y;
++			down_imu.z = -down_imu.z;
++			float dot = down_led.x * down_imu.x + down_led.y * down_imu.y + down_led.z * down_imu.z;
++			float mismatch_deg = (float)(acos(fmax(-1.f, fmin(1.f, dot))) * 180.0 / M_PI);
++			if (mismatch_deg > gravity_gate_deg) {
++				wcb->constellation.gravity_gate_drop_count++;
++				if (wcb->constellation.gravity_gate_drop_count == 1 ||
++				    (wcb->constellation.gravity_gate_drop_count % 50) == 0) {
++					WMR_INFO(wcb,
++					         "gravity gate: dropped wrong-lobe sample, %.1f deg > %.1f "
++					         "(pos was %.3f,%.3f,%.3f; %llu dropped so far)",
++					         mismatch_deg, gravity_gate_deg, sample->pose.position.x,
++					         sample->pose.position.y, sample->pose.position.z,
++					         (unsigned long long)wcb->constellation.gravity_gate_drop_count);
++				}
++				return;
++			}
++		}
++	}
++
+ 	// Position only: the constellation solve's orientation is not used for anything (the IMU's is
+ 	// better), but the history needs both bits set or every reader treats the entry as invalid.
+ 	// The orientation stored here is therefore the solve's, and deliberately never read back out
+@@ -968,8 +1035,41 @@ constellation_sample_store(struct t_constellation_tracker_device *device, struct
+ 		float dot = down_imu.x * down_solve.x + down_imu.y * down_solve.y + down_imu.z * down_solve.z;
+ 		float gravity_deg = (float)(acos(fmax(-1.f, fmin(1.f, dot))) * 180.0 / M_PI);
+ 
+-		WMR_DEBUG(wcb, "constellation vs IMU: full=%.1f deg gravity_axis=%.1f deg", angle_deg,
+-		          gravity_deg);
++		// Same comparison with the factory calibration's IMU-to-device transform applied to
++		// the fusion's orientation (the same P_imu_me product get_tracked_pose applies). The
++		// measurement above found the raw disagreement is bimodal at 104-161 deg and the
++		// transform's own angle is 105 deg on both hands (mirrored axes) -- so if the LED
++		// model and the IMU really are one rigid body separated by P_imu_me, the CORRECT
++		// constellation solves should collapse toward 0 deg here while the wrong lobe of the
++		// bistability keeps a large angle. That difference is the outside information the
++		// solver's tie needs; this log line is the go/no-go measurement for feeding it in.
++		struct xrt_quat imu_rot_dev;
++		math_quat_rotate(&imu_rot, &wcb->config.sensors.transforms.P_imu_me.orientation, &imu_rot_dev);
++		struct xrt_vec3 down_imu_dev;
++		math_quat_rotate_vec3(&imu_rot_dev, &down, &down_imu_dev);
++		float dot_dev =
++		    down_imu_dev.x * down_solve.x + down_imu_dev.y * down_solve.y + down_imu_dev.z * down_solve.z;
++		float gravity_dev_deg = (float)(acos(fmax(-1.f, fmin(1.f, dot_dev))) * 180.0 / M_PI);
++
++		// INFO, not DEBUG: reading this line must not require WMR_LOG=debug, because that
++		// also turns on the blobwatch's per-blob per-frame spam, and the one session run
++		// that way (2026-08-13, also with a dead companion and 4 SLAM threads -- not an
++		// isolated A/B) had the solve rate collapse to ~0.1/s vs T179's ~3.4/s. This line
++		// is already throttled to the %15 cadence (~2/s), so INFO costs nothing.
++		// Raw quaternions included because the 2026-08-13 angle-only capture could not
++		// settle WHICH composition of P_imu_me relates the two frames: the left hand's raw
++		// gravity disagreement was already low (20 deg) and applying fusion*P_imu_me made
++		// it WORSE (65 deg), the right's went 140 -> ~110 -- mirrored transforms react
++		// differently to a wrong composition order, which is exactly what that pattern
++		// suggests. With q_solve and q_imu logged per sample, the constant rotation per
++		// hand/lobe is fit offline and compared against P_imu_me and its inverse on both
++		// sides; the tightness of that fit is also the achievable gate width.
++		WMR_INFO(wcb,
++		         "constellation vs IMU [%s]: full=%.1f deg gravity_axis=%.1f deg via_P_imu_me=%.1f deg "
++		         "q_solve=(%.4f,%.4f,%.4f,%.4f) q_imu=(%.4f,%.4f,%.4f,%.4f)",
++		         wcb->base.str, angle_deg, gravity_deg, gravity_dev_deg, sample->pose.orientation.x,
++		         sample->pose.orientation.y, sample->pose.orientation.z, sample->pose.orientation.w,
++		         imu_rot.x, imu_rot.y, imu_rot.z, imu_rot.w);
+ 	}
+ 
+ 	// Throttled to ~2/s at 30fps so this is readable in the log without needing the debug GUI.
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.h b/src/xrt/drivers/wmr/wmr_controller_base.h
+index 1fc342785..c9615760e 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.h
++++ b/src/xrt/drivers/wmr/wmr_controller_base.h
+@@ -160,6 +160,8 @@ struct wmr_controller_base
+ 		uint64_t sample_count;
+ 		//! Samples rejected for placing the controller implausibly far away, see the range check.
+ 		uint64_t out_of_range_count;
++		//! Samples rejected by the IMU gravity gate (wrong lobe of the solve's bistability).
++		uint64_t gravity_gate_drop_count;
+ 
+ 		/*!
+ 		 * Every constellation sample this controller receives, keyed by the sample's own
+-- 
+2.47.3
+

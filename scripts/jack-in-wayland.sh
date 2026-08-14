@@ -232,6 +232,12 @@ if [ "$TRACKING" = "6dof" ]; then
     # when changing it -- scripts/frame-pacing.sh for pacing, the tracking.csv pose rate and
     # inter-pose rotation for tracking -- with three windows each; per-window pacing variance
     # here is wide (3.44% and 7.22% back to back in an identical configuration).
+    # 2026-08-13 (T180), idle rig, constellation off: SLAM pose throughput 17.3 Hz at 2
+    # threads, 25.9 Hz at 4 (the camera gives 30). The default stays 2 until the in-game
+    # side is re-measured: under game load the CPU<->clock<->tracking feedback loop bites
+    # back. Since basalt 0002 bounded the input queue, throughput no longer sets the
+    # dead-reckoning anchor age -- pose freshness is ~110 ms at either thread count; more
+    # threads now buy pose RATE, not staleness.
     SLAM_THREADS="${SLAM_THREADS:-2}"
 
     G2_SLAM_JSON="$(dirname "${BASH_SOURCE[0]}")/basalt-g2-config.json"
