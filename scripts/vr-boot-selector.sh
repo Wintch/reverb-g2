@@ -138,12 +138,33 @@ case "$CHOICE" in
         BOOT_LOG=/var/log/vr-boot-selector.log
         : >> "$BOOT_LOG" 2>/dev/null || BOOT_LOG=/tmp/vr-boot-selector.log
         { echo; echo "=== $(date -Is) power-on.py --pre-login ==="; } >> "$BOOT_LOG" 2>/dev/null
+        # --foreground is load-bearing, not cosmetic (found live 2026-08-15, this
+        # exact boot: T182). Without it, `timeout` puts power-on.py in a NEW
+        # process group that is NOT the terminal's foreground group (confirmed:
+        # `sh -c "timeout ..."` here is dash, which forks rather than exec-
+        # replacing itself, so `timeout` lands on its own PID and self-assigns
+        # setpgid(0,0) -- a real, consequential group split, not a no-op). The
+        # instant power-on.py's own interactive wait (wait_for_reseat) tries to
+        # read stdin -- ANY keypress, [Enter] or [s]+[Enter] alike -- the kernel
+        # sends it SIGTTIN for reading from a background process group, whose
+        # default action is STOP. Not paused: stopped for good, in ps state 'T',
+        # not scheduled at all, so neither its own 90s/300s wait_for_reseat clock
+        # nor the outer 1200s `timeout` ceiling can save it -- a signal sent to a
+        # stopped process stays pending, unacted-on, until something SIGCONTs it,
+        # which nothing here ever does. This reproduced 1:1 in a synthetic pty
+        # harness (scratchpad) matching this exact process tree, confirmed against
+        # the live stuck session from this same boot: `timeout --foreground` keeps
+        # power-on.py in the terminal's foreground group and the read just works.
+        # This was very likely also the real cause behind T172's "ya no pude
+        # apretar enter para volver a reintentar" -- the WAIT_HUMAN_S rearm logic
+        # added there never actually got to run, because the very first Enter
+        # already froze the process before reaching it.
         if command -v script >/dev/null 2>&1; then
             script -q -e -a "$BOOT_LOG" \
-                -c "timeout 1200 python3 -u '$HERE/power-on.py' --pre-login 1 3dof"
+                -c "timeout --foreground 1200 python3 -u '$HERE/power-on.py' --pre-login 1 3dof"
             rc=$?
         else
-            timeout 1200 python3 -u "$HERE/power-on.py" --pre-login 1 3dof
+            timeout --foreground 1200 python3 -u "$HERE/power-on.py" --pre-login 1 3dof
             rc=$?
         fi
         echo

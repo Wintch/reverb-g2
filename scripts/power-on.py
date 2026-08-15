@@ -279,7 +279,11 @@ def wait_for_reseat(recheck, status_line):
                 return "fixed"
         return "giveup"
     print()
-    warn("Esperando que reconectes -- [Enter] re-chequear ya | [s]+[Enter] seguir SIN VR (escritorio 2D)")
+    warn("Esperando que reconectes. Dos teclas, cada una seguida de Enter (no al mismo tiempo):")
+    dim(f"  Enter solo         -> re-chequeo ya mismo")
+    dim(f"  s, después Enter   -> DEJO DE ESPERAR ya y sigo SIN VR, escritorio 2D normal")
+    dim(f"Si no tocás nada: espero {WAIT_NO_HUMAN_S}s y paso igual al escritorio 2D, pero como falla")
+    dim("(para que quede registrado y lo reintentes cuando quieras -- ver docs/22).")
     dim("Cada Enter reinicia el reloj de espera. Mientras tanto silencio los mensajes del kernel")
     dim("en esta consola (siguen yendo al journal) para que no te tapen estas instrucciones.")
     console_quiet(True)
