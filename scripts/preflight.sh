@@ -30,7 +30,8 @@ else
     echo "  NOT READY: only $FOUND/5 headset devices."
     lsusb | grep -E "03f0:0580|045e:0659|04b4:650[46]|0bda:4c15"
     echo "  -> Check the USB port/cable (docs/00, docs/22). Don't continue until this is 5/5."
-    OVERALL_READY=0
+    echo "  -> USB gate failed; skipping controller HID and DP checks."
+    exit 1
 fi
 
 echo
