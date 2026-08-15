@@ -63,6 +63,40 @@ The offline helper committed in this repository is
 axis from `CALIB` quaternion samples; it deliberately does not apply a matrix
 automatically.
 
+## Normal pose and repeatable axis test
+
+Future captures use this reference pose before any rotation:
+
+- hold the grip as a pistol, with the trigger toward the index finger;
+- keep the controller's pointing direction straight **forward**, away from the
+  wearer (`-Z` in the OpenXR convention);
+- keep the top of the controller and ring toward **up** (`+Y`);
+- keep the reference marker/joystick side toward the hand's **outside**: right
+  for the right controller and left for the left controller. In a global room
+  frame this is `+X` for the right hand and `-X` for the left hand;
+- hold this pose still for three seconds, with both `pos_tracked` and
+  `ori_tracked` set.
+
+This makes the intended normal pose explicit: forward, up, and outward are
+known independently for each mirrored controller. The marker side is a useful
+physical check; it is not a replacement for the coordinate labels above.
+
+From that pose, capture each axis separately and return to the same pose after
+each turn:
+
+1. **Roll:** one full turn around the forward/pointing axis. The pointing
+   direction must stay fixed.
+2. **Pitch:** one full turn around the outward side axis. The pointer moves
+   up/down, without changing its left/right direction.
+3. **Yaw:** one full turn around the up axis. The pointer moves left/right,
+   without changing its height.
+
+Each capture starts and ends with three seconds still. The other controller is
+off or motionless, the tested controller stays awake, and the hand must not
+translate. A sample is rejected if position tracking is absent or the headset
+preflight is not `5/5`. This protocol separates a static frame offset from an
+axis permutation and makes the two mirrored hand conventions comparable.
+
 ## Reproduction rules
 
 1. Run `./scripts/preflight.sh`.
