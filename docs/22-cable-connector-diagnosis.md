@@ -28,6 +28,7 @@ index below; the full sections underneath are where the evidence and the reasoni
 | Windows: SteamVR "Headset not detected (**108**)", but the headset's audio device and companion do show up in Windows | Same seat lottery seen from Windows: the SuperSpeed branch never enumerated, and WMR/Oasis requires it | Same ladder as the row below — aim for all 5 devices in Device Manager, not "the headset appears" | `docs/31`, "The error index" |
 | Windows: SteamVR "unexpected problem (**422**)", intermittent, unaffected by reseating | Not a cable fault at all — SteamVR started and the driver failed under it (safe-mode-disabled add-on, stale unlock after a GPU/Windows change, beta branch) | Re-enable the `oasis` add-on, re-run the unlock, leave the SteamVR beta | `docs/31`, "The error index" |
 | Exactly ONE of the two USB branches enumerates per seating (SS-only or USB2-only, never both), stable at rest, changes only on reseat; "headset not detected" on Windows too | Marginal seat of the C-plug/adapter engaging one pin subgroup per insertion — all conductor groups healthy (T171, 2026-08-13) | Rear (CPU) USB3 port, firm and straight; then **rotate the C plug 180° inside the adapter without changing port**; then the other rear port; then visor-end. Success = 5/5 | "The seat lottery (T171)" |
+| Tracking cameras (HoloLens Sensors) enumerate but at 480M under the USB2 hub instead of 5000M under the USB3 hub; Monado logs no error, but the debug GUI's camera panels are solid pink and `img_xfer_cb` logs "Invalid frame magic" for every frame | Same visor-end marginal contact, this time degrading the SuperSpeed branch enough to corrupt (not drop) the camera transfer's own header bytes — Monado never sees an error because the corruption happens below its own checks | Reseat visor-end connector; verify with `lsusb -t` (HoloLens Sensors back to 5000M) before trusting any tracking data | "The silent 100% camera-frame-loss signature (2026-08-15)" |
 
 ## The measured anatomy
 
@@ -696,3 +697,58 @@ probability order (`reseat_instructions()`), and waits interactively for the fix
 of dead-ending — with `[s]` to skip VR and continue to the plain 2D desktop. Camera
 negotiated speed (step 3) got the same treatment, since "cameras enumerate at 480M through
 the hub's USB2 face" is exactly what a missing-SS seat looks like.
+
+## The silent 100% camera-frame-loss signature (2026-08-15, everyday system)
+
+**What this section adds that the seat-lottery section above doesn't**: that section
+diagnoses the missing-SS-branch *enumeration* (link speed, device count). This one is about
+what happens to the camera **image data itself** once that degraded branch is carrying
+traffic anyway — and specifically that Monado's own logs give **zero indication anything is
+wrong** at that layer, unlike every other signature in this doc's index.
+
+**Context**: rebuilding and testing the lab's newest 6DoF work (`lab-full`, patches through
+0048, see `patches/monado/README.md`) on the everyday system for the first time. Two
+unrelated things happened in sequence and must not be conflated: first, the 12V brick's own
+physical power switch was off (the exact false alarm from "Reseating mid-session" /
+T046-family entries above — fixed by flipping the switch, not a re-plug); once power was
+back, `jack-in.sh` reached a real "Jacked in - compositor is presenting" and `hello_xr`
+reached `XR_SESSION_STATE_FOCUSED` with `PositionTracking=True` — so DP/panel recovered
+completely. **The camera branch did not.**
+
+**Measured signature**: `lsusb -t` showed the HoloLens Sensors (`045e:0659`) at 480M under
+the USB2 hub (`04b4:6506`) instead of 5000M under the USB3 hub (`04b4:6504`) — bus 4 (USB3
+root) had zero children. With `WMR_CONSTELLATION_CONTROLLERS=1` and
+`CONSTELLATION_TRACKER_LOG=trace` set, and the user actively moving both controllers for
+~20-30s: **236 out of 236 camera frames logged `WARN [img_xfer_cb] Invalid frame magic (got
+<garbage>, expected 2b6f6c44). Dropping`** — a 100% loss rate, not intermittent, starting
+from the very first frame after `wmr_camera_start` and continuing for the whole sample
+window with no exceptions. The "got" values are garbage nibble-repeat patterns (`04040404`,
+`a0a0a0a`, `9090909`...), consistent with the marginal SuperSpeed contact corrupting the
+bulk transfer's own header bytes rather than failing the transfer outright. Zero blob
+observations ever reached the constellation tracker; the debug GUI's camera panels showed
+solid pink (an uninitialized texture that no valid frame ever wrote to, not a rendering
+bug).
+
+**Why this one is dangerous, more than the others in this doc**: `wmr_camera_start` logs
+cleanly, the framebuffer size logged (`2560 x 480 - 1233408 transfer size`) is the normal
+value, and `send_calibration` succeeds for all 4 cameras — every log line Monado itself
+produces at startup says the camera pipeline is healthy. The corruption happens at a layer
+below anything Monado checks (the USB transfer's own magic-number header), so **nothing
+in a normal launch log flags this** — you only see it by explicitly grepping for `"Invalid
+frame magic"`, which nobody does routinely. A session run this way would look, from the
+outside, like "6DoF just isn't tracking" or "constellation gate is too strict" — a plausible
+but wrong software diagnosis for what is actually 100% physical-layer data loss.
+
+**Fast diagnostic, added to `jack-in.sh` on the everyday system the same day** (not yet
+ported to `jack-in-wayland.sh`/`power-on.py` on the lab side — worth doing, since the
+mechanism is identical): a couple seconds after "Jacked in", grep the log for
+`"Invalid frame magic"` and warn loudly if the count is more than a handful, naming the
+`lsusb -t` check and pointing at this section. `grep -c "Invalid frame magic" <log>` against
+"is this a small number (transient) or does it never stop (this fault)" is the fast manual
+check if scripted detection isn't available.
+
+**Not yet fixed this session** — the visor-end reseat (this doc's own established fix) is
+the next step, queued but not done as of this section being written. This entry exists so
+whoever does the reseat next has the exact before-state to compare against
+(`lsusb -t` speed + a repeat of this same trace-log test) rather than just "it's better now"
+by feel.
