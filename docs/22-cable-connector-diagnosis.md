@@ -29,6 +29,7 @@ index below; the full sections underneath are where the evidence and the reasoni
 | Windows: SteamVR "unexpected problem (**422**)", intermittent, unaffected by reseating | Not a cable fault at all — SteamVR started and the driver failed under it (safe-mode-disabled add-on, stale unlock after a GPU/Windows change, beta branch) | Re-enable the `oasis` add-on, re-run the unlock, leave the SteamVR beta | `docs/31`, "The error index" |
 | Exactly ONE of the two USB branches enumerates per seating (SS-only or USB2-only, never both), stable at rest, changes only on reseat; "headset not detected" on Windows too | Marginal seat of the C-plug/adapter engaging one pin subgroup per insertion — all conductor groups healthy (T171, 2026-08-13) | Rear (CPU) USB3 port, firm and straight; then **rotate the C plug 180° inside the adapter without changing port**; then the other rear port; then visor-end. Success = 5/5 | "The seat lottery (T171)" |
 | Tracking cameras (HoloLens Sensors) enumerate but at 480M under the USB2 hub instead of 5000M under the USB3 hub; Monado logs no error, but the debug GUI's camera panels are solid pink and `img_xfer_cb` logs "Invalid frame magic" for every frame | Same visor-end marginal contact, this time degrading the SuperSpeed branch enough to corrupt (not drop) the camera transfer's own header bytes — Monado never sees an error because the corruption happens below its own checks | Reseat visor-end connector; verify with `lsusb -t` (HoloLens Sensors back to 5000M) before trusting any tracking data | "The silent 100% camera-frame-loss signature (2026-08-15)" |
+| `wmr_read_config_part` fails ("Failed to issue command 0b..."), HMD device creation fails outright, appearing AFTER camera corruption was already seen in the same session and after repeated relaunches | Same marginal contact, escalated further by repeated panel-activation power cycling while chasing the camera issue — **do not keep retrying** | STOP relaunching; reseat visor-end connector before any further attempt | "Retry escalates the fault — a stop condition, not just another symptom (2026-08-15)" |
 
 ## The measured anatomy
 
@@ -752,3 +753,49 @@ the next step, queued but not done as of this section being written. This entry 
 whoever does the reseat next has the exact before-state to compare against
 (`lsusb -t` speed + a repeat of this same trace-log test) rather than just "it's better now"
 by feel.
+
+## Retry escalates the fault — a stop condition, not just another symptom (2026-08-15)
+
+**What happened, right after the section above.** With camera corruption already confirmed,
+the everyday system relaunched `jack-in.sh` three more times in a row chasing two different
+goals: a clean visual test, then the wearer's explicit request to physically *feel* what
+degraded tracking is like in-headset (a legitimate goal on its own — this doc exists partly
+to build that kind of hands-on fault recognition — but reached by too many activation cycles
+in a row). **All three failed identically, before even reaching the display stage**:
+`ERROR [wmr_read_config_part] Failed to issue command 0b: 08 19 00` → `Failed to load headset
+configuration!` → `XRT_ERROR_DEVICE_CREATION_FAILED`. This is a different, *earlier* failure
+than the camera corruption — the companion's own HID config-read channel, which had answered
+fine in that same session's earlier successful launches, stopped responding at all by the
+third retry.
+
+**The mechanism is already documented above** (see "Recurrence, same night (T044, T043)"):
+panel activation's power transition is specifically what knocks this marginal contact
+looser. Every relaunch attempt sends that same activation sequence. Chasing a fix (or, here,
+chasing a demonstration) by relaunching repeatedly is running the one action most likely to
+make the contact worse, not better — and it did: a session that started with a healthy panel
+and only-the-cameras corrupted ended with the whole HMD failing to construct.
+
+**New standing rule, for either machine (same physical cable/connector — see
+[[reference-vr-lab-topology|the two-install topology]], this is one physical machine, not
+two):**
+
+> Once a launch fails at HID config-read (`Failed to issue command`, not just camera
+> corruption), **stop. Do not relaunch again.** Two consecutive failures at this stage, or
+> one config-read failure in a session where camera corruption was already seen, means
+> reseat the visor-end connector before any further attempt — don't treat it as an ordinary
+> transient hiccup worth just trying again, the way most single-shot USB errors elsewhere in
+> this doc are.
+
+This applies to `jack-in.sh` on the everyday system (where this was found) and equally to
+`jack-in-wayland.sh`/`scripts/power-on.py` on the lab side, which doesn't yet have this
+specific stop condition wired in — `power-on.py`'s existing `branch_flags()`/
+`reseat_instructions()` diagnose *which* branch is missing, but nothing today counts
+consecutive HID config-read failures and refuses to keep cycling. Worth adding there before
+the same escalation happens on dev, since it's the identical physical connector and the
+identical mechanism.
+
+**Also corrected, same incident**: this doc's own known-good enumeration is **5 devices**
+(USB2 hub, audio, companion, USB3 hub, HoloLens Sensors — see "The measured anatomy"), not
+4 — a mid-incident check that only found 4 (missing the USB3 hub instance itself,
+`04b4:6504`) was briefly and wrongly called "healthy" before the miscount was caught. When
+counting, count the hub instances too, not just the leaf devices.
