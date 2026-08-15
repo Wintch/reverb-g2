@@ -27,9 +27,9 @@ machine:
 
 ```bash
 # H.264/HEVC -> DNxHR HQ + PCM (fast: NVDEC decode, ~no CPU)
-ffmpeg -hwaccel cuda -i entrada.mp4 \
+ffmpeg -hwaccel cuda -i input.mp4 \
        -c:v dnxhd -profile:v dnxhr_hq -pix_fmt yuv422p \
-       -c:a pcm_s16le salida.mov
+       -c:a pcm_s16le output.mov
 ```
 
 DNxHR HQ 4K ≈ 700 GB/hour — think about the destination (the NTFS NVMe is visible from
