@@ -6,9 +6,11 @@ set -u
 #   ./scripts/retry-vr-after-preflight.sh -- <command> [args...]
 # Optional:
 #   VR_PREFLIGHT_INTERVAL=10   seconds between checks (default: 10)
+#   VR_PREFLIGHT_TIMEOUT=45    maximum seconds per preflight (default: 45)
 
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 INTERVAL=${VR_PREFLIGHT_INTERVAL:-10}
+PREFLIGHT_TIMEOUT=${VR_PREFLIGHT_TIMEOUT:-45}
 
 if [ "$#" -lt 2 ] || [ "$1" != "--" ]; then
     echo "usage: $0 -- <command> [args...]" >&2
@@ -20,7 +22,7 @@ attempt=0
 while :; do
     attempt=$((attempt + 1))
     echo "[vr-retry] preflight attempt $attempt" >&2
-    if "$HERE/preflight.sh"; then
+    if timeout --foreground "${PREFLIGHT_TIMEOUT}s" "$HERE/preflight.sh"; then
         echo "[vr-retry] preflight passed; launching command" >&2
         exec "$@"
     fi
