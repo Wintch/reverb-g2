@@ -1,0 +1,128 @@
+From e26ac16b36a5ebfb37456bcb627338bf7524cd92 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Sat, 15 Aug 2026 16:55:16 -0300
+Subject: [PATCH] wmr: add controller calibration telemetry and axis A/B
+ transforms
+
+Capture tracked pose and IMU quaternions for repeatable controller calibration, and keep the experimental frame transforms behind debug options.
+
+Co-authored-by: Codex <codex@openai.com>
+---
+ src/xrt/drivers/wmr/wmr_controller_base.c | 83 ++++++++++++++++++++++-
+ 1 file changed, 82 insertions(+), 1 deletion(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
+index 6f8faa903..29417b642 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.c
++++ b/src/xrt/drivers/wmr/wmr_controller_base.c
+@@ -47,6 +47,13 @@
+ // Kept, not deleted: the transform really is computed and unused, which is a genuine gap worth
+ // resolving properly rather than by leaving a 105-degree rotation switched on by default.
+ DEBUG_GET_ONCE_BOOL_OPTION(wmr_controller_imu_to_device, "WMR_CONTROLLER_IMU_TO_DEVICE", false)
++DEBUG_GET_ONCE_BOOL_OPTION(wmr_controller_wmr_axes, "WMR_CONTROLLER_WMR_AXES", false)
++DEBUG_GET_ONCE_BOOL_OPTION(wmr_controller_imu_to_device_right, "WMR_CONTROLLER_IMU_TO_DEVICE_RIGHT", false)
++DEBUG_GET_ONCE_BOOL_OPTION(wmr_controller_calibration_log, "WMR_CONTROLLER_CALIBRATION_LOG", false)
++DEBUG_GET_ONCE_BOOL_OPTION(wmr_controller_full_cal_right, "WMR_CONTROLLER_FULL_CAL_RIGHT", false)
++DEBUG_GET_ONCE_BOOL_OPTION(wmr_controller_right_roll_180, "WMR_CONTROLLER_RIGHT_ROLL_180", false)
++DEBUG_GET_ONCE_BOOL_OPTION(wmr_controller_left_yaw_minus90, "WMR_CONTROLLER_LEFT_YAW_MINUS90", false)
++DEBUG_GET_ONCE_BOOL_OPTION(wmr_controller_full_cal_left, "WMR_CONTROLLER_FULL_CAL_LEFT", false)
+ 
+ //! How stale a constellation sample may be before the controller falls back to the placeholder
+ //! pose. See the use site: 200 ms was shorter than the interval samples actually arrive at.
+@@ -614,8 +621,12 @@ wmr_controller_base_get_tracked_pose(struct xrt_device *xdev,
+ 	relation.pose = pose;
+ 
+ 	// Copy data while holding the lock.
++	struct xrt_quat fusion_orientation;
++	int64_t fusion_timestamp_ns;
+ 	os_mutex_lock(&wcb->data_lock);
+-	relation.pose.orientation = wcb->fusion.rot;
++	fusion_orientation = wcb->fusion.rot;
++	fusion_timestamp_ns = wcb->last_imu_timestamp_ns;
++	relation.pose.orientation = fusion_orientation;
+ 
+ 	// Convert the IMU-frame orientation the fusion produces into the controller's own frame, the
+ 	// same conversion wmr_hmd.c:1184 applies to the headset with the same field. The controllers
+@@ -638,10 +649,80 @@ wmr_controller_base_get_tracked_pose(struct xrt_device *xdev,
+ 		struct xrt_quat imu_to_device = wcb->config.sensors.transforms.P_imu_me.orientation;
+ 		math_quat_rotate(&relation.pose.orientation, &imu_to_device, &relation.pose.orientation);
+ 	}
++	// Temporary A/B: the HMD path applies the WMR axis convention by flipping Y/Z,
++	// equivalent to a 180-degree rotation around X. T181 identified this same bridge
++	// between the WMR controller IMU fusion frame and constellation frame; expose it
++	// independently so controller roll can be tested without conflating it with the
++	// factory P_imu_me transform above.
++	if (debug_get_bool_option_wmr_controller_wmr_axes()) {
++		const struct xrt_quat wmr_axes = {1.f, 0.f, 0.f, 0.f}; // Rx180: Y/Z flip
++		math_quat_rotate(&wmr_axes, &relation.pose.orientation, &relation.pose.orientation);
++	}
++	// A/B: apply the factory transform on the opposite side. For a body-frame
++	// correction the physical interpretation is world_from_imu * imu_from_device,
++	// whereas the older option above applies device_from_imu * world_from_imu.
++	if (debug_get_bool_option_wmr_controller_imu_to_device_right()) {
++		struct xrt_quat imu_to_device = wcb->config.sensors.transforms.P_imu_me.orientation;
++		math_quat_rotate(&relation.pose.orientation, &imu_to_device, &relation.pose.orientation);
++	}
++	// First full calibration fit from controlled roll/pitch/yaw captures on the right
++	// controller. Unlike the legacy A/B options above, this is deliberately composed in
++	// the controller body frame: world_from_device = world_from_imu * imu_from_device.
++	if (debug_get_bool_option_wmr_controller_full_cal_right() &&
++	    wcb->base.device_type == XRT_DEVICE_TYPE_RIGHT_HAND_CONTROLLER) {
++		struct xrt_quat imu_from_device = {
++		    0.724486f, -0.162460f, 0.666782f, -0.064257f,
++		};
++		if (debug_get_bool_option_wmr_controller_right_roll_180()) {
++			const struct xrt_quat device_roll_180 = {0.f, 0.f, 1.f, 0.f};
++			struct xrt_quat adjusted;
++			math_quat_rotate(&imu_from_device, &device_roll_180, &adjusted);
++			imu_from_device = adjusted;
++		}
++		math_quat_rotate(&fusion_orientation, &imu_from_device, &relation.pose.orientation);
++	}
++	if (debug_get_bool_option_wmr_controller_left_yaw_minus90() &&
++	    wcb->base.device_type == XRT_DEVICE_TYPE_LEFT_HAND_CONTROLLER) {
++		// OpenXR +Y yaw: -90 degrees moves the -Z pointing vector toward +X (right).
++		const struct xrt_quat device_yaw_minus90 = {0.f, -0.7071068f, 0.f, 0.7071068f};
++		math_quat_rotate(&fusion_orientation, &device_yaw_minus90, &relation.pose.orientation);
++	}
++	if (debug_get_bool_option_wmr_controller_full_cal_left() &&
++	    wcb->base.device_type == XRT_DEVICE_TYPE_LEFT_HAND_CONTROLLER) {
++		// Left captures established the physical axes as mirrored X/Y with the
++		// longitudinal Z preserved. This 180-degree Z correction keeps pitch,
++		// yaw and roll on distinct axes; unlike the temporary yaw offset above it
++		// does not introduce an axis permutation.
++		const struct xrt_quat imu_from_device_left = {0.f, 0.f, 1.f, 0.f};
++		math_quat_rotate(&fusion_orientation, &imu_from_device_left, &relation.pose.orientation);
++	}
+ 	relation.angular_velocity = wcb->last_angular_velocity;
+ 	last_imu_timestamp_ns = wcb->last_imu_timestamp_ns;
+ 	os_mutex_unlock(&wcb->data_lock);
+ 
++	// Calibration telemetry: preserve both ends of the orientation pipeline. The gizmo's
++	// forward vector cannot distinguish a roll error from a body-frame offset; these full
++	// quaternions let us fit the fixed IMU->controller transform offline. Log the tracking
++	// flags explicitly as placeholder poses otherwise look like valid orientation samples.
++	if (debug_get_bool_option_wmr_controller_calibration_log()) {
++		const char *hand = wcb->base.device_type == XRT_DEVICE_TYPE_LEFT_HAND_CONTROLLER ? "left" : "right";
++		int64_t imu_age_ms = (fusion_timestamp_ns == 0 || at_timestamp_ns < fusion_timestamp_ns)
++		                        ? -1
++		                        : (at_timestamp_ns - fusion_timestamp_ns) / 1000000;
++		WMR_INFO(wcb,
++		         "CALIB hand=%s t=%lld imu_age_ms=%lld pos_tracked=%d ori_tracked=%d "
++		         "q_imu=(%.6f,%.6f,%.6f,%.6f) q_out=(%.6f,%.6f,%.6f,%.6f) "
++		         "gyro=(%.6f,%.6f,%.6f) pos=(%.4f,%.4f,%.4f)",
++		         hand, (long long)at_timestamp_ns, (long long)imu_age_ms,
++		         (relation.relation_flags & XRT_SPACE_RELATION_POSITION_TRACKED_BIT) != 0,
++		         (relation.relation_flags & XRT_SPACE_RELATION_ORIENTATION_TRACKED_BIT) != 0,
++		         fusion_orientation.x, fusion_orientation.y, fusion_orientation.z, fusion_orientation.w,
++		         relation.pose.orientation.x, relation.pose.orientation.y, relation.pose.orientation.z,
++		         relation.pose.orientation.w, relation.angular_velocity.x, relation.angular_velocity.y,
++		         relation.angular_velocity.z, relation.pose.position.x, relation.pose.position.y,
++		         relation.pose.position.z);
++	}
++
+ 	// No prediction needed.
+ 	if (at_timestamp_ns < last_imu_timestamp_ns) {
+ 		*out_relation = relation;
+-- 
+2.47.3
