@@ -189,18 +189,32 @@ def branch_flags(lsusb_text):
 
 def reseat_instructions(usb2_ok, ss_ok):
     """Exact physical steps, most-likely-fix first. Source: the 2026-08-13
-    seat-lottery diagnosis (docs/22 / T171). SS pins live at the tip of the
+    seat-lottery diagnosis (docs/22 / T171), CONFIRMED with a controlled A/B
+    protocol 2026-08-15/16 (docs/pruebas.jsonl T183): 6 cold reinsertions, 3
+    per side, marked with tape so the side was known for certain, not
+    remembered -- 100% reproducible both ways. SS pins live at the tip of the
     connector tongue, the USB2 pair mid-connector -- a slightly different
     seating depth/angle engages a different subset, which is why 'rotate the
     C plug 180 degrees inside the adapter' (docs/06) is a real fix and not
-    superstition. Order: port seat, then orientation, then other port, then
-    visor-end -- the docs/06 ladder, revalidated live."""
+    superstition. T183's new finding: on THIS unit, one specific orientation
+    ('matched' in that session's tape marking) reproducibly kills BOTH
+    branches at once (0/5, 3/3 trials) -- a full dead census is not just a
+    generic bad-seat symptom, it can be this same orientation fault, so the
+    flip belongs in that branch's instructions too, not only the
+    single-branch-missing cases below. The other orientation recovered the
+    SuperSpeed branch every time (2/5, 3/3 trials) but never the USB2 one on
+    its own -- flipping is necessary but not sufficient for a full 5/5.
+    Order: port seat, then orientation, then other port, then visor-end --
+    the docs/06 ladder, revalidated live."""
     steps = []
     if not usb2_ok and not ss_ok:
         steps += [
             "Desenchufá el USB del casco en la PC y volvé a meterlo DERECHO y A FONDO,",
             "  sosteniendo el peso del cable con la otra mano (cuelga y hace palanca).",
             "Usá un puerto USB3 TRASERO de la placa (los del CPU) -- los del frente no sirven.",
+            "¿Sigue en 0/5? Un lado especifico de este plug USB-C mata las DOS ramas a la vez",
+            "  (confirmado 3/3 -- docs/pruebas.jsonl T183): sacá el plug del adaptador,",
+            "  GIRALO 180° y metelo de nuevo, firme y a fondo, ANTES de probar otro puerto.",
         ]
     elif not ss_ok:
         steps += [

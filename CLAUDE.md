@@ -1,5 +1,147 @@
 # Context for the 90Hz lab agent
 
+> ## START HERE NEXT SESSION (2026-08-16, ~01:32) — a real, deterministic USB-C connector fault
+> confirmed by a controlled A/B test; port-swapping and visor-reseat both rigorously cleared as
+> unreliable; two tracking findings finally seen through clean windows; the "port switch fixed
+> it" note below (same night, earlier) is SUPERSEDED — read this one first. `docs/pruebas.jsonl`
+> T184.
+>
+> **THE HEADLINE, and it changes the whole cable narrative**: a tape-marked, cold-reinsert A/B
+> test on the USB-C plug (headset's active-cable hub box -> PC) found something 100%
+> reproducible, 6/6 trials: **'matched' orientation = 0/5, always. 'unmatched' orientation = at
+> least 2/5 (SuperSpeed branch, cameras + controller tunnel), always.** Not spec-compliant
+> USB-C behavior, and not flapping noise — a real, controlled, repeatable fault. **Getting from
+> that guaranteed 2/5 up to the full 5/5 (the USB2 branch — companion `03f0:0580` + audio
+> `0bda:4c15` — joining) has NO confirmed reliable trigger**: tested rigorously across 4
+> different PC ports and 3 separate visor-end reseats, all while holding orientation fixed at
+> 'unmatched' — visor reseat never once produced a 2/5->5/5 transition (0/3), and the one port
+> change that looked like a fix was debunked on exact timestamps (the climb to 5/5 started
+> *before* the port change finished). **Don't spend time port-hopping or visor-reseating
+> looking for the USB2 fix — the data says neither works reliably.** `power-on.py`'s dead-panel
+> (0/5) guidance now tells the user to flip the USB-C plug, citing this test; deliberately no
+> guidance was added for 2/5->5/5, because there's honestly nothing to recommend yet.
+>
+> **New working hypothesis, the user's own idea and well-grounded, not speculation**: this is
+> an ACTIVE cable (already documented: a DP-repeater box) with real USB hub silicon in it
+> (Cypress `04b4:6506`/`04b4:6504` seen in `lsusb` all night) — a firmware/state-machine glitch
+> in that chip fits the evidence far better than mechanical wear. The user has never felt it
+> loose, has pulled on it hard with no effect, and gets rock-solid multi-hour sessions on
+> Windows once one is up — inconsistent with ongoing marginal contact, consistent with active
+> silicon that occasionally needs *something* to clear a stuck state and doesn't always clear
+> even then. **The next real lever to find is what resets the hub chip's firmware, not another
+> reseat ritual.**
+>
+> **Two tracking findings got their first clean look all project, once the storm dropped out
+> for extended windows**: (1) the rotation-speed hypothesis ("gira lento, salta menos") held up
+> live in SUPERHOT with real hardware noise mostly gone — slow rotation tracks, fast rotation
+> "dispara para cualquier lado ... como si le faltara cuadros para dibujar en el medio", which
+> matches the already-documented ~4 solves/s per controller against 30Hz cameras. Not yet
+> quantified with clean offline data (the in-storm rotexp capture from earlier the same night
+> stays inconclusive). (2) **`WMR_CONTROLLER_WMR_AXES=1` (T181's Rx180 bridge) was tried live
+> TWICE more, once in a genuinely clean window (0 companion errors at launch) — rotation was
+> STILL wrong both times.** Two independent looks agreeing is a real negative result: lower
+> confidence in the Rx180 hypothesis itself, not just in the data quality it was measured on.
+> `docs/33`'s calibration session still needs the imu_age_ms-gated redo from T183, but go in
+> expecting this flag alone may not be the fix.
+>
+> **A genuinely new, unstarted problem**: the user reported controller HEIGHT (vertical
+> position) is also wrong, independent of the known lateral-jump and rotation bugs — "nunca lo
+> contemplamos bien". A fork agent tasked with finding the likely cause (camera extrinsics,
+> `XRT_TRACKING_ORIGIN_OFFSET_Y`, constellation-vs-world frame mismatch) **went off-task and
+> returned a live storm status update instead of touching the question** — a real agent
+> failure, logged, not retried this session. Start here fresh next time; the investigation
+> itself was never actually attempted.
+>
+> **Also confirmed clean**: SUPERHOT VR ships no native recenter (all 11 binding files
+> inspected — only shoot/grab/mindwave/menu/ui_navigation). The only recenter live in this
+> stack is `patches/xrizer/0001` (hold-menu-3s), and it fired zero times this session — rules
+> out an accidental recenter as an explanation for tonight's jumps.
+>
+> **Tooling/process notes**: `scripts/hw-monitor.sh` (new, committed, synced to `~/vr/`) —
+> transition-only background USB/DP/companion-error logger, safe to leave running for hours,
+> was the instrument behind everything above. Watch for exactly the mistake made tonight:
+> promoting a scratchpad copy to the repo mid-session without killing the old running instance
+> split the log across two files for over an hour before anyone noticed — confirm only one
+> instance is running before trusting its output. And the Steam-Force-Quit-only closing rule
+> (don't use `vr-state.sh --close-title` without asking) lapsed a second time tonight, caught
+> by the agent itself; still the standing rule for a fresh session, don't assume standing
+> permission carries over.
+
+> ## START HERE NEXT SESSION (2026-08-15, ~23:40) — the USB2 branch is actively, measurably
+> degrading again, and this session's own methodology error contaminated part of what it
+> found before catching itself. Read `docs/pruebas.jsonl` T182-T183.
+>
+> **Two things happened today, in order: T182 (morning) fixed a real boot-console hang**
+> (`vr-boot-selector.sh`'s `timeout` was missing `--foreground`, so any keystroke during
+> `wait_for_reseat` — including the documented `[s]+[Enter]` skip — triggered `SIGTTIN` and
+> froze the process for good; fixed, verified end-to-end in a pty harness) **— unrelated to
+> everything below, already closed.** Then a controller-calibration session ran this
+> afternoon with Codex (`docs/33-controller-calibration-2026-08-15.md`, patch vendored at
+> `patches/monado/*controller-calibration-telemetry-and-axis-ab-transforms.patch`) — its
+> fitted transforms (`WMR_CONTROLLER_WMR_AXES`, `WMR_CONTROLLER_FULL_CAL_RIGHT/LEFT`) are
+> **NOT validated and should not be trusted as clean** — see why below.
+>
+> **T183 (tonight): what started as "confirm the headset still works" found the USB2
+> branch (companion `03f0:0580` + audio `0bda:4c15`, behind hub `04b4:6506`) in an active,
+> real storm** — first launch hit 152594 consecutive `os_hid_read=-1` errors, panel stuck on
+> backlight-only despite DP lease/EDID/OpenXR all reporting clean success (the project's
+> core "verification is physical" rule held exactly). **New, real bug found in the process**:
+> `control_read_packets` (`wmr_hmd.c`) has no backoff on repeated companion read failures —
+> spins, pinned monado-service at 237% CPU with nothing else running. Not fixed yet, a real
+> target for next session regardless of cable health. **New tool**: `scripts/hw-monitor.sh`
+> (transition-only background logger, safe to leave running for hours) gave the project's
+> first real timestamped answer to "how long do the blips last": USB2 drops to 3/5 (once
+> 2/5) for consistently **~3 seconds**, spaced 25-90s apart; **USB3 (cameras/controller
+> tunnel) never moved once** across 6+ minutes of monitoring. But companion HID
+> read-failures climb ~400-600/s nearly continuously, including during "5/5" stretches
+> between blips — **`lsusb` reading 5/5 is not proof the companion channel is healthy**,
+> check `hw-monitor.sh`'s snapshot line instead.
+>
+> **A new, more silent failure class was found on top of the already-known placeholder-position
+> one (`docs/33`)**: with `WMR_CONTROLLER_CALIBRATION_LOG=1`, a controller's IMU quaternion
+> can go bit-for-bit frozen for 196+ seconds — **including through the user actively waving
+> both controllers** — while `ori_tracked=1` keeps reporting it as valid. Nothing in the
+> normal pose flags this. Live in-game confirmation: the user's own description in
+> SUPERHOT/Propagation ("hand floating, very smooth, no jumps") was the freeze itself, not
+> good tracking — direct HID probes (`preflight.sh`, bypassing Monado) confirmed the
+> controllers stayed alive and responsive the whole time, so the stall is inside Monado's
+> fusion thread, not a dead device. **Any future calibration capture must gate samples on
+> `imu_age_ms` freshness, not just the `pos_tracked`/`ori_tracked` flags** — both can be
+> true while the data is minutes stale.
+>
+> **User-driven hardware interventions were NOT monotonic — worth knowing before repeating
+> one blind**: a "220V power-cut + USB flip" once made things actively WORSE (`lsusb -t`
+> showed the entire USB3 SuperSpeed branch vanish, HoloLens Sensors falling back to 480M on
+> the same hub as the companion — never seen before), and an *identical* second attempt
+> recovered the correct topology. **The physical visor-end cable reseat was never actually
+> tried tonight** — only PC-end power-cycle/flip, with inconsistent results. Given the
+> user's own "nunca me pasó que trackee tan mal" (worse than any prior session, in his own
+> words), **this may finally be the rev2A replacement cable's moment**, not just another
+> reseat — `docs/22`'s "still open, not retired" graduates to "do it" territory.
+>
+> **This session's own self-caught mistake, worth internalizing so it isn't repeated**:
+> `jack-in-wayland.sh`'s 6dof mode defaults `WMR_CONSTELLATION_CONTROLLERS` to **0** unless
+> explicitly overridden, and every launch until late in the session omitted that flag —
+> meaning controller **position** tracking was never actually active, and every
+> "hands frozen at the placeholder position" verdict given to the user before that point
+> conflated plain default-off 3DoF behavior with USB-storm damage. `vr-state.sh`'s own
+> status line printed `constellation=0` on every single check made the whole time; it took
+> the user's live description ("solo sobre su eje") to catch it. **Once corrected
+> (`WMR_CONSTELLATION_CONTROLLERS=1`), position jumps genuinely improved** — not from
+> anything new tonight, but because the gravity gate (patch 0047,
+> `WMR_CONSTELLATION_GRAVITY_GATE_DEG` default 14°) is unconditionally active by default.
+> Orientation is still wrong with constellation alone (expected — none of today's axis
+> options default to on) and `WMR_CONTROLLER_WMR_AXES=1` tried live did **not** clearly fix
+> it (the user read position as worse with it on) — not root-caused, muddied by the
+> IMU-freeze pattern recurring throughout. **Redo `docs/33`'s whole calibration exercise
+> with constellation explicitly on and `imu_age_ms` gating before trusting any of its
+> fitted transforms.**
+>
+> **Process note for next session**: the user's standing rule is that Steam titles get
+> closed by the user's own Force Quit in Steam, not by this agent running `vr-state.sh
+> --close-title` — the script itself works cleanly (session begin/end counts always
+> matched when used), the rule is about who's driving.
+
 > ## START HERE NEXT SESSION (2026-08-13, ~22:05) — both jitters cracked at the source in one night; two wearer verdicts pending and one precisely-scoped open problem
 >
 > **HEAD (T180, `patches/basalt/0002`): the delivered pose's 10-25 mm resting wander was a

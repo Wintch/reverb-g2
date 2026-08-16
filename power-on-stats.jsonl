@@ -27,3 +27,5 @@
 {"iso_time": "2026-08-12T08:54:10-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": true, "gamepad_present": true}
 {"iso_time": "2026-08-12T19:15:56-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": false, "gamepad_present": true}
 {"iso_time": "2026-08-13T12:26:49-0300", "verdict": "TE NECESITO", "step_reached": 1, "reason": "El cable est\u00e1 reconectando solo sin llegar a agarrar bien.", "part": null}
+{"iso_time": "2026-08-15T10:26:30-0300", "verdict": "TE NECESITO", "step_reached": 1, "reason": "Faltan piezas del casco y la reconexi\u00f3n no lleg\u00f3 a tiempo.", "part": null}
+{"iso_time": "2026-08-15T21:46:55-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": false, "gamepad_present": false}
