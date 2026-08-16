@@ -158,6 +158,7 @@ experiments/   the headset's own EDID plus prepared variants for the 90 Hz work
 | [22](docs/22-cable-connector-diagnosis.md) | Link anatomy + piece-by-piece diagnosis of cable/connector/power |
 | [23](docs/23-game-compatibility.md) | Game-by-game compatibility results via xrizer |
 | [30](docs/30-machine-handoff-protocol.md) | The two-machine topology, and the protocol for handing work off between them without it going stale |
+| [34](docs/34-tracking-quaternions-slam.md) | 6DoF tracking architectures, visual-inertial SLAM, and quaternion/Lie-algebra math reference |
 
 ## Reference hardware
 
