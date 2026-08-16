@@ -1,5 +1,15 @@
 # Context for the 90Hz lab agent
 
+> ## UPDATE (2026-08-16, ~18:20, everyday system, community/comms session, lab disk mounted) —
+> the companion-device backoff fix named as T188's most urgent open item below is now WRITTEN
+> and COMPILE-CHECKED, but NOT hardware-verified. `patches/monado/0049`, `docs/pruebas.jsonl`
+> T191. Committed `657bcd8af` on `lab-full` in both the lab disk's `~/vr/monado` and the
+> everyday system's own clone. **First real step for whoever is next on the lab machine**:
+> reproduce T188's load (SLAM + constellation + a real app running for ~15+ min) and confirm
+> `companion_errors`/CPU% stay bounded instead of climbing forever. A reply to Jan Schmidt on
+> MR !2967 citing this is drafted but not posted (gitlab.freedesktop.org's web UI was 504ing
+> when this was written) — post it once hardware-verified, or sooner if asked.
+
 > ## START HERE NEXT SESSION (2026-08-16, ~05:16) — the identity/provisioning hypothesis is
 > dead (good news), and in its place a live-caught, fully-characterized CPU-spin bug that's
 > worse than anyone knew. Read `docs/pruebas.jsonl` T185-T190 and `docs/31`'s "Live capture"

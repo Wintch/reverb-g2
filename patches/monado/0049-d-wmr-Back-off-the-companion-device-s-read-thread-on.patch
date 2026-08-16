@@ -1,0 +1,109 @@
+From 657bcd8af647f154af887b26ff96a8604b7946dd Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Sun, 16 Aug 2026 18:14:06 -0300
+Subject: [PATCH] d/wmr: Back off the companion device's read thread on a
+ sustained dropout
+
+control_read_packets() has swallowed transient os_hid_read() failures on
+the companion (HMD control) device since 0001, on the assumption that the
+outer thread loop is always paced by the hololens sensors device's
+blocking 100ms read, so retrying is "one cheap syscall" per iteration.
+That assumption held until last night: caught live under real gameplay
+load (SLAM + constellation + app, docs/pruebas.jsonl T188), a sustained
+companion dropout produced 472175 consecutive failed reads and pinned
+monado-service at 400-432% CPU for the entire ~17-minute session, because
+the hololens read stops blocking for its usual 100ms once real IMU data
+is arriving quickly -- so the unbounded companion retry ran at whatever
+rate that read was returning at, not the intended ~10Hz. Only a SIGTERM
+recovered it; closing the game had no effect, since the spin lives
+entirely inside this thread, independent of any client.
+
+Same shape as e39af9683's fix for the hololens sensors read: count
+consecutive failures, reset on success, and once a dropout looks
+sustained rather than transient, sleep 10ms on the failure path instead
+of retrying unbounded. Unlike that fix, never give up -- the companion
+device isn't load-bearing for tracking (only IPD/proximity/screen-enable),
+so slowing the retry rate is enough; killing the thread over it would be
+worse than the bug.
+
+Compile-checked (-Wall -Wextra -pedantic, matching the project's build
+flags) from the everyday system against the mounted lab checkout. Not yet
+verified against real hardware -- that needs a session on the lab OS
+itself to reproduce T188's load pattern and confirm the CPU pin is gone.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ src/xrt/drivers/wmr/wmr_hmd.c | 31 +++++++++++++++++++++++++++----
+ src/xrt/drivers/wmr/wmr_hmd.h | 12 ++++++++++++
+ 2 files changed, 39 insertions(+), 4 deletions(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_hmd.c b/src/xrt/drivers/wmr/wmr_hmd.c
+index e7572d336..da3d33d64 100644
+--- a/src/xrt/drivers/wmr/wmr_hmd.c
++++ b/src/xrt/drivers/wmr/wmr_hmd.c
+@@ -627,12 +627,35 @@ control_read_packets(struct wmr_hmd *wh)
+ 		// headset display is powering up. Don't kill the whole read thread over a
+ 		// read error here: the same thread also reads the hololens sensors device
+ 		// (IMU and tunnelled controller packets), which is typically still healthy.
+-		// No extra pacing: a failing read is one cheap syscall, and each loop
+-		// iteration is already paced by the blocking hololens read.
+-		WMR_DEBUG(wh, "Error reading from companion (HMD control) device. Call to os_hid_read returned %i",
+-		          size);
++		//
++		// This read is non-blocking, so in isolation a single failure is one cheap
++		// syscall. But a *sustained* dropout is not rare -- confirmed under real
++		// gameplay load (SLAM + constellation + app, docs/pruebas.jsonl T188) --
++		// and the assumption that the outer loop is always paced by the hololens
++		// device's blocking 100ms read doesn't hold once real IMU data is arriving
++		// fast enough that read to stop blocking. Left unbounded, that measured
++		// 472175 consecutive failures and monado-service pinned at 400%+ CPU for
++		// the whole ~17-minute session, recovering only on SIGTERM. Back off once
++		// a dropout looks sustained rather than transient. Unlike the hololens
++		// sensors read, never give up -- the companion device isn't load-bearing
++		// for tracking, so slowing the retry rate is enough.
++		wh->companion_consecutive_read_errors++;
++		if (wh->companion_consecutive_read_errors == 1 || wh->companion_consecutive_read_errors % 1000 == 0) {
++			WMR_WARN(wh,
++			         "Error reading from companion (HMD control) device (%d in a row). Call to "
++			         "os_hid_read returned %i",
++			         wh->companion_consecutive_read_errors, size);
++		} else {
++			WMR_DEBUG(wh,
++			          "Error reading from companion (HMD control) device. Call to os_hid_read returned %i",
++			          size);
++		}
++		if (wh->companion_consecutive_read_errors > 50) {
++			os_nanosleep(U_TIME_1MS_IN_NS * 10);
++		}
+ 		return true;
+ 	}
++	wh->companion_consecutive_read_errors = 0;
+ 	if (size == 0) {
+ 		WMR_TRACE(wh, "No more data to read");
+ 		return true; // No more messages, return.
+diff --git a/src/xrt/drivers/wmr/wmr_hmd.h b/src/xrt/drivers/wmr/wmr_hmd.h
+index 41aff5a08..d5072d52f 100644
+--- a/src/xrt/drivers/wmr/wmr_hmd.h
++++ b/src/xrt/drivers/wmr/wmr_hmd.h
+@@ -103,6 +103,18 @@ struct wmr_hmd
+ 	 */
+ 	struct os_hid_device *hid_control_dev;
+ 
++	/*!
++	 * Consecutive os_hid_read() failures on hid_control_dev, reset on any
++	 * successful read. Past a threshold, control_read_packets() backs off with a
++	 * short sleep instead of retrying unbounded -- see docs/pruebas.jsonl T188,
++	 * where an unrecovering companion dropout pinned monado-service at 400%+ CPU
++	 * for the length of a real session, because the outer thread loop's usual
++	 * pacing (hid_hololens_sensors_dev's blocking read) stops blocking once real
++	 * IMU data is arriving quickly. Unlike hololens_consecutive_read_errors this
++	 * never gives up -- the companion device isn't load-bearing for tracking.
++	 */
++	int companion_consecutive_read_errors;
++
+ 	//! Current desired HMD screen state.
+ 	bool hmd_screen_enable;
+ 	//! Latest raw IPD value read from the device.
+-- 
+2.47.3
+
