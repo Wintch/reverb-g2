@@ -1,5 +1,88 @@
 # Context for the 90Hz lab agent
 
+> ## START HERE NEXT SESSION (2026-08-16, ~05:16) — the identity/provisioning hypothesis is
+> dead (good news), and in its place a live-caught, fully-characterized CPU-spin bug that's
+> worse than anyone knew. Read `docs/pruebas.jsonl` T185-T190 and `docs/31`'s "Live capture"
+> section before anything else tonight — the ~01:32 header below is superseded on the
+> port/identity question, though its orientation A/B findings still stand.
+>
+> **The Windows-side detour that started this (unlock_wmr.exe failing, then working after a
+> reseat) resolved cleanly, and it's a real, useful negative result**: a live registry read
+> (`chntpw`'s `reged`, plus `Get-PnpDevice`/`Get-PnpDeviceProperty` in PowerShell — no admin
+> needed) confirmed every device behind the active cable's hub shares one `ContainerID`,
+> `{ee4482ce-afe7-5844-820a-73f26905a52f}`, derived from the hub chip's own hardware serial —
+> stable, not port-derived. A controlled port-swap A/B (T185) then proved it: moving to a
+> different port left `InstanceId`/`ContainerId` byte-identical but flipped the companion
+> device's `Status` to `Unknown` (a ghost/non-present signature) — **Windows' identity
+> tracking is fine; the USB2/companion branch just didn't enumerate on that port.** A
+> follow-up 6/6 test (T186) found **PC-end USB-C disconnect/reconnect — not a visor-end
+> reseat — reliably restores the branch**, sharply contrasting with T184's 0/3 for visor-end
+> reseats in the same conditions. A real Windows gameplay session on the recovered state ran
+> clean (T187). **A checkable "known-good fingerprint" (ContainerID, InstanceIds, firmware
+> versions) is now in `docs/22`** so a future session can verify against data instead of a
+> feeling. **Scope, stated plainly so it doesn't get overclaimed**: this explains *that
+> specific* 422 and rules out identity as the mechanism — it does NOT mean 422 is always
+> hardware, and it says nothing about error 108, a separately-documented, different bug.
+>
+> **Then, stress-testing the recovered state with real gameplay (Aircar, `docs/pruebas.jsonl`
+> T188), the project caught — live, for the first time, with full timestamped data instead
+> of a postmortem log — the companion-storm/CPU-spin bug T183 had flagged as unfixed.**
+> `companion_errors` climbed continuously for the entire ~17-minute session to a peak of
+> **472175 — more than 3x T183's worst case**, with `monado-service` pinned at **411-432%
+> CPU** the whole time (one thread at 99%+), a nested ~4.5-minute controller IMU freeze, and
+> USB branch drops that got MORE frequent and severe over time (70 transitions logged, the
+> last six in the final 90 seconds) rather than settling. **Three independent physical
+> symptoms corroborated it in real time, unprompted**: audio silently jumped from the
+> headset to PC speakers (PipeWire sink recreation, T052-T057's mechanism), head-tracking
+> drift got noticeably worse at the same moment (plausible CPU-contention bridge to Basalt,
+> not proven), and the CPU cooler was heard audibly ramping up and then quieting the instant
+> `monado-service` was stopped. **It never once trended toward recovering on its own** —
+> closing the game, twice, through two different mechanisms, had zero effect, because the
+> spin lives entirely inside `monado-service`'s own `control_read_packets` loop, independent
+> of any connected client. Only a direct `SIGTERM` to the service stopped it.
+>
+> **A same-night follow-up isolation matrix (T189-T190) split this into two separate
+> phenomena, which is the most useful thing to carry forward**: the companion storm itself is
+> **universal** — it reproduces at the same rate (~200-450 errors/s) in complete idle with
+> zero tracking load, zero app, headset untouched (retroactively explains why T052-T057 caught
+> the exact same signature weeks ago with nothing running at all). But the **400%+ CPU pin is
+> NOT explained by SLAM or constellation alone** — SLAM-only idles at ~227% (matches Basalt's
+> already-known ~1-core cost, T163), constellation-only at ~21%, neither climbing over 1-2
+> minutes, and simple addition of the two still falls short of T188's peak. **The extreme CPU
+> cost needs the full combination — SLAM + constellation + a real running app — not any single
+> piece.** Practical, cheap mitigation logged from this: leaving constellation off for titles
+> that don't need hand-tracked visuals (most of `docs/23`'s catalog) measurably reduces the
+> worst-case CPU-spin risk, even though it does nothing for the underlying storm.
+>
+> **Not fixed — this is now the single most important open item in the whole project**:
+> `control_read_packets` (`wmr_hmd.c`) still has no backoff on repeated companion read
+> failures. T183 found it; tonight measured its real severity ceiling (past the point that
+> caused a full panel lockup before) and confirmed it's completely independent of the
+> client/game layer. It needs an actual code fix, not another workaround — this is more
+> urgent than any tracking-quality work right now, because an unattended long session can
+> apparently degrade indefinitely with nothing to stop it.
+>
+> **Open threads, sharpened not closed**: whether a LONGER isolated SLAM-only or
+> constellation-only session (matching T188's 17 minutes, not T189/T190's 1-2) eventually also
+> climbs toward the CPU pin, or whether the three-way combination is genuinely required
+> regardless of duration; whether this same storm/spin pattern happens on Windows under
+> sustained real load, never tested (only a short, apparently-clean AirCar session, T187);
+> whether PC-end reconnect (T186's 6/6 lever) also rescues a bad orientation or a bad port, only
+> tested from an already-good starting condition; controller/headset auto-standby timing on
+> Windows, measured on Linux only (T181, ~15 min, and confirmed almost certainly deliberate
+> power-saving rather than a defect — see `docs/03`, though the exact protocol was never
+> captured); whether Oasis's native Windows stack implements HMD worn/presence detection where
+> Monado/xrizer does not (`docs/03`'s War Robots VR gap).
+>
+> **Documentation completeness pass, same night**: archived a detailed Reddit WMR
+> offline-preservation guide (`docs/37`) and two retired Microsoft Learn pages (`docs/35`,
+> `docs/36`) before they can disappear; read `HololensSensorsWinUsb.inf` and found a third USB
+> interface (`MI_03`, raw WinUSB, no kernel driver — likely Microsoft's own raw camera/sensor
+> data path) neither this project nor Monado has ever used, documented in `docs/12`. A
+> registry-inspection recipe (mount + `chntpw`) and the PowerShell `ContainerID` check are now
+> written up as reusable procedures in `docs/26`, not just narrated inside `docs/31`'s
+> chronicle.
+
 > ## START HERE NEXT SESSION (2026-08-16, ~01:32) — a real, deterministic USB-C connector fault
 > confirmed by a controlled A/B test; port-swapping and visor-reseat both rigorously cleared as
 > unreliable; two tracking findings finally seen through clean windows; the "port switch fixed
