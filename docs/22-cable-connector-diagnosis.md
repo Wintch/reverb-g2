@@ -799,3 +799,50 @@ identical mechanism.
 4 — a mid-incident check that only found 4 (missing the USB3 hub instance itself,
 `04b4:6504`) was briefly and wrongly called "healthy" before the miscount was caught. When
 counting, count the hub instances too, not just the leaf devices.
+
+## Known-good fingerprint (2026-08-16, `docs/pruebas.jsonl` T184-T187)
+
+Everything above establishes *that* a good state exists and roughly what it looks like
+(5/5). Until tonight, "it's working" was always a subjective read ("se ve perfecto") — this
+session produced an objective, checkable identity for the good state instead, so a future
+session can compare against something instead of a feeling. If a session ever looks wrong,
+check this first: matching values mean the config is the same one validated here and the
+problem is the usual physical/enumeration fault, not something new; a mismatch (different
+firmware version, different serial) means something genuinely changed and this whole doc's
+history doesn't automatically apply anymore.
+
+```
+Hub chip serial (both SuperSpeed and USB2 personas, same physical Cypress chip):
+    EE4482CEAFE75844820A73F26905A52F
+Windows ContainerID for the whole composite device (all 5 branches, one identity):
+    {ee4482ce-afe7-5844-820a-73f26905a52f}
+Presence device serial / InstanceId:
+    03f0:0580, serial 8CC044Z2CM
+    HID\VID_03F0&PID_0580\8&2513E90&0&0000  (child collection, stable across reconnects)
+Sensors device serial / InstanceId:
+    045e:0659, serial BDA9EF65-CA83-4C29-B649-93B019C736BB
+Headset OEM firmware (three components):
+    QA85QAPV1/1.2 | QA85QBLV1/7.0 | QA85QDPV1/50.49
+Display EDID identity:
+    220e:36c1 (HPN36C1) -- cross-checked against docs/12/26, unchanged
+```
+
+**Validated, same night, two independent ways**: (1) `docs/pruebas.jsonl` T186 — PC-end
+USB-C unplug/replug (NOT a visor-end reseat), same port, same orientation, cold ~8-10s gap —
+**6/6 clean 5/5**, every device number freshly incremented (genuine re-enumeration, not
+cache), no settle time needed. Sharp contrast with T184's 0/3 for visor-end reseat in the
+same conditions — the two ends of the cable are not interchangeable levers. (2) A real
+Windows gameplay session on top of that state — user's report: "corre todo perfecto sin
+problema", no audio cuts, no controller weirdness. **This is the first time this project has
+had both a mechanically-repeatable trigger for the good state AND a real-load confirmation
+on the same night** — previous "it's fine" verdicts were one or the other, never both
+together with a checkable fingerprint underneath.
+
+**Not yet tested, flagged for later rather than guessed at** (`docs/pruebas.jsonl` context,
+2026-08-16 session): whether the PC-end reconnect trick also rescues a bad orientation or a
+bad port (only tested from an already-good starting condition); whether the USB2 branch can
+still flap spontaneously mid-session on Windows under sustained load, not just at cold
+connect (T052/T183's storms are Linux-only observations so far); controller and headset
+auto-standby timing on Windows specifically (measured on Linux/Monado only, T181, ~15 min);
+whether Oasis's native Windows stack implements HMD worn/presence detection where
+Monado/xrizer does not (see `docs/03`'s War Robots VR finding).

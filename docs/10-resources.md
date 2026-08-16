@@ -50,6 +50,25 @@ Which one wasn't investigated.
 The bridge from SteamVR to the OS's WMR runtime. **Less useful**: it delegates to Windows, doesn't
 touch USB. Useful only for comparison.
 
+### `HoloLensSensors_10.0.19041.2054.zip` — local only, not in git
+
+Full driver package (3 `.inf`, 3 `.cat`, all DLLs incl. `MROEMFwHost.dll`,
+`SpatialStore.dll`, `MotionControllerSystem.dll`) for the exact driver version this lab's
+Windows install already runs — the one the r/HPReverb preservation thread names (`docs/31`).
+Kept **outside git, local only** (this repo went public 2026-08-06; redistributing Microsoft's
+compiled binaries in a public repo is a different risk than the plain-text pages already
+archived in `docs/35`/`docs/36`). Verified 2026-08-16 by `md5sum`: `HololensSensors.dll`,
+`MROEMFwHost.dll` and `HololensSensors.inf` in the zip are **byte-identical** to what's
+already installed in this machine's `DriverStore\FileRepository\hololenssensors.inf_amd64_*`
+— confirms it's genuine, adds nothing new to reverse (already fully read, see `docs/31`'s
+"Live capture" section for the `HololensSensors.inf` content, `Class = Holographic`,
+`DeviceGroupId = "MixedRealityHmd"`). The zip's third INF, `HmdMonitors.inf`, additionally
+confirms `Monitor\HPN36C1` (this exact headset) is a first-class entry in Microsoft's own WMR
+HMD monitor list, alongside Acer/Lenovo/Fujitsu/Dell/Samsung/ASUS entries — no port/identity
+mechanism in it, just `HMDDevicePresent=1`. If this file is needed again: it's wherever the
+user's local downloads/`SHARED/` land it — ask, don't assume a path, since it's untracked by
+design.
+
 ## Windows 11 context (as told by the user)
 
 - **Windows 11 no longer ships WMR support.** Microsoft removed it; an **intermediate driver** is
