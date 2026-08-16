@@ -842,7 +842,16 @@ together with a checkable fingerprint underneath.
 2026-08-16 session): whether the PC-end reconnect trick also rescues a bad orientation or a
 bad port (only tested from an already-good starting condition); whether the USB2 branch can
 still flap spontaneously mid-session on Windows under sustained load, not just at cold
-connect (T052/T183's storms are Linux-only observations so far); controller and headset
+connect (T052/T183's storms, and now T188's full-scale live capture — peak 472175 companion
+errors, monado-service pinned 400%+ CPU, confirmed independent of which/whether a client is
+connected — are all Linux-only observations so far; T188 also leaves open whether
+`WMR_CONSTELLATION_CONTROLLERS=1` specifically triggers or worsens it, since the storm was
+already climbing before constellation was ever enabled that session -- and T052-T057, weeks
+earlier, already saw the same storm at complete idle with NOTHING running, which argues
+against 6dof/constellation being required at all; a clean isolated test -- a long session in
+plain 3dof only, no SLAM, no constellation, otherwise identical conditions -- would settle
+whether tracking load matters here at all or whether this is purely time/thermal/hub-state
+driven, independent of what's running); controller and headset
 auto-standby timing on Windows specifically (measured on Linux/Monado only, T181, ~15 min);
 whether Oasis's native Windows stack implements HMD worn/presence detection where
 Monado/xrizer does not (see `docs/03`'s War Robots VR finding).

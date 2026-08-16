@@ -69,6 +69,20 @@ mechanism in it, just `HMDDevicePresent=1`. If this file is needed again: it's w
 user's local downloads/`SHARED/` land it — ask, don't assume a path, since it's untracked by
 design.
 
+### Searched, 2026-08-16: no official original Microsoft/HP driver is downloadable anymore
+
+Checked so this doesn't get re-searched from scratch next time: the original **Windows Mixed
+Reality Portal** / "Windows Mixed Reality for SteamVR" was never a standalone installable
+package to begin with — it was pushed by Windows Update as part of the OS. Microsoft's own
+Learn page for it (`docs/35`) is already marked `is_archived: true, is_retired: true`; there
+is nothing left to fetch from Microsoft directly. HP's support pages for the G2 exist
+(`support.hp.com/us-en/drivers/selfservice/hp-reverb-g2-controller-pair-na-la/2100200212`) but
+couldn't be read from this box (domain-verification block on one fetch, timeout on another) —
+unconfirmed whether that page actually hosts a real download or just points back to Oasis; if
+this matters again, check it directly rather than re-attempting an automated fetch. The
+Reddit-sourced offline-install recipe in `docs/37` is the only path this project has found to
+the actual APPX packages, via `store.rg-adguard.net` rather than any first-party mirror.
+
 ## Windows 11 context (as told by the user)
 
 - **Windows 11 no longer ships WMR support.** Microsoft removed it; an **intermediate driver** is

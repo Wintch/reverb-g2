@@ -296,6 +296,12 @@ New facts, not previously in this repo:
 - **`Display EDID: 220e:36c1`** matches the already-known ManufID `0x220E` = `HPN` and
   product `0x36c1` from `docs/12`/`docs/26` — cross-check, not new, but confirms the tool
   reads the same EDID this project has been fingerprinting all along.
+- **`HololensSensorsWinUsb.inf`, read in full 2026-08-16**: binds `USB\VID_045E&PID_0659&MI_03`
+  (a third interface, distinct from MI_02's HID collections used throughout this project and
+  MI_04's Holographic-class binding) as a raw WinUSB device — no kernel driver, a userspace app
+  opens it directly via `DeviceInterfaceGUID {61bd6c28-9f10-426e-aa65-729d4656f6a2}`. Full
+  interface-layout writeup moved to `docs/12` (section 1, USB Topology) since it's protocol
+  reference material, not Windows-bring-up narrative.
 - The display device path's `UID28933` is a **separate identity from the presence device's
   HID path** — one is keyed off the GPU's DP output, the other off the USB HID enumeration.
   If Oasis's unlock record ties both together, a USB-port-only change (DP staying put)

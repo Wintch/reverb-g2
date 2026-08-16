@@ -291,3 +291,29 @@ meaningful once controller position tracking is real — today controllers are 3
 (rotation, no real position; see "What's still missing" above and the paused constellation-
 tracking effort). User's call: test this together with that work once it resumes, not as a
 standalone task now.
+
+## Auto-sleep / standby (observed, not protocol-captured)
+
+**Symptom, first noted 2026-08-13 (T181)**: a controller left motionless for ~15 minutes
+powers itself off — LED off, and its solves before that point degrade to garbage
+near-origin poses (1.4-1.7 px reprojection error, fitting ambient IR blobs instead of the
+real constellation pattern; the constellation gravity gate correctly rejects these too).
+Re-attach of an already-registered controller after a mid-session power-on works without a
+Monado/service restart (distinct from T043's no-hot-add finding, which is about
+*unregistered* devices at startup, not this).
+
+**Almost certainly deliberate power-saving, not a defect** — this is standard behavior
+across essentially every Bluetooth-class wireless VR controller (Oculus/Meta Touch, Vive
+wands, PSVR, and WMR motion controllers specifically), all of which auto-sleep after
+inactivity to avoid draining the battery with the controller left idle. Worth stating
+plainly so it doesn't get chased as a bug: it very likely isn't one.
+
+**What's genuinely NOT established, so this isn't overclaimed**: no HID command or protocol
+byte for this has ever been captured from this project's own data. `docs/12`'s protocol
+reference only documents the **panel's** power on/off (`SET_FEATURE {0x04, 0x01}` /
+`{0x04, 0x00}`) — nothing about a controller-side sleep timer or wake command. "It's
+protection" is a well-grounded inference from general industry knowledge plus the observed
+symptom (LED off, clean re-attach, no crash), not something read off the wire here. If this
+is ever worth pinning down precisely, a `capture-hid.sh`-style USB capture spanning a
+controller's actual sleep transition would be the way to get a real answer instead of an
+inference.

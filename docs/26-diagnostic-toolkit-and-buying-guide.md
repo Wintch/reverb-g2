@@ -112,4 +112,36 @@ underlying signal — which of the four conductor groups is affected, in what pa
 not OS-specific, and a Windows-equivalent checklist (Device Manager error codes, the
 Windows Mixed Reality portal's own status page, `pnputil`/`devcon` for the USB reset
 step) is a natural follow-up so this is useful to anyone with a failing G2, not just this
-lab. Not started — logged as a direction, not a task in progress.
+lab. **Partially started, 2026-08-16** (`docs/pruebas.jsonl` T185, `docs/31`): a real
+Windows-side identity/census check now exists and needs no admin rights —
+
+```powershell
+Get-PnpDevice | Where-Object { $_.InstanceId -match 'VID_03F0.*PID_0580' -or $_.InstanceId -match 'VID_045E.*PID_0659' } | ForEach-Object {
+    $cid = (Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName 'DEVPKEY_Device_ContainerId').Data
+    [PSCustomObject]@{ InstanceId = $_.InstanceId; ContainerId = $cid; Status = $_.Status }
+} | Format-Table -AutoSize
+```
+
+`Status` other than `OK` (in practice, `Unknown`) on a device Windows can still name by ID is
+the closest Windows equivalent to the Linux "seat lottery" signal — a ghost/non-present
+device Windows remembers but that isn't currently on the bus. Compare `InstanceId`/
+`ContainerId` against `docs/22`'s "Known-good fingerprint" section to check whether a given
+session's identity matches a previously-validated one.
+
+**Registry-level inspection recipe**, for when the PowerShell check alone isn't enough (used
+to establish the fingerprint above in the first place): if Linux is available on the same
+box (even a second, separate drive, not necessarily true dual-boot on one disk), the Windows
+`SYSTEM`/`SOFTWARE` hives can be read directly, live, without booting Windows at all —
+
+```bash
+sudo mkdir -p /mnt/win3
+sudo mount -t ntfs-3g -o ro,uid=1000,gid=1000,umask=022 /dev/nvme0n1p3 /mnt/win3   # adjust the device
+sudo apt install -y chntpw   # provides `reged`
+/usr/sbin/reged -x /mnt/win3/Windows/System32/config/SYSTEM HKEY_LOCAL_MACHINE\\SYSTEM \
+  '\ControlSet001\Enum\HID\VID_03F0&PID_0580\<instance-id-from-PowerShell>' out.reg
+```
+
+**Don't** try to read a hive with raw `strings`/byte-proximity guessing instead of a real
+parser — value names are stored narrow/8-bit (not UTF-16) and a value's cell isn't reliably
+near its key name in the file, so that approach gives false negatives (tried and abandoned
+mid-session, `docs/31`). `reged -x` gives a clean, correct, recursive export in one shot.

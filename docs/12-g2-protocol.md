@@ -31,6 +31,31 @@ The two that matter for the protocol are the **companion** (`03f0:0580`) and the
 VID:PID. This also explains the "random USB2 hub resets" that the project had as an
 unexplained annoyance: they aren't random, they're triggered by the screen-off.
 
+**[OURS, from Microsoft's own driver INFs, 2026-08-16]** `045e:0659` (HoloLens Sensors) is
+itself composite, with (at least) three distinct interfaces, each bound differently by
+Microsoft's stack:
+
+```
+MI_02  ->  HololensSensors.inf (Class=Holographic)  ->  3 HID collections (col01/02/03)
+           the headset/controller-tunnel HID reports; this is the only one this project's
+           own stack (Monado/hidraw) has ever used.
+MI_03  ->  HololensSensorsWinUsb.inf (Class=USBDevice, WINUSB.INF)  ->  raw WinUSB claim,
+           DeviceInterfaceGUID {61bd6c28-9f10-426e-aa65-729d4656f6a2}. No kernel-side driver
+           at all -- a userspace app opens it directly. Never explored from this project's
+           side; the likely candidate is the raw bulk-transfer camera/sensor data path that
+           Microsoft's own MRUSBHost.dll pulls from, separate from the HID control channel.
+MI_04  ->  HololensSensors.inf again, but the OTHER device entry -> bound into the formal
+           Holographic device class (ClassGuid {d612553d-06b1-49ca-8938-e39ef80eb16f}) with
+           WUDF DeviceGroupId="MixedRealityHmd" for coordinated power/idle state. Bookkeeping
+           only (see docs/31) -- not itself a data path.
+```
+
+Also confirmed, and already independently satisfied: `HololensSensorsWinUsb.inf` explicitly
+disables USB idle/autosuspend for MI_03 (`DeviceIdleEnabled=0`). This project's own
+`scripts/71-usb-no-autosuspend.rules` already disables autosuspend for all of `idVendor==045e`
+at the whole-device level (superset of Microsoft's per-interface setting, Linux doesn't do
+per-interface power control the way Windows' AddReg can) — checked 2026-08-16, not a gap.
+
 ---
 
 ## 2. Message Types
