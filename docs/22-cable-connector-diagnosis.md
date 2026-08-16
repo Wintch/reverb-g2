@@ -848,10 +848,15 @@ connected — are all Linux-only observations so far; T188 also leaves open whet
 `WMR_CONSTELLATION_CONTROLLERS=1` specifically triggers or worsens it, since the storm was
 already climbing before constellation was ever enabled that session -- and T052-T057, weeks
 earlier, already saw the same storm at complete idle with NOTHING running, which argues
-against 6dof/constellation being required at all; a clean isolated test -- a long session in
-plain 3dof only, no SLAM, no constellation, otherwise identical conditions -- would settle
-whether tracking load matters here at all or whether this is purely time/thermal/hub-state
-driven, independent of what's running); controller and headset
+against 6dof/constellation being required at all -- **done same night, T189: settled, and it
+split the problem in two.** The companion-error storm itself reproduces at complete idle (no
+SLAM, no constellation, no app, headset untouched) at the same rate as under full load -- it
+needs nothing running at all. But `monado-service` CPU stayed under 1.2% the whole time,
+nothing like T188's 400%+ pin under Aircar+constellation. So the storm (load-independent,
+always available) and the CPU spin (load-dependent, mechanism unknown) are two separate
+things that only looked like one pair in T188. Next cut: constellation-only and SLAM-only in
+isolation, each idle/no-app, to find which one (if either alone) turns the counter into the
+CPU pin; controller and headset
 auto-standby timing on Windows specifically (measured on Linux/Monado only, T181, ~15 min);
 whether Oasis's native Windows stack implements HMD worn/presence detection where
 Monado/xrizer does not (see `docs/03`'s War Robots VR finding).
