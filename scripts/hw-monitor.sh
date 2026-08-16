@@ -35,7 +35,7 @@ fi
 usb_state() {
     local found bus4
     found=$(lsusb | grep -cE "03f0:0580|045e:0659|04b4:650[46]|0bda:4c15")
-    bus4=$(lsusb | grep -c "Bus 004 Device 00.*04b4:6504\|Bus 004 Device 00.*045e:0659")
+    bus4=$(lsusb | grep -c "Bus 004 Device [0-9]*.*04b4:6504\|Bus 004 Device [0-9]*.*045e:0659")
     echo "usb=${found}/5 usb3_branch=${bus4}/2"
 }
 
