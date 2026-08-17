@@ -70,6 +70,13 @@ another Windows capture session, check what previous ones already recorded.
 | `gnuplot-nox` | Lighter alternative to matplotlib for quick ASCII/PNG plots from the CSVs | apt |
 | A high-speed camera (a phone's 240 fps slow-mo is enough) | **Motion-to-photon latency**, the one number that would close the ghosting question directly instead of by inference. Point it at the panel with a moving marker in view and count frames between physical motion and displayed motion | free, needs a phone and a rig |
 
+**This gap got a name and a protocol on 2026-08-17 (T206)**: the wearer named a subtle
+late "color fill-in" artifact at the resolution limit of feel-testing —
+`docs/45-display-artifact-diagnosis.md` is the display-chain diagnosis protocol (strobe
+crosstalk vs. reprojection vs. warm-up ghosting), built exactly around the missing
+high-speed-camera instrument above, plus a static full-field color-toggle test mode for the
+360/VR180 player.
+
 Install line for the four apt ones:
 
 ```bash
