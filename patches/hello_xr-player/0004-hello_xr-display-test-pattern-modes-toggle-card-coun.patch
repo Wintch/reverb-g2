@@ -1,0 +1,392 @@
+From d388b9264779fe35f39a2d1937ec10916f3d1e0c Mon Sep 17 00:00:00 2001
+From: iam <iam@iashur.internal>
+Date: Mon, 17 Aug 2026 17:57:21 -0300
+Subject: [PATCH] hello_xr: display test-pattern modes (toggle/card/counter)
+ for the T206 color-fill diagnosis
+
+Three env-selected modes (HELLO_XR_TEST_PATTERN): full-field color toggle at a known
+frame cadence (zero geometry, zero motion -- reprojection/tracking physically cannot
+be the cause of anything seen; includes the documented slow-GtG dark-to-mid-gray
+pair); a world-locked sharp-edge card separating edge arrival from color-fill
+arrival; and a head-locked binary frame counter + RGB phase for 240fps
+camera-through-lens counting. Push-constant budget was already at the 128-byte
+minimum, so modes reuse dead slots (fovTangents becomes tintColor after the early
+return; counter packs into mode.x high bits). Unset = byte-identical rendering.
+Not yet verified in-headset (project rule: verification is physical). docs/45.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/tests/hello_xr/graphicsplugin_vulkan.cpp | 153 ++++++++++++++++++-
+ src/tests/hello_xr/vulkan_shaders/frag.glsl  | 119 ++++++++++++++-
+ src/tests/hello_xr/vulkan_utils.h            |   7 +-
+ 3 files changed, 276 insertions(+), 3 deletions(-)
+
+diff --git a/src/tests/hello_xr/graphicsplugin_vulkan.cpp b/src/tests/hello_xr/graphicsplugin_vulkan.cpp
+index 2d1a6f1..6fcbb9a 100644
+--- a/src/tests/hello_xr/graphicsplugin_vulkan.cpp
++++ b/src/tests/hello_xr/graphicsplugin_vulkan.cpp
+@@ -23,6 +23,8 @@
+ 
+ #include <algorithm>
+ #include <cctype>
++#include <cmath>
++#include <cstdlib>
+ #include <filesystem>
+ #include <system_error>
+ 
+@@ -498,6 +500,42 @@ class VulkanSwapchainImageData : public SwapchainImageDataBase<XrSwapchainImageV
+     std::vector<VulkanArraySliceState> m_slices;
+ };
+ 
++// HELLO_XR_TEST_PATTERN diagnostics: three env-selected display test patterns for isolating
++// the display chain (panel/strobe/gray-to-gray response) from tracking, reprojection and
++// content decode - see docs/pruebas.jsonl T206 in the lab's reverb-g2 repo for the "late
++// color fill-in" artifact this exists to chase down. Kept entirely inside RenderView's
++// existing push-constant/shader path (frag.glsl) instead of standing up a new pipeline; see
++// the comments there for how mode.x's spare bits and the panoFov/fovTangents push-constant
++// slots (already reused for zoom/brightness/the progress bar - the struct is at Vulkan's
++// guaranteed 128-byte push-constant limit, see vulkan_utils.h) get borrowed again here.
++enum class TestPattern : int32_t { Off = 0, Toggle = 1, Card = 2, Counter = 3 };
++
++// sRGB (display code value, 0..1) -> linear light. The player's swapchain format is *_SRGB
++// (see SelectColorSwapchainFormat below), so the GPU re-encodes whatever a shader writes as
++// it lands in the framebuffer - a value has to be pre-compensated so it lands on the panel
++// at the CODE VALUE named, not at that value again after a second gamma curve. Used to build
++// the toggle pair table below; frag.glsl's CardColor has its own copy for the same reason
++// (host and shader can't share code across that boundary).
++float SrgbToLinear(float c) { return (c <= 0.04045f) ? (c / 12.92f) : powf((c + 0.055f) / 1.055f, 2.4f); }
++
++// The three required toggle pairs (HELLO_XR_TEST_TOGGLE_PAIR selects the starting one, cycled
++// at runtime by the next/prev-track controller input - see the "test pattern" block in
++// RenderView below).
++struct TogglePair {
++    XrColor4f a, b;
++};
++const TogglePair kTogglePairs[] = {
++    // bw: black <-> white, the fast-GtG control.
++    {{0.0f, 0.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f}},
++    // gray: ~10% <-> ~40% sRGB, the documented slow-GtG case.
++    {{SrgbToLinear(0.10f), SrgbToLinear(0.10f), SrgbToLinear(0.10f), 1.0f},
++     {SrgbToLinear(0.40f), SrgbToLinear(0.40f), SrgbToLinear(0.40f), 1.0f}},
++    // sat: two saturated colors, chosen as different hues (not just different brightnesses of
++    // one) so every subpixel channel actually transitions, not just luminance.
++    {{1.0f, 0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 1.0f, 1.0f}},
++};
++constexpr int kNumTogglePairs = sizeof(kTogglePairs) / sizeof(kTogglePairs[0]);
++
+ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+     VulkanGraphicsPlugin() { m_graphicsBinding.type = GetGraphicsBindingType(); };
+ 
+@@ -1728,6 +1766,53 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+             if (m_videoMode) UpdateVideoTexture();
+         }
+ 
++        // HELLO_XR_TEST_PATTERN (see the TestPattern enum + kTogglePairs table near the top
++        // of this file). Parsed every call like HELLO_XR_FIXED_POSE/HELLO_XR_POSE_STATS
++        // above - getenv is cheap and this keeps the same not-cached convention.
++        TestPattern testPattern = TestPattern::Off;
++        if (const char* v = getenv("HELLO_XR_TEST_PATTERN")) {
++            if (strcmp(v, "toggle") == 0)
++                testPattern = TestPattern::Toggle;
++            else if (strcmp(v, "card") == 0)
++                testPattern = TestPattern::Card;
++            else if (strcmp(v, "counter") == 0)
++                testPattern = TestPattern::Counter;
++            else
++                Log::Write(Log::Level::Warning,
++                           Fmt("HELLO_XR_TEST_PATTERN='%s' not recognized (want toggle|card|counter) - ignoring", v));
++        }
++
++        if (testPattern != TestPattern::Off && eye == 0) {
++            ++m_testPatternFrame;
++
++            // Toggle mode repurposes the next/prev-track controller input (Y/X, or n/p on the
++            // keyboard - see playercontrol.h) to cycle the color pair: track navigation is
++            // meaningless here since this mode has no playlist reason to run against real
++            // video, and reusing the binding avoids adding a new controller action just for
++            // this. Left alone in video mode - the block above already owns that input there.
++            if (testPattern == TestPattern::Toggle && !m_videoMode) {
++                if (!m_testPatternPairInited) {
++                    m_testPatternPairInited = true;
++                    if (const char* v = getenv("HELLO_XR_TEST_TOGGLE_PAIR")) {
++                        if (strcmp(v, "bw") == 0)
++                            m_testPatternPairIndex = 0;
++                        else if (strcmp(v, "gray") == 0)
++                            m_testPatternPairIndex = 1;
++                        else if (strcmp(v, "sat") == 0)
++                            m_testPatternPairIndex = 2;
++                        else
++                            Log::Write(Log::Level::Warning, Fmt("HELLO_XR_TEST_TOGGLE_PAIR='%s' not recognized "
++                                                                "(want bw|gray|sat) - using bw", v));
++                    }
++                }
++                const long delta = PlayerControl::TakeNextTrackRequest() - PlayerControl::TakePreviousTrackRequest();
++                if (delta != 0) {
++                    m_testPatternPairIndex =
++                        (int)(((m_testPatternPairIndex + delta) % kNumTogglePairs + kNumTogglePairs) % kNumTogglePairs);
++                }
++            }
++        }
++
+         VulkanSwapchainImageData* swapchainData;
+         uint32_t imageIndex;
+ 
+@@ -1892,6 +1977,59 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+             }
+             pushConstants.mode[2] = (PlayerControl::SecondsSinceLastInteraction() < 3.0) ? 255 : 0;
+         }
++
++        // Test pattern override: everything above computed pushConstants exactly as it would
++        // without HELLO_XR_TEST_PATTERN set (so the field stays byte-identical when it's
++        // unset) - this overwrites whatever fields each mode actually needs, on top of that.
++        // See frag.glsl for what each does with them.
++        if (testPattern != TestPattern::Off) {
++            int toggleFrames = 8;
++            if (const char* v = getenv("HELLO_XR_TEST_TOGGLE_FRAMES")) {
++                const int parsed = atoi(v);
++                if (parsed > 0) toggleFrames = parsed;
++            }
++            const bool swapped = ((m_testPatternFrame / (uint64_t)toggleFrames) % 2) != 0;
++
++            switch (testPattern) {
++                case TestPattern::Toggle: {
++                    const TogglePair& pair = kTogglePairs[m_testPatternPairIndex];
++                    pushConstants.tintColor = swapped ? pair.b : pair.a;
++                    pushConstants.mode[0] = (int32_t)TestPattern::Toggle << 5;
++                    pushConstants.mode[1] = pushConstants.mode[2] = pushConstants.mode[3] = 0;
++                    break;
++                }
++                case TestPattern::Card: {
++                    // Forces PROJ_FLAT regardless of the loaded content's own projection -
++                    // frag.glsl reuses that path's uv/inside math for the quad itself. The
++                    // loaded photo/video is otherwise unused in this mode, just a placeholder
++                    // to satisfy the pipeline's normal startup path (LoadPhotoTexture etc.).
++                    pushConstants.mode[0] = 2 /* PROJ_FLAT */ | ((int32_t)TestPattern::Card << 5);
++                    if (eye == 1) pushConstants.mode[0] |= 0x10;
++                    // ~0.6m card at ~1m: tangent-unit half-extent (see projection360.h's
++                    // comment on panoFov for Flat mode - tan(angle), not radians).
++                    pushConstants.panoFov[0] = 0.30f;
++                    pushConstants.panoFov[1] = 0.30f;
++                    pushConstants.panoFov[2] = 1.0f;  // zoom forced off - "~1m ahead" shouldn't drift
++                    pushConstants.panoFov[3] = 1.0f;  // brightness forced off - would shift the exact greys
++                    pushConstants.mode[1] = swapped ? 1 : 0;
++                    pushConstants.mode[2] = pushConstants.mode[3] = 0;
++                    break;
++                }
++                case TestPattern::Counter: {
++                    // Purely additive - everything else about this frame (real content, real
++                    // projection, the real progress bar) is untouched; only a few spare high
++                    // bits get set for frag.glsl's CounterPatch corner overlay.
++                    const uint32_t counter = (uint32_t)(m_testPatternFrame & 0xFF);
++                    const uint32_t phase = (uint32_t)(m_testPatternFrame % 3);
++                    pushConstants.mode[0] |=
++                        ((int32_t)TestPattern::Counter << 5) | ((int32_t)counter << 7) | ((int32_t)phase << 15);
++                    break;
++                }
++                default:
++                    break;
++            }
++        }
++
+         vkCmdPushConstants(m_cmdBuffer.buf, m_pipelineLayout.layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                            sizeof(pushConstants), &pushConstants);
+ 
+@@ -1914,7 +2052,13 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+         //
+         // The reference-space cubes are also the visual for the floor/height question: STAGE sits
+         // where the tracking origin is, which is wherever the headset was when SLAM initialised.
+-        if (!cubes.empty()) {
++        //
++        // Suppressed for the toggle/card test patterns (HELLO_XR_TEST_PATTERN): they own the
++        // whole screen and a stray controller/reference-space cube drawn on top would be
++        // exactly the kind of world geometry those modes exist to rule out. Counter mode is
++        // left alone - it's a small additive overlay on otherwise-normal content, cubes and all.
++        const bool suppressCubesForTestPattern = (testPattern == TestPattern::Toggle || testPattern == TestPattern::Card);
++        if (!cubes.empty() && !suppressCubesForTestPattern) {
+             swapchainData->BindCubePipeline(m_cmdBuffer.buf, imageArrayIndex);
+             vkCmdBindIndexBuffer(m_cmdBuffer.buf, m_drawBuffer.idx.buf, 0, VK_INDEX_TYPE_UINT16);
+ 
+@@ -2036,6 +2180,13 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+     VkShaderModule m_videoFragModule{VK_NULL_HANDLE};
+     uint64_t m_renderViewCalls{0};
+ 
++    // HELLO_XR_TEST_PATTERN state - see the TestPattern enum near the top of this file. Has
++    // to be a member (not a local): the frame counter and pair selection must survive both
++    // eyes of one frame and carry over between frames, unlike pushConstants itself.
++    uint64_t m_testPatternFrame{0};
++    int m_testPatternPairIndex{0};
++    bool m_testPatternPairInited{false};
++
+     VkImage m_photoImage{VK_NULL_HANDLE};
+     VkDeviceMemory m_photoImageMemory{VK_NULL_HANDLE};
+     VkImageView m_photoImageView{VK_NULL_HANDLE};
+diff --git a/src/tests/hello_xr/vulkan_shaders/frag.glsl b/src/tests/hello_xr/vulkan_shaders/frag.glsl
+index fbfe760..8e52138 100644
+--- a/src/tests/hello_xr/vulkan_shaders/frag.glsl
++++ b/src/tests/hello_xr/vulkan_shaders/frag.glsl
+@@ -19,7 +19,10 @@ layout (std140, push_constant) uniform buf
+     vec4 fovTangents;     // tan(angleLeft), tan(angleRight), tan(angleUp), tan(angleDown)
+     vec4 uvScaleOffset;   // xy scale, zw offset: this eye's sub-rectangle of a stereo frame
+     vec4 panoFov;         // 180: half-angles in radians. flat: half-extents of the screen.
+-    ivec4 mode;           // x: PROJ_*
++    ivec4 mode;           // x: PROJ_* in bits 0-3, eye in bit 4, HELLO_XR_TEST_PATTERN in
++                           // bits 5-6 (see below), counter-mode frame count/phase in bits
++                           // 7-14/15-16. y/z/w: progress bar and quit-hold, see near the
++                           // bottom of this file (also reused by card/toggle test patterns).
+ } ubuf;
+ 
+ layout (set = 0, binding = 0) uniform sampler2D equirectTex;
+@@ -27,11 +30,116 @@ layout (set = 0, binding = 0) uniform sampler2D equirectTex;
+ layout (location = 0) in vec2 iNdc;
+ layout (location = 0) out vec4 FragColor;
+ 
++// sRGB (display code value, 0..1) -> linear light. The player's swapchain format is *_SRGB
++// (see SelectColorSwapchainFormat in graphicsplugin_vulkan.cpp), so the GPU re-encodes
++// whatever a shader writes here on the way into the framebuffer - a value has to be
++// pre-compensated with this to land on the panel at the CODE VALUE named, not at that value
++// again after a second gamma curve. Used by CardColor below; the .cpp has its own copy for
++// the toggle-mode gray pair, since host and shader can't share code across that boundary.
++float SrgbToLinear(float c)
++{
++    return (c <= 0.04045) ? (c / 12.92) : pow((c + 0.055) / 1.055, 2.4);
++}
++
++// HELLO_XR_TEST_PATTERN=card (see graphicsplugin_vulkan.cpp): thin white border + checkerboard
++// corner markers around an interior fill that swaps with the background grey on mode.y (0 or
++// 1 - set from the same frame counter/cadence toggle mode uses). The two greys are the
++// ~10%/~40% sRGB pair mode 1's "gray" toggle also uses (see kTogglePairs in the .cpp) -
++// interior and background are always opposite members of that pair, so the whole quad+
++// backdrop only ever shows those two values, just swapping which region has which.
++vec3 CardColor(vec2 uv, float inside)
++{
++    float dark = SrgbToLinear(0.10);
++    float mid = SrgbToLinear(0.40);
++    bool swapped = ubuf.mode.y != 0;
++    float interiorGrey = swapped ? mid : dark;
++    float backgroundGrey = swapped ? dark : mid;
++
++    if (inside < 0.5) {
++        return vec3(backgroundGrey);
++    }
++
++    // Thin white outline just inside the quad's edge - a static, always-sharp reference so
++    // edge-arrival can be judged separately from how long the larger fill areas take to settle.
++    float edgeDist = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
++    if (edgeDist < 0.03) {
++        return vec3(1.0);
++    }
++
++    // Checkerboard corner markers: a fine black/white grid in each corner, inside the border.
++    const float kCornerSize = 0.18;
++    const float kCell = 0.03;
++    bool inCornerX = (uv.x < kCornerSize) || (uv.x > 1.0 - kCornerSize);
++    bool inCornerY = (uv.y < kCornerSize) || (uv.y > 1.0 - kCornerSize);
++    if (inCornerX && inCornerY) {
++        float cx = floor(uv.x / kCell);
++        float cy = floor(uv.y / kCell);
++        bool white = mod(cx + cy, 2.0) < 1.0;
++        return vec3(white ? 1.0 : 0.0);
++    }
++
++    return vec3(interiorGrey);
++}
++
++// HELLO_XR_TEST_PATTERN=counter (see graphicsplugin_vulkan.cpp): a small head-locked patch,
++// screen-space only like the progress/quit-hold bars further down, so an external high-speed
++// camera can read off exactly which rendered frame is on screen. modeX bits 7-14 carry a
++// wrapping 0-255 frame counter (bit on = white, off = black, 8 blocks packed 4x2, MSB first);
++// bits 15-16 carry a color phase (0=R 1=G 2=B, cycling every frame) shown in the gaps between
++// blocks - a coarse signal visible even out of focus, on top of the precise per-frame count.
++// Returns false (and leaves FragColor untouched) outside the patch.
++bool CounterPatch(float s, float t, int modeX)
++{
++    const float kPatchSMin = 0.03, kPatchSMax = 0.25;
++    const float kPatchTMin = 0.72, kPatchTMax = 0.92;
++    if (s < kPatchSMin || s > kPatchSMax || t < kPatchTMin || t > kPatchTMax) {
++        return false;
++    }
++
++    int counter = (modeX >> 7) & 0xFF;
++    int phase = (modeX >> 15) & 0x3;
++    vec3 phaseColor = (phase == 0) ? vec3(1.0, 0.0, 0.0) : (phase == 1) ? vec3(0.0, 1.0, 0.0) : vec3(0.0, 0.0, 1.0);
++
++    float ps = (s - kPatchSMin) / (kPatchSMax - kPatchSMin) * 4.0;
++    float pt = (t - kPatchTMin) / (kPatchTMax - kPatchTMin) * 2.0;
++    float cellS = fract(ps);
++    float cellT = fract(pt);
++    int bitIndex = int(pt) * 4 + int(ps);
++    bool bitOn = ((counter >> (7 - bitIndex)) & 1) != 0;
++    bool inBlock = cellS > 0.12 && cellS < 0.88 && cellT > 0.12 && cellT < 0.88;
++
++    FragColor = vec4(inBlock ? (bitOn ? vec3(1.0) : vec3(0.0)) : phaseColor, 1.0);
++    return true;
++}
++
+ void main()
+ {
+     // Vulkan NDC: x runs -1 (left) .. +1 (right), y runs -1 (top) .. +1 (bottom).
+     float s = iNdc.x * 0.5 + 0.5;
+     float t = iNdc.y * 0.5 + 0.5;
++
++    // HELLO_XR_TEST_PATTERN (see graphicsplugin_vulkan.cpp for how mode.x's bits 5-6 get set,
++    // and docs/pruebas.jsonl T206 in the lab repo for why this exists - a suspected LCD
++    // strobe-crosstalk/gray-to-gray artifact needing patterns that isolate the display chain
++    // from tracking/reprojection/content-decode). 0 (unset) takes none of these branches, so
++    // behavior is byte-identical to before this feature existed.
++    int testPattern = (ubuf.mode.x >> 5) & 0x3;
++
++    // TOGGLE: full-field solid color, zero geometry, zero motion - returns before any of the
++    // ray/projection math below runs. Color comes straight from fovTangents (see the .cpp -
++    // that slot is unused by this mode, reused instead of growing the push-constant struct).
++    if (testPattern == 1) {
++        FragColor = vec4(ubuf.fovTangents.rgb, 1.0);
++        return;
++    }
++
++    // COUNTER: also screen-space only, checked here ahead of all the ray/projection math since
++    // it never needs any of it, and must win over the `discard` below for pixels outside the
++    // loaded content - easiest to guarantee by simply returning before reaching that check.
++    if (testPattern == 3 && CounterPatch(s, t, ubuf.mode.x)) {
++        return;
++    }
++
+     float xv = mix(ubuf.fovTangents.x, ubuf.fovTangents.y, s);  // left -> right
+     float yv = mix(ubuf.fovTangents.z, ubuf.fovTangents.w, t);  // up -> down
+ 
+@@ -77,6 +185,15 @@ void main()
+         }
+     }
+ 
++    // CARD: reuses the PROJ_FLAT uv/inside just computed above - a world-locked flat quad is
++    // exactly that path's own geometry (the .cpp forces projType to PROJ_FLAT whenever this
++    // mode is active, regardless of the loaded content's real projection). Paints the WHOLE
++    // screen, inside the quad or not, instead of discarding - see CardColor above.
++    if (testPattern == 2) {
++        FragColor = vec4(CardColor(uv, inside), 1.0);
++        return;
++    }
++
+     // u wraps from 1 back to 0 at the seam behind the viewer. The implicit derivative there is
+     // ~1.0 instead of ~0, which would drive the mip selection to the smallest level and paint a
+     // blocky band across the seam - so unwrap the derivatives and select the mip explicitly.
+diff --git a/src/tests/hello_xr/vulkan_utils.h b/src/tests/hello_xr/vulkan_utils.h
+index daf71ef..1d7fb03 100644
+--- a/src/tests/hello_xr/vulkan_utils.h
++++ b/src/tests/hello_xr/vulkan_utils.h
+@@ -943,7 +943,12 @@ struct VulkanUniformBuffer {
+     float uvScaleOffset[4];   // this eye's sub-rectangle of a stereo frame
+     float panoFov[4];         // xy: 180 half-angles (rad) / flat half-extents. z: zoom (1=off).
+                                // w: brightness multiplier (1=off).
+-    int32_t mode[4];          // x: 0 = 360 equirect, 1 = 180 half-equirect, 2 = flat screen
++    int32_t mode[4];          // x: bits 0-3 = 0 = 360 equirect, 1 = 180 half-equirect, 2 = flat
++                               // screen; bit 4 = eye; bits 5-6 = HELLO_XR_TEST_PATTERN (0 off,
++                               // 1 toggle, 2 card, 3 counter - see graphicsplugin_vulkan.cpp
++                               // and frag.glsl); bits 7-14/15-16 = counter mode's frame count /
++                               // color phase, unused otherwise. y/z/w: progress bar and
++                               // quit-hold fields (frag.glsl), reused by card/toggle mode.
+ };
+ 
+ // Simple vertex MVP xform, tint color & color fragment shader layout
+-- 
+2.47.3
+

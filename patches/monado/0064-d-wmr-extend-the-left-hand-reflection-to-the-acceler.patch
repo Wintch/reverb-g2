@@ -1,0 +1,43 @@
+From 92eae558e1bb8219b223cca996278a2315baf0d3 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Mon, 17 Aug 2026 18:45:50 -0300
+Subject: [PATCH] d/wmr: extend the left-hand reflection to the accelerometer
+ (coherent frame for fusion)
+
+T207 reconciliation: the two hands' factory Rt mountings differ by ~178.6deg about Y
+(all matrices proper -- no recoverable factory reflection), and the numerically
+derived left-to-right correction is exactly diag(1,-1,1) on BOTH post-calibration
+sensor vectors. 0062 negated only the gyro, feeding m_imu_3dof inconsistent
+conventions: the gravity correction (accel-driven) fought the corrected gyro --
+the wearer's 'still wrong' with the gyro-only fix. Same gate, both sensors.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/xrt/drivers/wmr/wmr_controller_hp.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/src/xrt/drivers/wmr/wmr_controller_hp.c b/src/xrt/drivers/wmr/wmr_controller_hp.c
+index 3f95c3b46..6982acc23 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_hp.c
++++ b/src/xrt/drivers/wmr/wmr_controller_hp.c
+@@ -405,6 +405,17 @@ wmr_controller_hp_packet_parse(struct wmr_controller_hp *ctrl, const unsigned ch
+ 	if (wcb->base.device_type == XRT_DEVICE_TYPE_LEFT_HAND_CONTROLLER &&
+ 	    debug_get_bool_option_wmr_controller_left_yaw_gyro_invert()) {
+ 		last_input->imu.gyro.y = -last_input->imu.gyro.y;
++		// The accel MUST get the same reflection (2026-08-17, T207 reconciliation
++		// analysis): the factory Rt matrices of the two hands differ by ~178.6 deg
++		// about Y (computed from the 0063 determinant log; all matrices proper, so
++		// no factory reflection exists to recover), and the numerically-derived
++		// left-to-right correction is exactly diag(1,-1,1) applied to BOTH
++		// post-calibration sensor vectors. Negating only the gyro fed m_imu_3dof
++		// two INCONSISTENT conventions -- the gravity correction (driven by this
++		// accel) then fights the corrected gyro, which is what the wearer felt as
++		// still-wrong with the gyro-only fix active. Same gate, both sensors,
++		// coherent frame.
++		last_input->imu.acc.y = -last_input->imu.acc.y;
+ 	}
+ 
+ 	uint32_t prev_ticks = last_input->imu.timestamp_ticks & UINT32_C(0xFFFFFFFF);
+-- 
+2.47.3
+

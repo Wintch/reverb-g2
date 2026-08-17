@@ -1,0 +1,127 @@
+From 21a8476b0fd02316ec2d0013738f293001eab977 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Mon, 17 Aug 2026 18:28:03 -0300
+Subject: [PATCH] d/wmr: log controller factory calib matrices + determinants
+ at connect (reflection hunt)
+
+The left controller's gyro yaw axis is sign-flipped (a det=-1 reflection, 0062).
+Parse investigation found the probable origin: pose_from_rt() converts the factory
+Rt.Rotation through Eigen's polar decomposition, which silently forces det=+1 --
+a genuine reflection in the mounting matrix (plausible for physically mirrored
+left/right units) gets absorbed into a discarded scaling term, and quaternions
+structurally cannot carry it. This logging prints both sensors' mix_matrix AND
+Rt.Rotation with determinants, per hand, once per connect: if the left gyro
+Rt.Rotation reads det<0 while the right reads +1, the root is confirmed and the
+coherent fix (apply the reflection to both sensors at parse, replacing 0062's
+single-axis hack) becomes implementable against data.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/xrt/drivers/wmr/wmr_controller_base.c | 84 +++++++++++++++++++++++
+ 1 file changed, 84 insertions(+)
+
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
+index 850bde6a7..e692ae009 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.c
++++ b/src/xrt/drivers/wmr/wmr_controller_base.c
+@@ -112,6 +112,24 @@ wmr_controller_base(struct xrt_device *p)
+ 	return (struct wmr_controller_base *)p;
+ }
+ 
++//! T208 instrumentation (2026-08-17): plain cofactor-expansion determinant of a tightly-packed
++//! xrt_matrix_3x3. Correct regardless of whether the 9 floats are stored row-major or
++//! column-major -- det(M) == det(M^T) -- which matters here because different call sites in this
++//! driver disagree on that convention (see the comment at the use site). A negative determinant
++//! means the matrix is a reflection, not a rotation: something no factory IMU calibration should
++//! ever legitimately produce, and the concrete, checkable signature the left/right controller
++//! sign-flip investigation (0062, T206/T207) has been missing since it was first floated as a
++//! hypothesis in the "controller's factory mix_matrix... encodes a reflection" comment further
++//! down this file.
++static inline float
++mat3x3_det(const struct xrt_matrix_3x3 *m)
++{
++	const float *v = m->v;
++	return v[0] * (v[4] * v[8] - v[5] * v[7]) - //
++	       v[1] * (v[3] * v[8] - v[5] * v[6]) + //
++	       v[2] * (v[3] * v[7] - v[4] * v[6]);
++}
++
+ static void
+ receive_bytes(struct wmr_controller_base *wcb, uint64_t time_ns, uint8_t *buffer, uint32_t buf_size)
+ {
+@@ -1053,6 +1071,72 @@ wmr_controller_base_init(struct wmr_controller_base *wcb,
+ 
+ 	wmr_config_precompute_transforms(&wcb->config.sensors, NULL);
+ 
++	// T208 instrumentation (2026-08-17): per-connect factory IMU calibration dump for BOTH
++	// sensors on BOTH hands, modeled on wmr_hmd.c's WMR_INFO block from patch 0060 (the
++	// analogous HMD-side print) -- nothing before this has ever printed a controller's raw
++	// factory mix_matrix, bias, or Rt.Rotation, and 0062's own comment says explicitly that
++	// whether the true defect lives in "the factory gyro.mix_matrix, the bias_offsets, or
++	// P_oxr_gyr.orientation for this specific unit" is still open, because "none of those raw
++	// values are logged today." This closes that gap.
++	//
++	// It also adds the one thing that can actually distinguish those three candidates: the
++	// determinant of each raw 3x3. A negative determinant is a reflection -- not something a
++	// legitimate rotation or cross-axis mixing matrix should ever produce -- and this driver
++	// has TWO different 3x3s per sensor that a reflection could hide in, with very different
++	// consequences:
++	//
++	//   - mix_matrix (MixingMatrixTemperatureModel): applied directly to the raw ADC vector via
++	//     math_matrix_3x3_transform_vec3() in wmr_controller_hp.c. A real det<0 here WOULD be
++	//     applied correctly -- a plain matrix-vector multiply cannot lose a reflection.
++	//
++	//   - rotation (Rt.Rotation, this sensor's mounting pose): fed through pose_from_rt()
++	//     (top of wmr_config.c) into math_pose_from_isometry(), which calls Eigen's
++	//     Isometry3f::rotation(). That performs a polar decomposition (SVD-based) that is
++	//     mathematically GUARANTEED to return a proper rotation (det=+1) no matter what its
++	//     input is -- if the input linear part has det<0, Eigen silently flips the sign of one
++	//     singular value/column to force the output rotation's determinant back to +1,
++	//     absorbing the reflection into a scaling component that math_pose_from_isometry()
++	//     never reads. In other words: a det<0 in THIS matrix is not merely mishandled, it is
++	//     structurally impossible for the resulting quaternion (P_oxr_gyr/P_oxr_acc, used in
++	//     wmr_controller_hp.c to rotate the mix-corrected sample into OpenXR coordinates) to
++	//     ever represent it, by construction of the library call used to build it. If the left
++	//     hand's gyro.rotation comes back det<0 here while mix_matrix stays det>0 on both
++	//     hands, that is a concrete, file-line-identified origin for 0062's single-axis sign
++	//     defect -- upstream of the mix_matrix/bias_offsets 0062 already compensates after.
++	{
++		const char *hand =
++		    wcb->base.device_type == XRT_DEVICE_TYPE_LEFT_HAND_CONTROLLER ? "left" : "right";
++		const struct xrt_matrix_3x3 *gm = &wcb->config.sensors.gyro.mix_matrix;
++		const struct xrt_matrix_3x3 *am = &wcb->config.sensors.accel.mix_matrix;
++		const struct xrt_matrix_3x3 *gr = &wcb->config.sensors.gyro.rotation;
++		const struct xrt_matrix_3x3 *ar = &wcb->config.sensors.accel.rotation;
++		const struct xrt_vec3 *gb = &wcb->config.sensors.gyro.bias_offsets;
++		const struct xrt_vec3 *ab = &wcb->config.sensors.accel.bias_offsets;
++
++		WMR_INFO(wcb,
++		         "factory calib (%s) gyro:  mix [%.6f %.6f %.6f; %.6f %.6f %.6f; %.6f %.6f %.6f] "
++		         "det=%.6f bias=(%.6f %.6f %.6f)",
++		         hand, gm->v[0], gm->v[1], gm->v[2], gm->v[3], gm->v[4], gm->v[5], gm->v[6], gm->v[7],
++		         gm->v[8], (double)mat3x3_det(gm), gb->x, gb->y, gb->z);
++		WMR_INFO(wcb,
++		         "factory calib (%s) accel: mix [%.6f %.6f %.6f; %.6f %.6f %.6f; %.6f %.6f %.6f] "
++		         "det=%.6f bias=(%.6f %.6f %.6f)",
++		         hand, am->v[0], am->v[1], am->v[2], am->v[3], am->v[4], am->v[5], am->v[6], am->v[7],
++		         am->v[8], (double)mat3x3_det(am), ab->x, ab->y, ab->z);
++		WMR_INFO(
++		    wcb,
++		    "factory calib (%s) gyro:  Rt.Rotation [%.6f %.6f %.6f; %.6f %.6f %.6f; %.6f %.6f %.6f] "
++		    "det=%.6f (feeds pose_from_rt -> P_oxr_gyr; a real det<0 here is silently forced to +1 "
++		    "by Eigen's polar decomposition -- see comment above)",
++		    hand, gr->v[0], gr->v[1], gr->v[2], gr->v[3], gr->v[4], gr->v[5], gr->v[6], gr->v[7], gr->v[8],
++		    (double)mat3x3_det(gr));
++		WMR_INFO(wcb,
++		         "factory calib (%s) accel: Rt.Rotation [%.6f %.6f %.6f; %.6f %.6f %.6f; %.6f %.6f %.6f] "
++		         "det=%.6f (feeds pose_from_rt -> P_oxr_acc, same caveat)",
++		         hand, ar->v[0], ar->v[1], ar->v[2], ar->v[3], ar->v[4], ar->v[5], ar->v[6], ar->v[7],
++		         ar->v[8], (double)mat3x3_det(ar));
++	}
++
+ 	// MEASUREMENT 2026-08-12: P_imu_me converts an IMU-frame orientation into the device's own
+ 	// frame. The controllers compute it right here and then NOTHING uses it -- the only caller in
+ 	// the tree is wmr_hmd.c, for the headset. The controllers therefore report their raw IMU
+-- 
+2.47.3
+

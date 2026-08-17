@@ -1,0 +1,167 @@
+From 3cc2ff7af4bf30be587965753c9cfca96bb50c3d Mon Sep 17 00:00:00 2001
+From: iam <iam@iashur.internal>
+Date: Mon, 17 Aug 2026 18:04:51 -0300
+Subject: [PATCH] hello_xr: solid per-axis RGB colors on the controller pose
+ gizmo
+
+The gizmo already drew three elongated bars, but all three reused the shared
+per-FACE-colored cube mesh -- stretched into bars, the long side faces showed other
+axes' colors and every bar read as a multicolor smear (part of T206's 'the cross is
+one thing, the rotation axes another' confusion was the visualization itself).
+Bars are now centered on the pose (+/- split is real geometry) and colored
+procedurally in the vertex shader: X=red, Y=green, Z=blue, negative half dimmed
+0.25x, every face correct. Ordinary cubes bit-for-bit untouched (GizmoAxis=-1).
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/tests/hello_xr/graphicsplugin.h           |  8 ++++++
+ src/tests/hello_xr/graphicsplugin_vulkan.cpp  | 14 +++++++---
+ src/tests/hello_xr/openxr_program.cpp         | 28 +++++++++----------
+ .../hello_xr/vulkan_shaders/cube_vert.glsl    | 27 +++++++++++++++---
+ 4 files changed, 55 insertions(+), 22 deletions(-)
+
+diff --git a/src/tests/hello_xr/graphicsplugin.h b/src/tests/hello_xr/graphicsplugin.h
+index 960adcb..dc3040e 100644
+--- a/src/tests/hello_xr/graphicsplugin.h
++++ b/src/tests/hello_xr/graphicsplugin.h
+@@ -11,6 +11,14 @@ using nonstd::span;
+ struct Cube {
+     XrPosef Pose;
+     XrVector3f Scale;
++
++    // -1 (default): an ordinary cube, colored per-face like every cube has always been
++    // (Geometry::c_cubeVertices). 0/1/2: a controller-gizmo axis bar (X/Y/Z) - see
++    // PushPoseGizmo in openxr_program.cpp - rendered as a single solid axis color instead,
++    // bright on its own positive half and dim on its negative half (see cube_vert.glsl).
++    // Reference-space cubes and everything else built with the 2-argument Cube{Pose, Scale}
++    // form are unaffected: this just defaults to "off".
++    int32_t GizmoAxis{-1};
+ };
+ 
+ // Wraps a graphics API so the main openxr program can be graphics API-independent.
+diff --git a/src/tests/hello_xr/graphicsplugin_vulkan.cpp b/src/tests/hello_xr/graphicsplugin_vulkan.cpp
+index 6fcbb9a..94dda60 100644
+--- a/src/tests/hello_xr/graphicsplugin_vulkan.cpp
++++ b/src/tests/hello_xr/graphicsplugin_vulkan.cpp
+@@ -2079,11 +2079,17 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+                 XrMatrix4x4f_CreateTranslationRotationScale(&model, &cube.Pose.position, &cube.Pose.orientation, &cube.Scale);
+                 XrMatrix4x4f mvp;
+                 XrMatrix4x4f_Multiply(&mvp, &vp, &model);
+-                // Only the leading mvp of the shared push-constant block; the cube shader reads
+-                // nothing else, and the 360 pipeline's own constants are re-pushed on the next
+-                // frame before it draws again.
++                // mvp plus one int (Cube::GizmoAxis) - see cube_vert.glsl, which reads the two
++                // together as its own independent interpretation of the shared push-constant
++                // range (the 360 pipeline's own constants are re-pushed on the next frame
++                // before it draws again, so nothing here needs to match that struct's layout
++                // past what cube_vert.glsl itself declares).
++                struct {
++                    XrMatrix4x4f mvp;
++                    int32_t gizmoAxis;
++                } cubePush{mvp, cube.GizmoAxis};
+                 vkCmdPushConstants(m_cmdBuffer.buf, m_pipelineLayout.layout,
+-                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(mvp.m), &mvp.m[0]);
++                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(cubePush), &cubePush);
+                 vkCmdDrawIndexed(m_cmdBuffer.buf, m_drawBuffer.count.idx, 1, 0, 0, 0);
+             }
+         }
+diff --git a/src/tests/hello_xr/openxr_program.cpp b/src/tests/hello_xr/openxr_program.cpp
+index ba6b781..583d2ef 100644
+--- a/src/tests/hello_xr/openxr_program.cpp
++++ b/src/tests/hello_xr/openxr_program.cpp
+@@ -748,10 +748,19 @@ struct OpenXrProgram : IOpenXrProgram {
+      * frame unambiguous: X to the device's right, Y up, Z backward (OpenXR's -Z is forward, so
+      * the Z bar points back out of the muzzle).
+      *
+-     * Bars are offset by half their length along their own axis so they meet at the pose origin
+-     * rather than straddling it, which keeps the origin itself readable as the point where the
+-     * three meet. Colours come from the cube mesh's own per-face vertex colours, so the three are
+-     * told apart by direction rather than by hue.
++     * Each bar is centered ON the pose and spans it symmetrically (half in its axis's own +
++     * direction, half in -), so all three still cross exactly at the pose origin -- and now the
++     * +/- split is real geometry, not just an arbitrary "arm". Found 2026-08-17 (T206, the
++     * wearer live-debugging orientation): the previous "tell them apart by direction" via the
++     * cube mesh's own per-face colours failed in practice -- a bar's two tiny end caps carried
++     * the right colour, but its four long side faces (the vast majority of what's visible from
++     * any angle) showed whatever OTHER axis happened to own that face, so every bar read as a
++     * confusing multi-colour smear. Now each bar is a single solid axis colour on every face
++     * (+X red, +Y green, +Z blue, dim on the negative half) -- see cube_vert.glsl, which derives
++     * the colour from the vertex's own local position along the bar's axis instead of from the
++     * mesh's baked per-face colours. Cube::GizmoAxis (0/1/2) is what tells cube_vert.glsl this
++     * is a gizmo bar and which axis it is; -1 (the default for every other cube, reference
++     * spaces included) keeps the original per-face colouring untouched.
+      */
+     static void PushPoseGizmo(std::vector<Cube>& cubes, const XrPosef& pose, float scale) {
+         constexpr float kLength = 0.12f;
+@@ -759,19 +768,10 @@ struct OpenXrProgram : IOpenXrProgram {
+         const float len = kLength * scale;
+         const float thick = kThick * scale;
+ 
+-        const XrVector3f axes[3] = {{len * 0.5f, 0.f, 0.f}, {0.f, len * 0.5f, 0.f}, {0.f, 0.f, len * 0.5f}};
+         const XrVector3f sizes[3] = {{len, thick, thick}, {thick, len, thick}, {thick, thick, len}};
+ 
+         for (int axis = 0; axis < 3; axis++) {
+-            XrVector3f offset;
+-            XrQuaternionf_RotateVector3f(&offset, &pose.orientation, &axes[axis]);
+-
+-            XrPosef barPose = pose;
+-            barPose.position.x += offset.x;
+-            barPose.position.y += offset.y;
+-            barPose.position.z += offset.z;
+-
+-            cubes.push_back(Cube{barPose, sizes[axis]});
++            cubes.push_back(Cube{pose, sizes[axis], axis});
+         }
+     }
+ 
+diff --git a/src/tests/hello_xr/vulkan_shaders/cube_vert.glsl b/src/tests/hello_xr/vulkan_shaders/cube_vert.glsl
+index fccdff5..b1447e5 100644
+--- a/src/tests/hello_xr/vulkan_shaders/cube_vert.glsl
++++ b/src/tests/hello_xr/vulkan_shaders/cube_vert.glsl
+@@ -8,12 +8,16 @@
+ 
+ #pragma vertex
+ 
+-// Same push-constant block the 360 pipeline uses, so both pipelines can share one
+-// VkPipelineLayout. Only the leading mvp is read here; the rest is the 360 viewer's
+-// business and is declared solely to keep the offsets identical.
++// Same push-constant range the 360 pipeline uses (offset 0, size within its 128-byte push
++// constant block), so both pipelines can share one VkPipelineLayout - but this stage
++// declares its OWN, independent interpretation of those bytes: mvp, then one int right after
++// it (see graphicsplugin_vulkan.cpp's cube draw call, which pushes exactly this - mvp plus
++// Cube::GizmoAxis - not the 360 viewer's full struct).
+ layout (std140, push_constant) uniform buf
+ {
+     mat4 mvp;
++    int gizmoAxis;  // -1 = off (ordinary per-face Color below). 0/1/2 = controller-gizmo
++                     // axis bar (X/Y/Z) - see PushPoseGizmo in openxr_program.cpp.
+ } ubuf;
+ 
+ layout (location = 0) in vec3 Position;
+@@ -27,7 +31,22 @@ out gl_PerVertex
+ 
+ void main()
+ {
+-    oColor.rgb = Color.rgb;
++    if (ubuf.gizmoAxis >= 0) {
++        // Controller-gizmo axis bar: one solid colour per axis (+X red, +Y green, +Z blue),
++        // dimmed by the same 0.25 factor Geometry's Dark* colours already use elsewhere, on
++        // whichever half of the bar sits on the negative side of ITS OWN local axis - not by
++        // face identity, so every face of the bar (end caps AND the four long sides) reads the
++        // right colour, not just the two tiny tips. Position is the mesh's local -0.5..+0.5
++        // unit-cube coordinate, so Position[gizmoAxis]'s sign is exactly that.
++        vec3 axisColor = (ubuf.gizmoAxis == 0) ? vec3(1.0, 0.0, 0.0)
++                        : (ubuf.gizmoAxis == 1) ? vec3(0.0, 1.0, 0.0)
++                                                 : vec3(0.0, 0.0, 1.0);
++        float t = (ubuf.gizmoAxis == 0) ? Position.x : (ubuf.gizmoAxis == 1) ? Position.y : Position.z;
++        float bright = (t >= 0.0) ? 1.0 : 0.25;
++        oColor.rgb = axisColor * bright;
++    } else {
++        oColor.rgb = Color.rgb;
++    }
+     oColor.a = 1.0;
+     gl_Position = ubuf.mvp * vec4(Position, 1);
+ }
+-- 
+2.47.3
+

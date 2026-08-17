@@ -1,0 +1,144 @@
+From b1e97f6b21a9cc21949a0c825dd7863a50c619e4 Mon Sep 17 00:00:00 2001
+From: iam <iam@iashur.internal>
+Date: Mon, 17 Aug 2026 18:25:24 -0300
+Subject: [PATCH] hello_xr: solid color caps on the positive tip of each gizmo
+ axis bar
+
+Wearer request (T206 debugging): an asymmetric end marker per axis -- red cap on +X,
+green on +Y, blue on +Z, nothing on negative ends -- so handedness reads at a glance
+and a displaced rotation pivot becomes visually obvious (the caps move rigidly with
+the bars). Tip cubes encode GizmoAxis=axis+3: same hue path, but skipping the
+local-position sign test (a tip cube tagged with the bar's own code would render
+half bright/half dim -- local frame, not world placement).
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/tests/hello_xr/graphicsplugin.h           |  5 +--
+ src/tests/hello_xr/openxr_program.cpp         | 31 +++++++++++++++++
+ .../hello_xr/vulkan_shaders/cube_vert.glsl    | 33 ++++++++++++-------
+ 3 files changed, 56 insertions(+), 13 deletions(-)
+
+diff --git a/src/tests/hello_xr/graphicsplugin.h b/src/tests/hello_xr/graphicsplugin.h
+index dc3040e..dbf0862 100644
+--- a/src/tests/hello_xr/graphicsplugin.h
++++ b/src/tests/hello_xr/graphicsplugin.h
+@@ -16,8 +16,9 @@ struct Cube {
+     // (Geometry::c_cubeVertices). 0/1/2: a controller-gizmo axis bar (X/Y/Z) - see
+     // PushPoseGizmo in openxr_program.cpp - rendered as a single solid axis color instead,
+     // bright on its own positive half and dim on its negative half (see cube_vert.glsl).
+-    // Reference-space cubes and everything else built with the 2-argument Cube{Pose, Scale}
+-    // form are unaffected: this just defaults to "off".
++    // 3/4/5 (axis + 3): that same axis's positive-tip marker cube, always full brightness,
++    // no light/dark split. Reference-space cubes and everything else built with the
++    // 2-argument Cube{Pose, Scale} form are unaffected: this just defaults to "off".
+     int32_t GizmoAxis{-1};
+ };
+ 
+diff --git a/src/tests/hello_xr/openxr_program.cpp b/src/tests/hello_xr/openxr_program.cpp
+index 583d2ef..3595758 100644
+--- a/src/tests/hello_xr/openxr_program.cpp
++++ b/src/tests/hello_xr/openxr_program.cpp
+@@ -761,17 +761,48 @@ struct OpenXrProgram : IOpenXrProgram {
+      * mesh's baked per-face colours. Cube::GizmoAxis (0/1/2) is what tells cube_vert.glsl this
+      * is a gizmo bar and which axis it is; -1 (the default for every other cube, reference
+      * spaces included) keeps the original per-face colouring untouched.
++     *
++     * Tip cubes, added same day per the wearer's own live request ("metele un cubo en una punta
++     * de cada eje"): one small solid cube capping the POSITIVE end of each bar only, slightly
++     * larger than the bar's cross-section. Nothing marks the negative end. The asymmetry is the
++     * point -- it makes handedness readable at a glance (three colour-coded caps, not a
++     * symmetric jack), and because the three caps move as a rigid unit with the bars, an
++     * unexpected pivot offset (rotation happening around a point that visibly isn't where the
++     * caps converge) becomes obvious too. Encoded as GizmoAxis 3/4/5 (bar axis + 3) rather than
++     * reusing 0/1/2 directly: a plain cube's own local vertices split -0.5..+0.5 on EVERY axis
++     * regardless of where the cube is placed in the world, so naively tagging a tip cube with
++     * the bar's own axis value would render it half-bright/half-dim like a tiny bar segment, not
++     * the solid marker asked for -- cube_vert.glsl's `gizmoAxis >= 3` case forces full brightness
++     * unconditionally instead of testing the vertex's local sign.
+      */
+     static void PushPoseGizmo(std::vector<Cube>& cubes, const XrPosef& pose, float scale) {
+         constexpr float kLength = 0.12f;
+         constexpr float kThick = 0.012f;
++        // ~1.75x the bar's own cross-section (matches the wearer's own "3.5cm cube on a 2cm
++        // bar" example ratio) -- big enough to read as a deliberate marker, not just a thicker
++        // bit of bar.
++        constexpr float kTipCube = kThick * 1.75f;
+         const float len = kLength * scale;
+         const float thick = kThick * scale;
++        const float tipCube = kTipCube * scale;
+ 
+         const XrVector3f sizes[3] = {{len, thick, thick}, {thick, len, thick}, {thick, thick, len}};
++        const XrVector3f tipOffsetLocal[3] = {{len * 0.5f, 0.f, 0.f}, {0.f, len * 0.5f, 0.f}, {0.f, 0.f, len * 0.5f}};
++        const XrVector3f tipScale{tipCube, tipCube, tipCube};
+ 
+         for (int axis = 0; axis < 3; axis++) {
+             cubes.push_back(Cube{pose, sizes[axis], axis});
++
++            // Tip cube, centered exactly at the bar's positive end (the same point local
++            // Position[axis] == +0.5 on the bar maps to), so it caps the bar rather than
++            // floating past or short of it.
++            XrVector3f tipOffsetWorld;
++            XrQuaternionf_RotateVector3f(&tipOffsetWorld, &pose.orientation, &tipOffsetLocal[axis]);
++            XrPosef tipPose = pose;
++            tipPose.position.x += tipOffsetWorld.x;
++            tipPose.position.y += tipOffsetWorld.y;
++            tipPose.position.z += tipOffsetWorld.z;
++            cubes.push_back(Cube{tipPose, tipScale, axis + 3});
+         }
+     }
+ 
+diff --git a/src/tests/hello_xr/vulkan_shaders/cube_vert.glsl b/src/tests/hello_xr/vulkan_shaders/cube_vert.glsl
+index b1447e5..e98bbbb 100644
+--- a/src/tests/hello_xr/vulkan_shaders/cube_vert.glsl
++++ b/src/tests/hello_xr/vulkan_shaders/cube_vert.glsl
+@@ -17,7 +17,9 @@ layout (std140, push_constant) uniform buf
+ {
+     mat4 mvp;
+     int gizmoAxis;  // -1 = off (ordinary per-face Color below). 0/1/2 = controller-gizmo
+-                     // axis bar (X/Y/Z) - see PushPoseGizmo in openxr_program.cpp.
++                     // axis bar (X/Y/Z), dimmed on its own negative half. 3/4/5 = that axis's
++                     // POSITIVE-tip marker cube, always fully bright (see below) - see
++                     // PushPoseGizmo in openxr_program.cpp.
+ } ubuf;
+ 
+ layout (location = 0) in vec3 Position;
+@@ -32,17 +34,26 @@ out gl_PerVertex
+ void main()
+ {
+     if (ubuf.gizmoAxis >= 0) {
+-        // Controller-gizmo axis bar: one solid colour per axis (+X red, +Y green, +Z blue),
+-        // dimmed by the same 0.25 factor Geometry's Dark* colours already use elsewhere, on
+-        // whichever half of the bar sits on the negative side of ITS OWN local axis - not by
+-        // face identity, so every face of the bar (end caps AND the four long sides) reads the
++        // Controller-gizmo axis bar (0/1/2) or tip cube (3/4/5, axis + 3) - see
++        // PushPoseGizmo. Either way, one solid colour per axis: +X red, +Y green, +Z blue.
++        int axis = ubuf.gizmoAxis % 3;
++        bool isTip = ubuf.gizmoAxis >= 3;
++        vec3 axisColor = (axis == 0) ? vec3(1.0, 0.0, 0.0)
++                        : (axis == 1) ? vec3(0.0, 1.0, 0.0)
++                                      : vec3(0.0, 0.0, 1.0);
++
++        // Bars dim by the same 0.25 factor Geometry's Dark* colours already use elsewhere, on
++        // whichever half sits on the negative side of ITS OWN local axis - not by face
++        // identity, so every face of the bar (end caps AND the four long sides) reads the
+         // right colour, not just the two tiny tips. Position is the mesh's local -0.5..+0.5
+-        // unit-cube coordinate, so Position[gizmoAxis]'s sign is exactly that.
+-        vec3 axisColor = (ubuf.gizmoAxis == 0) ? vec3(1.0, 0.0, 0.0)
+-                        : (ubuf.gizmoAxis == 1) ? vec3(0.0, 1.0, 0.0)
+-                                                 : vec3(0.0, 0.0, 1.0);
+-        float t = (ubuf.gizmoAxis == 0) ? Position.x : (ubuf.gizmoAxis == 1) ? Position.y : Position.z;
+-        float bright = (t >= 0.0) ? 1.0 : 0.25;
++        // unit-cube coordinate, so Position[axis]'s sign is exactly that.
++        //
++        // Tip cubes skip this entirely and are always full brightness: a plain cube's own
++        // local vertices split -0.5..+0.5 on EVERY axis no matter where the cube sits in the
++        // world, so testing Position[axis] here would render the marker half-bright/half-dim
++        // like a stub of bar instead of the solid cap it's meant to be.
++        float t = (axis == 0) ? Position.x : (axis == 1) ? Position.y : Position.z;
++        float bright = isTip ? 1.0 : ((t >= 0.0) ? 1.0 : 0.25);
+         oColor.rgb = axisColor * bright;
+     } else {
+         oColor.rgb = Color.rgb;
+-- 
+2.47.3
+
