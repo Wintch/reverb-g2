@@ -1,0 +1,56 @@
+From 737233fd8b8dcb705d053a5059ebcdcc5f583138 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Mon, 17 Aug 2026 02:21:18 -0300
+Subject: [PATCH 7/8] vit: BASALT_IMU_NONBLOCK_CATCHUP -- non-blocking IMU
+ catch-up to stop the SLAM collapse
+
+Root cause (docs/39, T192-T195): processImu() integrates IMU up to the image timestamp with a
+BLOCKING pop; during the collapse each processed image is ~600ms ahead of the arriving IMU
+(frames dropped), so it blocks ~600ms/frame waiting for the 250Hz stream -- self-sustaining.
+With BASALT_IMU_NONBLOCK_CATCHUP=1 the catch-up uses try_pop: integrate what is buffered and
+extend the last sample to curr_t_ns (existing logic) instead of stalling. Default OFF pending
+a drift A/B; flip the default once confirmed (collapse gone + drift OK).
+---
+ .../optical_flow/frame_to_frame_optical_flow.h  | 17 +++++++++++++++--
+ 1 file changed, 15 insertions(+), 2 deletions(-)
+
+diff --git a/include/basalt/optical_flow/frame_to_frame_optical_flow.h b/include/basalt/optical_flow/frame_to_frame_optical_flow.h
+index b8e17e8..78ccc9c 100644
+--- a/include/basalt/optical_flow/frame_to_frame_optical_flow.h
++++ b/include/basalt/optical_flow/frame_to_frame_optical_flow.h
+@@ -182,9 +182,22 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
+ 
+     if (input_imu_queue.empty()) return pim;
+ 
++    // BASALT_IMU_NONBLOCK_CATCHUP=1: do not block waiting for the IMU stream to catch up to the
++    // image timestamp. The blocking pop below stalls ~600 ms per frame during the SLAM pose-rate
++    // collapse (docs/39, T192-T195): once frames are dropped, each processed image is ~600 ms ahead
++    // of the arriving IMU, so this catch-up loop blocks for real-time IMU -- a self-sustaining stall.
++    // Non-blocking integrates whatever is buffered and extends the last sample to curr_t_ns (the
++    // "pretend last IMU happened now" step below), trading a little prediction accuracy for no stall.
++    // Default OFF pending a drift A/B; flip the default once confirmed (collapse gone + drift OK).
++    static const bool nonblock = std::getenv("BASALT_IMU_NONBLOCK_CATCHUP") != nullptr;
++
+     auto pop_imu = [&](ImuData<double>::Ptr& data) -> bool {
+       ImuData<double>::Ptr sample;
+-      input_imu_queue.pop(sample);  // Blocking pop
++      if (nonblock) {
++        if (!input_imu_queue.try_pop(sample)) return false;  // queue empty: stop, do not block
++      } else {
++        input_imu_queue.pop(sample);  // Blocking pop (original behaviour)
++      }
+       if (sample == nullptr) return false;
+ 
+       // Calibrate sample
+@@ -208,7 +221,7 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
+ 
+     while (data->t_ns <= curr_t_ns) {
+       pim.integrate(*data, accel_cov, gyro_cov);
+-      if (!pop_imu(data)) return pim;
++      if (!pop_imu(data)) break;  // no more IMU (queue empty when non-blocking, or shutdown): extend below
+     }
+ 
+     // Pretend last IMU sample before "now" happened now
+-- 
+2.47.3
+

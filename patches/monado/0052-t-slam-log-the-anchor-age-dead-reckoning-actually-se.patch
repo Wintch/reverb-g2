@@ -1,0 +1,46 @@
+From 9fe21a089bc7b9d9fc5789813cdf206ce0b30957 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Mon, 17 Aug 2026 05:27:38 -0300
+Subject: [PATCH] t/slam: log the anchor age dead reckoning actually sees
+ (rate-limited diagnostic)
+
+One INFO line per ~256 queries printing when_ns - rel_ts at the dead-reckoning call
+site. Written for the 2026-08-17 constant ~1 s wearer lag: the integrator never fails,
+yet delivered == filtered anchor exactly. The number answered it -- anchors LOOK only
+~50-112 ms old while their content is ~630-700 ms stale, and cross-checking the same
+log's newest camera-frame stamps against when_ns proved the camera timestamps run
+p50 +578 ms (max 610) in the FUTURE of the query/IMU clock. The camera clock-domain
+conversion bias is the unifying root of docs/39's image-ahead-of-IMU stall, the
+632-666 ms collapse period, and the unbridgeable perceived latency.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/xrt/auxiliary/tracking/t_tracker_slam.cpp | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+index bc2c66754..b6a30ae64 100644
+--- a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
++++ b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+@@ -1092,6 +1092,18 @@ predict_pose(TrackerSlam &t, timepoint_ns when_ns, struct xrt_space_relation *ou
+ 
+ 
+ 	if (t.pred_type == SLAM_PRED_DEAD_RECKONING) {
++		// Diagnostic for the 2026-08-17 constant ~1 s wearer lag: the integrator never
++		// fails (zero SLAM_ERROR hits) yet the delivered stream matches the filtered
++		// anchor exactly, so either the anchor's stamp is near-now (timestamp-domain
++		// skew: nothing to integrate, staleness unbridgeable) or the gap is real and
++		// integration is inert some other way. Log the one number that discriminates:
++		// the anchor age the integrator actually sees. Rate-limited, ~1 line/s at 250 Hz.
++		static int aage_counter = 0;
++		if ((aage_counter++ % 256) == 0) {
++			SLAM_INFO("pred: anchor age %.1f ms (when_ns=%" PRId64 " rel_ts=%" PRId64 ")",
++			          (double)(when_ns - (int64_t)rel_ts) / 1e6, when_ns, (int64_t)rel_ts);
++		}
++
+ 		os_mutex_lock(&t.lock_ff);
+ 
+ 		if (!t_apply_dead_reckoning(   //
+-- 
+2.47.3
+

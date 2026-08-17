@@ -1,0 +1,91 @@
+From 4bb1bec75ae437be174bc09cb9e5758f74af4f82 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Mon, 17 Aug 2026 00:57:33 -0300
+Subject: [PATCH 3/8] vit: env-gated SLAM-collapse instrumentation
+ (VIT_COLLAPSE_LOG)
+
+Log input (push_frame) and output (pop_state) rate, frame-timestamp spacing,
+input-queue depth, and cumulative drops, to diagnose the T192-T195 SLAM pose-rate
+collapse (abrupt ~17Hz -> ~1.5Hz permanent, near-constant ~640ms). The near-constant
+interval reads like the frontend/VIO per-frame time gating a saturated bounded input
+queue; this discriminates input starvation / bad timestamps / queue backpressure at
+onset. Off by default (one getenv); zero cost unless VIT_COLLAPSE_LOG is set.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/vit/vit_tracker.cpp | 45 +++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 45 insertions(+)
+
+diff --git a/src/vit/vit_tracker.cpp b/src/vit/vit_tracker.cpp
+index e1c37be..71e38bb 100644
+--- a/src/vit/vit_tracker.cpp
++++ b/src/vit/vit_tracker.cpp
+@@ -55,6 +55,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ #include <sophus/se3.hpp>
+ 
+ #include <cstdio>
++#include <cstdlib>
++#include <chrono>
+ #include <memory>
+ #include <string>
+ #include <thread>
+@@ -517,6 +519,26 @@ struct Tracker::Implementation {
+     for (uint32_t j = 0; j < s->width * s->height; j++) { mimg->ptr[j] = img.at<uchar>(j) << 8; }
+ 
+     if (i == cam_count - 1) {
++      {
++        // Env-gated SLAM-collapse instrumentation (T192-T195): input-side rate/queue.
++        // Set VIT_COLLAPSE_LOG=1 to enable. Discriminates input starvation / bad
++        // timestamps / queue backpressure at collapse onset. Off by default (one getenv).
++        static const bool collapse_log = std::getenv("VIT_COLLAPSE_LOG") != nullptr;
++        if (collapse_log) {
++          static std::chrono::steady_clock::time_point last_in{};
++          static int64_t last_in_ts = 0;
++          auto now = std::chrono::steady_clock::now();
++          double wall_ms = last_in.time_since_epoch().count() == 0
++                               ? 0.0
++                               : std::chrono::duration<double, std::milli>(now - last_in).count();
++          double ts_gap_ms = last_in_ts == 0 ? 0.0 : (double)(partial_frame->t_ns - last_in_ts) / 1e6;
++          std::cout << "vit_collapse IN  wall_ms=" << wall_ms << " frame_ts_gap_ms=" << ts_gap_ms
++                    << " imgq=" << image_data_queue->size() << " dropped=" << input_frames_dropped
++                    << " t_ns=" << partial_frame->t_ns << std::endl;
++          last_in = now;
++          last_in_ts = partial_frame->t_ns;
++        }
++      }
+       partial_frame->addTime("frames_read");
+       partial_frame->addTime("frames_pushed");
+       if (deterministic) {
+@@ -588,6 +610,29 @@ struct Tracker::Implementation {
+     }
+     data->input_images->addTime("consumer_state_received");
+ 
++    {
++      // Env-gated SLAM-collapse instrumentation (T192-T195): output-side rate/latency.
++      // This is where the ~1.5 Hz / ~640 ms near-constant collapse is observed. wall_ms is
++      // the real output interval; frame_ts_gap_ms is the input-timestamp spacing of the
++      // frames that make it out; imgq/dropped expose whether the input queue is backing up.
++      static const bool collapse_log = std::getenv("VIT_COLLAPSE_LOG") != nullptr;
++      if (collapse_log) {
++        static std::chrono::steady_clock::time_point last_out{};
++        static int64_t last_out_ts = 0;
++        auto now = std::chrono::steady_clock::now();
++        double wall_ms = last_out.time_since_epoch().count() == 0
++                             ? 0.0
++                             : std::chrono::duration<double, std::milli>(now - last_out).count();
++        int64_t frame_ts = data->input_images->t_ns;
++        double ts_gap_ms = last_out_ts == 0 ? 0.0 : (double)(frame_ts - last_out_ts) / 1e6;
++        std::cout << "vit_collapse OUT wall_ms=" << wall_ms << " frame_ts_gap_ms=" << ts_gap_ms
++                  << " imgq=" << image_data_queue->size() << " dropped=" << input_frames_dropped
++                  << " t_ns=" << frame_ts << std::endl;
++        last_out = now;
++        last_out_ts = frame_ts;
++      }
++    }
++
+     if (show_gui) ui.log_vio_data(data);
+ 
+     data->input_images->addTime("consumer_state_pushed");
+-- 
+2.47.3
+

@@ -33,3 +33,4 @@
 {"iso_time": "2026-08-16T03:04:51-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": true, "gamepad_present": false}
 {"iso_time": "2026-08-16T03:20:11-0300", "verdict": "TE NECESITO", "step_reached": 1, "reason": "Faltan piezas del casco y la reconexi\u00f3n no lleg\u00f3 a tiempo.", "part": null}
 {"iso_time": "2026-08-16T18:32:44-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": true, "gamepad_present": false}
+{"iso_time": "2026-08-17T04:04:26-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": false, "gamepad_present": false}

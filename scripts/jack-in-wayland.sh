@@ -2,9 +2,17 @@
 # Starts Monado in a WAYLAND session using DRM lease, instead of NVIDIA Direct-Mode
 # from X11. This is the path by which Project-VR reports the G2 running at 4320x2160@90.
 #
-#   ./jack-in-wayland.sh [mode] [tracking]
+#   ./jack-in-wayland.sh [action] [mode] [tracking]
+#
+# Three orthogonal, order-independent tokens (docs/43's up/dev/quiet/down mode contract,
+# ported here from jack-in.sh -- run with -h/--help for the full usage):
+#                                    action: up (default) = quiet launch, ambient-overridable
+#                                            dev = verbose launch (this script's old no-args
+#                                                  behavior)
+#                                            quiet = non-inheriting unattended station
+#                                            down = teardown, ignores mode/tracking below
 #                                    mode: 0 = 2880x1440@90
-#                                          1 = 4320x2160@90  (the one Project-VR uses)
+#                                          1 = 4320x2160@90  (the one Project-VR uses, default)
 #                                          2 = 4320x2160@60  (the only one that works today in X11)
 #                                    tracking: 3dof = IMU only, rotation only (default)
 #                                              6dof = real SLAM via Basalt (position + rotation)
@@ -20,24 +28,125 @@
 
 set -u
 
-MODE="${1:-1}"
-# "3dof" is jack-in.sh's syntax for its single positional arg, not this script's mode index —
-# and atoi("3dof")=3 silently requested a nonexistent mode (happened on 2026-08-06). Here mode
-# is ONLY the display-mode index; tracking is now a separate second argument (T060).
-case "$MODE" in
-    0|1|2) ;;
-    *) echo "invalid mode: '$MODE' (0 = 2880x1440@90, 1 = 4320x2160@90, 2 = 4320x2160@60)" >&2; exit 1 ;;
-esac
-TRACKING="${2:-3dof}"
-case "$TRACKING" in
-    3dof|6dof|ctrl) ;;
-    *) echo "invalid tracking: '$TRACKING' (3dof, 6dof or ctrl)" >&2; exit 1 ;;
-esac
+usage() {
+    cat <<EOF
+Usage: $(basename "${BASH_SOURCE[0]}") [action] [mode] [tracking]
+
+Three orthogonal tokens, any order (docs/43's up/dev/quiet/down mode contract):
+
+  action      lifecycle -- what to do. Default: up.
+      up, start              Quiet launch: VR_VERBOSE=0 VR_PACING=0, XRT_COMPOSITOR_LOG
+                              defaults to warn. Ambient exports of those still win.
+      dev, --verbose, -v     Verbose launch: VR_VERBOSE=1 VR_PACING=1,
+                              XRT_COMPOSITOR_LOG=debug -- this script's old, only, behavior.
+      quiet, unattended      Non-inheriting station mode: same levels as 'up' but HARD-
+                              pinned (ambient does not win), plus VR_POSE_CSVS=0 and the
+                              opt-in firehose/debug-GUI vars scrubbed via 'env -u'.
+      down, stop             Teardown: SIGTERM monado-service (escalate to -9 after 10s),
+                              remove the IPC socket, touch nothing else on disk. Ignores
+                              mode/tracking below.
+
+  mode        display index. Default: 1.
+      0   2880x1440@90
+      1   4320x2160@90  (the one Project-VR uses)
+      2   4320x2160@60  (the only one that works today in X11)
+
+  tracking    Default: 3dof.
+      3dof   IMU only, rotation only
+      6dof   real SLAM via Basalt (position + rotation)
+      ctrl   head 3dof, cameras ON, constellation tracking of the CONTROLLERS
+
+  -h, --help  Show this help and exit.
+
+Examples:
+  $(basename "${BASH_SOURCE[0]}")              # up, mode 1, 3dof
+  $(basename "${BASH_SOURCE[0]}") dev 6dof
+  $(basename "${BASH_SOURCE[0]}") quiet 1 6dof
+  $(basename "${BASH_SOURCE[0]}") down
+EOF
+}
+
+# One order-independent pass, mirroring jack-in.sh's argument model (docs/43): every
+# argument is classified by which of three disjoint token sets it belongs to, so 'mode'
+# and 'tracking' can appear in either order and the new 'action' token can be inserted
+# anywhere -- including the old two-positional invocation, ./jack-in-wayland.sh 1 6dof,
+# which keeps working unchanged (this also retires the historical footgun where a lone
+# '3dof', jack-in.sh's own single-arg syntax, once silently parsed as mode index
+# atoi("3dof")=3 and failed as "invalid mode" -- 2026-08-06; classifying by content
+# instead of position makes that class of bug structurally impossible now). An argument
+# matching none of the three sets is a hard error (exit 2 + usage), not a silent
+# fall-through.
+ACTION=up
+MODE=""
+TRACKING=""
+for arg in "$@"; do
+    case "$arg" in
+        -h|--help) usage; exit 0 ;;
+        up|start) ACTION=up ;;
+        dev|--verbose|-v) ACTION=dev ;;
+        quiet|unattended) ACTION=quiet ;;
+        down|stop) ACTION=down ;;
+        0|1|2)
+            [ -n "$MODE" ] && { echo "duplicate mode argument: '$arg'" >&2; usage >&2; exit 2; }
+            MODE="$arg"
+            ;;
+        3dof|6dof|ctrl)
+            [ -n "$TRACKING" ] && { echo "duplicate tracking argument: '$arg'" >&2; usage >&2; exit 2; }
+            TRACKING="$arg"
+            ;;
+        *)
+            echo "unknown argument: '$arg'" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+done
+MODE="${MODE:-1}"
+TRACKING="${TRACKING:-3dof}"
 VR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 [ -d "$HOME/vr/monado" ] && VR="$HOME/vr"
 SERVICE="$VR/monado/build/src/xrt/targets/service/monado-service"
 LOG="$VR/jack-in-wayland.log"
 SOCKET="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/monado_comp_ipc"
+
+# 'down' teardown (docs/43), dispatched here -- before the Wayland-session guard, the
+# basalt/6dof check and the USB census below, none of which a plain stop needs. MODE and
+# TRACKING are parsed above but deliberately unused past this point: down is not a launch.
+if [ "$ACTION" = down ]; then
+    echo "Stopping monado-service..."
+    # pgrep -x (exact comm match), NOT -f: -f scans every process's full cmdline, so any
+    # bystander that merely *mentions* the binary -- a shell running a compound command, a
+    # tail on a path containing "monado-service" -- gets killed too. First live use of
+    # 'down' (2026-08-17) SIGTERM'd the invoking agent's own shell exactly this way.
+    RUNNING=0
+    for p in $(pgrep -x monado-service); do
+        RUNNING=1
+        # SIGTERM first, deliberately -- the opposite of the kill -9 used elsewhere in
+        # this script (that one is pre-launch hygiene against a stale process holding the
+        # socket, not a shutdown). SIGTERM runs Monado's clean-path handler (screen-off,
+        # DRM lease released); do not "fix" this to match the launch path's kill -9.
+        kill -TERM "$p" 2>/dev/null
+    done
+    if [ "$RUNNING" = 1 ]; then
+        for _i in $(seq 1 10); do
+            pgrep -x monado-service >/dev/null || break
+            sleep 1
+        done
+        if pgrep -x monado-service >/dev/null; then
+            echo "  Still running after 10s, escalating to SIGKILL."
+            for p in $(pgrep -x monado-service); do kill -9 "$p" 2>/dev/null; done
+        fi
+    else
+        echo "  Not running."
+    fi
+    rm -f "$SOCKET"
+    # Writes nothing to disk: no DRM-lease/monitor state to restore (the compositor owns
+    # the lease under Wayland, unlike jack-in.sh's X11 direct-mode path), and $LOG is left
+    # untouched on purpose -- a session that just failed is exactly the one you don't want
+    # a teardown silently erasing.
+    echo "Socket removed ($SOCKET). $LOG left untouched."
+    exit 0
+fi
 
 # T060: Basalt (~/vr/basalt/build/libbasalt.so) was never actually built here for a long
 # time despite docs referencing SLAM measurements -- cmake --preset library was silently
@@ -68,7 +177,7 @@ if [ "$FOUND" -lt 5 ]; then
 fi
 
 # SIGKILL doesn't clean up the socket, and a stale socket makes startup fail.
-for p in $(pgrep -f "monado[-]service"); do kill -9 "$p" 2>/dev/null; done
+for p in $(pgrep -x monado-service); do kill -9 "$p" 2>/dev/null; done
 sleep 2
 rm -f "$SOCKET"
 
@@ -288,6 +397,50 @@ if [ "$CONSTELLATION" = 1 ]; then
     echo "    verify with: grep -E 'get_tracked_pose:|position_tracked' $LOG"
 fi
 
+# --- Lifecycle action -> logging policy (docs/43 mode contract) ---------------------
+# Mirrors jack-in.sh's up/dev/quiet contract onto this script's EXISTING master switches
+# instead of rebuilding a LOG_ENV from scratch: VR_VERBOSE/VR_PACING already gate the
+# blocks below, and XRT_COMPOSITOR_LOG (further down, in the actual monado-service launch
+# line) was "the one knob with no master switch" -- hardcoded to debug unconditionally.
+# It now follows the same action.
+#
+#   up     (default)  VR_VERBOSE=0 VR_PACING=0, XRT_COMPOSITOR_LOG defaults to warn.
+#                      Ambient exports of any of the three still win (same "ambient wins"
+#                      rule as jack-in.sh's up/dev).
+#   dev                VR_VERBOSE=1 VR_PACING=1, XRT_COMPOSITOR_LOG=debug -- this was this
+#                      script's old, and only, no-args behavior. Still ambient-overridable.
+#   quiet              Same effective levels as up, but HARD-PINNED -- ambient exports of
+#                      VR_VERBOSE/VR_PACING/XRT_COMPOSITOR_LOG do NOT win here, mirroring
+#                      jack-in.sh's "the one deliberately non-inheriting mode" -- plus
+#                      VR_POSE_CSVS=0 (no per-run CSV directory) and an env -u scrub of the
+#                      opt-in firehoses + debug GUI, the same six-variable list jack-in.sh
+#                      scrubs.
+#
+# NOTE, worth being loud about: no-args now launches QUIETER than before this patch (this
+# script's VR_VERBOSE/VR_PACING were unconditionally 1). That is the documented contract's
+# own default action ('up'), not an oversight -- see docs/43's "Mirroring this on dev's
+# jack-in-wayland.sh". The old verbose-by-default behavior is one token away: 'dev'.
+case "$ACTION" in
+    dev)  VERBOSE_DEFAULT=1; PACING_DEFAULT=1; COMPOSITOR_LOG_DEFAULT=debug ;;
+    *)    VERBOSE_DEFAULT=0; PACING_DEFAULT=0; COMPOSITOR_LOG_DEFAULT=warn ;;  # up, quiet
+esac
+
+SCRUB_ENV=()
+if [ "$ACTION" = quiet ]; then
+    VERBOSE=0
+    PACING=0
+    XRT_COMPOSITOR_LOG_VALUE=warn
+    POSE_CSVS=0
+    SCRUB_ENV=(-u VIT_COLLAPSE_LOG -u CONSTELLATION_TRACKER_LOG -u HELLO_XR_POSE_STATS
+               -u SLAM_UI -u XRT_TRACING -u XRT_DEBUG_GUI)
+    echo "Quiet/unattended launch: levels hard-pinned, firehoses scrubbed, no pose CSVs."
+else
+    VERBOSE="${VR_VERBOSE:-$VERBOSE_DEFAULT}"
+    PACING="${VR_PACING:-$PACING_DEFAULT}"
+    XRT_COMPOSITOR_LOG_VALUE="${XRT_COMPOSITOR_LOG:-$COMPOSITOR_LOG_DEFAULT}"
+    POSE_CSVS="${VR_POSE_CSVS:-1}"
+fi
+
 # --- Eye height / floor calibration (2026-08-12, T163) --------------------------------
 # Monado does not measure where the floor is. b_space_overseer_legacy_setup() places STAGE a
 # hardcoded 1.6 m below LOCAL (target_builder_helpers.c: T_stage_local.position.y = 1.6), so
@@ -351,7 +504,8 @@ fi
 # external rerun.io viewer), and XRT_TRACING (perfetto). Set VR_VERBOSE=0 to turn the
 # whole block off if log volume is ever suspected of perturbing the realtime USB
 # callback -- that would be a real measurement, so keep the switch.
-VERBOSE="${VR_VERBOSE:-1}"
+# VERBOSE is already resolved above by the lifecycle-action block (action-aware default,
+# hard-pinned instead of ambient-overridable under 'quiet').
 LOG_ENV=()
 if [ "$VERBOSE" = 1 ]; then
     LOG_ENV=(
@@ -373,7 +527,7 @@ fi
 # that motivate VR_VERBOSE=0 are the driver's per-poll debug lines, while the CSVs are a
 # few hundred KB over a long session. VR_POSE_CSVS=0 turns them off on their own.
 CSV_ENV=()
-if [ "${VR_POSE_CSVS:-1}" = 1 ]; then
+if [ "$POSE_CSVS" = 1 ]; then
     SLAM_CSV_DIR="$VR/logs/slam-$(date +%Y%m%d-%H%M%S)"
     mkdir -p "$SLAM_CSV_DIR"
     CSV_ENV=(
@@ -404,7 +558,7 @@ fi
 #
 # Read it with ./scripts/frame-pacing.sh -- do not eyeball the log.
 # Set VR_PACING=0 to turn it off; there is no known reason to.
-PACING="${VR_PACING:-1}"
+# PACING is already resolved above by the lifecycle-action block, same as VERBOSE.
 PACING_ENV=()
 if [ "$PACING" = 1 ]; then
     PACING_ENV=(
@@ -448,7 +602,7 @@ if [ "${VR_PIPELINED:-1}" = 1 ]; then
     PACING_ENV+=(U_PACING_APP_PIPELINED=true)
 fi
 
-echo "Starting Monado (mode $MODE, tracking $TRACKING) via DRM lease... log: $LOG"
+echo "Starting Monado (action $ACTION, mode $MODE, tracking $TRACKING) via DRM lease... log: $LOG"
 
 # Keep the previous run's log. Truncating on every start destroyed the one log that could
 # have proven why tracking froze mid-session on 2026-08-07 (T045): a later service start
@@ -486,9 +640,10 @@ while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
         sleep 3
     fi
 
-    env XRT_COMPOSITOR_FORCE_WAYLAND_DIRECT=1 \
+    env "${SCRUB_ENV[@]}" \
+        XRT_COMPOSITOR_FORCE_WAYLAND_DIRECT=1 \
         XRT_COMPOSITOR_DESIRED_MODE="$MODE" \
-        XRT_COMPOSITOR_LOG=debug \
+        XRT_COMPOSITOR_LOG="$XRT_COMPOSITOR_LOG_VALUE" \
         XRT_NO_STDIN=1 \
         "${TRACKING_ENV[@]}" \
         "${LOG_ENV[@]}" \
@@ -517,15 +672,25 @@ while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
     # compositor, so a failed lease (no connector, no mode) still leaves a live process with a
     # live socket -- any OpenXR app launched against it fails later with
     # XRT_ERROR_RUNTIME_FAILURE on xrGetSystem. Require BOTH the socket and a real mode.
-    if grep -q "found display mode" "$LOG" && [ -S "$SOCKET" ]; then
+    # And a real mode is STILL not enough (2026-08-17, caught live): if the wmr builder
+    # fails to probe the headset -- e.g. the USB2 companion re-enumerating in exactly the
+    # wrong window, as it did tonight at 04:38:54 -- Monado silently falls back to the
+    # legacy builder's Simulated HMD, which still leases the connector and still logs
+    # "found display mode". T050 documented this trap as a manual check; a launcher that
+    # can retry should enforce it itself, so a legacy/Simulated session now counts as a
+    # failed attempt and gets killed + retried like any other.
+    if grep -q "found display mode" "$LOG" && [ -S "$SOCKET" ] && grep -q "Using builder wmr" "$LOG"; then
         SUCCESS=1
         break
+    fi
+    if grep -q "Using builder legacy" "$LOG"; then
+        echo "  Attempt $ATTEMPT: wmr builder failed (companion missing?) -- Simulated HMD fallback detected, retrying." >&2
     fi
 
     # Failed attempt: don't leave a broken instance running into the next try (found the hard
     # way on 2026-08-07: had to manually pkill a service that had been "Socket ready" for
     # several failed launches in a row).
-    for p in $(pgrep -f "monado[-]service"); do kill -9 "$p" 2>/dev/null; done
+    for p in $(pgrep -x monado-service); do kill -9 "$p" 2>/dev/null; done
     rm -f "$SOCKET"
     ATTEMPT=$((ATTEMPT + 1))
 done
@@ -546,13 +711,19 @@ OUT="$(grep -E "found display mode|frame interval" "$LOG" | tail -3)"
 
 echo
 if [ "$SUCCESS" = 1 ]; then
-    echo "Socket ready (attempt $ATTEMPT/$MAX_ATTEMPTS). Launch an OpenXR app with:"
-    echo "  XR_RUNTIME_JSON=$VR/monado/build/openxr_monado-dev.json IPC_IGNORE_VERSION=1 <app> --graphics Vulkan2"
+    if [ "$ACTION" = quiet ]; then
+        # quiet suppresses the dev usage banner (docs/43) -- no human is reading it on an
+        # unattended station.
+        echo "Socket ready (attempt $ATTEMPT/$MAX_ATTEMPTS)."
+    else
+        echo "Socket ready (attempt $ATTEMPT/$MAX_ATTEMPTS). Launch an OpenXR app with:"
+        echo "  XR_RUNTIME_JSON=$VR/monado/build/openxr_monado-dev.json IPC_IGNORE_VERSION=1 <app> --graphics Vulkan2"
+    fi
 else
-    echo "!! No usable compositor after $MAX_ATTEMPTS attempts (no leasable connector / no mode found)." >&2
+    echo "!! No usable compositor after $MAX_ATTEMPTS attempts (no leasable connector / no mode found / wmr builder fell back to Simulated)." >&2
     echo "!! Last lines of the log:" >&2
     tail -15 "$LOG" >&2
-    for p in $(pgrep -f "monado[-]service"); do kill -9 "$p" 2>/dev/null; done
+    for p in $(pgrep -x monado-service); do kill -9 "$p" 2>/dev/null; done
     rm -f "$SOCKET"
     exit 1
 fi

@@ -1,5 +1,57 @@
 # Context for the 90Hz lab agent
 
+> ## START HERE NEXT SESSION (2026-08-17, ~05:30, lab machine) — the 632-666 ms magic
+> number is ROOT-CAUSED AND PROVEN with live data: **the camera frame timestamps run
+> p50 +578 ms (max 610) in the FUTURE of the query/IMU clock** — a stable clock-domain
+> conversion bias born upstream of Basalt. Read `docs/pruebas.jsonl` T196-T198 and
+> `docs/44-clock-domain-skew.md` first; they supersede the "logical blocking mechanism"
+> framing below (it was the right hunch, and it is now a named, measured mechanism).
+>
+> **What the bias explains, all at once**: docs/39's "each processed image is ~600 ms
+> ahead of the arriving IMU" (the collapse mechanism the handoff's 0007/0008 fix treats
+> symptomatically — the fix is real and VERIFIED on the lab headset, T196, the minimal
+> repro no longer collapses); the ±1% stability of the 632-666 ms period across runs and
+> machines (a code-level constant, not hardware); and the new headline problem: **the
+> wearer feels a constant ~1 s head-motion latency** ("muy claro y sin cortes, pero con
+> delay constante", first movement included, does not drain at rest) because the pose
+> content is genuinely ~0.6-0.7 s stale while its stamps claim ~90 ms — so dead
+> reckoning (healthy, never fails — grep proved zero fallback hits) integrates only the
+> ~90 ms the lying stamps show it. Monado does NOT re-stamp (`flush_poses` uses
+> `data.timestamp` verbatim); the bias arrives from upstream conversion.
+>
+> **Next step, surgical**: read `wmr_source.c`'s `cam_hw2mono` / clock-offset path and
+> find why converted camera stamps land ~+600 ms vs monotonic AT INGEST — a 3-line log
+> of converted-ts minus `os_monotonic_get_ns()` at the push site settles it. Strong
+> hypothesis: the offset estimator anchors during the startup burst of ~19 buffered
+> frames (19 × 33 ms ≈ 630 ms), which would make the bias constant per session, portable
+> across machines, and load-indifferent — everything observed. **Minefield**: T162
+> already measured `m_clock_windowed_skew_tracker` as a dead end (drift 243-1002 m);
+> don't reach for it as the fix.
+>
+> **Also tonight (T196-T197)**: handoff-20260817 fully integrated (basalt 0001-0010,
+> monado 0049-0052, docs/39-43 + docs/re-windows/); `jack-in-wayland.sh` gained docs/43's
+> up/dev/quiet/down contract PLUS two live-failure hardenings (all `pgrep -f` →
+> `pgrep -x` after `down` killed the agent's own shell; launch success now REQUIRES
+> `Using builder wmr` — a companion re-enumeration mid-probe produced a silent Simulated
+> HMD session that passed every old check, T050's trap caught live and now enforced in
+> code). The repo's `scripts/jack-in.sh` still does NOT have the contract (docs/43: the
+> reference lives on the everyday box — standing reconciliation debt). **Basalt 0009's
+> drop-oldest on the OF→VIO queue is a measured NEGATIVE result** (keyframe-per-frame
+> ratchet to 2.5 Hz — 0010 corrects it to blocking push into the capacity-2 queue; keep
+> that shape). Constellation budget 3 ms reproduces the docs/40 tradeoff on the lab too
+> (CPU 487→355% but controllers park at the shared placeholder; blob swamping measured
+> num_blobs=29 here — NOT everyday-box-specific; the refined fix direction stands).
+> Backend service time is ~66 ms/frame at rest but 133-400 ms under real head motion
+> with SLAM_THREADS=2 or 4 alike — the pipeline runs saturated whenever someone wears
+> the headset, so every bounded queue sits permanently full; fixing the stamp bias makes
+> prediction hide that debt, which is why it is the one high-leverage fix.
+>
+> **State**: lab `monado-service` = 0049+0050+0051+0052 (`9fe21a089` on `lab-full`);
+> `~/vr/basalt` = 0001-0010 (`696a02f` on `lab`); both binaries current. The panel ended
+> the night dark from a companion re-enumeration AFTER service open (stale fd, known
+> class — a fresh launch recovers it). Jan Schmidt MR !2967 reply STILL pending — now
+> with a much better story to tell once the stamp bias is fixed.
+
 > ## START HERE NEXT SESSION (2026-08-16, ~22:10, lab machine) — a real `perf sched` trace,
 > not another hypothesis, RULES OUT scheduling/CPU-starvation as the SLAM-collapse mechanism.
 > Read `docs/pruebas.jsonl` T195 first; it supersedes the RT-priority theory in the block

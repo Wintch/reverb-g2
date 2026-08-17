@@ -1,0 +1,124 @@
+From ae697f92d9b01688750440d60e76810865c411d5 Mon Sep 17 00:00:00 2001
+From: iam <iam@iashur.internal>
+Date: Mon, 17 Aug 2026 04:55:24 -0300
+Subject: [PATCH] vit: cap the optical-flow->VIO queue at 2 and push
+ drop-oldest (BASALT_VISION_NONBLOCK)
+
+The stock vision_data_queue capacity of 10 is the third and last blocking latency
+reservoir on the live path (0001 bounded the state output queue, 0002 the image input
+queue). Measured 2026-08-17 on the lab G2 (SLAM + constellation + both controllers,
+first wearer session after the collapse fix): the VIO backend saturates at ~63-66 ms
+per frame, an early burst fills the queue, and with arrival rate == service rate it
+never drains -- delivered-pose age starts at 133 ms and locks at capacity x service
+time = ~632 ms, exactly T192/T194's collapse period, now finally sourced. Pose RATE
+stays healthy (~15 Hz) so nothing downstream flags it; the wearer feels head motion
+reflected ~1 s late and VIT_COLLAPSE_LOG's IN-vs-OUT t_ns delta shows it directly.
+
+Default ON; strict no-op while the queue is not full (try_push succeeds first try).
+BASALT_VISION_NONBLOCK=0 restores the stock capacity-10 blocking queue for an A/B.
+Deterministic mode keeps the stock lossless behaviour regardless. of_log now prints
+outq_dropped alongside the existing counters.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ .../frame_to_frame_optical_flow.h             | 23 +++++++++++++++++--
+ include/basalt/optical_flow/optical_flow.h    |  4 ++++
+ src/vit/vit_tracker.cpp                       | 18 +++++++++++++++
+ 3 files changed, 43 insertions(+), 2 deletions(-)
+
+diff --git a/include/basalt/optical_flow/frame_to_frame_optical_flow.h b/include/basalt/optical_flow/frame_to_frame_optical_flow.h
+index c3f2271..8ab5942 100644
+--- a/include/basalt/optical_flow/frame_to_frame_optical_flow.h
++++ b/include/basalt/optical_flow/frame_to_frame_optical_flow.h
+@@ -95,7 +95,9 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
+   using OpticalFlowBase::latest_lm_bundle;
+   using OpticalFlowBase::latest_state;
+   using OpticalFlowBase::old_pyramid;
++  using OpticalFlowBase::output_nonblock;
+   using OpticalFlowBase::output_queue;
++  using OpticalFlowBase::output_results_dropped;
+   using OpticalFlowBase::patch_coord;
+   using OpticalFlowBase::predicted_state;
+   using OpticalFlowBase::processing_thread;
+@@ -339,7 +341,24 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
+ 
+     if (output_queue && frame_counter % config.optical_flow_skip_frames == 0) {
+       transforms->input_images->addTime("frontend_keypoints_pushed");
+-      output_queue->push(transforms);
++      if (output_nonblock) {
++        // Drop-oldest instead of blocking, the same policy 0001 gave the state output
++        // queue and 0002 gave the image input queue -- this queue was the last blocking
++        // reservoir on the live path. Measured 2026-08-17 (lab, real G2, SLAM +
++        // constellation + both controllers): with the backend saturated at ~63-66 ms per
++        // frame, the stock capacity-10 blocking queue filled once during an early burst
++        // and never drained (arrival rate == service rate), pinning delivered-pose age at
++        // capacity x service time = ~632 ms -- T192/T194's "magic number", finally
++        // sourced. The wearer feels that as head motion reflected ~1 s late. When the
++        // queue is not full, try_push succeeds first try and this is a strict no-op
++        // relative to the blocking push.
++        while (!output_queue->try_push(transforms)) {
++          OpticalFlowResult::Ptr dropped;
++          if (output_queue->try_pop(dropped)) output_results_dropped++;
++        }
++      } else {
++        output_queue->push(transforms);
++      }
+     }
+ 
+     if (of_log) {
+@@ -351,7 +370,7 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
+       double total_ms = std::chrono::duration<double, std::milli>(of_t1 - of_t0).count();
+       double recall_ms = std::chrono::duration<double, std::milli>(of_rec1 - of_rec0).count();
+       std::cout << "vit_of total_ms=" << total_ms << " recall_ms=" << recall_ms << " keypoints=" << nkp
+-                << " patches=" << patches.size() << std::endl;
++                << " patches=" << patches.size() << " outq_dropped=" << output_results_dropped << std::endl;
+     }
+ 
+     frame_counter++;
+diff --git a/include/basalt/optical_flow/optical_flow.h b/include/basalt/optical_flow/optical_flow.h
+index c4510cb..d90847f 100644
+--- a/include/basalt/optical_flow/optical_flow.h
++++ b/include/basalt/optical_flow/optical_flow.h
+@@ -159,6 +159,10 @@ class OpticalFlowBase {
+   tbb::concurrent_queue<PoseVelBiasState<double>::Ptr> input_state_queue;
+   tbb::concurrent_queue<LandmarkBundle::Ptr> input_lm_bundle_queue;
+   tbb::concurrent_bounded_queue<OpticalFlowResult::Ptr>* output_queue = nullptr;
++  /// When true, push results with a drop-oldest policy instead of blocking (set by the
++  /// VIT tracker for the live Monado path; offline/deterministic paths leave it false).
++  bool output_nonblock = false;
++  size_t output_results_dropped = 0;  //!< Results dropped by the drop-oldest policy
+ 
+   Eigen::MatrixXf patch_coord;
+   double depth_guess = -1;
+diff --git a/src/vit/vit_tracker.cpp b/src/vit/vit_tracker.cpp
+index 71e38bb..c08a210 100644
+--- a/src/vit/vit_tracker.cpp
++++ b/src/vit/vit_tracker.cpp
+@@ -416,6 +416,24 @@ struct Tracker::Implementation {
+     imu_data_queue = &vio->imu_data_queue;
+     ASSERT_(imu_data_queue != nullptr);
+ 
++    // BASALT_VISION_NONBLOCK (default ON): cap the optical-flow -> VIO queue at 2 and
++    // push with drop-oldest, mirroring what 0002 did for the image input queue. The stock
++    // capacity of 10 is the third and last latency reservoir on the live path: measured
++    // 2026-08-17 on the lab G2 under SLAM + constellation + both controllers, the backend
++    // saturates at ~63-66 ms/frame, an early burst fills the queue, and with arrival rate
++    // == service rate it never drains again -- delivered-pose age locks at capacity x
++    // service time = ~632 ms, which is exactly T192/T194's collapse period. Pose RATE
++    // stays healthy (~15 Hz), so nothing in the output stream flags it; only the wearer
++    // (head motion reflected ~1 s late) and the IN-vs-OUT t_ns delta in VIT_COLLAPSE_LOG
++    // see it. Set =0 to restore the stock queue for an A/B. Deterministic mode keeps the
++    // stock lossless blocking queue regardless.
++    const char* vnb = std::getenv("BASALT_VISION_NONBLOCK");
++    const bool vision_nonblock = vnb == nullptr || (vnb[0] != '0' && vnb[0] != 'f' && vnb[0] != 'F');
++    if (!deterministic && vision_nonblock) {
++      vio->vision_data_queue.set_capacity(2);
++      opt_flow_ptr->output_nonblock = true;
++    }
++
+     opt_flow_ptr->output_queue = &vio->vision_data_queue;
+     opt_flow_ptr->show_gui = show_gui;
+     if (show_gui) {
+-- 
+2.47.3
+

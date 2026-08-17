@@ -1,0 +1,47 @@
+From 696a02fdb509c44f46b34e4a91784e20a8f73b77 Mon Sep 17 00:00:00 2001
+From: iam <iam@iashur.internal>
+Date: Mon, 17 Aug 2026 05:03:16 -0300
+Subject: [PATCH] vit: blocking push into the capacity-2 vision queue;
+ drop-oldest demoted to opt-in
+
+Measured on the very next relaunch (2026-08-17, lab G2, wearer active): with drop-oldest
+the backend only ever consumes the newest survivor, frames reach it ~400 ms apart, every
+frame crosses the keyframe threshold, and per-frame cost explodes 66 -> ~400 ms (full
+optimize+marginalize each time) -- a self-reinforcing ratchet down to 2.5 Hz output,
+strictly worse than the 632 ms queue latency it was written to fix. A blocking push into
+the SHORT queue keeps the latency fix (capacity 2, not 10) while backpressure moves the
+shedding to the input side, where 0002's drop-oldest already runs at an equilibrium the
+backend tolerates (~66 ms/frame, most frames non-KF). BASALT_VISION_DROP_OLDEST=1 keeps
+the negative-result path reproducible.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/vit/vit_tracker.cpp | 12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/src/vit/vit_tracker.cpp b/src/vit/vit_tracker.cpp
+index c08a210..6dbfc55 100644
+--- a/src/vit/vit_tracker.cpp
++++ b/src/vit/vit_tracker.cpp
+@@ -431,7 +431,17 @@ struct Tracker::Implementation {
+     const bool vision_nonblock = vnb == nullptr || (vnb[0] != '0' && vnb[0] != 'f' && vnb[0] != 'F');
+     if (!deterministic && vision_nonblock) {
+       vio->vision_data_queue.set_capacity(2);
+-      opt_flow_ptr->output_nonblock = true;
++      // Drop-oldest on THIS queue is a measured negative result (2026-08-17, same night,
++      // one relaunch later): the backend then only ever sees the newest survivor, frames
++      // arrive ~400 ms apart, every one of them crosses the keyframe threshold, and the
++      // per-frame cost explodes 66 -> ~400 ms (full optimize+marginalize each time) -- a
++      // self-reinforcing ratchet down to 2.5 Hz, WORSE than the latency it was meant to
++      // fix. A blocking push into the capacity-2 queue instead propagates backpressure to
++      // the input side, where 0002's drop-oldest already sheds load at a rate the backend
++      // tolerates (measured equilibrium ~66 ms/frame, most frames non-KF). Kept as an
++      // opt-in experiment knob only.
++      const char* vdo = std::getenv("BASALT_VISION_DROP_OLDEST");
++      opt_flow_ptr->output_nonblock = vdo != nullptr && (vdo[0] == '1' || vdo[0] == 't' || vdo[0] == 'T');
+     }
+ 
+     opt_flow_ptr->output_queue = &vio->vision_data_queue;
+-- 
+2.47.3
+
