@@ -102,10 +102,55 @@ throughput issue (detection frequency / cell config / max keypoints / image qual
 investigated separately — ideally on dev at 90 Hz where the judder is actually felt, since
 optical-flow cost is build/driver-dependent.
 
+## Controllers-ON A/B (2026-08-17): the 3 ms budget DOES cut real matches — do not default it on
+
+The remaining gate — "does the budget harm real tracking?" — was tested with a controller
+spinning on the turntable, budget ON (3 ms) vs OFF (0), same lighting/position:
+
+| | poses found | failed to find | `monado-service` CPU | mean blobs/obs |
+|---|---|---|---|---|
+| budget **ON** (3 ms) | **0** | 1603 | 313 % | 26.9 (max 63) |
+| budget **OFF** (0) | **19** | 1304 | 409 % | 22.2 (max 62) |
+
+So the 3 ms deadline is **too tight for this box's blob-swamped scene**: with ~22-27 blobs per
+observation (real LEDs + spurious room-light blobs) the exhaustive search sometimes needs more
+than 3 ms to find the valid P3P among the noise, and the budget cuts it off first. The prediction
+that "a real target matches well inside the budget" held only for a clean scene; under swamping it
+does not. **Conclusion: keep the budget default OFF; do not ship 3 ms as-is.**
+
+Two things are true at once, and it matters not to conflate them:
+1. The budget **does** kill the pathological no-target CPU runaway (614 %→261 %, above) — a real,
+   keepable effect.
+2. It **also** costs real matches when the scene is noisy — a real regression.
+
+The dominant problem on this box is upstream of the budget entirely: **blob swamping.** Even with
+the budget OFF, tracking barely works here (19 found vs 1304 failed = ~1.4 %), because mean 22-27
+blobs/frame (a controller shows ≤~16 LEDs to a camera) means the frames are heavily contaminated by
+room-light blobs — the long-known exposure/lighting/threshold issue on the everyday system. The
+matcher is being asked to find a needle in a pile of needles every frame.
+
+### Refined fix direction (not yet implemented)
+
+A blanket wall-clock budget is the wrong lever because it penalises the legitimate-but-hard match
+identically to the hopeless no-match. Better options, to design/test (ideally on dev, where
+controller tracking is validated and lighting is controlled):
+
+- **Blob-count / swamping guard** — if a camera reports more than ~N blobs, the scene is too noisy
+  for a reliable match anyway (and that is exactly when the search explodes); reject or subsample
+  the frame. Kills the CPU runaway *and* the swamped-match cost, without time-cutting a clean-scene
+  match. Pairs with the deferred `pixel_threshold`/`blob_required_threshold` tuning.
+- **Controller-present gate** — skip the exhaustive full search when the controller has not been
+  seen recently (handles the controllers-off case directly, zero cost to real tracking).
+- **A much larger budget** (e.g. 10-15 ms) as a pure runaway backstop — still << the full
+  exhaustive expansion that pegged the cores, but generous enough not to cut clean matches. Weakest
+  of the three; only a safety net.
+
 ## Status
 
-- Constellation search budget: **implemented, validated on the pathological case, default
-  OFF (opt-in).** Remaining gate before flipping the default ON: confirm it does not harm
-  real controller tracking (controllers ON, on the turntable — a strong match should still
-  land well inside 3 ms, so no regression is expected).
-- SLAM frame drops (optical-flow keypoint detection): **open, separate issue.**
+- Constellation search budget (`WMR_CONSTELLATION_SEARCH_BUDGET_US`): **implemented; kills the
+  no-target CPU runaway (validated); but the controllers-ON A/B shows 3 ms cuts real matches —
+  stays default OFF.** Needs the refined guard above (blob-count cap / controller-present gate)
+  before it can default on. Monado `lab-full` `22ec60f3b`.
+- Blob swamping (mean 22-27 blobs/frame under room light): **the real controller-tracking blocker
+  on the everyday system — exposure/threshold, pre-existing, orthogonal to the search budget.**
+- SLAM frame drops (optical-flow keypoint detection): **open, separate issue** (docs/42 Thread 3).
