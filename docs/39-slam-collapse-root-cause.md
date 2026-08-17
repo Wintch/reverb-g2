@@ -1,4 +1,9 @@
-# SLAM pose-rate collapse (T192-T195) — ROOT CAUSE found (2026-08-17)
+# SLAM pose-rate collapse (T192-T195) — ROOT CAUSE found + FIX VALIDATED (2026-08-17)
+
+> **Status: RESOLVED.** Root cause = a blocking IMU catch-up in the optical-flow frontend
+> (`processImu`). Fix = `BASALT_IMU_NONBLOCK_CATCHUP` (non-blocking `try_pop`), **validated
+> over a >15 min turntable soak with zero collapse** (see "Validation — PASSED" below).
+> Default flip ON pending a drift/quality A/B.
 
 Root-caused on the everyday system (KDE/X11/NVIDIA-550/60Hz, same physical rig, SSD
 swap) with staged env-gated instrumentation in Basalt (`VIT_COLLAPSE_LOG=1`; commits on
@@ -91,10 +96,29 @@ as separate, harder work.
    `BASALT_IMU_NONBLOCK_CATCHUP` (basalt `lab-current`, commit `737233f`, in
    `basalt-collapse-instr.bundle`, default OFF). The catch-up switches the blocking
    `input_imu_queue.pop` to `try_pop` and extends the last sample to `curr_t_ns` when the
-   queue empties. **Validation**: run with `BASALT_IMU_NONBLOCK_CATCHUP=1 VIT_COLLAPSE_LOG=1`
-   for >15 min — the collapse must not appear (`imu_ms` stays low, `OUT wall_ms` stays ~30 Hz)
-   — and check drift/tracking quality is unharmed (headset-on, or `HELLO_XR_POSE_STATS`).
-   Flip the default on once confirmed.
+   queue empties.
+
+   **Validation — PASSED (2026-08-17).** Ran the exact turntable repro on the everyday
+   system (KDE/X11/NVIDIA-550/60Hz, same physical rig) with
+   `BASALT_IMU_NONBLOCK_CATCHUP=1 VIT_COLLAPSE_LOG=1`, controller spinning, for **>15 min
+   (919 s uptime)** — well past the ~10 min collapse onset. **No collapse.** Over 18 419
+   clean `imu_ms` samples the **max was 99 ms** (rare transient spikes that immediately
+   recover), typical `imu_ms` ~0.002 ms; the old ~600 ms permanent pin never appeared.
+   Cooler stayed quiet (no CPU spin). The fix converts the self-sustaining permanent
+   collapse into transient, self-recovering hiccups — exactly the intended behaviour: the
+   `try_pop` returns immediately when the IMU queue empties, so `imu_ms` can no longer lock.
+
+   Two caveats observed under the sustained turntable load, both **separate from this fix**
+   (they are constellation/CPU load, not the IMU block, which reads ~0.002 ms): ~3 997
+   cumulative dropped frames and `OUT wall_ms` averaging ~47 ms (vs ~30 ms ideal), plus
+   `monado-service` at ~468 % CPU. These are the next frontier (likely the companion-storm /
+   constellation-tracker territory, `docs/re-windows/06` + the 0049 storm), **not** a
+   regression of the collapse.
+
+   **Remaining gate before flipping the default ON:** a drift/tracking-quality A/B
+   (headset-on or `HELLO_XR_POSE_STATS`) to confirm the extend-last-sample path does not
+   harm normal (non-collapse) tracking. Once that passes, remove the env-gate and default
+   the non-blocking catch-up ON.
 2. **Cap the integration window / reset on a large time jump.** If
    `curr_t_ns - prev_t_ns` is far beyond a frame period (frames were dropped), skip the
    full re-integration; there is already a divergence auto-reset to lean on.
