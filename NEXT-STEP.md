@@ -1,5 +1,15 @@
 # Next step
 
+> # START HERE (2026-08-17) — Windows WMR reverse-engineering landed, + a compile/validate plan
+>
+> The full Windows WMR driver stack was decompiled and cross-referenced against Monado
+> (`docs/re-windows/`, start at its `README.md`). It pinpoints concrete fixes for the open
+> tracking bugs — the position pops (clock/optical-timesync, `re-windows/02`+`05`), a real
+> 3-axis magnetometer decode bug (`re-windows/03`) — and correlates with the **SLAM pose-rate
+> collapse (T192–T195)** (a near-constant ~640 ms interval reads like a fixed timeout).
+> **`docs/re-windows/WORKPLAN.md`** is the coordinated comms↔dev plan to compile and validate
+> them, SLAM collapse first. Raw decompiled code stays off git — comms box only, NDA.
+
 > # PLANNED (2026-08-12, T163) — a real benchmark suite, and a machine that never varies underneath it
 >
 > Asked for directly by the user this session, after a night where the same title in the same
