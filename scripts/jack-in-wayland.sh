@@ -517,7 +517,9 @@ if [ "$VERBOSE" = 1 ]; then
         XRT_LOG=debug
         WMR_LOG=debug
         SLAM_LOG=debug
-        CONSTELLATION_TRACKER_LOG=debug
+        # Ambient wins (T206): a hardcoded debug here silently clobbered an ambient
+        # CONSTELLATION_TRACKER_LOG=trace and cost a blob-calibration sample.
+        CONSTELLATION_TRACKER_LOG="${CONSTELLATION_TRACKER_LOG:-debug}"
     )
     echo "Verbose tracking logs ON."
 fi
