@@ -342,12 +342,17 @@ if [ "$TRACKING" = "6dof" ]; then
     # inter-pose rotation for tracking -- with three windows each; per-window pacing variance
     # here is wide (3.44% and 7.22% back to back in an identical configuration).
     # 2026-08-13 (T180), idle rig, constellation off: SLAM pose throughput 17.3 Hz at 2
-    # threads, 25.9 Hz at 4 (the camera gives 30). The default stays 2 until the in-game
-    # side is re-measured: under game load the CPU<->clock<->tracking feedback loop bites
-    # back. Since basalt 0002 bounded the input queue, throughput no longer sets the
-    # dead-reckoning anchor age -- pose freshness is ~110 ms at either thread count; more
-    # threads now buy pose RATE, not staleness.
-    SLAM_THREADS="${SLAM_THREADS:-2}"
+    # threads, 25.9 Hz at 4 (the camera gives 30). The default stayed 2 until the in-game
+    # side was re-measured; T197 (2026-08-17, pre power-pinning) then found 4 threads
+    # indifferent under full load -- because constellation search and the schedutil
+    # governor were eating the headroom. 2026-08-17 ~08:00 (T203), with the machine
+    # pinned to performance and the clock-skew fix (0055) in: per-stage timing (finally
+    # live, 0057) showed the optical-flow TRACKING stage as the #1 cost at 48.5 ms p50,
+    # and 4 threads halved it to 28.4 ms with pose-interval p90 dropping 99.9 -> 66.8 ms
+    # (the alternating 66/100 ms pattern gone). Wearer-confirmed same session: best
+    # controller anchoring of the project, head "un poco mejor". Default is now 4;
+    # SLAM_THREADS= still overrides either way.
+    SLAM_THREADS="${SLAM_THREADS:-4}"
 
     G2_SLAM_JSON="$(dirname "${BASH_SOURCE[0]}")/basalt-g2-config.json"
     if [ "${SLAM_G2_CONFIG:-1}" = "1" ] && [ -z "${SLAM_CONFIG:-}" ] && [ -f "$G2_SLAM_JSON" ]; then
@@ -361,7 +366,7 @@ use-double=0
 deterministic=0
 num-threads=$SLAM_THREADS
 EOF
-        echo "  SLAM worker threads: $SLAM_THREADS (of $(nproc) available; 2 is the measured default, SLAM_THREADS= overrides)"
+        echo "  SLAM worker threads: $SLAM_THREADS (of $(nproc) available; 4 is the measured default since T203, SLAM_THREADS= overrides)"
         TRACKING_ENV+=("SLAM_CONFIG=$G2_SLAM_TOML" SLAM_CONFIG_PIPELINE_ONLY=1)
         echo "  SLAM pipeline config: $G2_SLAM_JSON (denser detection; SLAM_G2_CONFIG=0 disables)"
     elif [ -n "${SLAM_CONFIG:-}" ]; then

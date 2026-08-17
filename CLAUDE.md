@@ -1,6 +1,55 @@
 # Context for the 90Hz lab agent
 
-> ## START HERE NEXT SESSION (2026-08-17, ~06:40, lab machine) — THE T192-T199 SAGA IS
+> ## START HERE NEXT SESSION (2026-08-17, ~08:00, lab machine) — optimization round 1
+> DONE on top of the closed saga (read T199-T203 + `docs/44`): machine pinned
+> (`vr-power-setup.sh --apply`, first time ever — governor was schedutil all along),
+> `SLAM_THREADS` default now **4** (per-stage timing went live for the first time via
+> 0057 and showed the REAL #1 cost is the optical-flow TRACKING stage, 48.5 ms p50 —
+> the VIO backend is only ~12 ms; threads=4 on the pinned machine halves tracking to
+> 28.4 ms, pose p90 99.9→66.8 ms, wearer-confirmed). Final wearer state: "joysticks
+> anclados, nunca desaparecen, fluidos" (best of the project), head "bastante bien, no
+> perfecto" — fast rotation still shows correction. Monado = 0049-0057 (`0a8fc0e81`),
+> basalt = 0001-0010, launchers carry the docs/43 contract + all hardenings.
+>
+> **NEXT ROUND MAP, value-ordered, every item measured (T203)**:
+> 1. **Motion-amplified snap smoothing** — worn snaps 4-4.6 Hz ≥0.5°/5 mm vs only
+>    0.088 Hz at rest (93% positional ~6 mm, backend re-triangulation jitter): the felt
+>    component rides motion; weakly anchor-correlated (×1.10), so smooth BETWEEN
+>    anchors (0044's timestamp-compensation open item / correction spreading), not just
+>    at arrival.
+> 2. **Roll drift is motion-induced** — +0.84-0.93°/min worn (R²=0.80) vs −0.027
+>    sign-flipping at rest: gyro-bias estimation under dynamics in Basalt, NOT static
+>    calibration. The T162 left-roll debt finally has a number and a direction.
+> 3. **New rare stall class**: 2.15-2.9 s pipeline stalls (~1/15 min, distinct from the
+>    632 ms saga) fling dead-reckoning 7.8-14.4 m and snap back on the next anchor —
+>    at rest, zero app: a pure stall SUFFICES (sharpens T162's speed framing; 0057's
+>    reset-offset-carry softens the teleport class but the stall itself is unexplained;
+>    prediction layer should also clamp DR excursions during anchor gaps).
+> 4. **Keepalive v2**: 0054 is query-driven (get_tracked_pose) so it NEVER runs with 0
+>    clients — exactly the unattended case it exists for; A/B self-invalidated (0
+>    resends, controllers slept on schedule = clean control baseline). Move to a
+>    driver-internal timer. Cold power-on stays impossible (T200).
+> 5. **GPU wattage cap, user directive**: this board "performa casi igual en 70%";
+>    `vr-power-setup.sh --gpu-limit 70` exists but was NOT applied yet (needs sudo +
+>    a pacing A/B under 90 Hz load); `--apply` should learn a per-box config
+>    (`~/vr/power.conf`), nothing hardcoded. Also guard the benign EPP write on
+>    acpi-cpufreq (line ~106 glob error).
+> 6. Constellation solve-rate / assignment-prior for the ~1 cm controller position
+>    breathe; guards 0056 (MAX_BLOBS / LOST_SEARCH_DIV) are in, default off, awaiting
+>    per-box calibration.
+> 7. Position y-axis convergence transient at rest (−57→−12 mm/min decaying, −770 mm
+>    over 31 min, slam-20260817-063841).
+>
+> **USB2 branch**: 3 drops tonight (pre-launch, mid-game 06:27 — which stalled USB3
+> cameras 14-24 s, suspect shared `hid_lock`, worth its own investigation — and idle
+> ~07:05). PC-end USB-C replug 2/2 tonight (T186 holding). Log truncation per run
+> means mid-game forensics die with the next launch — consider log rotation.
+> **FAIL_MARKER** still unimplemented in both launchers (docs/43 gap).
+
+> ## SUPERSEDED same morning (~06:40) — the saga-closing header below stands; round 1
+> above builds on it.
+
+> ## START HERE PREVIOUS (2026-08-17, ~06:40, lab machine) — THE T192-T199 SAGA IS
 > CLOSED: the 632-666 ms magic number was **0049's own 10 ms backoff sleep throttling the
 > shared read loop** (companion + hololens/IMU share one sequential thread), pinning the
 > IMU stream ~630 ms stale (kernel ring fills at ~100 reads/s vs ~250 packets/s), which

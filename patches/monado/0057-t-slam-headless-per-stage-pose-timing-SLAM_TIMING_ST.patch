@@ -1,0 +1,320 @@
+From 0a8fc0e813a1fa3ef72fe325141d752418c704fc Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Mon, 17 Aug 2026 07:07:42 -0300
+Subject: [PATCH] t/slam: headless per-stage pose timing (SLAM_TIMING_STAT
+ finally consumed) + carry the divergence-reset offset into the output pose
+ (SLAM_RESET_OFFSET_CARRY)
+
+Two changes, one file. (1) timing.csv has shipped 2 columns for the project's entire
+history: the 26-checkpoint Basalt breakdown was gated behind a debug-GUI button, and
+SLAM_TIMING_STAT was parsed into the config but never consumed -- now it enables the
+extension headlessly (default on), and TimingWriter gets its columns populated BEFORE
+construction (CSVWriter copies by value; the old order shipped a corrupted bare-#
+header). (2) The T162 divergence auto-reset (0023) finally gets its real fix instead
+of the teleport: on reset, solve the transform mapping the first post-reset pose onto
+the last accepted pre-reset pose, keep only position + gravity-twist yaw (swing
+discarded -- roll/pitch stay tracker-truth so the world cannot tilt), apply at ingest
+so relation history, filters, prediction and CSVs all see one continuous frame;
+multiple resets accumulate through the re-solved anchor. Fired 1x during tonight's
+real Aircar session (1502m spike -> hard [0,0,0] teleport, wearer luckily mid-motion);
+with this, the wearer keeps their place. SLAM_RESET_OFFSET_CARRY=0 restores the
+teleport for A/B. Strict no-op until a reset fires.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/xrt/auxiliary/tracking/t_tracker_slam.cpp | 218 ++++++++++++++++--
+ 1 file changed, 198 insertions(+), 20 deletions(-)
+
+diff --git a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+index b6a30ae64..b939d4805 100644
+--- a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
++++ b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+@@ -98,6 +98,7 @@ DEBUG_GET_ONCE_FLOAT_OPTION(slam_filter_beta, "SLAM_FILTER_BETA", 0.16)
+ DEBUG_GET_ONCE_FLOAT_OPTION(slam_pos_deadzone, "SLAM_POS_DEADZONE_M", 0)
+ DEBUG_GET_ONCE_OPTION(slam_filter, "SLAM_FILTER", nullptr)
+ DEBUG_GET_ONCE_NUM_OPTION(slam_auto_reset_max_speed, "SLAM_AUTO_RESET_MAX_SPEED", 10)
++DEBUG_GET_ONCE_BOOL_OPTION(slam_reset_offset_carry, "SLAM_RESET_OFFSET_CARRY", true)
+ DEBUG_GET_ONCE_BOOL_OPTION(euroc_record, "EUROC_RECORD", false)
+ DEBUG_GET_ONCE_OPTION(euroc_record_path, "EUROC_RECORD_PATH", nullptr)
+ DEBUG_GET_ONCE_OPTION(slam_csv_path, "SLAM_CSV_PATH", "evaluation/")
+@@ -311,6 +312,42 @@ struct TrackerSlam
+ 		timepoint_ns quiet_until; //!< Don't re-check until this timestamp (post-reset settling)
+ 		uint64_t count;           //!< Resets performed this session
+ 	} auto_reset;
++
++	//! Divergence-reset frame continuity. auto_reset above restarts the external tracker,
++	//! which comes back reporting poses in its OWN new coordinate frame (near its own
++	//! origin) -- without this, that reads to every consumer as the position teleporting,
++	//! which is exactly what shipped with patch 0023 and never got the real fix: the wearer
++	//! stranded far from a healthy-metrics world with no way back short of a manual recenter
++	//! (T162; recurred T202, 2026-08-17, 1502 m spike then a hard snap to [0,0,0] at
++	//! t=14.1min of a real session). Keeps a persistent rigid transform from "whatever frame
++	//! the tracker is using right now" to "the frame the application has been seeing since
++	//! the session started", re-solved every time the tracker hands back a fresh frame (see
++	//! flush_poses). SLAM_RESET_OFFSET_CARRY=0 disables this and restores the old
++	//! teleport-on-reset behaviour, for an A/B.
++	struct
++	{
++		bool enabled;
++		//! Raw-tracker-frame -> output-frame transform currently in effect. Identity
++		//! until the first reset of the session; re-solved (not composed) on each one,
++		//! see @ref awaiting_anchor -- because @ref anchor is itself expressed in the
++		//! already-corrected output frame, re-solving against it is what makes repeated
++		//! resets accumulate correctly without ever multiplying stale transforms
++		//! together.
++		struct xrt_pose offset = XRT_POSE_IDENTITY;
++		//! True from the moment a reset fires until the tracker's next pose has been
++		//! used to re-solve @ref offset against @ref anchor. While true, the next pose
++		//! seen by flush_poses is treated as this reset's first post-reset sample,
++		//! whatever its value -- no assumption is made about it landing near the
++		//! tracker's origin.
++		bool awaiting_anchor = false;
++		//! Last known-good OUTPUT pose (i.e. already offset-corrected), captured the
++		//! instant a reset fires. Deliberately the pose from BEFORE the diverged sample
++		//! that triggered the reset, not the spike itself -- the auto_reset block above
++		//! detects divergence by comparing against the previous accepted pose, so that
++		//! previous pose is the last one known to still be good.
++		struct xrt_pose anchor = XRT_POSE_IDENTITY;
++	} reset_offset;
++
+ 	int dropped_bundles = 0;                      //!< Consecutive bundles dropped for that reason
+ 	//! Candidate timestamp of a rejected insane forward jump (INT64_MIN = none). A single
+ 	//! corrupted timestamp must never become last_cam_ts[0]: accepted once, every following
+@@ -564,14 +601,44 @@ struct TrackerSlam
+  *
+  */
+ 
++//! Populates @ref TrackerSlam::timing "t.timing".columns: the fixed 2 columns every build
++//! ships, plus Basalt's own per-stage breakdown if the tracker supports the pose-timing
++//! extension (independent of whether that extension is actually TURNED ON -- title
++//! metadata is available regardless).
++//!
++//! Idempotent and safe to call more than once (t_slam_create calls it once headlessly,
++//! before TimingWriter's constructor runs, and timing_ui_setup below calls it again for
++//! the GUI-only path -- both compute the same result).
+ static void
+-timing_ui_setup(TrackerSlam &t)
++timing_columns_setup(TrackerSlam &t)
+ {
+-	t.timing.enabled = false;
++	// We provide two timing columns by default, even if there is no extension support
++	t.timing.columns = {"sampled", "received_by_monado"};
++
++	// Only fill the timing columns if the tracker supports pose timing
++	if (t.exts.has_pose_timing) {
++		vit_tracker_timing_titles titles = {};
++		vit_result_t vres = t.vit.tracker_get_timing_titles(t.tracker, &titles);
++		if (vres != VIT_SUCCESS) {
++			SLAM_ERROR("Failed to get timing titles from tracker");
++			return;
++		}
++
++		// Copies the titles locally.
++		std::vector<std::string> cols(titles.titles, titles.titles + titles.count);
++
++		t.timing.columns.insert(t.timing.columns.begin() + 1, cols.begin(), cols.end());
++	}
++}
+ 
++static void
++timing_ui_setup(TrackerSlam &t)
++{
+ 	u_var_add_ro_raw_text(&t, "\nTracker timing", "Tracker timing");
+ 
+-	// Setup toggle button
++	// Setup toggle button. Its initial label reflects t.timing.enabled as it is NOW, which
++	// may already be true if t_slam_create enabled the extension headlessly via
++	// SLAM_TIMING_STAT -- don't reset it to false here.
+ 	static const char *msg[2] = {"[OFF] Enable timing", "[ON] Disable timing"};
+ 	u_var_button_cb cb = [](void *t_ptr) {
+ 		TrackerSlam *t = (TrackerSlam *)t_ptr;
+@@ -590,23 +657,7 @@ timing_ui_setup(TrackerSlam &t)
+ 	t.timing.enable_btn.ptr = &t;
+ 	u_var_add_button(&t, &t.timing.enable_btn, msg[t.timing.enabled]);
+ 
+-	// We provide two timing columns by default, even if there is no extension support
+-	t.timing.columns = {"sampled", "received_by_monado"};
+-
+-	// Only fill the timing columns if the tracker supports pose timing
+-	if (t.exts.has_pose_timing) {
+-		vit_tracker_timing_titles titles = {};
+-		vit_result_t vres = t.vit.tracker_get_timing_titles(t.tracker, &titles);
+-		if (vres != VIT_SUCCESS) {
+-			SLAM_ERROR("Failed to get timing titles from tracker");
+-			return;
+-		}
+-
+-		// Copies the titles locally.
+-		std::vector<std::string> cols(titles.titles, titles.titles + titles.count);
+-
+-		t.timing.columns.insert(t.timing.columns.begin() + 1, cols.begin(), cols.end());
+-	}
++	timing_columns_setup(t);
+ 
+ 	// Construct null-separated array of options for the combo box
+ 	using namespace std::string_literals;
+@@ -942,6 +993,82 @@ flush_poses(TrackerSlam &t)
+ 		xrt_quat nrot{data.ox, data.oy, data.oz, data.ow};
+ 		xrt_vec3 nvel{data.vx, data.vy, data.vz};
+ 
++		// Divergence-reset frame continuity (SLAM_RESET_OFFSET_CARRY, default on -- see
++		// TrackerSlam::reset_offset's doc comment, and the auto_reset block further down
++		// where a reset is detected and @ref reset_offset.awaiting_anchor gets set).
++		// Applied HERE, before npos/nrot/nvel are used for ANYTHING -- the divergence
++		// check just below, the relation pushed to slam_rels, prediction, every output
++		// filter, and every CSV/EuRoC writer (including tracking.csv; see its own comment
++		// further down for why this is a deliberate, disclosed exception to "tracking.csv
++		// is unfiltered raw output" -- this is a coordinate REBASE, not smoothing, and
++		// SLAM_RESET_OFFSET_CARRY=0 restores byte-identical pre-fix output) -- so every one
++		// of those sees a single continuous frame and never has to know a reset happened.
++		if (t.reset_offset.enabled) {
++			if (t.reset_offset.awaiting_anchor) {
++				// The tracker's first pose since tracker_reset() -- solve for the
++				// transform T with T ∘ (this pose) landing on t.reset_offset.anchor,
++				// the last good OUTPUT pose captured right before the reset.
++				//
++				// math_pose_transform(T, pose, out) composes as
++				//   out.orientation = T.orientation * pose.orientation
++				//   out.position    = T.orientation * pose.position + T.position
++				// so solving out == anchor for T gives
++				//   T.orientation = anchor.orientation * inverse(nrot)
++				//   T.position    = anchor.position - rotate(T.orientation, npos)
++				//
++				// That T.orientation is the FULL relative rotation between the two
++				// frames, roll/pitch included -- but Basalt re-aligns to gravity on
++				// every reset, so nrot is already close to upright in its own frame,
++				// and forcing the full rotation on top of that would tilt the world
++				// by whatever roll/pitch noise is in the difference. This file
++				// already treats +Z as up (see gravity_correction above, and that
++				// its UI only ever exposes the Z component): decompose T.orientation
++				// about the Z axis and keep only its TWIST (yaw), discarding the
++				// SWING (roll/pitch). Re-solve the position against that yaw-only
++				// rotation so the anchor still lands exactly; orientation continuity
++				// is then only approximate, bounded by the roll/pitch difference
++				// between the two gravity alignments, which is the intended
++				// trade-off -- roll/pitch stay tracker-truth, only position and
++				// heading are carried across the reset.
++				xrt_quat nrot_inv;
++				math_quat_invert(&nrot, &nrot_inv);
++				xrt_quat full_rot;
++				math_quat_rotate(&t.reset_offset.anchor.orientation, &nrot_inv, &full_rot);
++
++				xrt_vec3 z_axis{0, 0, 1};
++				xrt_quat swing_discarded, yaw_only;
++				math_quat_decompose_swing_twist(&full_rot, &z_axis, &swing_discarded, &yaw_only);
++
++				xrt_vec3 rotated_npos;
++				math_quat_rotate_vec3(&yaw_only, &npos, &rotated_npos);
++
++				t.reset_offset.offset.orientation = yaw_only;
++				t.reset_offset.offset.position = t.reset_offset.anchor.position - rotated_npos;
++				t.reset_offset.awaiting_anchor = false;
++
++				float yaw_deg = 2.0f * atan2f(yaw_only.z, yaw_only.w) * (180.0f / (float)M_PI);
++				xrt_vec3 d = t.reset_offset.offset.position;
++				SLAM_WARN("Reset #%" PRIu64 ": carrying offset into the output pose so it "
++				          "stays continuous -- position delta=[%.3f,%.3f,%.3f] m, yaw "
++				          "delta=%.2f deg",
++				          t.auto_reset.count, (double)d.x, (double)d.y, (double)d.z,
++				          (double)yaw_deg);
++			}
++
++			xrt_pose raw_pose{nrot, npos};
++			xrt_pose corrected_pose;
++			math_pose_transform(&t.reset_offset.offset, &raw_pose, &corrected_pose);
++			nrot = corrected_pose.orientation;
++			npos = corrected_pose.position;
++
++			// Velocity transforms by rotation only (no translation term), so rotate it
++			// the same way to stay consistent with the corrected pose above for
++			// whichever consumer (prediction's dead reckoning) reads it next.
++			xrt_vec3 rotated_nvel;
++			math_quat_rotate_vec3(&t.reset_offset.offset.orientation, &nvel, &rotated_nvel);
++			nvel = rotated_nvel;
++		}
++
+ 		// Last relation
+ 		xrt_space_relation lr = XRT_SPACE_RELATION_ZERO;
+ 		int64_t lts;
+@@ -993,6 +1120,18 @@ flush_poses(TrackerSlam &t)
+ 				          ". Resetting (reset #%" PRIu64 " this session).",
+ 				          sqrt(dx * dx + dy * dy + dz * dz), dt, speed, nts,
+ 				          t.auto_reset.count);
++				if (t.reset_offset.enabled) {
++					// Capture the last known-good OUTPUT pose (already
++					// offset-corrected by the ingest block above) now, before
++					// the reset -- deliberately lr.pose, i.e. the PREVIOUS
++					// accepted pose, not the diverged sample just measured
++					// above, which is the spike itself and not "good". The
++					// actual transform is solved once the tracker hands back
++					// its first post-reset pose, see reset_offset.awaiting_anchor
++					// at the top of this loop.
++					t.reset_offset.anchor = lr.pose;
++					t.reset_offset.awaiting_anchor = true;
++				}
+ 				vit_result_t rres = t.vit.tracker_reset(t.tracker);
+ 				if (rres != VIT_SUCCESS) {
+ 					SLAM_ERROR("Failed to reset the diverged tracker (%d)", rres);
+@@ -1037,6 +1176,14 @@ flush_poses(TrackerSlam &t)
+ 		// in the ingest path above silently redefined it, which would have made the next
+ 		// lag measurement compare the filter against itself and read a clean zero. Same
+ 		// for the EuRoC recorder: a dataset recorded through our filter is not a dataset.
++		// The one deliberate exception, disclosed here rather than silently changing what
++		// "raw" means again: when SLAM_RESET_OFFSET_CARRY is on (default), npos/nrot were
++		// already rebased by TrackerSlam::reset_offset above, before this point -- so after
++		// an auto-reset, tracking.csv keeps recording one continuous trajectory instead of
++		// jumping to the tracker's own post-reset origin. That's a coordinate REBASE, not
++		// smoothing: it doesn't add noise or remove signal the way the filters would, and
++		// SLAM_RESET_OFFSET_CARRY=0 restores byte-identical pre-fix raw output (including
++		// the teleport) for anyone who needs the tracker's literal, un-rebased numbers.
+ 		xrt_pose raw_pose = {nrot, npos};
+ 		gt_ui_push(t, nts, raw_pose);
+ 		t.slam_traj_writer->push({nts, raw_pose});
+@@ -2000,6 +2147,12 @@ t_slam_create(struct xrt_frame_context *xfctx,
+ 		          t.auto_reset.max_speed);
+ 	}
+ 
++	t.reset_offset.enabled = debug_get_bool_option_slam_reset_offset_carry();
++	if (t.reset_offset.enabled) {
++		SLAM_INFO("Divergence-reset frame continuity on: an auto-reset above will carry its offset "
++		          "into the output pose instead of teleporting (SLAM_RESET_OFFSET_CARRY=0 disables)");
++	}
++
+ 	t.filter.one_euro_before_predict = debug_get_bool_option_slam_filter_before_predict();
+ 	SLAM_INFO("One euro filter runs %s prediction (SLAM_FILTER_BEFORE_PREDICT=%d)",
+ 	          t.filter.one_euro_before_predict ? "BEFORE" : "after", t.filter.one_euro_before_predict);
+@@ -2023,6 +2176,31 @@ t_slam_create(struct xrt_frame_context *xfctx,
+ 
+ 	t.gt.trajectory = new Trajectory{};
+ 
++	// timing.csv's columns MUST be populated before TimingWriter is constructed just below:
++	// CSVWriter's constructor copies the vector it's handed BY VALUE into its own
++	// column_names member, so whatever t.timing.columns held at that instant is what the
++	// CSV header uses forever after. setup_ui() -> timing_ui_setup() (further down) is the
++	// only thing that used to populate t.timing.columns, and it runs AFTER this point --
++	// meaning TimingWriter's own column_names was permanently empty (bare "#" header, first
++	// data row glued onto it) unless the debug GUI's timing button had already been clicked,
++	// for the whole history of this feature. Worse, SLAM_TIMING_STAT (config->timing_stat)
++	// was read into config since day one and never consumed anywhere -- a dangling knob that
++	// looked like it should have been fixing exactly this (T202/docs follow-up 2026-08-17).
++	// Populate the columns now, and negotiate the extension headlessly when requested, so a
++	// service with no debug GUI attached still gets Basalt's full per-stage breakdown.
++	// timing_ui_setup() still owns the GUI toggle and is free to flip t.timing.enabled later;
++	// it recomputes the same columns (idempotent) so the two paths can't disagree.
++	timing_columns_setup(t);
++	if (t.exts.has_pose_timing && config->timing_stat) {
++		vit_result_t tres = t.vit.tracker_enable_extension(t.tracker, VIT_TRACKER_EXTENSION_POSE_TIMING, true);
++		if (tres != VIT_SUCCESS) {
++			SLAM_ERROR("Failed to enable the tracker pose-timing extension (%d)", tres);
++		} else {
++			t.timing.enabled = true;
++			SLAM_INFO("Pose timing enabled headlessly via SLAM_TIMING_STAT");
++		}
++	}
++
+ 	// Setup CSV files
+ 	bool write_csvs = config->write_csvs;
+ 	string dir = config->csv_path;
+-- 
+2.47.3
+
