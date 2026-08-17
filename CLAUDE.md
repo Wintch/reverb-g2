@@ -8,8 +8,14 @@
 > (backoff = deadline-skip, no sleep; `WMR_COMPANION_BACKOFF_BLOCKING=1` restores old
 > behavior for A/B) and **validated with the storm active** (39792 consecutive companion
 > errors): cam-vs-IMU skew flat −4..−0.7 ms over 8 min/14400 frames, anchor age now
-> honest (~144 ms idle). Read `docs/pruebas.jsonl` T199-T200 and `docs/44` first.
+> honest (~144 ms idle). Read `docs/pruebas.jsonl` T199-T201 and `docs/44` first.
 > This also explains why the collapse appeared WITH 0049 and never before it (T193).
+> **WEARER-VERIFIED same morning (T201, ~06:17): "perfecto! se fue"** — head response
+> immediate, controllers "mejoraron mucho tambien" (the throttled loop also carried the
+> tunnelled controller packets). Objective, same minutes: skew flat −0.9..−2.1 ms under
+> full load, anchor age honest 136-193 ms and gyro-bridged, pose out ~10 Hz / CPU ~703%
+> — the backend stays saturated under full constellation load but the wearer no longer
+> feels it: perceived latency was the debt HIDDEN from prediction, not the debt itself.
 >
 > **What needs the WEARER next session, in order**: (1) feel test — head rotation should
 > now be immediate (the real pipeline debt ~150-600 ms under load is finally VISIBLE to
