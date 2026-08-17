@@ -1,10 +1,84 @@
 #!/bin/bash
 # jack-in.sh - bring up the Reverb G2 VR pipeline in one shot.
 #
+#   ./jack-in.sh [action] [tracking]
+#
 # Requires an X11 session (not Wayland) - the NVIDIA direct-mode compositor
 # path needs it. Log into "Plasma (X11)" from the SDDM session picker first.
+#
+# Two orthogonal, order-independent tokens (docs/43's up/dev/quiet/down mode contract --
+# run with -h/--help for the full usage):
+#   action     up (default) = quiet launch, ambient-overridable log levels
+#              dev = verbose launch (WMR/XRT/SLAM/compositor logs at debug)
+#              quiet = non-inheriting unattended station (hard-pinned warn, firehoses scrubbed)
+#              down = teardown, ignores the tracking token below
+#   tracking   6dof (default) = SLAM/Basalt, real 6DoF, currently jittery on this rig
+#              3dof = IMU-only, rotation only, tracking cameras off entirely -- rock steady
 
 set -u
+
+usage() {
+	cat <<EOF
+Usage: $(basename "${BASH_SOURCE[0]}") [action] [tracking]
+
+Two orthogonal tokens, any order (docs/43's up/dev/quiet/down mode contract):
+
+  action      lifecycle -- what to do. Default: up.
+      up, start              Quiet launch: WMR_LOG/XRT_LOG/SLAM_LOG/XRT_COMPOSITOR_LOG
+                              default to warn. Ambient exports of those still win. This is
+                              a deterministic restatement of the script's old, only,
+                              behavior (Monado's own compiled default was already WARN).
+      dev, --verbose, -v     Verbose launch: the same four log levels default to debug.
+                              Ambient still wins.
+      quiet, unattended      Non-inheriting station mode: same levels as 'up' but HARD-
+                              pinned (ambient does not win), pacing logs pinned too, and the
+                              opt-in firehose/debug-GUI vars scrubbed via 'env -u'. Suppresses
+                              the dev usage banner at the end.
+      down, stop             Teardown: SIGTERM monado-service (escalate to -9 after 10s),
+                              remove the IPC socket, reassert the desktop monitor layout.
+                              Ignores the tracking token below.
+
+  tracking    Default: 6dof.
+      6dof   SLAM/Basalt, real 6DoF, currently jittery on this rig.
+      3dof   IMU-only, rotation only, tracking cameras off entirely -- rock steady.
+
+  -h, --help  Show this help and exit.
+
+Examples:
+  $(basename "${BASH_SOURCE[0]}")              # up, 6dof (unchanged from before this contract)
+  $(basename "${BASH_SOURCE[0]}") dev 3dof
+  $(basename "${BASH_SOURCE[0]}") quiet
+  $(basename "${BASH_SOURCE[0]}") down
+EOF
+}
+
+# One order-independent pass (docs/43), mirroring jack-in-wayland.sh's argument model:
+# every argument is classified by which of two disjoint token sets it belongs to, so
+# 'action' and 'tracking' may appear in either order, and the old single positional
+# invocation (./jack-in.sh 3dof, ./jack-in.sh with no args) keeps working unchanged. An
+# argument matching neither set is a hard error (exit 2 + usage), not a silent fall-through
+# -- previously an unrecognized $1 silently fell through to the 6dof branch.
+ACTION=up
+TRACK=""
+for arg in "$@"; do
+	case "$arg" in
+		-h|--help) usage; exit 0 ;;
+		up|start) ACTION=up ;;
+		dev|--verbose|-v) ACTION=dev ;;
+		quiet|unattended) ACTION=quiet ;;
+		down|stop) ACTION=down ;;
+		3dof|6dof)
+			[ -n "$TRACK" ] && { echo "duplicate tracking argument: '$arg'" >&2; usage >&2; exit 2; }
+			TRACK="$arg"
+			;;
+		*)
+			echo "unknown argument: '$arg'" >&2
+			usage >&2
+			exit 2
+			;;
+	esac
+done
+TRACK="${TRACK:-6dof}"
 
 # Where the source trees live. bootstrap-lab.sh puts them in ~/vr; the older hand-built setup
 # on the development machine used ~/Documents/linux_vr_base. Autodetected, VR_BASE=... overrides.
@@ -56,8 +130,56 @@ COMMON_ENV=(
 	WMR_DISPLAY_INIT_SLEEP_SECONDS="${WMR_DISPLAY_INIT_SLEEP_SECONDS:-2}"
 )
 
+# --- Lifecycle action -> logging policy (docs/43 mode contract) ---------------------
+# This script never set WMR_LOG/XRT_LOG/SLAM_LOG/XRT_COMPOSITOR_LOG explicitly before --
+# Monado's own compiled default is WARN, so plain 'up' below is a deterministic restatement
+# of the old effective noise, not a behavior change.
+#
+#   up     (default)  ${VAR:-warn} on all four -- ambient exports still win.
+#   dev                ${VAR:-debug} on all four -- ambient still wins.
+#   quiet              HARD-pinned warn (no ${VAR:-...} -- ambient does NOT win), the pacing
+#                      logs pinned too (U_PACING_APP_LOG/U_PACING_COMPOSITOR_LOG=warn,
+#                      U_PACING_LIVE_STATS=false), and the opt-in firehoses + XRT_DEBUG_GUI
+#                      scrubbed via 'env -u'. The one deliberately non-inheriting mode -- the
+#                      station you can walk away from.
+#
+# Layering: SCRUB_ENV (-u, quiet only) must come first in the `env` invocation inside
+# start_service() so it strips before anything re-adds a var; COMMON_ENV (which now carries
+# LOG_ENV) comes next; explicit args passed to start_service() (WMR_SLAM=.../WMR_CAMERAS=...,
+# or wake_panel()'s own pinned-low overrides) come last and win, matching GNU env's
+# later-NAME=VALUE-wins semantics.
+case "$ACTION" in
+	dev)   LOG_LEVEL_DEFAULT=debug ;;
+	*)     LOG_LEVEL_DEFAULT=warn ;;   # up, quiet
+esac
+
+SCRUB_ENV=()
+if [ "$ACTION" = quiet ]; then
+	LOG_ENV=(
+		WMR_LOG=warn XRT_LOG=warn SLAM_LOG=warn XRT_COMPOSITOR_LOG=warn
+		U_PACING_APP_LOG=warn U_PACING_COMPOSITOR_LOG=warn U_PACING_LIVE_STATS=false
+	)
+	SCRUB_ENV=(-u VIT_COLLAPSE_LOG -u CONSTELLATION_TRACKER_LOG -u HELLO_XR_POSE_STATS
+	           -u SLAM_UI -u XRT_TRACING -u XRT_DEBUG_GUI)
+	echo "Quiet/unattended launch: levels hard-pinned, firehoses scrubbed."
+else
+	LOG_ENV=(
+		WMR_LOG="${WMR_LOG:-$LOG_LEVEL_DEFAULT}"
+		XRT_LOG="${XRT_LOG:-$LOG_LEVEL_DEFAULT}"
+		SLAM_LOG="${SLAM_LOG:-$LOG_LEVEL_DEFAULT}"
+		XRT_COMPOSITOR_LOG="${XRT_COMPOSITOR_LOG:-$LOG_LEVEL_DEFAULT}"
+	)
+	[ "$ACTION" = dev ] && echo "Verbose launch: WMR/XRT/SLAM/compositor logs at debug."
+fi
+COMMON_ENV+=("${LOG_ENV[@]}")
+
 dp0_status() { xrandr --query 2>/dev/null | awk -v o="$HMD_OUTPUT" '$1==o{print $2}'; }
-service_pids() { pgrep -f "targets/service/monado-service"; }
+# pgrep -x (exact comm match), NOT -f: a -f pattern scans every process's full cmdline, so
+# any bystander that merely *mentions* the binary -- a shell running a compound command, a
+# tail on a path containing "monado-service" -- gets matched too. Live-fired 2026-08-17
+# (T196) on jack-in-wayland.sh's first 'down' invocation, which SIGTERM'd the invoking
+# agent's own shell this exact way; every pgrep site in this project now uses -x.
+service_pids() { pgrep -x monado-service; }
 
 # Switching the headset's display off forces a CRTC reconfiguration, and there the NVIDIA
 # driver silently loses the rotation of a portrait monitor (xrandr keeps REPORTING "right"
@@ -159,7 +281,7 @@ start_service() {
 	# mid-line for minutes - which makes every failure impossible to diagnose. stdbuf keeps
 	# the log live.
 	cd "$MONADO_BUILD" || return 1
-	env "${COMMON_ENV[@]}" "$@" \
+	env "${SCRUB_ENV[@]}" "${COMMON_ENV[@]}" "$@" \
 		setsid stdbuf -oL -eL "$SERVICE" < /dev/null >> "$LOG" 2>&1 &
 	disown
 }
@@ -177,7 +299,13 @@ start_service() {
 wake_panel() {
 	echo "Panel is dark - running Monado once to send the WMR activation report..."
 	rm -f "$SOCKET"
-	start_service WMR_SLAM=0 WMR_CAMERAS=0 || return 1
+	# Pinned low regardless of ACTION (docs/43): this run is kill -9'd within seconds and
+	# its log is about to be truncated before the real run, so it never needs 'dev's
+	# verbosity. These explicit values win over COMMON_ENV's mode-based LOG_ENV because
+	# start_service()'s `env` invocation lists "$@" (this call's own args) after COMMON_ENV,
+	# and env's later NAME=VALUE wins. Export the level yourself if you need to debug the
+	# probe itself.
+	start_service WMR_SLAM=0 WMR_CAMERAS=0 WMR_LOG=warn XRT_LOG=warn XRT_COMPOSITOR_LOG=warn XRT_DEBUG_GUI=0 || return 1
 
 	for _i in $(seq 1 25); do
 		if [ "$(dp0_status)" = "connected" ]; then
@@ -193,6 +321,54 @@ wake_panel() {
 
 	[ "$(dp0_status)" = "connected" ]
 }
+
+# 'down' teardown (docs/43), dispatched here -- before the X11-session guard and the
+# already-running guard below, both of which a plain stop doesn't need and the latter of
+# which would actively defeat it (it would print "Already running" and exit without
+# stopping anything, since it only checks for the service already being up). TRACK is
+# parsed above but deliberately unused past this point: down is not a launch.
+if [ "$ACTION" = down ]; then
+	echo "Stopping monado-service..."
+	RUNNING=0
+	for p in $(service_pids); do
+		RUNNING=1
+		# SIGTERM first, deliberately -- the opposite of wake_panel's kill -9 above (that
+		# one is pre-launch hygiene against a stale process holding the socket, not a
+		# shutdown). SIGTERM runs Monado's clean-path handler (screen-off, display
+		# released); do not "fix" this teardown to match the launch path's kill -9.
+		kill -TERM "$p" 2>/dev/null
+	done
+	if [ "$RUNNING" = 1 ]; then
+		for _i in $(seq 1 10); do
+			[ -z "$(service_pids)" ] && break
+			sleep 1
+		done
+		if [ -n "$(service_pids)" ]; then
+			echo "  Still running after 10s, escalating to SIGKILL."
+			for p in $(service_pids); do kill -9 "$p" 2>/dev/null; done
+		fi
+	else
+		echo "  Not running."
+	fi
+	rm -f "$SOCKET"
+	# Restore the desktop monitor layout -- but only under X11, so 'down' can also clean up
+	# from a non-X11 session without touching xrandr at all. Unlike the launch path's two
+	# reasserts (one after freeing DP-0, one after Monado starts), this is a single
+	# snapshot+reassert of whatever the desktop looks like right now: Monado taking/
+	# releasing the direct-mode display can leave a portrait monitor's CRTC rotation
+	# desynced from what xrandr reports (see reassert_monitors' comment on why re-cycling
+	# the rotation is what actually forces a reprogram), and this is the same fix applied
+	# once at teardown instead of twice around a launch.
+	if [ "${XDG_SESSION_TYPE:-}" = "x11" ]; then
+		snapshot_monitors
+		reassert_monitors
+		echo "Desktop monitor layout reasserted."
+	fi
+	# Writes nothing else to disk: $LOG is left untouched on purpose -- a session that just
+	# failed is exactly the one you don't want a teardown silently erasing.
+	echo "Socket removed ($SOCKET). $LOG left untouched."
+	exit 0
+fi
 
 if [ "${XDG_SESSION_TYPE:-}" != "x11" ]; then
 	echo "Not in an X11 session (XDG_SESSION_TYPE=${XDG_SESSION_TYPE:-unset})." >&2
@@ -212,7 +388,8 @@ fi
 # better; real 6DoF apps still need SLAM despite the jitter.
 #   ./jack-in.sh 3dof   -> IMU-only, rock steady, no position, tracking cameras off entirely
 #   ./jack-in.sh        -> SLAM/Basalt, 6DoF, currently jittery
-if [ "${1:-}" = "3dof" ]; then
+# Orthogonal to the lifecycle action (docs/43): ./jack-in.sh dev 3dof, ./jack-in.sh quiet, etc.
+if [ "$TRACK" = "3dof" ]; then
 	echo "Tracking: IMU-only 3DoF (WMR_SLAM=0, WMR_CAMERAS=0) - rotation only, very stable."
 	MODE_ENV=(WMR_SLAM=0 WMR_CAMERAS=0)
 else
@@ -250,7 +427,7 @@ wait_for_companion || exit 1
 # headset over Bluetooth, but Monado only probes for them at startup, so ones powered on later
 # show up as 'left/right: <none>' until the service is restarted.
 
-echo "Starting Monado (log: $LOG)..."
+echo "Starting Monado (action $ACTION, tracking $TRACK, log: $LOG)..."
 rm -f "$SOCKET"
 : > "$LOG"
 start_service "${MODE_ENV[@]}" || exit 1
@@ -270,7 +447,9 @@ else
 	echo "Compositor did not reach the vblank thread. Check $LOG." >&2
 fi
 
-cat <<EOF
+# 'quiet' suppresses this banner (docs/43) -- no human is reading it on an unattended station.
+if [ "$ACTION" != quiet ]; then
+	cat <<EOF
 
 Launch any OpenXR app with:
   XR_RUNTIME_JSON=$MONADO_BUILD/openxr_monado-dev.json IPC_IGNORE_VERSION=1 <app> --graphics Vulkan2
@@ -284,3 +463,4 @@ hello_xr quits the instant stdin hits EOF, so keep stdin open, e.g.:
 
 For the 360 photo viewer, set HELLO_XR_PHOTO360=/path/to/equirect.jpg
 EOF
+fi

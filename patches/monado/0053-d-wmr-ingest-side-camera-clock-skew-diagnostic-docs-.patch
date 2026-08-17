@@ -1,0 +1,82 @@
+From 1c7bea7f273a8e478fb6773d318e5d143187002b Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Mon, 17 Aug 2026 05:46:15 -0300
+Subject: [PATCH] d/wmr: ingest-side camera clock-skew diagnostic (docs/44
+ follow-up)
+
+Logs, at cam0 cadence (first 30 frames, then 1/300), the raw hardware-domain skew
+between the frame stamp and the last IMU sample stamp, and where the CONVERTED stamp
+lands vs monotonic now. First capture already reshaped docs/44's picture: a FRESH
+session is honest (cam-vs-IMU hw skew -4..0 ms, converted stamps -4.5 ms in the past)
+-- so the +578 ms measured at the tracker layer 30 min into wearer sessions is a
+DRIFT that accumulates under load, not a constant bias. Leading suspect: hw2mono's
+arrival-time EMA absorbing read-thread/USB latency as the shared wmr_run_thread falls
+behind. Frames 1-4 (before the first IMU sample initializes the offset) also expose
+the raw device hw clock: +16.45 s vs host monotonic on this boot.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/xrt/drivers/wmr/wmr_source.c | 27 +++++++++++++++++++++++++++
+ 1 file changed, 27 insertions(+)
+
+diff --git a/src/xrt/drivers/wmr/wmr_source.c b/src/xrt/drivers/wmr/wmr_source.c
+index 6dabf2225..c7dc88ba9 100644
+--- a/src/xrt/drivers/wmr/wmr_source.c
++++ b/src/xrt/drivers/wmr/wmr_source.c
+@@ -113,6 +113,12 @@ struct wmr_source
+ 	uint64_t imu_stabilised_total; //!< IMU samples saved by flooring instead of dropping
+ 	time_duration_ns hw2mono;     //!< Estimated offset from IMU to monotonic clock
+ 	time_duration_ns cam_hw2mono; //!< Caches hw2mono for use in the full frame bundle
++
++	// Clock-skew diagnostic (2026-08-17, docs/44): the converted camera stamps were proven
++	// to land p50 +578 ms in the FUTURE of the query/IMU clock at the tracker layer. These
++	// fields instrument the ingest itself: raw cam-vs-IMU hardware-domain skew per frame.
++	timepoint_ns last_imu_hw_ns; //!< Raw (unconverted) hw timestamp of the last IMU sample
++	uint32_t cam0_frames_seen;   //!< cam0 frame counter for the clockskew log cadence
+ };
+ 
+ /*
+@@ -121,12 +127,32 @@ struct wmr_source
+  *
+  */
+ 
++// Clock-skew diagnostic (docs/44): logs, at cam0 cadence, the raw hardware-domain skew
++// between this frame's stamp and the last IMU sample's stamp, and where the CONVERTED
++// stamp lands relative to monotonic now (negative age = stamped in the future). First 30
++// frames log unconditionally to catch any startup-burst/anchoring transient; then 1/300
++// (~1 line per 10 s at 30 Hz). raw_ts must be the PRE-conversion frame timestamp.
++static void
++log_cam_clockskew(struct wmr_source *ws, timepoint_ns raw_ts)
++{
++	ws->cam0_frames_seen++;
++	if (ws->cam0_frames_seen > 30 && ws->cam0_frames_seen % 300 != 0) {
++		return;
++	}
++	timepoint_ns now_mono = (timepoint_ns)os_monotonic_get_ns();
++	double cam_minus_imu_hw_ms = (double)(raw_ts - ws->last_imu_hw_ns) / 1e6;
++	double converted_minus_now_ms = (double)((raw_ts + ws->hw2mono) - now_mono) / 1e6;
++	WMR_INFO(ws, "clockskew: frame=%u cam_minus_imu_hw_ms=%.2f converted_minus_now_ms=%.2f hw2mono_ms=%.2f",
++	         ws->cam0_frames_seen, cam_minus_imu_hw_ms, converted_minus_now_ms, (double)ws->hw2mono / 1e6);
++}
++
+ #define DEFINE_RECEIVE_CAM(cam_id)                                                                                     \
+ 	static void receive_cam##cam_id(struct xrt_frame_sink *sink, struct xrt_frame *xf)                             \
+ 	{                                                                                                              \
+ 		struct wmr_source *ws = container_of(sink, struct wmr_source, cam_sinks[cam_id]);                      \
+ 		if (cam_id == 0) {                                                                                     \
+ 			ws->cam_hw2mono = ws->hw2mono;                                                                 \
++			log_cam_clockskew(ws, xf->timestamp);                                                          \
+ 		}                                                                                                      \
+ 		xf->timestamp += ws->cam_hw2mono;                                                                      \
+ 		WMR_TRACE(ws, "cam" #cam_id " img t=%" PRId64 " source_t=%" PRId64, xf->timestamp,                     \
+@@ -178,6 +204,7 @@ receive_imu_sample(struct xrt_imu_sink *sink, struct xrt_imu_sample *s)
+ 	timepoint_ns now_hw = s->timestamp_ns;
+ 	timepoint_ns now_mono = (timepoint_ns)os_monotonic_get_ns();
+ 	timepoint_ns ts = m_clock_offset_a2b(IMU_FREQ, now_hw, now_mono, &ws->hw2mono);
++	ws->last_imu_hw_ns = now_hw; // raw hw stamp, for the cam clockskew diagnostic (docs/44)
+ 
+ 	// TRIED AND REVERTED (2026-08-12): swapping this for m_clock_windowed_skew_tracker, the
+ 	// windowed minimum-skew estimator already in this tree (and already used by the Rift
+-- 
+2.47.3
+

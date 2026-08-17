@@ -1,7 +1,45 @@
 # Context for the 90Hz lab agent
 
-> ## START HERE NEXT SESSION (2026-08-17, ~05:30, lab machine) — the 632-666 ms magic
-> number is ROOT-CAUSED AND PROVEN with live data: **the camera frame timestamps run
+> ## START HERE NEXT SESSION (2026-08-17, ~06:40, lab machine) — THE T192-T199 SAGA IS
+> CLOSED: the 632-666 ms magic number was **0049's own 10 ms backoff sleep throttling the
+> shared read loop** (companion + hololens/IMU share one sequential thread), pinning the
+> IMU stream ~630 ms stale (kernel ring fills at ~100 reads/s vs ~250 packets/s), which
+> `hw2mono` absorbed, pushing camera stamps ~630 ms into the future. **Fixed in 0055**
+> (backoff = deadline-skip, no sleep; `WMR_COMPANION_BACKOFF_BLOCKING=1` restores old
+> behavior for A/B) and **validated with the storm active** (39792 consecutive companion
+> errors): cam-vs-IMU skew flat −4..−0.7 ms over 8 min/14400 frames, anchor age now
+> honest (~144 ms idle). Read `docs/pruebas.jsonl` T199-T200 and `docs/44` first.
+> This also explains why the collapse appeared WITH 0049 and never before it (T193).
+>
+> **What needs the WEARER next session, in order**: (1) feel test — head rotation should
+> now be immediate (the real pipeline debt ~150-600 ms under load is finally VISIBLE to
+> prediction and gyro-bridged); the ~1 s constant lag of T197 should be gone; (2)
+> controllers on for a real session (constellation budget stays OFF — 3 ms kills matches
+> on both machines, docs/40's blob-guard is the refined path); (3) the keep-awake A/B:
+> `WMR_CONTROLLER_KEEPALIVE_S=600` (0054, default off), controller motionless >15 min,
+> LED + `imu_age_ms` as instruments — decides if the prototype graduates or reverts
+> (cold power-on from software is settled-IMPOSSIBLE, see T200; the timer may be purely
+> motion-based, in which case only real motion helps).
+>
+> **Still real and open after the clock fix**: the backend costs 133-400 ms/frame under
+> head motion (SLAM_THREADS 2 vs 4 indifferent) so the pipeline still runs saturated
+> when worn — prediction now hides it for rotation, position benefits less (0045's
+> asymmetry); the keypoint-detection cost (docs/40) is the next real lever if position
+> feel needs it. Basalt 0009's drop-oldest is a measured NEGATIVE result (KF-per-frame
+> ratchet, 66→400 ms) — 0010's blocking capacity-2 is the kept shape; don't revisit.
+> FAIL_MARKER is unimplemented in both launchers (docs/43 gap, T200).
+>
+> **State**: lab `monado-service` = 0049-0055 (`6aa1fbd92` on `lab-full`), basalt =
+> 0001-0010 (`696a02f` on `lab`), binaries current; both launchers carry the docs/43
+> contract + `pgrep -x` + the builder-wmr success check. An idle soak session may still
+> be running from the validation — `~/vr/jack-in-wayland.sh down` before relaunching.
+> MR !2967 reply still pending — the story is now complete enough to write it well.
+
+> ## SUPERSEDED same night (2026-08-17, ~05:30) — kept for the reasoning chain; the
+> "surgical next step" below was executed and the hypothesis it named (startup-burst
+> anchor bias) was DISPROVEN by the very first ingest capture (fresh sessions start
+> honest; the bias is a load-onset DRIFT, and its true source is 0049's sleep, above).
+> Original header: the 632-666 ms magic number is ROOT-CAUSED AND PROVEN with live data: **the camera frame timestamps run
 > p50 +578 ms (max 610) in the FUTURE of the query/IMU clock** — a stable clock-domain
 > conversion bias born upstream of Basalt. Read `docs/pruebas.jsonl` T196-T198 and
 > `docs/44-clock-domain-skew.md` first; they supersede the "logical blocking mechanism"

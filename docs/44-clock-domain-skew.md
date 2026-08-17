@@ -1,10 +1,67 @@
-# Camera clock-domain skew (T196-T198) — ROOT CAUSE PROVEN for the 632-666 ms magic number and the constant ~1 s wearer lag
+# Camera clock-domain skew (T196-T200) — ROOT CAUSE FOUND, FIXED, AND VALIDATED (2026-08-17)
 
-> **Status: PROVEN, not yet fixed.** The camera frame timestamps that reach Basalt (and
-> stamp its output poses) run **p50 +578 ms (max +610, n=121) in the FUTURE** of the clock
-> that pose queries and IMU-for-prediction live in. This is a single, stable, code-level
-> bias — not hardware, not CPU load, not the scheduler (already ruled out, T195) — and it
-> unifies three findings that until tonight looked like three separate problems.
+> ## RESOLVED (2026-08-17, T199) — the whole T192-T199 saga closes here
+>
+> **The bias documented below is real but was mis-framed: it is a load-onset DRIFT, not a
+> constant.** A fresh, ingest-side diagnostic (monado `0053`, logging RAW cam-vs-IMU
+> hardware-domain skew at the actual `cam_hw2mono` conversion site, not inferred from the
+> tracker layer) caught a session starting **honest** — cam-vs-IMU skew −4..0 ms, converted
+> camera stamps only −4.5 ms in the past — then **ramping from −2.45 ms to +630 ms between
+> frames ~300 and ~1200 (under 40 s, no app, no wearer)** and pinning there rock-stable.
+> This kills both the "constant bias baked in at session start" framing of this document's
+> title and the "startup-burst anchoring" hypothesis in its own "Next step" section below —
+> see the superseded notes inline.
+>
+> **Root cause**: `0049`'s companion-storm backoff slept 10 ms via `os_nanosleep` **inside**
+> `wmr_run_thread`'s single shared read loop (`control_read_packets` and
+> `hololens_sensors_read_packets` run sequentially in one thread, sharing `wh->hid_lock` —
+> T194). With the companion storm active (universal, T183/T188/T189/T190), that sleep
+> capped the whole loop — hololens/IMU reads included — at **~100 iterations/s against
+> ~250 IMU packets/s actually produced**. The kernel-side ring filled and pinned the IMU
+> stream a fixed **~630 ms stale** at arrival; `hw2mono` (fit from IMU arrival times)
+> absorbed that lag instead of exposing it, pushing the *converted* camera frame stamps
+> ~630 ms into the future relative to query-now. That one number is the 632-666 ms "magic
+> number" chased across T192-T199: it produced docs/39's image-ahead-of-IMU stall (the
+> SLAM pose-rate collapse), and separately the wearer's constant ~1 s perceived head
+> latency (T197) — prediction trusts the anchor's stamp, not its true content age, so dead
+> reckoning only ever bridged the ~90 ms the lying stamp admitted to. **It also answers why
+> the collapse appeared WITH 0049 and never before it**: T193's pre-0049 45-minute run
+> never collapsed because the failing companion read back then spun **without any pacing
+> sleep** in the loop at all — nothing throttled the hololens/IMU side, so the ring never
+> filled in the first place.
+>
+> **Fix**: monado `0055` keeps 0049's ≤100 Hz companion retry ceiling but implements the
+> backoff as a **skip until `companion_backoff_until_ns`** instead of a sleep — zero impact
+> on the shared loop's pace (the hololens blocking read still paces the healthy loop).
+> `WMR_COMPANION_BACKOFF_BLOCKING=1` restores the old in-loop sleep for a direct A/B.
+>
+> **Validation**: idle SLAM session, storm ACTIVE the whole time (39792 consecutive
+> companion errors — the exact old trigger condition). cam-vs-IMU raw hardware-domain skew
+> held **flat at −4..−0.7 ms over 8 minutes / 14400 frames** (old behavior: +630 ms by
+> frame 1200), converted camera stamps steady at −4.5 ms (honest past), and the tracker's
+> prediction anchor age finally reads the **true content age (~144 ms idle)** instead of a
+> lying ~50-112 ms.
+>
+> **Independent cross-confirmation via Windows RE**: `MRUSBHost.dll` carries
+> `IMUStaleDataDrop` / `CameraReaderLoopRestartingIMU` — Windows' own driver explicitly
+> detects and restarts a stale IMU stream, i.e. defends against exactly this failure class.
+> This project only found it by living through it; Microsoft's own driver treats it as a
+> known, named failure mode worth guarding against.
+>
+> **Scope, stated plainly**: validated at mechanism level with the storm both active and
+> idle. **The wearer feel-test is still pending** — head rotation should now be immediate,
+> the constant ~1 s lag of T197 should be gone. See `docs/pruebas.jsonl` T199-T200,
+> `patches/monado/0053-0055`, and `patches/monado/README.md`'s entries for the same.
+>
+> The investigation record below is kept intact as history; read the superseded notes
+> inline before trusting its "Next step" and "Honest scope" sections on their own.
+
+> **Status at the time this was written (superseded above): PROVEN, not yet fixed.** The
+> camera frame timestamps that reach Basalt (and stamp its output poses) run **p50 +578 ms
+> (max +610, n=121) in the FUTURE** of the clock that pose queries and IMU-for-prediction
+> live in. This is a single, stable, code-level bias — not hardware, not CPU load, not the
+> scheduler (already ruled out, T195) — and it unifies three findings that until tonight
+> looked like three separate problems.
 
 ## The one number, and how it was measured
 
@@ -97,6 +154,11 @@ conversion rides untouched all the way to the application.
   consistent with everything observed (constant per session, portable across machines,
   indifferent to load) but has not been isolated with a direct before/after log at the
   conversion site.
+  **SUPERSEDED (T199): disproven, not just unmeasured.** The ingest-side diagnostic this
+  section's own "Next step" called for (`0053`) found the bias is NOT fixed at session
+  start — a fresh session starts honest (−4..0 ms) and only reaches +630 ms after a ~40 s
+  ramp, once the companion storm's backoff crosses its failure threshold. It is a
+  load-onset drift, not a startup constant. See the resolution section at the top.
 - **The relationship between +578-610 ms and the 632-666 ms collapse period is close but
   not identical**, and that gap is noted here rather than explained away. They may be the
   same constant measured two different ways (session-start anchoring vs. steady-state
@@ -104,6 +166,15 @@ conversion rides untouched all the way to the application.
   which.
 
 ## Next step, surgical
+
+> **SUPERSEDED (T199): executed, and the leading hypothesis below was DISPROVEN by the
+> very first capture, not confirmed.** `0053` did exactly what this section asked for —
+> raw skew logged at the `cam_hw2mono` ingest site itself — and the first session it
+> caught started honest (−4..0 ms), ruling out a fixed startup-burst anchor. The real
+> mechanism is 0049's in-loop sleep starving the shared read thread once the companion
+> storm's backoff engages, producing a DRIFT that ramps in ~40 s rather than a constant
+> fixed at process start. See the resolution section at the top of this document and
+> `patches/monado/0055`. Kept below for the reasoning record only.
 
 Read `wmr_source.c`'s `cam_hw2mono` / clock-offset estimation path and log, at the ingest
 push site, `converted_ts - os_monotonic_get_ns()` directly — a three-line diff that turns

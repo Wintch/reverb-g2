@@ -1,0 +1,108 @@
+From 6aa1fbd920a906f94c931ecae6df9b06b6517389 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Mon, 17 Aug 2026 06:04:19 -0300
+Subject: [PATCH] d/wmr: companion backoff by deadline-skip, not by sleeping
+ the shared read loop
+
+THE REAL 0049 FOLLOW-UP FIX, closing the whole T192-T199 saga. 0049's 10ms
+os_nanosleep ran inside wmr_run_thread's shared loop, so with the (universal)
+companion storm active the hololens sensors reads -- IMU included -- were capped at
+~100/s against ~250 packets/s produced. The kernel-side ring filled and pinned the
+IMU stream a fixed ~630ms stale; hw2mono (fit from IMU arrivals) absorbed the lag,
+pushing camera stamps ~630ms into the FUTURE. That single number is the 632-666ms
+'magic number': it produced docs/39's image-ahead-of-IMU stall (the SLAM pose-rate
+collapse 0007/0008 treats symptomatically), and the constant ~1s perceived head
+latency (prediction trusts stamps, so it bridged only the ~90ms they admitted to).
+It also explains why the collapse appeared WITH 0049 and never before it (T193's
+pre-0049 45min run never collapsed): pre-0049 the failing read spun without pacing
+the loop.
+
+The fix keeps 0049's <=100Hz companion retry ceiling but implements it as a skip
+until companion_backoff_until_ns -- zero impact on the loop's pace, no busy-spin
+(the hololens blocking read still paces the healthy loop, and the hololens failure
+path keeps its own sleep). WMR_COMPANION_BACKOFF_BLOCKING=1 restores the old sleep
+for an A/B.
+
+Validated live (2026-08-17 ~06:20, idle SLAM session, storm ACTIVE at 39792
+consecutive companion errors): cam-vs-IMU raw hw skew stayed -4..-0.7ms over 8 min /
+14400 frames (old behavior: +630ms by frame 1200), converted camera stamps steady at
+-4.5ms (honest past), prediction anchor age now shows the true ~144ms content age.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/xrt/drivers/wmr/wmr_hmd.c | 29 ++++++++++++++++++++++++++++-
+ src/xrt/drivers/wmr/wmr_hmd.h |  7 +++++++
+ 2 files changed, 35 insertions(+), 1 deletion(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_hmd.c b/src/xrt/drivers/wmr/wmr_hmd.c
+index 894e1b6b1..1373715e1 100644
+--- a/src/xrt/drivers/wmr/wmr_hmd.c
++++ b/src/xrt/drivers/wmr/wmr_hmd.c
+@@ -617,6 +617,21 @@ control_read_packets(struct wmr_hmd *wh)
+ 
+ 	unsigned char buffer[WMR_FEATURE_BUFFER_SIZE];
+ 
++	// 0049 follow-up (2026-08-17, docs/44, T199): the backoff below used to be a 10ms
++	// os_nanosleep INSIDE this shared read loop. With the (universal) companion storm
++	// active, that capped the whole loop -- hololens sensors reads included -- at
++	// ~100 iterations/s against ~250 IMU packets/s produced, so the kernel-side ring
++	// filled and the IMU stream ran a pinned ~630ms stale. hw2mono (fit from IMU
++	// arrivals) absorbed the lag, pushing the camera stamps ~630ms into the FUTURE:
++	// that one number is the 632-666ms "magic number" behind the T192/T194 collapse
++	// (docs/39's image-ahead-of-IMU stall) and the constant ~1s perceived latency
++	// (prediction trusts the stamps, so it cannot bridge staleness it cannot see).
++	// Back off by SKIPPING the companion attempt until a deadline instead: same
++	// <=100Hz retry ceiling for the companion, zero impact on the loop's pace.
++	if (wh->companion_backoff_until_ns != 0 && os_monotonic_get_ns() < wh->companion_backoff_until_ns) {
++		return true;
++	}
++
+ 	// Do not block
+ 	os_mutex_lock(&wh->hid_lock);
+ 	int size = os_hid_read(wh->hid_control_dev, buffer, sizeof(buffer), 0);
+@@ -651,11 +666,23 @@ control_read_packets(struct wmr_hmd *wh)
+ 			          size);
+ 		}
+ 		if (wh->companion_consecutive_read_errors > 50) {
+-			os_nanosleep(U_TIME_1MS_IN_NS * 10);
++			// WMR_COMPANION_BACKOFF_BLOCKING=1 restores the old in-loop sleep for
++			// an A/B against the skip-based backoff (see the comment at the top of
++			// this function for why the sleep is the wrong shape).
++			static int backoff_blocking = -1;
++			if (backoff_blocking == -1) {
++				backoff_blocking = getenv("WMR_COMPANION_BACKOFF_BLOCKING") != NULL;
++			}
++			if (backoff_blocking) {
++				os_nanosleep(U_TIME_1MS_IN_NS * 10);
++			} else {
++				wh->companion_backoff_until_ns = os_monotonic_get_ns() + U_TIME_1MS_IN_NS * 10;
++			}
+ 		}
+ 		return true;
+ 	}
+ 	wh->companion_consecutive_read_errors = 0;
++	wh->companion_backoff_until_ns = 0;
+ 	if (size == 0) {
+ 		WMR_TRACE(wh, "No more data to read");
+ 		return true; // No more messages, return.
+diff --git a/src/xrt/drivers/wmr/wmr_hmd.h b/src/xrt/drivers/wmr/wmr_hmd.h
+index d5072d52f..1d94898d8 100644
+--- a/src/xrt/drivers/wmr/wmr_hmd.h
++++ b/src/xrt/drivers/wmr/wmr_hmd.h
+@@ -114,6 +114,13 @@ struct wmr_hmd
+ 	 * never gives up -- the companion device isn't load-bearing for tracking.
+ 	 */
+ 	int companion_consecutive_read_errors;
++	/*!
++	 * When nonzero, skip companion read attempts until this monotonic timestamp instead
++	 * of sleeping in the shared read loop. See control_read_packets: the old in-loop
++	 * 10ms sleep throttled the hololens sensors reads and let the IMU stream fall a
++	 * fixed ~630ms behind (docs/44, T199).
++	 */
++	uint64_t companion_backoff_until_ns;
+ 
+ 	//! Current desired HMD screen state.
+ 	bool hmd_screen_enable;
+-- 
+2.47.3
+
