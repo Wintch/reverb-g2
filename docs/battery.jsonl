@@ -1,0 +1,2 @@
+{"when": "2026-08-17T16:30", "event": "batteries_changed", "note": "user installed fresh batteries in both controllers"}
+{"when": "2026-08-17T16:52", "event": "reading", "left_or_a_raw": 153, "right_or_b_raw": 148, "note": "first reading on fresh batteries, session start; raw byte scale unknown (driver logs raw). Previous exhausted set read 150->147 while draining across a 9h idle-ish session (T204 era) -- scale appears narrow or nonlinear near full; curve will resolve it.", "source": "wmr_controller_hp_packet_parse WMR_INFO in jack-in-wayland.log"}
