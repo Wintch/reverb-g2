@@ -272,10 +272,10 @@ def main():
     name, appid = selected
     if name == "__player__":
         print("=== lanzando el player 360/VR180 ===")
-        subprocess.Popen([str(VR / "play360.sh"), str(VR / "media" / "test-equirect.jpg"), "-s"])
+        subprocess.Popen([str(VR / "play360.sh"), str(VR / "media" / "test-equirect.jpg"), "-s"], env=GAME_ENV)
     else:
         print(f"=== lanzando {name} (Steam appid {appid}) ===")
-        subprocess.Popen(["steam", "-applaunch", appid])
+        subprocess.Popen(["steam", "-applaunch", appid], env=GAME_ENV)
 
     print("  lanzado (queda corriendo en background, este script no espera a que cierre).")
 

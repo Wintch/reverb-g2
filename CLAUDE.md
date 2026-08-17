@@ -1,5 +1,212 @@
 # Context for the 90Hz lab agent
 
+> ## START HERE NEXT SESSION (2026-08-16, ~22:10, lab machine) — a real `perf sched` trace,
+> not another hypothesis, RULES OUT scheduling/CPU-starvation as the SLAM-collapse mechanism.
+> Read `docs/pruebas.jsonl` T195 first; it supersedes the RT-priority theory in the block
+> below (which was tested directly and disproved, not just reasoned around).
+>
+> **Two things done, both negative results, both real progress**: (1) disabled SCHED_FIFO
+> max priority on the WMR read thread alone (`WMR_HMD_THREAD_NO_RT=1`, env-gated patch
+> already in the lab binary, off by default) — the collapse still happened, so T194's
+> leading theory is DISPROVEN, not confirmed. (2) Got a working `perf sched record`/
+> `latency` pipeline (needed `kernel.perf_event_paranoid=-1` AND, separately,
+> `chmod -R o+rX /sys/kernel/tracing` on the WHOLE tree, not just `events/` — sibling files
+> like `printk_formats` being root-only caused a cryptic "incompatible file format" on
+> read-back that looked like a corrupt/version-mismatched trace but was actually a
+> write-time permission gap) and captured two live collapses. **Result: `WMR: USB-HMD`'s
+> own max scheduling delay was 0.026ms. The rest of monado-service's threads (29 of them)
+> showed max delay 4.004ms and were actively RUNNING 9.2 of the 15 traced seconds (60%+
+> utilization).** Nothing anywhere in either trace comes close to explaining a repeating
+> ~632-666ms stall. **The threads are getting CPU time promptly and are NOT starved — the
+> bottleneck is a LOGICAL blocking mechanism inside the code itself** (a lock held too
+> long, a condition-variable wait that isn't signaled, a queue/timestamp-validation path in
+> Basalt's own VIO pipeline getting stuck) — not a scheduler problem at all.
+>
+> **The strongest remaining clue, still unexplained**: the collapsed interval is
+> suspiciously tight (~632-666ms, roughly ±1% jitter) across every run tonight, including
+> across entirely separate monado-service processes — that smells like a real code-level
+> period (a timeout, a retry interval, a fixed sleep somewhere else in the pipeline), not
+> organic system noise. **Also worth remembering**: the onset timing itself has no fixed
+> timescale — 6m55s (T192), 0.3s and 8.3s (T194), and yet another mid-length one during
+> T195's own trace run — five 0049 runs tonight, five different onset delays, same locked-in
+> collapsed signature every time.
+>
+> **Next step, not started**: read Basalt's own source (a separate upstream repo,
+> `~/vr/basalt`, not examined at this level yet) and Monado's `t_tracker_slam.cpp` for a
+> lock, queue policy, or timestamp-gating constant anywhere near 632-666ms, or that could
+> produce that period as a multiple/derivative of something else. This is a source-reading
+> task now, not something more live-hardware cycling will crack on its own.
+>
+> **State**: current lab `monado-service` binary is 0049 + the `WMR_HMD_THREAD_NO_RT` env
+> gate (harmless, off unless that var is set) — NOT pure 0049. A pure-0049 backup is at
+> `~/vr/monado/build/.../monado-service.0049-backup` (md5 `e92656c8...`) if a clean 0049
+> binary is needed again before this gets folded into a real patch.
+
+> ## START HERE NEXT SESSION (2026-08-16, ~21:32, lab machine) — the SLAM pose-rate collapse
+> is now isolated to a MINIMAL repro (0049 + SLAM + constellation, zero app, collapses in
+> under a second) with a concrete, code-confirmed mechanism hypothesis. Read
+> `docs/pruebas.jsonl` T194 before anything else; it supersedes the block below.
+>
+> **The collapse needs no app at all, and happens almost instantly.** Killed monado-service
+> mid-T193-followup and relaunched 0049 + SLAM + constellation with NO OpenXR client
+> connected — the pose interval collapsed from a healthy ~37-86ms to the same ~400-650ms
+> signature at sample 7, **roughly 0.3-0.5s after startup**. New wrinkle: it briefly
+> recovered (samples 24-30) before locking into the collapsed state for good at sample 31 —
+> an oscillate-then-lock pattern, not a one-way trip, suggesting a threshold-crossing
+> mechanism. This flatly contradicts T190's own pre-0049 finding that SLAM+constellation
+> alone idles clean for 1-2 minutes — same subsystems, same hardware, now collapses in under
+> a second with 0049 in the binary. Combined with T193 (0/1 valid pre-0049 run, 45m47s with
+> real load, never collapsed), this is strong evidence 0049 is the actual trigger, not CPU
+> saturation (monado-service's own CPU measured only 59.1% during this minimal repro, far
+> below the 400-550% seen with an app running).
+>
+> **A concrete, code-grounded mechanism hypothesis** (not yet proven — no scheduler trace or
+> fix-and-confirm done): `wmr_run_thread` (runs both `control_read_packets`, where 0049
+> lives, and `hololens_sensors_read_packets`, which carries the actual IMU/tracking data)
+> calls `u_linux_try_to_set_realtime_priority_on_thread()` at startup — confirmed in
+> `u_linux.c` to set `SCHED_FIFO` at `sched_get_priority_max(SCHED_FIFO)`, Linux's absolute
+> max real-time priority. Before 0049: a failing companion read looped with no sleep,
+> producing a tight busy-spin that monopolized ONE core (T183/T188's 400%+ CPU) without
+> necessarily disturbing other cores. After 0049: the thread now sleeps 10ms per failing
+> read once past the 50-consecutive threshold (which the universal storm crosses almost
+> immediately) — so instead of monopolizing one core, it wakes ~100x/second and, holding
+> max SCHED_FIFO priority, INSTANTLY PREEMPTS whatever normal-priority thread (almost
+> certainly including Basalt's own workers) is running on whatever core it lands on. Trades
+> "one core wasted, contained" for "a system-wide ~100Hz max-priority preemption pulse,
+> uncontained" — plausible enough to wreck Basalt's tight VIO timing without the offending
+> thread's own throughput ever looking abnormal (which is exactly why T192's own loop-rate
+> check, ~100-105Hz healthy, missed it — it was checking the wrong thread's own throughput,
+> not what its wakeups do to everyone else).
+>
+> **Next step, not done tonight**: test the fix candidate — don't hold max SCHED_FIFO
+> priority through the punitive backoff sleep (drop scheduling class/priority before
+> `os_nanosleep`, or just request a lower priority for this thread given it's now known to
+> sleep routinely under the — universal, expected — companion dropout). If that stops the
+> collapse, the mechanism is confirmed and 0049 gets a real follow-up fix, not just a
+> revert. A `perf sched` trace during a live collapse would also settle it directly.
+>
+> **Also tonight, unrelated to 0049**: a live Aircar crash (`EXCEPTION_ACCESS_VIOLATION`
+> reading address `0x38` in the rendering thread, confirmed via `WINEDEBUG` trace and a
+> saved `UE4Minidump.dmp`) turned out to be a genuine Unreal Engine null-pointer bug,
+> unrelated to Monado/VR — not investigated further, noted for completeness only.
+>
+> ## START HERE NEXT SESSION (2026-08-16, ~20:35, lab machine) — the pre-0049 A/B is done
+> (`docs/pruebas.jsonl` T193), and it makes both of T192's open questions MORE puzzling, not
+> less. Read T193 before anything else; it supersedes the "next step" in the block below.
+>
+> **The SLAM pose-rate collapse (T192's scarier finding) did NOT reproduce without 0049.**
+> Ran the pre-0049 binary (`e26ac16b3`, still built at `/tmp/monado-pre0049` if it survived
+> reboot) through the identical recipe, took three attempts to get a clean comparison (see
+> "what went wrong getting here" below), but the valid run went **45m47s — longer than the
+> 0049 arm's ~39min, including real driving, and racking up 893706 companion_errors (~2x
+> T188's own peak)** — and its `tracking.csv` **never once showed a gap over 300ms**. The
+> 0049 arm collapsed hard and permanently at 6m55s. This directly contradicts the read-loop
+> explanation floated in T192 (which argued the loop runs a healthy ~100Hz so 0049 "can't"
+> be responsible) — the empirical A/B now says the opposite: something links the collapse
+> to 0049 specifically, or to that one original session's own particular conditions, not to
+> a universal SLAM-under-load phenomenon. **Next step: repeat the 0049 arm FRESH under
+> today's now-proven-clean conditions** (both controllers registered before launch, no
+> Xbox 360 gamepad, quiet storm window) to see if the collapse reproduces a SECOND time —
+> that's what actually settles whether it's 0049-linked or a one-off.
+>
+> **The CPU-runaway question (0049's original target) is still fully open.** T188's own
+> signature — continuous climb to 400-432%, needing a SIGTERM — has now failed to reproduce
+> in THREE separate single-clean-launch sessions tonight, on BOTH binaries. Real evidence
+> that T188's runaway depended on its own two-phase launch pattern (start without
+> constellation, let it run, kill, relaunch WITH constellation) rather than simply on the
+> missing backoff. **A single clean launch is not the right experiment to isolate 0049's
+> effect on this** — next time, deliberately reproduce T188's exact two-phase pattern on
+> both binaries.
+>
+> **What went wrong getting to a valid A/B, worth internalizing**: attempt 1 ran 16+ min on
+> a completely invalid setup — controllers never registered (`left:|right:` grep showed
+> `None` the whole time, zero constellation blob-matching in the log) — HALF the CPU cost
+> of a real run, caught only by checking the log instead of trusting a clean-looking
+> CPU/SLAM trend. **Always grep for controller registration before trusting any run of this
+> kind.** Getting a working attempt 3 also fought an unusually dense USB2-storm window
+> across ~6 wasted restart cycles (hammering restarts didn't help, reconfirming T183's
+> standing lesson) — a single 220V mains power-cycle cleared it immediately.
+>
+> **Also reconfirmed live, unrelated to 0049**: patch 0023's known divergence-then-silent-
+> reset (T162) fired again — SLAM position ran from 0.24m to 31.26m over ~120 samples, then
+> snapped back to 0.024m, textbook `implied speed > 10 m/s` auto-reset, felt by the user as
+> the in-game view suddenly "flying off" and first mistaken for a possible new bug. Still
+> not fixed (the real fix — carrying the reset offset into the output pose — was never
+> implemented); not touched tonight.
+>
+> **State**: 0049 binary restored and confirmed via md5 in `~/vr/monado/build`; the
+> pre-0049 comparison binary lives in a separate worktree at `/tmp/monado-pre0049` (rebuild
+> from `657bcd8af^` if it's gone — `/tmp` doesn't survive a reboot). The Jan Schmidt MR
+> !2967 reply is still pending — now for a stronger reason than before: post it once the
+> collapse question is actually resolved, not just the runaway one.
+
+> ## START HERE NEXT SESSION (2026-08-16, ~19:21, lab machine) — 0049 is VERIFIED (the CPU
+> spin is fixed), but the same session caught a separate, more serious, unexplained SLAM
+> pose-rate collapse that shows up almost immediately and never self-recovers. Read
+> `docs/pruebas.jsonl` T192 before anything else.
+>
+> **0049 (patches/monado/0049, T191's fix) does exactly what it was written to do.**
+> Rebuilt `~/vr/monado` first (T191's "compile-check" was never a real `ninja` build — the
+> on-disk binary predated the 0049 commit by ~30h, caught before touching hardware). A
+> single clean launch (`jack-in-wayland.sh 1 6dof`, `WMR_CONSTELLATION_CONTROLLERS=1` from
+> the start, no mid-session relaunch unlike T188) plus Aircar ran continuously for **39+
+> minutes — more than 2x T188's session length — without a single SIGTERM needed.** The
+> backoff was confirmed actually engaging live (WMR_WARN escalates at exactly 1, 1000,
+> 2000... consecutive failures, as coded) and self-capped the companion-error rate at a
+> live-measured ~100-105 lines/s, matching the 10ms sleep's ~100Hz theoretical ceiling.
+> `monado-service` CPU peaked at 551% in the first 90s and then **trended steadily
+> downward** the entire rest of the session (551%→...→392% at 39min) — the opposite of
+> T188's continuous climb to 472175 errors / 400-432% pinned. USB2 branch (companion+audio)
+> kept flapping at the same universal rate as T183/T188/T189/T190; USB3 never moved.
+>
+> **The user's own methodological pushback was correct and is not yet closed**: T192 vs
+> T188 is a cross-session comparison (different day-part, different launch sequence — T188
+> had a mid-session kill+relaunch, T192 didn't), not a controlled same-day A/B. A pre-0049
+> binary (commit `e26ac16b3`, `657bcd8af^`) is already built in an isolated worktree at
+> `/tmp/monado-pre0049/build/.../monado-service` (that path is in `/tmp`, not the repo —
+> rebuild from `657bcd8af^` again if it's gone). **Next step: run the exact same
+> single-clean-launch sequence with that binary** to confirm the runaway genuinely doesn't
+> happen without 0049 either — right now that's assumed, not proven.
+>
+> **Bigger and unplanned: a SLAM pose-rate collapse, unrelated to 0049, still unexplained.**
+> The user reported real head-tracking lag mid-session ("como si se moviera bien, pero
+> luego de 1 segundo cuando moví la cabeza"). Measured exactly from the pose CSVs
+> (`SLAM_WRITE_CSVS=1` is on by default): pose interval was healthy at ~55-58ms (~17-18Hz,
+> matches the documented baseline) for the first **6m55s**, then collapsed abruptly and
+> permanently to a suspiciously tight, near-constant **~632-648ms (~1.5-1.6Hz)** — and
+> **never recovered for the remaining ~32+ minutes**, including several minutes of the
+> headset sitting completely untouched after the user stopped playing. **A live narrative
+> earlier in that same session wrongly pinned the onset to a deliberate "fly for real"
+> stress test at ~22-23min** — that was an eyeballed guess from a sample-count-bucketed CSV
+> summary, a misleading proxy once the tail is dominated by 10x-longer samples. The
+> corrected, timestamp-precise onset (6m55s) is well before the stress test and lines up
+> with ordinary early Aircar gameplay — meaning this isn't exotic-stress-only, it shows up
+> almost immediately. **0049's own code was investigated and ruled out as the direct
+> cause**: `control_read_packets()` and `hololens_sensors_read_packets()` (the one that
+> actually carries IMU/camera-tunnel data) run strictly sequentially in ONE thread
+> (`wmr_run_thread`) sharing `wh->hid_lock`, so the fix's unconditional 10ms sleep on every
+> failing companion read was a real suspect for starving that shared loop — but the
+> companion-error log-line rate (a direct proxy for the loop's own rate) measured a
+> healthy, steady ~100-105Hz with no macro-scale stalling, ruling out the read loop as the
+> site of the 632ms stall. The bottleneck is downstream, most likely Basalt/SLAM
+> processing or CPU-scheduling contention under the full SLAM+constellation+app
+> combination — a mechanism T188 already flagged as live but unproven, now measured with
+> hard numbers for the first time but still not root-caused.
+>
+> **Also separately user-reported, not yet characterized**: a distinct positional "tick" in
+> head pose, period a bit under 1 second, persisting regardless of headset
+> orientation/movement, and explicitly noted by the user as recurring across multiple past
+> sessions — not unique to tonight. Same CSV method should nail this down next.
+>
+> **Open, in order**: (1) run the pre-0049 binary through the identical sequence to close
+> the A/B properly; (2) if the collapse reproduces without 0049 too (expected, given the
+> read-loop evidence), profile Basalt's own pipeline (`timing.csv` is already being
+> recorded alongside `tracking.csv`) to find which stage backs up at the 6m55s mark; (3)
+> characterize the separate sub-1s positional tick; (4) the Jan Schmidt MR !2967 reply is
+> **still pending** — 0049's own verification is clean now, but don't let the reply imply
+> the headset's tracking is fully healthy, only that the specific CPU-spin 0049 targets is
+> fixed.
+
 > ## UPDATE (2026-08-16, ~18:20, everyday system, community/comms session, lab disk mounted) —
 > the companion-device backoff fix named as T188's most urgent open item below is now WRITTEN
 > and COMPILE-CHECKED, but NOT hardware-verified. `patches/monado/0049`, `docs/pruebas.jsonl`
