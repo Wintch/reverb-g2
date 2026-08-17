@@ -1,0 +1,454 @@
+From 13379314fdb2d5ad7ba8484f938a95b5ea383aac Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Mon, 17 Aug 2026 16:57:30 -0300
+Subject: [PATCH 58/60] u/comp/wmr: CPU-affinity experiment knobs + controller
+ keepalive v2 (client-independent)
+
+Two round-2 deliverables (T204 program). (1) XRT_COMPOSITOR_CPU_AFFINITY /
+WMR_CPU_AFFINITY: env-gated CPU pinning for the compositor's three RT threads and
+the WMR read + constellation processing threads -- strict no-op unset. Investigation
+first confirmed RT priority is already comprehensively applied (no missing-RT
+hypothesis survives); the live suspects for the 4-7% one-slot-late frames are the
+kernel's RT bandwidth throttle (sched_rt_runtime_us=950000 reserves 5% for non-RT,
+numerically matching the 4-4.4% floor -- root A/B pending) and cache/SMT contention,
+which the affinity knobs let us test. (2) Keepalive v2: the periodic controller
+resend now ticks from wmr_run_thread once per loop -- client-independent, fixing
+0054's self-invalidating query-driven design (0 resends with 0 clients, T203/T204).
+The receive-path alternative was rejected for a real self-deadlock: the tunnel
+callback holds conn->lock which send_bytes re-takes. get_tracked_pose call removed
+(run-thread tick strictly dominates).
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/xrt/auxiliary/util/u_linux.c              | 68 +++++++++++++++++++
+ src/xrt/auxiliary/util/u_linux.h              | 17 +++++
+ src/xrt/auxiliary/util/u_thread_priority.c    | 14 ++++
+ src/xrt/auxiliary/util/u_thread_priority.h    | 17 +++++
+ .../compositor/main/comp_target_swapchain.c   |  4 ++
+ .../compositor/multi/comp_multi_compositor.c  |  5 ++
+ src/xrt/compositor/multi/comp_multi_system.c  |  6 ++
+ src/xrt/drivers/wmr/wmr_controller_base.c     | 46 +++++++++++--
+ src/xrt/drivers/wmr/wmr_controller_base.h     | 14 ++++
+ src/xrt/drivers/wmr/wmr_hmd.c                 | 42 ++++++++++++
+ .../constellation/t_constellation_tracker.cpp | 12 ++++
+ 11 files changed, 239 insertions(+), 6 deletions(-)
+
+diff --git a/src/xrt/auxiliary/util/u_linux.c b/src/xrt/auxiliary/util/u_linux.c
+index f0048e18a..6a721cfa6 100644
+--- a/src/xrt/auxiliary/util/u_linux.c
++++ b/src/xrt/auxiliary/util/u_linux.c
+@@ -16,6 +16,7 @@
+ #include <unistd.h>
+ #include <sched.h>
+ #include <stdio.h>
++#include <stdlib.h>
+ 
+ #define LOG_D(...) U_LOG_IFL_D(log_level, __VA_ARGS__)
+ #define LOG_I(...) U_LOG_IFL_I(log_level, __VA_ARGS__)
+@@ -139,3 +140,70 @@ u_linux_try_to_set_realtime_priority_on_thread(enum u_logging_level log_level, c
+ 
+ 	return ret == 0;
+ }
++
++/*!
++ * Pin this thread to a set of CPUs, if @p env_var_name is set in the environment. Written
++ * for the round-2 item T204 left open: "compositor thread priority/affinity under
++ * tracking load" -- every Monado-owned compositor thread already runs SCHED_FIFO max
++ * priority (see u_linux_try_to_set_realtime_priority_on_thread and its call sites), so
++ * more priority has nothing left to buy; separating WHICH cores the compositor and the
++ * WMR/tracking side land on is the other half of "scheduling", untried before this. A
++ * strict no-op with the env var unset: no syscall, no behaviour change on the healthy path.
++ *
++ * @p env_var_name's value is a comma-separated list of CPU ids, e.g. "0,1". Unset or empty
++ * leaves the thread's affinity exactly as the OS gave it.
++ */
++bool
++u_linux_try_to_set_thread_affinity_from_env(enum u_logging_level log_level, const char *name, const char *env_var_name)
++{
++	pthread_t this_thread = pthread_self();
++	char str[NAME_LENGTH];
++
++	if (name == NULL) {
++		get_name(str, ARRAY_SIZE(str));
++		name = str;
++	}
++
++	const char *list = getenv(env_var_name);
++	if (list == NULL || list[0] == '\0') {
++		return true;
++	}
++
++	cpu_set_t set;
++	CPU_ZERO(&set);
++
++	int count = 0;
++	const char *p = list;
++	while (*p != '\0') {
++		char *end = NULL;
++		long cpu = strtol(p, &end, 10);
++		if (end == p) {
++			// Not a number where one was expected: stop parsing rather than guess
++			// at what the rest of a malformed value might mean.
++			break;
++		}
++		if (cpu >= 0 && cpu < CPU_SETSIZE) {
++			CPU_SET((int)cpu, &set);
++			count++;
++		}
++		p = end;
++		while (*p == ',' || *p == ' ') {
++			p++;
++		}
++	}
++
++	if (count == 0) {
++		LOG_W("%s='%s' did not parse to any valid CPU id, leaving '%s' unpinned", env_var_name, list, name);
++		return false;
++	}
++
++	int ret = pthread_setaffinity_np(this_thread, sizeof(set), &set);
++	if (ret != 0) {
++		LOG_W("Could not pin thread '%s' to CPU set '%s' (%s), errno-style ret=%i", name, list, env_var_name,
++		      ret);
++	} else {
++		LOG_I("Pinned thread '%s' to CPU set '%s' (%s)", name, list, env_var_name);
++	}
++
++	return ret == 0;
++}
+diff --git a/src/xrt/auxiliary/util/u_linux.h b/src/xrt/auxiliary/util/u_linux.h
+index af887676b..040f3b584 100644
+--- a/src/xrt/auxiliary/util/u_linux.h
++++ b/src/xrt/auxiliary/util/u_linux.h
+@@ -35,6 +35,23 @@ extern "C" {
+ bool
+ u_linux_try_to_set_realtime_priority_on_thread(enum u_logging_level log_level, const char *name);
+ 
++/*!
++ * Try to pin this thread to a set of CPUs named by the comma-separated list of CPU ids in
++ * the environment variable @p env_var_name (e.g. "0,1"). Unset or empty is a strict no-op:
++ * no syscall, thread affinity left exactly as the OS gave it.
++ *
++ * @param name          Thread name to be used in logging, can be NULL.
++ * @param log_level     Logging level to control chattiness.
++ * @param env_var_name  Name of the environment variable holding the CPU list.
++ *
++ * @return          Returns true if either nothing was requested, or the requested affinity
++ *                   was applied successfully; false if a set was requested and rejected.
++ *
++ * @ingroup aux_util
++ */
++bool
++u_linux_try_to_set_thread_affinity_from_env(enum u_logging_level log_level, const char *name, const char *env_var_name);
++
+ 
+ #ifdef __cplusplus
+ }
+diff --git a/src/xrt/auxiliary/util/u_thread_priority.c b/src/xrt/auxiliary/util/u_thread_priority.c
+index fc0716c5c..f306bc2ad 100644
+--- a/src/xrt/auxiliary/util/u_thread_priority.c
++++ b/src/xrt/auxiliary/util/u_thread_priority.c
+@@ -43,3 +43,17 @@ u_try_to_set_realtime_priority_on_thread(enum u_logging_level log_level, const c
+ 
+ 	return false;
+ }
++
++bool
++u_try_to_set_thread_affinity_from_env(enum u_logging_level log_level, const char *name, const char *env_var_name)
++{
++#if defined(XRT_OS_LINUX)
++	return u_linux_try_to_set_thread_affinity_from_env(log_level, name, env_var_name);
++#else
++	// Not implemented on this OS. Same as the env var being unset: a no-op, not a failure.
++	(void)log_level;
++	(void)name;
++	(void)env_var_name;
++	return true;
++#endif
++}
+diff --git a/src/xrt/auxiliary/util/u_thread_priority.h b/src/xrt/auxiliary/util/u_thread_priority.h
+index 2b1c54d54..60e261602 100644
+--- a/src/xrt/auxiliary/util/u_thread_priority.h
++++ b/src/xrt/auxiliary/util/u_thread_priority.h
+@@ -34,6 +34,23 @@ extern "C" {
+ bool
+ u_try_to_set_realtime_priority_on_thread(enum u_logging_level log_level, const char *name);
+ 
++/*!
++ * Try to pin this thread to a set of CPUs named by the comma-separated list of CPU ids in
++ * the environment variable @p env_var_name. Unset or empty (or unsupported on this OS) is
++ * a strict no-op. See u_linux_try_to_set_thread_affinity_from_env for the Linux details.
++ *
++ * @param name          Thread name to be used in logging.
++ * @param log_level     Logging level to control chattiness.
++ * @param env_var_name  Name of the environment variable holding the CPU list.
++ *
++ * @return          Returns true if either nothing was requested, or the requested affinity
++ *                   was applied successfully; false if a set was requested and rejected.
++ *
++ * @ingroup aux_util
++ */
++bool
++u_try_to_set_thread_affinity_from_env(enum u_logging_level log_level, const char *name, const char *env_var_name);
++
+ 
+ #ifdef __cplusplus
+ }
+diff --git a/src/xrt/compositor/main/comp_target_swapchain.c b/src/xrt/compositor/main/comp_target_swapchain.c
+index 7f58e86db..d18abf1d5 100644
+--- a/src/xrt/compositor/main/comp_target_swapchain.c
++++ b/src/xrt/compositor/main/comp_target_swapchain.c
+@@ -575,6 +575,10 @@ run_vblank_event_thread(void *ptr)
+ 	// Try to raise priority of this thread.
+ 	u_try_to_set_realtime_priority_on_thread(U_LOGGING_INFO, "VBlank Events");
+ 
++	// See the matching call in comp_multi_system.c -- same XRT_COMPOSITOR_CPU_AFFINITY,
++	// no-op unless set.
++	u_try_to_set_thread_affinity_from_env(U_LOGGING_INFO, "VBlank Events", "XRT_COMPOSITOR_CPU_AFFINITY");
++
+ 	os_thread_helper_lock(&cts->vblank.event_thread);
+ 
+ 	while (os_thread_helper_is_running_locked(&cts->vblank.event_thread)) {
+diff --git a/src/xrt/compositor/multi/comp_multi_compositor.c b/src/xrt/compositor/multi/comp_multi_compositor.c
+index 4c8264bea..b34a4d4d4 100644
+--- a/src/xrt/compositor/multi/comp_multi_compositor.c
++++ b/src/xrt/compositor/multi/comp_multi_compositor.c
+@@ -256,6 +256,11 @@ run_func(void *ptr)
+ 	// permanent whole-period phase shift). Raise it like the main loop does.
+ 	u_try_to_set_realtime_priority_on_thread(U_LOGGING_INFO, "Multi Client Module: Waiter");
+ 
++	// See the matching call in the main loop (comp_multi_system.c) -- same
++	// XRT_COMPOSITOR_CPU_AFFINITY, no-op unless set.
++	u_try_to_set_thread_affinity_from_env(U_LOGGING_INFO, "Multi Client Module: Waiter",
++	                                      "XRT_COMPOSITOR_CPU_AFFINITY");
++
+ 	os_thread_helper_lock(&mc->wait_thread.oth);
+ 
+ 	// Signal the start function that we are enterting the loop.
+diff --git a/src/xrt/compositor/multi/comp_multi_system.c b/src/xrt/compositor/multi/comp_multi_system.c
+index 37bdc3bc5..a7c784d52 100644
+--- a/src/xrt/compositor/multi/comp_multi_system.c
++++ b/src/xrt/compositor/multi/comp_multi_system.c
+@@ -532,6 +532,12 @@ multi_main_loop(struct multi_system_compositor *msc)
+ 	// Try to raise priority of this thread.
+ 	u_try_to_set_realtime_priority_on_thread(U_LOGGING_INFO, "Multi Client Module");
+ 
++	// T204's open round-2 item: this thread is already SCHED_FIFO max priority above, so
++	// more priority has nothing left to buy against Basalt/constellation load -- try
++	// separating WHICH cores it lands on instead. No-op unless XRT_COMPOSITOR_CPU_AFFINITY
++	// is set (e.g. "0,1"); see u_linux_try_to_set_thread_affinity_from_env.
++	u_try_to_set_thread_affinity_from_env(U_LOGGING_INFO, "Multi Client Module", "XRT_COMPOSITOR_CPU_AFFINITY");
++
+ 	struct xrt_compositor *xc = &msc->xcn->base;
+ 
+ 	// For wait frame.
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
+index 440cd2a2c..8a4b82234 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.c
++++ b/src/xrt/drivers/wmr/wmr_controller_base.c
+@@ -73,6 +73,13 @@ DEBUG_GET_ONCE_FLOAT_OPTION(wmr_stick_deadzone, "WMR_STICK_DEADZONE", 0.0f)
+ //! ~15 min idle window is still pending. Seconds between resends per controller; 0 (default)
+ //! disables it entirely. Suggested cadence for a live test: 600 (10 min), comfortably inside
+ //! the ~15 min window without spamming the shared HID tunnel.
++//!
++//! v2 (T204's open item): v1 drove this from get_tracked_pose, which self-invalidated the whole
++//! A/B (T203) -- that path simply never runs with zero OpenXR clients, exactly the unattended
++//! case this exists for. The tick now lives in wmr_hmd.c's own read thread (see
++//! wmr_controller_base_send_keepalive_if_due and its call site in wmr_run_thread), which runs
++//! for the life of the HMD device regardless of clients. The env var and the two commands sent
++//! are unchanged.
+ DEBUG_GET_ONCE_NUM_OPTION(wmr_controller_keepalive_s, "WMR_CONTROLLER_KEEPALIVE_S", 0)
+ #include <string.h>
+ #include <assert.h>
+@@ -558,6 +565,10 @@ read_controller_config(struct wmr_controller_base *wcb)
+ //! and are not known to be safe to repeat mid-session. Suggested cadence for a live test: 600s
+ //! (10 min), comfortably inside the ~15 min window without adding much traffic to the shared
+ //! HID tunnel.
++//!
++//! v2, called from wmr_controller_base_send_keepalive_if_due() below -- see that function's
++//! comment for WHERE this is now driven from and why the packet-receive callback was considered
++//! and rejected as the tick source (a real deadlock, not just a style preference).
+ static void
+ wmr_controller_send_keepalive(struct wmr_controller_base *wcb)
+ {
+@@ -594,6 +605,35 @@ wmr_controller_send_keepalive(struct wmr_controller_base *wcb)
+ 	WMR_INFO(wcb, "keepalive: resent status/imu enable to %s", wcb->base.str);
+ }
+ 
++//! Public entry point for the WMR_CONTROLLER_KEEPALIVE_S tick, called once per iteration of
++//! wmr_hmd.c's own read thread (wmr_run_thread) for each connected controller -- see the call
++//! site there. That thread runs for the entire life of the HMD device, independent of whether
++//! any OpenXR client is connected, which is exactly the case v1 of this prototype missed: it
++//! drove from wmr_controller_base_get_tracked_pose, a path the OpenXR runtime only ever calls
++//! WITH a client attached, so it never ran during the unattended-idle window the whole feature
++//! exists for (docs/pruebas.jsonl T203/T204 in the reverb-g2 repo). No functional change to the
++//! cadence or the commands sent -- wmr_controller_send_keepalive still does its own due-check
++//! against WMR_CONTROLLER_KEEPALIVE_S and is a no-op unless it's set, so calling this every loop
++//! iteration (easily >1/s, even throttled under a companion-read storm) costs one relaxed
++//! monotonic-clock read and a mutex trylock-equivalent when the env var is off.
++//!
++//! v2 rationale for NOT using the packet-receive path (the other candidate): this controller's
++//! own receive_bytes callback (wmr_hmd_controller.c's receive_bytes_from_controller, or the
++//! equivalent for a direct-BT connection) is invoked while holding that connection's own lock,
++//! and actually sending from inside it would need to re-take that SAME lock one call down
++//! (wmr_controller_send_bytes -> wcc->send_bytes -> send_bytes_to_controller's
++//! os_mutex_lock(&conn->lock)) -- a guaranteed self-deadlock on the first keepalive send, not a
++//! hypothetical one. The run thread has no such conflict: it never holds hid_lock or any
++//! connection lock across this call (both control_read_packets and hololens_sensors_read_packets
++//! only hold hid_lock around the raw HID read itself, released well before dispatch returns
++//! here), so wmr_hmd_send_controller_packet's own brief hid_lock is free to take.
++void
++wmr_controller_base_send_keepalive_if_due(struct xrt_device *xdev)
++{
++	struct wmr_controller_base *wcb = wmr_controller_base(xdev);
++	wmr_controller_send_keepalive(wcb);
++}
++
+ static xrt_result_t
+ wmr_controller_base_get_tracked_pose(struct xrt_device *xdev,
+                                      enum xrt_input_name name,
+@@ -604,12 +644,6 @@ wmr_controller_base_get_tracked_pose(struct xrt_device *xdev,
+ 
+ 	struct wmr_controller_base *wcb = wmr_controller_base(xdev);
+ 
+-	// WMR_CONTROLLER_KEEPALIVE_S prototype: get_tracked_pose runs continuously for the life of
+-	// the session (this is the same path that computes IMU-age/prediction below), which makes
+-	// it a convenient place to drive a periodic, rate-limited resend. No-op unless the env var
+-	// is set. See wmr_controller_send_keepalive for the full rationale and its open questions.
+-	wmr_controller_send_keepalive(wcb);
+-
+ 	// Variables needed for prediction.
+ 	int64_t last_imu_timestamp_ns = 0;
+ 	struct xrt_space_relation relation = {0};
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.h b/src/xrt/drivers/wmr/wmr_controller_base.h
+index 7a6247ffa..df0e1df0f 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.h
++++ b/src/xrt/drivers/wmr/wmr_controller_base.h
+@@ -216,6 +216,20 @@ wmr_controller_base_deinit(struct wmr_controller_base *wcb);
+ void
+ wmr_controller_base_apply_stick_deadzone(struct xrt_vec2 *stick);
+ 
++/*!
++ * WMR_CONTROLLER_KEEPALIVE_S v2 (UNVALIDATED PROTOTYPE, default off): resend the two
++ * connect-time enable commands to this controller if the configured interval has elapsed.
++ * No-op, cheap, if the env var is unset. Meant to be called from a context that ticks
++ * regardless of connected OpenXR clients -- currently wmr_hmd.c's own read thread, once per
++ * loop iteration for each connected controller. Do NOT call this from a connection's
++ * receive_bytes callback: see the implementation's comment for why that specific call site
++ * deadlocks.
++ *
++ * @param xdev A device created by wmr_controller_base_init().
++ */
++void
++wmr_controller_base_send_keepalive_if_due(struct xrt_device *xdev);
++
+ static inline void
+ wmr_controller_connection_receive_bytes(struct wmr_controller_connection *wcc,
+                                         uint64_t time_ns,
+diff --git a/src/xrt/drivers/wmr/wmr_hmd.c b/src/xrt/drivers/wmr/wmr_hmd.c
+index 1373715e1..790fd8ab4 100644
+--- a/src/xrt/drivers/wmr/wmr_hmd.c
++++ b/src/xrt/drivers/wmr/wmr_hmd.c
+@@ -749,6 +749,37 @@ control_read_packets(struct wmr_hmd *wh)
+  *
+  */
+ 
++//! Drive the WMR_CONTROLLER_KEEPALIVE_S v2 tick (wmr_controller_base.c) for both tunnelled
++//! controllers, once per wmr_run_thread loop iteration. This thread runs for the entire life of
++//! the HMD device regardless of whether any OpenXR client is connected -- see the call site in
++//! wmr_run_thread and wmr_controller_base_send_keepalive_if_due()'s own comment for why that
++//! property is exactly what v1 (driven from get_tracked_pose) was missing.
++static void
++wmr_hmd_send_controller_keepalives(struct wmr_hmd *wh)
++{
++	// controller_status_lock also guards these two pointers against hololens_ensure_controller
++	// (same thread, but taken there too -- stay consistent) and against wmr_hmd_destroy (a
++	// different thread, though by the time it touches wh->controller[] this thread has already
++	// been joined via os_thread_helper_destroy, so that case can't actually race here).
++	os_mutex_lock(&wh->controller_status_lock);
++	struct wmr_hmd_controller_connection *left = wh->controller[0];
++	struct wmr_hmd_controller_connection *right = wh->controller[1];
++	os_mutex_unlock(&wh->controller_status_lock);
++
++	if (left != NULL) {
++		struct xrt_device *xdev = wmr_hmd_controller_connection_get_controller(left);
++		if (xdev != NULL) {
++			wmr_controller_base_send_keepalive_if_due(xdev);
++		}
++	}
++	if (right != NULL) {
++		struct xrt_device *xdev = wmr_hmd_controller_connection_get_controller(right);
++		if (xdev != NULL) {
++			wmr_controller_base_send_keepalive_if_due(xdev);
++		}
++	}
++}
++
+ static void *
+ wmr_run_thread(void *ptr)
+ {
+@@ -765,6 +796,11 @@ wmr_run_thread(void *ptr)
+ 	if (getenv("WMR_HMD_THREAD_NO_RT") == NULL) {
+ 		u_linux_try_to_set_realtime_priority_on_thread(wh->log_level, "WMR: USB-HMD");
+ 	}
++
++	// T204 round-2 item: pair with XRT_COMPOSITOR_CPU_AFFINITY (comp_multi_system.c and
++	// friends) to partition cores between the compositor and the WMR/tracking side instead
++	// of only fighting over priority. No-op unless WMR_CPU_AFFINITY is set (e.g. "2,3,4,5").
++	u_linux_try_to_set_thread_affinity_from_env(wh->log_level, "WMR: USB-HMD", "WMR_CPU_AFFINITY");
+ #endif
+ 
+ 
+@@ -781,6 +817,12 @@ wmr_run_thread(void *ptr)
+ 		if (!hololens_sensors_read_packets(wh)) {
+ 			break;
+ 		}
++
++		// WMR_CONTROLLER_KEEPALIVE_S v2: client-independent, ticks every loop iteration.
++		// No locks are held here (both read_packets calls above only hold hid_lock briefly
++		// around the raw HID read itself) -- see wmr_hmd_send_controller_keepalives.
++		wmr_hmd_send_controller_keepalives(wh);
++
+ 		os_thread_helper_lock(&wh->oth);
+ 	}
+ 	os_thread_helper_unlock(&wh->oth);
+diff --git a/src/xrt/tracking/constellation/t_constellation_tracker.cpp b/src/xrt/tracking/constellation/t_constellation_tracker.cpp
+index 702647c80..fbde8b8a8 100644
+--- a/src/xrt/tracking/constellation/t_constellation_tracker.cpp
++++ b/src/xrt/tracking/constellation/t_constellation_tracker.cpp
+@@ -14,6 +14,7 @@
+ 
+ #include "os/os_time.h"
+ #include "util/u_time.h"
++#include "util/u_thread_priority.h"
+ 
+ #ifdef XRT_FEATURE_RERUN
+ #include "constellation_tracker_rerun.hpp"
+@@ -1186,6 +1187,13 @@ constellation_tracker_camera_slow_thread(void *ptr)
+ {
+ 	Camera *camera = (Camera *)ptr;
+ 
++	// T204 round-2 item: this is the num_blobs=29-class correspondence-search work T197
++	// found competing with the compositor for CPU. It runs at default SCHED_OTHER (no RT
++	// change here -- it is bulk compute, not a deadline), but can be kept off whichever
++	// cores XRT_COMPOSITOR_CPU_AFFINITY reserves for the compositor by setting
++	// WMR_CPU_AFFINITY to the complement set. No-op unless set.
++	u_try_to_set_thread_affinity_from_env(U_LOGGING_INFO, "Constellation: Slow", "WMR_CPU_AFFINITY");
++
+ 	os_thread_helper_lock(&camera->slow_processing_thread);
+ 	while (os_thread_helper_is_running_locked(&camera->slow_processing_thread)) {
+ 		os_thread_helper_wait_locked(&camera->slow_processing_thread);
+@@ -1211,6 +1219,10 @@ constellation_tracker_camera_fast_thread(void *ptr)
+ {
+ 	Camera *camera = (Camera *)ptr;
+ 
++	// See the matching call in the slow thread above -- same WMR_CPU_AFFINITY, no-op
++	// unless set.
++	u_try_to_set_thread_affinity_from_env(U_LOGGING_INFO, "Constellation: Fast", "WMR_CPU_AFFINITY");
++
+ 	os_thread_helper_lock(&camera->fast_processing_thread);
+ 	while (os_thread_helper_is_running_locked(&camera->fast_processing_thread)) {
+ 		os_thread_helper_wait_locked(&camera->fast_processing_thread);
+-- 
+2.47.3
+

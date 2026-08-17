@@ -1,0 +1,60 @@
+From ae2e9dae3e24719496140cae4b75d1ee63029853 Mon Sep 17 00:00:00 2001
+From: iam <iam@iashur.internal>
+Date: Mon, 17 Aug 2026 16:59:27 -0300
+Subject: [PATCH] utils: cap ExecutionStats per-key vectors (the T204 memory
+ leak)
+
+On the live Monado path these vectors are appended on every VIO solve (several keys
+once per Gauss-Newton iteration), never read, never cleared -- the dominant term of
+a measured ~72 MB/h RSS growth over a 9 h session (356 MB -> 1 GB). Offline
+evaluation runs, which do read them via print()/save_json(), rarely reach the
+65536-per-key cap; live sessions stop accumulating instead of growing for the
+process lifetime. Bounded worst case ~8 MB.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/utils/time_utils.cpp | 15 +++++++++++++--
+ 1 file changed, 13 insertions(+), 2 deletions(-)
+
+diff --git a/src/utils/time_utils.cpp b/src/utils/time_utils.cpp
+index 1eba7ff..e1e5a13 100644
+--- a/src/utils/time_utils.cpp
++++ b/src/utils/time_utils.cpp
+@@ -30,13 +30,23 @@ Scalar variance(const Eigen::Matrix<Scalar, N, 1>& vec) {
+   return centered.squaredNorm() / Scalar(vec.size());
+ }
+ 
++// Cap each per-key stats vector. Found 2026-08-17 (reverb-g2 T204 leak hunt): on the live
++// Monado path these vectors are pure dead weight -- appended on every VIO solve (some keys
++// once per Gauss-Newton iteration), never read, never cleared -- and they were the dominant
++// term in a measured ~72 MB/h RSS growth over a 9 h session. Offline evaluation runs
++// (finite datasets, which DO read these via print()/save_json()) rarely reach the cap; a
++// live session simply stops accumulating past it instead of growing for the process
++// lifetime. Bounded worst case: 65536 doubles x ~16 keys = ~8 MB.
++static constexpr size_t STATS_PER_KEY_CAP = 65536;
++
+ ExecutionStats::Meta& ExecutionStats::add(const std::string& name, double value) {
+   auto [it, new_item] = stats_.try_emplace(name);
+   if (new_item) {
+     order_.push_back(name);
+     it->second.data_ = std::vector<double>();
+   }
+-  std::get<std::vector<double>>(it->second.data_).push_back(value);
++  auto& vec = std::get<std::vector<double>>(it->second.data_);
++  if (vec.size() < STATS_PER_KEY_CAP) vec.push_back(value);
+   return it->second;
+ }
+ 
+@@ -46,7 +56,8 @@ ExecutionStats::Meta& ExecutionStats::add(const std::string& name, const Eigen::
+     order_.push_back(name);
+     it->second.data_ = std::vector<Eigen::VectorXd>();
+   }
+-  std::get<std::vector<Eigen::VectorXd>>(it->second.data_).push_back(value);
++  auto& vec = std::get<std::vector<Eigen::VectorXd>>(it->second.data_);
++  if (vec.size() < STATS_PER_KEY_CAP) vec.push_back(value);
+   return it->second;
+ }
+ 
+-- 
+2.47.3
+
