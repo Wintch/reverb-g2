@@ -87,7 +87,14 @@ as separate, harder work.
 1. **Do not block indefinitely in the IMU catch-up.** In the
    `while (data->t_ns <= curr_t_ns)` loop, use a non-blocking / time-bounded pop: if the
    IMU queue is exhausted before reaching the image time, stop and predict from what was
-   integrated instead of stalling. (Most direct, contained.)
+   integrated instead of stalling. (Most direct, contained.) — **IMPLEMENTED** as
+   `BASALT_IMU_NONBLOCK_CATCHUP` (basalt `lab-current`, commit `737233f`, in
+   `basalt-collapse-instr.bundle`, default OFF). The catch-up switches the blocking
+   `input_imu_queue.pop` to `try_pop` and extends the last sample to `curr_t_ns` when the
+   queue empties. **Validation**: run with `BASALT_IMU_NONBLOCK_CATCHUP=1 VIT_COLLAPSE_LOG=1`
+   for >15 min — the collapse must not appear (`imu_ms` stays low, `OUT wall_ms` stays ~30 Hz)
+   — and check drift/tracking quality is unharmed (headset-on, or `HELLO_XR_POSE_STATS`).
+   Flip the default on once confirmed.
 2. **Cap the integration window / reset on a large time jump.** If
    `curr_t_ns - prev_t_ns` is far beyond a frame period (frames were dropped), skip the
    full re-integration; there is already a divergence auto-reset to lean on.
