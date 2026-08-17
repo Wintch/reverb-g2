@@ -61,6 +61,27 @@ sample, so it wanders. **Hypothesis to test:** the pops fix `WMR_CLOCK_MIN_LATEN
 (stabilises `hw2mono`) may also delay or prevent this collapse. If so, the two bugs share
 one root.
 
+### Experiment result (2026-08-17): shared clock root CONFIRMED, but the min-latency fix is COUNTERPRODUCTIVE
+
+Ran the exact repro with `WMR_CLOCK_MIN_LATENCY=1` (same rig, same everything, only the
+flag added). The collapse onset moved from **~10 min to ~27 s** (first `imu_ms>300` at
+frame 823; 12% of frames already collapsed within the first ~35 s). Two conclusions:
+
+1. **The collapse is clock-driven — shared root with the pops CONFIRMED.** A single change
+   to the `hw2mono` update path moved the onset by ~20x. The image-vs-IMU clock divergence
+   that `processImu` blocks on is the same `hw2mono` instability behind the pops.
+2. **The specific `WMR_CLOCK_MIN_LATENCY` implementation is WRONG — it makes things worse.**
+   Its once-per-64-samples update + outlier/LKG guard leaves `hw2mono` **stale**, so the
+   image clock diverges from the IMU *faster*, not slower. It would likely worsen the pops
+   too. **Do not deploy it** (it is opt-in/default-off, and stays that way). The
+   `monado-pops-fix.bundle` / commit `eba16b4f0` are now known-bad for this reason — keep
+   them only as a negative result.
+
+**Revised plan:** fix `processImu` directly (fix direction 1 below) — it stops the collapse
+regardless of clock behaviour and is contained. The clock/pops fix needs a different
+approach than the reverted skew-tracker and the counterproductive min-latency one; treat it
+as separate, harder work.
+
 ## Fix directions (to design + test)
 
 1. **Do not block indefinitely in the IMU catch-up.** In the
