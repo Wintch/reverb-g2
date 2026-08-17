@@ -49,7 +49,7 @@
 > known, named failure mode worth guarding against.
 >
 > **Scope, stated plainly**: validated at mechanism level with the storm both active and
-> idle. **The wearer feel-test is still pending** — head rotation should now be immediate,
+> idle. **Wearer feel-test: PASSED (T201, ~06:17): "perfecto! se fue"** — head rotation immediate,
 > the constant ~1 s lag of T197 should be gone. See `docs/pruebas.jsonl` T199-T200,
 > `patches/monado/0053-0055`, and `patches/monado/README.md`'s entries for the same.
 >
