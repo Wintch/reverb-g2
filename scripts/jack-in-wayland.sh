@@ -397,6 +397,14 @@ else
     CONSTELLATION="${WMR_CONSTELLATION_CONTROLLERS:-$([ "$TRACKING" = ctrl ] && echo 1 || echo 0)}"
 fi
 TRACKING_ENV+=("WMR_CONSTELLATION_CONTROLLERS=$CONSTELLATION")
+
+# WMR thumbstick center drift (2026-08-18, WS2 of the closing plan): the sticks ship with
+# NO factory center calibration (docs/23's Aircar row documented it in 2026-08-12; patch
+# 0008 added the knob) and the wearer feels it directly -- left stick self-presses up+left,
+# right presses hard-left + slightly up. This default was never wired into this launcher
+# until now. 0.15 masks it; the real fix (per-stick auto-centering, WMR_STICK_AUTOCENTER)
+# will let this shrink to ~0.05.
+TRACKING_ENV+=("WMR_STICK_DEADZONE=${WMR_STICK_DEADZONE:-0.15}")
 if [ "$CONSTELLATION" = 1 ]; then
     echo "  Controller constellation tracking: ON (WMR_CONSTELLATION_CONTROLLERS=0 disables)"
     echo "    verify with: grep -E 'get_tracked_pose:|position_tracked' $LOG"

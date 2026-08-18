@@ -15,6 +15,9 @@ INTERVAL="${1:-5}"
 DURATION="${2:-0}"
 OUT="$HOME/vr/logs/power-$(date +%Y%m%d-%H%M%S).csv"
 RAPL=/sys/class/powercap/intel-rapl:0/energy_uj
+if [ ! -r "$RAPL" ]; then
+	echo "NOTE: RAPL not readable, CPU watts will read 0 -- run vr-power-setup.sh --apply with RAPL_PUBLIC=1" >&2
+fi
 echo "ts,gpu_w,cpu_pkg_w" > "$OUT"
 echo "Sampling every ${INTERVAL}s -> $OUT (Ctrl-C or duration end to stop)"
 start_ts=$(date +%s)
