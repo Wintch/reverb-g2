@@ -1,6 +1,48 @@
 # Next step
 
-> # START HERE (2026-08-17) — Windows WMR reverse-engineering landed, + a compile/validate plan
+> # START HERE (2026-08-18) — THE BAR IS NOW COMMERCIAL: this rig is a showcase for a
+> VR-solutions business. "Vendemos soluciones VR, es muy importante que el showcase sea
+> lo mejor, que impresione." Every workstream below is now judged against that: a demo
+> where a controller dies mid-session, parks in the air, or a frame stutters is a lost
+> sale, not a bug ticket. Read `docs/pruebas.jsonl` T196-T209 for how far 2026-08-17's
+> marathon moved everything (clock-skew root cause fixed and wearer-verified; both
+> hands' rotation dynamics correct; heading anchored to constellation; machine-grade
+> turntable calibration bootstrapped; per-cell battery tracking live; per-stage timing
+> telemetry first light; memory leak capped; power/pacing curve started).
+>
+> ## Showcase-grade workstreams, value-ordered
+>
+> 1. **Session integrity — the joys must be trustworthy for a FULL demo session.**
+>    Keepalive v2 (0058) ticks client-independent — VALIDATE the >15-min wake A/B
+>    (pending a quiet window). Battery certainty: `docs/46-battery-management.md` has
+>    the model; wire a pre-session battery gate + in-session cliff alert (cliff byte
+>    ~65-83, unconfirmed) into power-on/vr-state so a demo never starts on dying cells.
+>    Position acquisition (the parked-hands-at-the-side issue) is the #1 remaining
+>    tracking gap: docs/40's matching/solve-rate work + the assignment prior (0047's
+>    residual), now with machine tools (turntable + cradle box) to validate against.
+> 2. **The left controller's final 5%**: the twist DOF (140° pitch/yaw ambiguity, 0069)
+>    falls to ONE more turntable orientation — build the 3-axis cradle box (cardboard,
+>    ~10 min) and the matrix is machine-complete with zero human motion. The wearer's
+>    residual "roll left + pitch down" constant offset dies with it.
+> 3. **Experience polish**: fast-turn correction visibility (spread=60 shipping; the
+>    motion-amplified snap component remains), the docs/45 display-artifact protocol
+>    (test patterns built, wearer + 240fps phone pending), the 2-3s rare stall class.
+> 4. **Performance & cost calibration (the arcade economics)**: pacing is CPU-bound —
+>    105W GPU cap plays Aircar as well as 210W (T209); `scripts/power-log.sh` measures
+>    real Wh/h; pending: the RT-throttle A/B under game (sched_rt_runtime_us, the
+>    numerically-perfect 4-5% suspect), the affinity split A/B, per-box power.conf so
+>    --apply carries the validated caps. Wall-wattmeter validation closes system-total.
+> 5. **Battery lifecycle / recycling**: per-cell roster live (kos/kub/mar/mik/bob/rio);
+>    when a cell's runtime falls well below its siblings' across charges, it graduates
+>    to RECYCLING (not trash) — the e-waste ethos is a selling point of the showcase
+>    itself: recovered hardware, rechargeable fleet, zero toxic waste.
+> 6. **Operational robustness**: the USB2-branch storm remains the #1 hardware risk
+>    (6 drops on 2026-08-17; PC-end replug 2/2, 220V cycle 2/2 as levers; the mid-game
+>    drop even stalled USB3 cameras 14-24s — suspect shared hid_lock, uninvestigated).
+>    The launcher now self-defends (builder-wmr enforcement, pgrep -x, retries) but a
+>    showcase needs the cable question settled: rev2A replacement or root-cause.
+
+> # PREVIOUS (2026-08-17) — Windows WMR reverse-engineering landed, + a compile/validate plan
 >
 > The full Windows WMR driver stack was decompiled and cross-referenced against Monado
 > (`docs/re-windows/`, start at its `README.md`). It pinpoints concrete fixes for the open
