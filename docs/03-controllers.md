@@ -317,3 +317,84 @@ symptom (LED off, clean re-attach, no crash), not something read off the wire he
 is ever worth pinning down precisely, a `capture-hid.sh`-style USB capture spanning a
 controller's actual sleep transition would be the way to get a real answer instead of an
 inference.
+
+## 2026-08-17 — the orientation saga: right hand solved, left hand 95% there
+
+`docs/pruebas.jsonl` T206-T208. The long-standing controller-orientation debt (`docs/03`'s
+own "What's still missing" #2, and 0047's still-open "near-pure-yaw mis-assignments"
+paragraph) went from a vague "orientation is still wrong with constellation alone" to a
+precisely diagnosed, mostly-fixed state in one night, via two new instruments this project
+now treats as standard.
+
+**The new instruments.** (1) The **labeled-motion capture**: still 10s → several reps of
+pure pitch → still → pure roll → still → pure yaw → still, per hand, same session, with
+`WMR_CONTROLLER_CALIBRATION_LOG=1`, segmented offline by gyro magnitude into a per-phase
+dominant-axis table. This is what actually located the defect — a plain live A/B, tried
+first (`patches/monado/0061`), only burned a candidate and taught the negative lesson that
+composing rotations can never fix a reflection. (2) The **figure-8 test**: a real 3D
+figure-8 traced by the wearer's hand while watching the gizmo. Cheap and decisive — it
+discriminates a **constant offset** (the figure-8 closes, just rotated) from **precession**
+(it winds up extra turns and never closes), which no static or single-motion capture can
+tell apart. Both instruments needed the controller-pose gizmo to actually render correctly
+first — it didn't, until `patches/hello_xr-player/0005-hello_xr-*` fixed a per-face-color
+mesh bug that made every axis bar read as a multicolor smear (found while trying to use
+0016's gizmo for exactly this). `patches/hello_xr-player/0006-hello_xr-*` then added
+positive-tip caps so handedness reads at a glance.
+
+**Right hand: fully correct, first time in this project's history.** The labeled capture
+showed the right controller's raw fused orientation already matches the OpenXR grip
+convention exactly (pitch+X, roll−Z, yaw+Y — R = identity), matching the wearer's own
+"derecho bien". The only defect this hand had was the missing absolute yaw reference (see
+below), and with that fixed, T208 recorded the project's first-ever fully-correct
+controller: "el derecho se termino acomodando a casi perfecto... lo tuve 100% bien por unos
+10 segundos casi. Bien mapeado todo."
+
+**Left hand: the dominant defect is fixed, a small residual remains.** The same labeled
+capture showed the left controller matches the right on pitch and roll but comes out
+yaw-inverted — two axes correct, one sign-flipped, which is a **reflection** (determinant
+−1). This is provably unfixable by composing any fixed quaternion onto the output (a
+composition of proper rotations is always itself a proper rotation, det +1), which is
+exactly why the whole prior A/B menu — including 0047's live `WMR_CONTROLLER_WMR_AXES` try
+and 0061's plain conjugate — never worked. `patches/monado/0062`
+(`WMR_CONTROLLER_LEFT_YAW_GYRO_INVERT`) fixes it at the source: negate the LEFT controller's
+calibrated gyro Y before fusion. `patches/monado/0063` then logged both hands' factory
+calibration matrices and their determinants and found **all eight proper** — the reflection
+is not a recoverable factory-calibration artifact; its true origin (raw ADC axis wiring, or
+a per-hand device-frame convention Microsoft handles driver-side) is still unknown.
+`patches/monado/0064` tried extending the same negation to the accelerometer, reasoning
+from a frame-reconciliation algebra that predicted a coherent `diag(1,-1,1)` on both
+sensors; `patches/monado/0065` retracted it the same night after the wearer's figure-8
+showed the two-sensor version **precesses** (winds up extra turns) while the gyro-only
+version closes — gyro-only stands, and the accel extension is kept in the tree as a
+documented negative result, not deleted.
+
+**With the sign flip fixed, what remained was heading, not axes** — no magnetometer means
+nothing anchors yaw the way gravity anchors pitch/roll, so boot attitude was simply adopted
+as heading. `patches/monado/0066` (`WMR_CONTROLLER_SOLVE_YAW_CORRECT`) closes that by
+nudging fusion's heading toward gate-accepted constellation solves (reusing 0047's own
+Rx180 gravity-gate bridge), gain-limited and capped per step. Its first hardware contact
+(T208) immediately caught two real bugs in the same log — an unwrapped yaw error stepping
+the long way around the circle into endless rotation, and 0047's already-documented
+near-pure-yaw ghost solves un-locking a good heading — both fixed same-hour in
+`patches/monado/0067`. After the fix, both controllers converge and lock: right to `0.0°`
+in 140 corrections, left to `-0.1°` in 240.
+
+**What's left, precisely scoped**: the left controller's figure-8 still "sigue acumulando
+algo y rotando de a poco drifteando sobre un eje fantasma medio combinado" — a residual
+cross-axis misalignment beyond the pure sign flip, on the order of a few degrees, that
+integrates visibly over a multi-turn motion even though it reads as imperceptible in a
+single static capture. `patches/monado/0068` (`WMR_CONTROLLER_LEFT_GYRO_FIT`) bakes a
+least-squares-fitted left-to-right correction matrix from a labeled two-hand capture, but
+is **explicitly flagged unsettled in its own comment**: the fit deviates 21.8° from
+identity — far more than the 1-3° the figure-8's qualitative description suggested — and a
+single 8-rep-per-axis hand capture cannot cleanly separate real hardware asymmetry from the
+wearer's own left/right biomechanical asymmetry. The live figure-8 A/B decides whether it
+graduates; if unclear, the named next step is a turntable protocol (constant angular rate,
+sub-1° floor, and the gain dimension a hand capture cannot measure at all), which
+supersedes hand captures for this calibration class.
+
+**Net effect on item 2 of "What's still missing" above**: constellation-fed 6DoF
+orientation is no longer an open problem for the right hand, and is down to a small,
+bounded, actively-being-fitted residual for the left. Position acquisition slowness
+(parked-at-anchor, late jumps toward real positions) remains the separate, still-open
+constellation-matching thread.
