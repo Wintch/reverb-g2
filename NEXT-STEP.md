@@ -7,7 +7,7 @@
 > sale, not a bug ticket. THE TARGET IS BETTER THAN WINDOWS, ideal -- explicitly beyond
 > the old "on par" cutoff: Windows WMR is deprecated and frozen forever; this stack
 > improves weekly and already carries knobs Windows never had. Experimental layers are
-> acceptable en route; the wearer experience is the judge. Read `docs/pruebas.jsonl` T196-T209 for how far 2026-08-17's
+> acceptable en route; the wearer experience is the judge. Read `docs/pruebas.jsonl` T196-T211 for how far 2026-08-17's
 > marathon moved everything (clock-skew root cause fixed and wearer-verified; both
 > hands' rotation dynamics correct; heading anchored to constellation; machine-grade
 > turntable calibration bootstrapped; per-cell battery tracking live; per-stage timing
@@ -23,18 +23,28 @@
 >    Position acquisition (the parked-hands-at-the-side issue) is the #1 remaining
 >    tracking gap: docs/40's matching/solve-rate work + the assignment prior (0047's
 >    residual), now with machine tools (turntable + cradle box) to validate against.
-> 2. **The left controller's final 5%**: the twist DOF (140° pitch/yaw ambiguity, 0069)
->    falls to ONE more turntable orientation — build the 3-axis cradle box (cardboard,
->    ~10 min) and the matrix is machine-complete with zero human motion. The wearer's
->    residual "roll left + pitch down" constant offset dies with it.
+> 2. **CLOSED 2026-08-18 (T210, patch 0071): the left matrix is machine-complete.**
+>    The cradle box delivered the second machine axis; Kabsch over 4 correspondences
+>    gives a physically-interpretable half-turn about −Y (179.93°), residuals uniform
+>    RMS 4.25°, zero hand data. Wearer: "el 8 vuelve", "los ejes están bien" — the
+>    constant offset is dead. Residual: left yaw winds slowly under HEAVY handling
+>    (~4° full-stream residual integrating); its healer is the solve-yaw anchor, which
+>    starves when hands park — workstream 1's position acquisition cures both at once.
+>    HMD twin finding (T211): the head's own roll drift is a ~9% yaw→roll/pitch
+>    cross-axis leak (~7.3° gyro mounting misalignment), proven by chair oscillation —
+>    `WMR_HMD_GYRO_MOUNT_FIX` fit in flight; validation = second chair pass ≈ 0 leak.
+>    Fixture catalog: turntable (controllers, constant-rate), cradle box (second axis),
+>    **gamer chair (headset weight class — oscillation ONLY, the tether winds)**; the
+>    rigid-plane quorum test (headset + both joys on one board, three gyros, one shared
+>    motion) is the cross-validation instrument for all of them.
 > 3. **Experience polish**: fast-turn correction visibility (spread=60 shipping; the
 >    motion-amplified snap component remains), the docs/45 display-artifact protocol
 >    (test patterns built, wearer + 240fps phone pending), the 2-3s rare stall class.
 > 4. **Performance & cost calibration (the arcade economics)**: pacing is CPU-bound —
 >    105W GPU cap plays Aircar as well as 210W (T209); `scripts/power-log.sh` measures
->    real Wh/h; pending: the RT-throttle A/B under game (sched_rt_runtime_us, the
->    numerically-perfect 4-5% suspect), the affinity split A/B, per-box power.conf so
->    --apply carries the validated caps. Wall-wattmeter validation closes system-total.
+>    real Wh/h; RT-throttle REFUTED by clean A/B (T209 — the 5% match was coincidence);
+>    remaining suspect: the affinity split A/B (0058 knobs, untested); per-box
+>    power.conf shipping. Wall-wattmeter validation closes system-total.
 > 5. **Battery lifecycle / recycling**: per-cell roster live (kos/kub/mar/mik/bob/rio);
 >    when a cell's runtime falls well below its siblings' across charges, it graduates
 >    to RECYCLING (not trash) — the e-waste ethos is a selling point of the showcase
