@@ -20,9 +20,13 @@
 >    (pending a quiet window). Battery certainty: `docs/46-battery-management.md` has
 >    the model; wire a pre-session battery gate + in-session cliff alert (cliff byte
 >    ~65-83, unconfirmed) into power-on/vr-state so a demo never starts on dying cells.
->    Position acquisition (the parked-hands-at-the-side issue) is the #1 remaining
->    tracking gap: docs/40's matching/solve-rate work + the assignment prior (0047's
->    residual), now with machine tools (turntable + cradle box) to validate against.
+>    Position acquisition: MECHANISM FOUND (T213, the WS3 trace capture): ~180° yaw-GHOST
+>    correspondence assignments, structurally invisible to the gravity gate (a half-turn
+>    about vertical preserves the down vector), left 13× worse than right (more
+>    yaw-symmetric LED ring); blobs abundant, 0056 guards never fire — supply exonerated.
+>    Fix in flight: `WMR_CONSTELLATION_YAW_PRIOR_DEG` (locked fusion heading as prior at
+>    solve acceptance). SEPARATE open mechanism: hands-still/crossed geometry (P3/P4)
+>    collapses correspondence to a flat ZERO for both hands despite healthy blobs.
 > 2. **CLOSED 2026-08-18 (T210, patch 0071): the left matrix is machine-complete.**
 >    The cradle box delivered the second machine axis; Kabsch over 4 correspondences
 >    gives a physically-interpretable half-turn about −Y (179.93°), residuals uniform

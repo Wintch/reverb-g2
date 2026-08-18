@@ -1,0 +1,220 @@
+From 21f26d36095430b11c82e0bea74761c3f9dc6176 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Tue, 18 Aug 2026 03:36:25 -0300
+Subject: [PATCH] d/wmr: WMR_CONSTELLATION_YAW_PRIOR_DEG -- reject yaw-ghost
+ solves against the locked fusion heading (default off)
+
+T213's WS3 trace capture measured the parked-hands mechanism: ~180deg
+yaw-flipped correspondence assignments, structurally invisible to the
+gravity gate (a half-turn about vertical preserves the down vector),
+left 13x worse than right (gate survival 5.3 vs 68.1 pct) while raw
+finds are HIGHER on left. Code-confirmed loophole: pose_metrics.c's
+evaluate_pose_with_prior accepts on reprojection+blob-count alone via
+its else-if branch when prior_must_match=false, never re-checking
+orientation -- where the ghost slips through.
+
+Device-side gate in constellation_sample_store (the single caller of
+m_relation_history_push): when solve-yaw is locked, any sample whose
+bridged yaw deviates more than the threshold from the fusion heading is
+dropped before storage -- ghosts never deliver position again. Shares
+the 0066 bridge math via a new helper; snapshot under the existing
+data_lock; rate-limited reject log + counter. No-op unless
+SOLVE_YAW_CORRECT is active and locked, by construction.
+
+Known residual (documented): Camera::pushPose updates the tracker's own
+last_known_pose before any gate, so a rejected ghost still poisons the
+tracker-internal recovery prior -- the full fix is tracker-side plumbing
+of the fusion heading into pose_metrics' prior check (future work).
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/xrt/drivers/wmr/wmr_controller_base.c | 109 ++++++++++++++++++----
+ src/xrt/drivers/wmr/wmr_controller_base.h |   3 +
+ 2 files changed, 93 insertions(+), 19 deletions(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
+index 9fb23b93b..a93966d04 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.c
++++ b/src/xrt/drivers/wmr/wmr_controller_base.c
+@@ -77,6 +77,24 @@ DEBUG_GET_ONCE_FLOAT_OPTION(wmr_constellation_gravity_gate_deg, "WMR_CONSTELLATI
+ //! live value: 0.05 (5% of the measured yaw error corrected per accepted solve).
+ DEBUG_GET_ONCE_FLOAT_OPTION(wmr_controller_solve_yaw_correct, "WMR_CONTROLLER_SOLVE_YAW_CORRECT", 0.0f)
+ 
++//! Degrees of yaw disagreement (same swing-twist-about-world-up measurement
++//! WMR_CONTROLLER_SOLVE_YAW_CORRECT already computes) a constellation solve may have from the
++//! fusion's CURRENT heading before the whole sample is rejected outright -- not stored, not
++//! pushed into the relation history, not delivered as a position. 0 (default) = off. Targets the
++//! near-180-degree-about-vertical yaw-flip ghost measured 2026-08-17/18 (WS3 capture): the LED
++//! ring is near-symmetric under that half-turn, so the correspondence search returns a
++//! geometrically-plausible wrong-yaw pose with reprojection error as good as the true one, and
++//! WMR_CONSTELLATION_GRAVITY_GATE_DEG's own down-vector check is BLIND to it by construction (a
++//! rotation about the vertical axis leaves the down vector fixed). Only takes effect once the
++//! solve-yaw anchor is locked (@ref wmr_controller_base::constellation.solve_yaw_locked, set by
++//! apply_solve_yaw_correction below) -- before lock, the fusion's own heading is not yet trusted
++//! either, so nothing here would be a meaningful reference to reject against. This is therefore a
++//! no-op unless WMR_CONTROLLER_SOLVE_YAW_CORRECT is also > 0 (the only thing that ever sets
++//! locked), same "no-op by construction, not by an extra check" pattern the gravity gate's own
++//! comment documents for that option. See constellation_sample_store's use site. Suggested live
++//! value: 60 (matches apply_solve_yaw_correction's own ghost-distrust threshold).
++DEBUG_GET_ONCE_FLOAT_OPTION(wmr_constellation_yaw_prior_deg, "WMR_CONSTELLATION_YAW_PRIOR_DEG", 0.0f)
++
+ //! Radial thumbstick deadzone, applied by the per-model packet parsers. Off by default.
+ DEBUG_GET_ONCE_FLOAT_OPTION(wmr_stick_deadzone, "WMR_STICK_DEADZONE", 0.0f)
+ 
+@@ -1304,43 +1322,36 @@ wmr_controller_base_init(struct wmr_controller_base *wcb,
+ //! 90 deg boot offset should read as visually settled (a couple of degrees left) within about
+ //! 4-7 seconds of the controller coming into camera view, converging smoothly rather than
+ //! snapping. This is the intended trade-off requested for this feature, not an oversight.
+-static void
+-apply_solve_yaw_correction(struct wmr_controller_base *wcb,
+-                           const struct t_constellation_tracker_sample *sample,
+-                           float gain)
++//!
++//! The frame-bridge + swing-twist-about-world-up + +-180 wrap below (down through the
++//! "Ghost-solve trust window" comment) is factored into @ref
++//! wmr_constellation_solve_yaw_error_rad, shared with the WMR_CONSTELLATION_YAW_PRIOR_DEG reject
++//! gate in constellation_sample_store -- see that function's own comment for why a second,
++//! independent consumer of the same measurement exists.
++static float
++wmr_constellation_solve_yaw_error_rad(const struct xrt_quat *solve_orientation, const struct xrt_quat *fusion_rot)
+ {
+ 	// Rx180: the WMR y/z axes-swap convention this whole driver already applies elsewhere
+ 	// (wmr_hmd.c's "Correct swapped axes", and WMR_CONTROLLER_WMR_AXES's own comment above) --
+ 	// 0047's identified LED-model <-> IMU-fusion body frame bridge, self-inverse.
+ 	static const struct xrt_quat rx180 = {1.f, 0.f, 0.f, 0.f};
+-	// xrt world is Y-up in this file (see the gate's own `down = {0,-1,0}` just below).
++	// xrt world is Y-up in this file (see the gravity gate's own `down = {0,-1,0}` below).
+ 	static const struct xrt_vec3 world_up = {0.f, 1.f, 0.f};
+-	// Cap on the CORRECTION ACTUALLY APPLIED per accepted solve (post-gain), not on the raw
+-	// measured error -- see the convergence-design comment above.
+-	const float max_step_rad = 2.0f * ((float)M_PI / 180.0f);
+-	// Rate-limited convergence log: once for the very first correction (so it's visible
+-	// immediately that the feature is live), then every 20 accepted solves after that (roughly
+-	// every 2.5-5 s at the measured 4-8 solves/s/controller) so a session log shows the error
+-	// shrinking over time instead of one line per accepted solve.
+-	const uint32_t log_every = 20;
+ 
+ 	struct xrt_quat solve_in_fusion_frame;
+-	math_quat_rotate(&sample->pose.orientation, &rx180, &solve_in_fusion_frame);
+-
+-	os_mutex_lock(&wcb->data_lock);
+-	struct xrt_quat fusion_rot = wcb->fusion.rot;
++	math_quat_rotate(solve_orientation, &rx180, &solve_in_fusion_frame);
+ 
+ 	// World-frame rotation taking the fusion's CURRENT belief to the solve's belief -- same
+ 	// "target * inverse(current)" pattern t_tracker_slam.cpp's reset-offset transform (0057)
+ 	// uses for its own anchor-matching problem.
+ 	struct xrt_quat fusion_inv;
+-	math_quat_invert(&fusion_rot, &fusion_inv);
++	math_quat_invert(fusion_rot, &fusion_inv);
+ 	struct xrt_quat full_delta;
+ 	math_quat_rotate(&solve_in_fusion_frame, &fusion_inv, &full_delta);
+ 
+ 	// Yaw-only twist about world-up, mirroring how 0057/0059 isolate heading from a full
+ 	// relative rotation (there about their own Z-up; here about this file's Y-up) -- roll/pitch
+-	// (the swing half) are gravity-truth already and must never be touched by this feature.
++	// (the swing half) are gravity-truth already and must never be touched by this measurement.
+ 	struct xrt_quat swing_discarded, yaw_only;
+ 	math_quat_decompose_swing_twist(&full_delta, &world_up, &swing_discarded, &yaw_only);
+ 
+@@ -1359,6 +1370,27 @@ apply_solve_yaw_correction(struct wmr_controller_base *wcb,
+ 	} else if (yaw_error_rad < -(float)M_PI) {
+ 		yaw_error_rad += 2.0f * (float)M_PI;
+ 	}
++	return yaw_error_rad;
++}
++
++static void
++apply_solve_yaw_correction(struct wmr_controller_base *wcb,
++                           const struct t_constellation_tracker_sample *sample,
++                           float gain)
++{
++	// Cap on the CORRECTION ACTUALLY APPLIED per accepted solve (post-gain), not on the raw
++	// measured error -- see the convergence-design comment above.
++	const float max_step_rad = 2.0f * ((float)M_PI / 180.0f);
++	// Rate-limited convergence log: once for the very first correction (so it's visible
++	// immediately that the feature is live), then every 20 accepted solves after that (roughly
++	// every 2.5-5 s at the measured 4-8 solves/s/controller) so a session log shows the error
++	// shrinking over time instead of one line per accepted solve.
++	const uint32_t log_every = 20;
++
++	os_mutex_lock(&wcb->data_lock);
++	struct xrt_quat fusion_rot = wcb->fusion.rot;
++
++	float yaw_error_rad = wmr_constellation_solve_yaw_error_rad(&sample->pose.orientation, &fusion_rot);
+ 
+ 	// Ghost-solve trust window (0047's open near-pure-yaw mis-assignments produce solves at
+ 	// wildly different headings with equally-good reprojection): before the heading has ever
+@@ -1491,9 +1523,11 @@ constellation_sample_store(struct t_constellation_tracker_device *device, struct
+ 	if (gravity_gate_deg > 0.0f) {
+ 		struct xrt_quat imu_rot;
+ 		int64_t imu_ts;
++		bool solve_yaw_locked;
+ 		os_mutex_lock(&wcb->data_lock);
+ 		imu_rot = wcb->fusion.rot;
+ 		imu_ts = wcb->last_imu_timestamp_ns;
++		solve_yaw_locked = wcb->constellation.solve_yaw_locked;
+ 		os_mutex_unlock(&wcb->data_lock);
+ 
+ 		if (imu_ts != 0) {
+@@ -1535,6 +1569,43 @@ constellation_sample_store(struct t_constellation_tracker_device *device, struct
+ 			if (solve_yaw_gain > 0.0f) {
+ 				apply_solve_yaw_correction(wcb, sample, solve_yaw_gain);
+ 			}
++
++			// WMR_CONSTELLATION_YAW_PRIOR_DEG: a SECOND, independent gate on top of the
++			// gravity gate above -- see that option's own DEBUG_GET_ONCE_FLOAT_OPTION
++			// comment for the full motivation (a near-180-deg yaw flip about the vertical
++			// axis, which the gravity gate is blind to by construction, since that
++			// rotation leaves the down vector fixed). Reuses the imu_rot/solve_yaw_locked
++			// snapshot taken under data_lock above -- no extra lock needed -- and the same
++			// yaw measurement apply_solve_yaw_correction uses, just above. Deliberately
++			// checked AFTER that call, not before: a sample big enough to trip this gate is
++			// exactly the kind apply_solve_yaw_correction's own ghost-distrust window
++			// (yaw_distrust_rad, 60 deg) already refuses to learn from once locked, so this
++			// ordering changes nothing about what the anchor sees -- it only decides
++			// whether the ghost's WRONG position still reaches the relation history below
++			// (m_relation_history_push) and gets reported out as this controller's position.
++			// Only engages once solve_yaw_locked (a real heading has been acquired); before
++			// that a large error is the expected boot transient, not a ghost -- same
++			// reasoning apply_solve_yaw_correction's own trust window already uses.
++			float yaw_prior_deg = debug_get_float_option_wmr_constellation_yaw_prior_deg();
++			if (yaw_prior_deg > 0.0f && solve_yaw_locked) {
++				float yaw_error_rad =
++				    wmr_constellation_solve_yaw_error_rad(&sample->pose.orientation, &imu_rot);
++				float yaw_error_deg = fabsf(yaw_error_rad) * 180.0f / (float)M_PI;
++				if (yaw_error_deg > yaw_prior_deg) {
++					wcb->constellation.yaw_prior_reject_count++;
++					if (wcb->constellation.yaw_prior_reject_count == 1 ||
++					    (wcb->constellation.yaw_prior_reject_count % 100) == 0) {
++						WMR_INFO(wcb,
++						         "yaw prior: rejected sample, %.1f deg > %.1f from locked "
++						         "heading (pos was %.3f,%.3f,%.3f; %llu rejected so far)",
++						         (double)yaw_error_deg, (double)yaw_prior_deg,
++						         sample->pose.position.x, sample->pose.position.y,
++						         sample->pose.position.z,
++						         (unsigned long long)wcb->constellation.yaw_prior_reject_count);
++					}
++					return;
++				}
++			}
+ 		}
+ 	}
+ 
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.h b/src/xrt/drivers/wmr/wmr_controller_base.h
+index d2cdfe23e..ae03fa0e8 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.h
++++ b/src/xrt/drivers/wmr/wmr_controller_base.h
+@@ -171,6 +171,9 @@ struct wmr_controller_base
+ 		//! Set once the solve-yaw error has been observed small (heading acquired);
+ 		//! afterwards, huge sudden errors are distrusted as 0047's yaw-ghost solves.
+ 		bool solve_yaw_locked;
++		//! Gate-accepted solves further rejected by WMR_CONSTELLATION_YAW_PRIOR_DEG for
++		//! disagreeing with the locked fusion heading (0 while off, or before lock).
++		uint64_t yaw_prior_reject_count;
+ 
+ 		/*!
+ 		 * Every constellation sample this controller receives, keyed by the sample's own
+-- 
+2.47.3
+

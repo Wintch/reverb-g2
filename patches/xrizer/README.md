@@ -45,3 +45,16 @@ session):
   texture/bounds mismatch (the game may submit one wide texture with different UV bounds
   per eye, and something about how `swapchain_info_for_texture` derives the effective
   per-eye size from those bounds may never converge). See `docs/pruebas.jsonl` T087.
+
+## 0003 — real HMD presence via XR_EXT_user_presence (2026-08-18, T213 era)
+
+`ShouldApplicationPause`, `IsInputAvailable` and the HMD branch of
+`GetTrackedDeviceActivityLevel` were hardcoded stubs — any title gating on worn
+state (War Robots VR's un-skippable "put on your VR helmet", docs/03) was stuck
+forever. Now: `ext_user_presence` requested opportunistically, the central event
+pump catches `UserPresenceChangedEXT` into a cached `AtomicBool`, and all three
+surfaces consult it. A runtime without the extension degrades to exactly the old
+hardcoded behavior. **Pairs with monado 0075 (`WMR_USER_PRESENCE=1`)** — the G2's
+nose-bridge proximity sensor feeds Monado's generic presence machinery. The
+`proximity != 0` threshold is provisional; the first live don/doff with logging
+calibrates it. Showcase value: doff-to-pause/attract-mode. cargo clean, 83/83 tests.

@@ -386,3 +386,15 @@ Base: `21a8476b0` on `lab-full`; HEAD after these two `851692b11` (0064 commit `
 | patch | what |
 |---|---|
 | 0073 | The mik cell failure was diagnosed blind: the log said `81 -> 79` but not WHICH controller. `%s` from `base.base.str`, same as the keepalive line. Trivial, earned by a live failure. Base: `b016ce4d2`, commit `ed13e1395`. |
+
+## 0074 — WMR_CONSTELLATION_YAW_PRIOR_DEG: the yaw-ghost gate (2026-08-18, T213)
+
+| patch | what |
+|---|---|
+| 0074 | T213's WS3 trace capture converted "hands park" into a mechanism: **~180° yaw-flipped correspondence assignments** — structurally invisible to 0047's gravity gate (a half-turn about vertical preserves the down vector), left 13× worse than right (gate survival 5.3% vs 68.1%) while raw finds are *higher* on left; and the same ghosts starved 0066/0067's healer (post-lock, every left sample was a ghost the distrust rightly refused — ghosts still delivered *positions* though). **Code-confirmed loophole**: `pose_metrics_evaluate_pose_with_prior`'s `else if` accepts on reprojection+blob-count alone when `prior_must_match=false`, never re-checking orientation. The gate: in `constellation_sample_store` (the single caller of `m_relation_history_push`), when solve-yaw is locked, drop any sample whose bridged yaw deviates > threshold from the fusion heading — rejected ghosts never deliver position. Shares 0066's bridge math via a helper; snapshots under the existing `data_lock`; rate-limited reject log + counter. Structurally a no-op unless `SOLVE_YAW_CORRECT` is on and locked. **Known residual**: `Camera::pushPose` updates the tracker's own `last_known_pose` pre-gate, so ghosts still poison the tracker-internal recovery prior — full fix is tracker-side plumbing (future). Gated `WMR_CONSTELLATION_YAW_PRIOR_DEG` (default 0=off; live value 60). Base: `ed13e1395`, commit `21f26d360`. |
+
+## 0075 — WMR_USER_PRESENCE: proximity sensor → XR_EXT_user_presence (2026-08-18)
+
+| patch | what |
+|---|---|
+| 0075 | The G2's nose-bridge proximity sensor was always read (`control_ipd_value_decode` fills `wh->proximity_sensor`) and never consumed. Plugs into Monado's existing generic presence machinery (`supported.presence` + `XRT_INPUT_GENERIC_HEAD_DETECT` + `update_inputs`), same shape as the Rift CV1 driver — no OpenXR-layer changes needed. Threshold `!= 0` is PROVISIONAL (docs/22: never confirmed with a clean cover/uncover); INFO-logs every transition with the raw byte so the first live don/doff calibrates it. Default off; zero cost when off. Pairs with xrizer 0003 to unblock War Robots VR and give the showcase doff-to-pause. Base: `21f26d360`, commit `506bedafe`. |

@@ -1,0 +1,146 @@
+From 5b957d4f78032c489cda159ddfb80545cd62cb9a Mon Sep 17 00:00:00 2001
+From: iam <iam@iashur.internal>
+Date: Tue, 18 Aug 2026 03:42:48 -0300
+Subject: [PATCH 3/3] system: real HMD presence via XR_EXT_user_presence
+
+ShouldApplicationPause, IsInputAvailable and the HMD branch of
+GetTrackedDeviceActivityLevel were hardcoded stubs -- any title gating on
+worn state (War Robots VR's 'put on your VR helmet') was stuck forever.
+Requests ext_user_presence opportunistically, catches
+UserPresenceChangedEXT in the central event pump, caches an AtomicBool;
+all three surfaces consult it. Runtime without the extension = exactly
+the old hardcoded behavior. Pairs with Monado-side WMR_USER_PRESENCE.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/openxr_data.rs | 23 ++++++++++++++++++++++-
+ src/system.rs      | 32 ++++++++++++++++++++++++++++----
+ 2 files changed, 50 insertions(+), 5 deletions(-)
+
+diff --git a/src/openxr_data.rs b/src/openxr_data.rs
+index 5565740..2c2a565 100644
+--- a/src/openxr_data.rs
++++ b/src/openxr_data.rs
+@@ -10,7 +10,7 @@ use openxr as xr;
+ use std::mem::ManuallyDrop;
+ use std::sync::{
+     RwLock,
+-    atomic::{AtomicI64, Ordering},
++    atomic::{AtomicBool, AtomicI64, Ordering},
+ };
+ use std::time::Duration;
+ 
+@@ -44,6 +44,17 @@ pub struct OpenXrData<C: Compositor> {
+     pub display_period_nanos: AtomicI64,
+     pub enabled_extensions: xr::ExtensionSet,
+ 
++    /// Cached state from the last `XrEventDataUserPresenceChangedEXT` (see
++    /// `poll_events_impl`). Only meaningful when `enabled_extensions.ext_user_presence`
++    /// is set -- callers must check that first, since a runtime without the extension
++    /// will never send the event and this will just sit at its initial value forever.
++    /// Defaults to `true` (present/worn) so that IVRSystem::ShouldApplicationPause /
++    /// IsInputAvailable behave exactly like today's hardcoded stubs (never pause, always
++    /// available) until a real event says otherwise -- matches XR_EXT_user_presence's own
++    /// expectation that runtimes queue an initial event right after session creation, so
++    /// this placeholder should only be observable for a very short window.
++    pub user_present: AtomicBool,
++
+     /// should only be externally accessed for testing
+     pub(crate) input: Injected<crate::input::Input<C>>,
+     pub(crate) compositor: Injected<C>,
+@@ -136,6 +147,7 @@ impl<C: Compositor> OpenXrData<C> {
+             supported_exts.htc_vive_focus3_controller_interaction;
+         exts.meta_touch_controller_plus = supported_exts.meta_touch_controller_plus;
+         exts.fb_display_refresh_rate = supported_exts.fb_display_refresh_rate;
++        exts.ext_user_presence = supported_exts.ext_user_presence;
+ 
+         // Extension that enables simple full body tracking support via generic tracked devices.
+         // Available only in the Monado OpenXR runtime.
+@@ -190,6 +202,7 @@ impl<C: Compositor> OpenXrData<C> {
+             display_time: AtomicXrTime(display_time.into()), // This will get replaced on the first WaitGetPoses
+             display_period_nanos: 11111111.into(), // This will get replaced on the first WaitGetPoses
+             enabled_extensions: exts,
++            user_present: AtomicBool::new(true),
+             input: injector.inject(),
+             compositor: injector.inject(),
+         })
+@@ -217,6 +230,14 @@ impl<C: Compositor> OpenXrData<C> {
+                         input.interaction_profile_changed(session_data);
+                     }
+                 }
++                xr::Event::UserPresenceChangedEXT(event) => {
++                    let present = event.is_user_present();
++                    info!(
++                        "XR_EXT_user_presence: user is now {}",
++                        if present { "PRESENT (worn)" } else { "NOT PRESENT (doffed)" }
++                    );
++                    self.user_present.store(present, Ordering::Relaxed);
++                }
+                 _ => {
+                     info!("unknown event");
+                 }
+diff --git a/src/system.rs b/src/system.rs
+index c12c23e..8b925d6 100644
+--- a/src/system.rs
++++ b/src/system.rs
+@@ -10,7 +10,7 @@ use log::{debug, error, trace, warn};
+ use openvr as vr;
+ use openxr as xr;
+ use std::ffi::{CStr, CString};
+-use std::sync::{Arc, Mutex};
++use std::sync::{atomic::Ordering, Arc, Mutex};
+ 
+ #[derive(Copy, Clone)]
+ pub struct ViewData {
+@@ -326,13 +326,22 @@ impl vr::IVRSystem026_Interface for System {
+         false
+     }
+     fn ShouldApplicationPause(&self) -> bool {
+-        false
++        // XR_EXT_user_presence backs this on runtimes that support it (Monado's WMR
++        // driver does, gated behind WMR_USER_PRESENCE=1 -- see patches/monado's
++        // wmr_hmd_update_inputs()). Without the extension, degrade to today's
++        // behavior: never pause, since we have no way to know whether the headset
++        // is being worn.
++        self.openxr.enabled_extensions.ext_user_presence
++            && !self.openxr.user_present.load(Ordering::Relaxed)
+     }
+     fn IsSteamVRDrawingControllers(&self) -> bool {
+         todo!()
+     }
+     fn IsInputAvailable(&self) -> bool {
+-        true
++        // Mirrors ShouldApplicationPause: input is considered available whenever the
++        // user is present, or unconditionally when we can't tell (extension unsupported).
++        !self.openxr.enabled_extensions.ext_user_presence
++            || self.openxr.user_present.load(Ordering::Relaxed)
+     }
+     fn GetControllerAxisTypeNameFromEnum(
+         &self,
+@@ -795,7 +804,22 @@ impl vr::IVRSystem026_Interface for System {
+         device_index: vr::TrackedDeviceIndex_t,
+     ) -> vr::EDeviceActivityLevel {
+         match device_index {
+-            vr::k_unTrackedDeviceIndex_Hmd => vr::EDeviceActivityLevel::UserInteraction,
++            vr::k_unTrackedDeviceIndex_Hmd => {
++                // Best-effort refinement using XR_EXT_user_presence: report Idle (no
++                // proximity/motion for the runtime-defined "a while") when the runtime
++                // has told us the headset isn't being worn, otherwise fall back to the
++                // previous unconditional UserInteraction. This is a coarse mapping --
++                // OpenVR's activity levels distinguish several idle/timeout states we
++                // have no XR-level equivalent for -- but it's strictly better than
++                // claiming interaction is happening while doffed.
++                if self.openxr.enabled_extensions.ext_user_presence
++                    && !self.openxr.user_present.load(Ordering::Relaxed)
++                {
++                    vr::EDeviceActivityLevel::Idle
++                } else {
++                    vr::EDeviceActivityLevel::UserInteraction
++                }
++            }
+             x if self
+                 .input
+                 .get()
+-- 
+2.47.3
+
