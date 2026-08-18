@@ -51,6 +51,15 @@
 >    real Wh/h; RT-throttle REFUTED by clean A/B (T209 — the 5% match was coincidence);
 >    remaining suspect: the affinity split A/B (0058 knobs, untested); per-box
 >    power.conf shipping. Wall-wattmeter validation closes system-total.
+>    **Tooling queue (2026-08-18, user-prompted)**: (a) synthetic render benchmark —
+>    add a tunable GPU-load dial (fragment-heavy shader knob) to hello_xr's test
+>    patterns and sweep GPU utilization vs pacing, no Steam needed — answers "how low
+>    can the cap go" scientifically; (b) automated benchmark harness — script the
+>    3-window discipline over SLAM_THREADS × GPU cap × affinity, one data row per
+>    condition; (c) motion-to-photon trace (IMU→pose→render→present timestamps), the
+>    showcase headline number; (d) NVIDIA driver landscape review (agent ran
+>    2026-08-18 — see its report; upgrade only in a controlled window, never
+>    mid-showcase; PR #1275 status is the trigger to watch).
 >    **Per-title VR profiles (user-named 2026-08-18)**: titles played with the Xbox
 >    gamepad (Aircar-class) should run with `WMR_CONSTELLATION_CONTROLLERS=0` —
 >    constellation costs real CPU (~140 solves/s at good geometry, sank SLAM to

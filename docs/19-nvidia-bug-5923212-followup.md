@@ -436,3 +436,36 @@ NVIDIA panel or in Windows Settings while in direct/HMD mode). What's still invi
 here is exactly what was asked above: what happens during DisplayPort link training
 (DPCD/AUX) or inside the closed GSP firmware — no user-space tool reaches either of those on
 any OS.
+
+## Driver landscape check (2026-08-18, agent-verified at source level)
+
+PR #1275 still OPEN, zero maintainer engagement since 2026-08-06 (CLA bot only).
+New releases 595.91.07 (stable) and 610.57.04 (feature, Blackwell) — changelogs
+touch nothing we depend on, and `nvkms-dpy.c` at the 610.57.04 tag still carries
+the pre-patch bpc clamp byte-for-byte (grepped directly, not summarized). Our
+patches 0001/0003/0004 spot-verified to apply clean against 610 source; 0002
+(DRM lease, 10 files) needs a real `git am --check` before any upgrade.
+
+**Operational hazard, keep loud**: the NVIDIA CUDA apt repo for Debian 13 offers
+610.57.04 — an unpinned `apt full-upgrade` would silently replace the patched
+driver and BREAK 90Hz. The apt pin to 595.71.05-1 (priority 1000) is the guard;
+never remove it casually.
+
+**Verdict: stay on 595.71.05 + patches.** Revisit triggers: (a) PR #1275 gets
+maintainer movement; (b) a changelog mentions DP EDID color-depth/bpc, DRM lease,
+or VR; (c) a Debian kernel bump breaks the 595 dkms build; (d) new GPU hardware.
+
+## Live thread/RT audit (2026-08-18, running 6dof session, Ryzen 5 3600)
+
+37 threads in monado-service. Exactly THREE run SCHED_FIFO:99 (absolute max):
+`WMR: USB-HMD` (the T194-cleared USB read thread), `VBlank Events`, and one
+unnamed thread (almost certainly the compositor renderer). Everything else —
+including all Basalt VIO workers — is SCHED_OTHER and floats freely across all
+12 CPUs. Two findings for the per-title profile work (NEXT-STEP WS4):
+1. RT assignment is coarse: three threads at the absolute ceiling, everything
+   else unprioritized — nothing in between. Whether SLAM's optical-flow/backend
+   threads deserve a mid RT band (SCHED_RR 10-50?) has never been tested.
+2. Observability gap: Basalt worker threads carry no pthread names (`comm` =
+   "monado-service"), making per-thread profiling/affinity assignment blind. A
+   cheap patch naming them (pthread_setname_np) unlocks the whole
+   per-core-ownership design.
