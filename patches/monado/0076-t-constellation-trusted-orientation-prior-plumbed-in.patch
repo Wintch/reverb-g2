@@ -1,0 +1,938 @@
+From d7eed079ad13b59e1af3ad12285fcb2cfed528c4 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Tue, 18 Aug 2026 05:23:35 -0300
+Subject: [PATCH] t/constellation: trusted-orientation prior plumbed into the
+ correspondence search (the deep fix for yaw ghosts)
+
+The 0074 device-side gate rejects half-turn ghosts post-hoc, but by then
+the search already PICKED the ghost (losing the true pose that frame) and
+Camera::pushPose already poisoned last_known_pose. This closes the loop
+at the source: a new optional get_trusted_orientation callback on
+t_constellation_tracker_tracking_source lets the WMR controller supply
+its fusion heading (Rx180-bridged into LED-model convention, gated on
+solve_yaw_locked + WMR_CONSTELLATION_YAW_PRIOR_DEG, no new env). In the
+tracker: pose_metrics_evaluate_pose_with_prior's reprojection-only else-if
+branch (the code-located loophole) now also requires yaw-within-threshold
+of the trusted prior; pose_metrics_score_is_better_pose prefers a
+passing candidate over a failing one among already-good pairs; pushPose's
+last_known_pose/blob-marking update is gated on trusted-yaw only for
+opted-in calls (its unconditionality is documented load-bearing for
+ordinary reacquisition -- byte-identical for every other device).
+NULL-callback devices (rift, pssense, wmr_hmd) unaffected by construction.
+Rate-limited tracker-side diagnostics distinguish this layer from 0074's.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/xrt/drivers/wmr/wmr_controller_base.c     |  74 ++++++-
+ src/xrt/include/tracking/t_constellation.h    |  54 +++++
+ .../constellation/correspondence_search.c     |  15 +-
+ .../constellation/correspondence_search.h     |  12 +-
+ src/xrt/tracking/constellation/pose_metrics.c | 150 +++++++++++++-
+ src/xrt/tracking/constellation/pose_metrics.h |  54 ++++-
+ .../constellation/t_constellation_tracker.cpp | 189 +++++++++++++++---
+ .../t_constellation_tracker_internal.hpp      |  17 +-
+ 8 files changed, 515 insertions(+), 50 deletions(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
+index a93966d04..9d8e7f6a2 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.c
++++ b/src/xrt/drivers/wmr/wmr_controller_base.c
+@@ -1328,18 +1328,25 @@ wmr_controller_base_init(struct wmr_controller_base *wcb,
+ //! wmr_constellation_solve_yaw_error_rad, shared with the WMR_CONSTELLATION_YAW_PRIOR_DEG reject
+ //! gate in constellation_sample_store -- see that function's own comment for why a second,
+ //! independent consumer of the same measurement exists.
++// Rx180: the WMR y/z axes-swap convention this whole driver already applies elsewhere
++// (wmr_hmd.c's "Correct swapped axes", and WMR_CONTROLLER_WMR_AXES's own comment above) -- 0047's
++// identified LED-model <-> IMU-fusion body frame bridge, self-inverse (q*q reduces to -identity,
++// which is the same rotation as identity under the quaternion double cover). File-scope so both
++// wmr_constellation_solve_yaw_error_rad below (solve -> fusion frame, right-multiplied) and
++// constellation_tracking_source_get_trusted_orientation (fusion -> solve frame, same
++// right-multiplication -- valid because the bridge is self-inverse, and because the file's own
++// derivation just above states the identity directly both ways: "solve_orientation ~=
++// imu_orientation * Rx180") share one definition instead of two copies that could drift apart.
++static const struct xrt_quat wmr_constellation_rx180_bridge = {1.f, 0.f, 0.f, 0.f};
++
+ static float
+ wmr_constellation_solve_yaw_error_rad(const struct xrt_quat *solve_orientation, const struct xrt_quat *fusion_rot)
+ {
+-	// Rx180: the WMR y/z axes-swap convention this whole driver already applies elsewhere
+-	// (wmr_hmd.c's "Correct swapped axes", and WMR_CONTROLLER_WMR_AXES's own comment above) --
+-	// 0047's identified LED-model <-> IMU-fusion body frame bridge, self-inverse.
+-	static const struct xrt_quat rx180 = {1.f, 0.f, 0.f, 0.f};
+ 	// xrt world is Y-up in this file (see the gravity gate's own `down = {0,-1,0}` below).
+ 	static const struct xrt_vec3 world_up = {0.f, 1.f, 0.f};
+ 
+ 	struct xrt_quat solve_in_fusion_frame;
+-	math_quat_rotate(solve_orientation, &rx180, &solve_in_fusion_frame);
++	math_quat_rotate(solve_orientation, &wmr_constellation_rx180_bridge, &solve_in_fusion_frame);
+ 
+ 	// World-frame rotation taking the fusion's CURRENT belief to the solve's belief -- same
+ 	// "target * inverse(current)" pattern t_tracker_slam.cpp's reset-offset transform (0057)
+@@ -1727,6 +1734,62 @@ constellation_tracking_source_get_tracked_pose(struct t_constellation_tracker_tr
+ 	m_relation_history_get(wcb->constellation.relation_history, when_ns, out_relation);
+ }
+ 
++/*!
++ * @ref t_constellation_tracker_tracking_source::get_trusted_orientation implementation (reverb-g2
++ * T213, the tracker-side deep fix following on from this file's own WMR_CONSTELLATION_YAW_PRIOR_DEG
++ * device-side gate above): hands the tracker's search a trusted heading straight off the IMU
++ * fusion -- unlike @ref constellation_tracking_source_get_tracked_pose's own answer (predicted
++ * from past constellation solves via @ref m_relation_history, which can go stale between real
++ * fixes, or in principle still carry a poisoned entry), the fusion is always current and, once
++ * locked, its YAW specifically is trustworthy (0057/0059's gyro-Y correction work). Reuses
++ * WMR_CONSTELLATION_YAW_PRIOR_DEG for the threshold -- no new env var -- and the exact same
++ * solve_yaw_locked gate the device-side reject uses, so this is a no-op (returns false) under the
++ * identical conditions that already make that gate a no-op: the option unset/0, or heading not yet
++ * locked. When the option is set but heading isn't locked yet, false is still correct (there's
++ * nothing trustworthy to hand over yet), matching apply_solve_yaw_correction's own reasoning for
++ * why an unlocked heading isn't a meaningful reference.
++ *
++ * Frame conversion: out_orientation must come back in the tracker's SOLVE/LED-model convention
++ * (same convention @ref constellation_tracking_source_get_tracked_pose's own poses use --
++ * confirmed by reading that function's own m_relation_history_push call site, which stores
++ * sample->pose verbatim). This file's own derivation, a few hundred lines up
++ * (wmr_constellation_solve_yaw_error_rad's header comment), states the bridge directly BOTH ways:
++ * "solve_orientation ~= imu_orientation * Rx180" -- i.e. fusion -> solve is a single
++ * right-multiply by the same self-inverse wmr_constellation_rx180_bridge constant
++ * wmr_constellation_solve_yaw_error_rad uses for the opposite (solve -> fusion) direction. Not an
++ * inversion of that helper's math: the identity is already stated in the fusion -> solve direction
++ * in the source comment, this just applies it directly instead of the other direction.
++ */
++static bool
++constellation_tracking_source_get_trusted_orientation(struct t_constellation_tracker_tracking_source *tracking_source,
++                                                       int64_t when_ns,
++                                                       struct xrt_quat *out_orientation,
++                                                       float *out_yaw_threshold_rad)
++{
++	struct wmr_controller_base *wcb =
++	    container_of(tracking_source, struct wmr_controller_base, constellation.tracking_source);
++
++	(void)when_ns; // Fusion is read live below; there is no history to predict forward from here.
++
++	float yaw_prior_deg = debug_get_float_option_wmr_constellation_yaw_prior_deg();
++	if (yaw_prior_deg <= 0.0f) {
++		return false;
++	}
++
++	os_mutex_lock(&wcb->data_lock);
++	bool locked = wcb->constellation.solve_yaw_locked;
++	struct xrt_quat fusion_rot = wcb->fusion.rot;
++	os_mutex_unlock(&wcb->data_lock);
++
++	if (!locked) {
++		return false;
++	}
++
++	math_quat_rotate(&fusion_rot, &wmr_constellation_rx180_bridge, out_orientation);
++	*out_yaw_threshold_rad = yaw_prior_deg * ((float)M_PI / 180.0f);
++	return true;
++}
++
+ void
+ wmr_controller_base_add_to_constellation_tracker(struct wmr_controller_base *wcb,
+                                                  struct t_constellation_tracker *tracker,
+@@ -1762,6 +1825,7 @@ wmr_controller_base_add_to_constellation_tracker(struct wmr_controller_base *wcb
+ 		m_relation_history_create(&wcb->constellation.relation_history);
+ 	}
+ 	wcb->constellation.tracking_source.get_tracked_pose = constellation_tracking_source_get_tracked_pose;
++	wcb->constellation.tracking_source.get_trusted_orientation = constellation_tracking_source_get_trusted_orientation;
+ 
+ 	struct t_constellation_tracker_device_params params = {
+ 	    .led_model = wcb->constellation.led_model,
+diff --git a/src/xrt/include/tracking/t_constellation.h b/src/xrt/include/tracking/t_constellation.h
+index ac05b7bcc..a0b753655 100644
+--- a/src/xrt/include/tracking/t_constellation.h
++++ b/src/xrt/include/tracking/t_constellation.h
+@@ -222,6 +222,38 @@ struct t_constellation_tracker_tracking_source
+ 	void (*get_tracked_pose)(struct t_constellation_tracker_tracking_source *,
+ 	                         int64_t when_ns,
+ 	                         struct xrt_space_relation *out_relation);
++
++	/*!
++	 * OPTIONAL, may be NULL. If set, called by the constellation tracker before searching for
++	 * this device to ask for a TRUSTED absolute orientation -- independent of, and not required
++	 * to agree with, whatever @ref get_tracked_pose's own predicted/history-based pose currently
++	 * says. The motivating case (reverb-g2 project, T213/patch 0074 follow-up) is a tracking
++	 * source whose visual prior can go stale between real fixes or get poisoned by a bad past
++	 * correspondence match, but which also has a SEPARATE, always-fresh reference -- e.g. a WMR
++	 * controller's gyro-integrated IMU fusion heading -- worth trusting for orientation (yaw
++	 * specifically) even when the ordinary prior can't be trusted tightly.
++	 *
++	 * @param[in]  when_ns               Timestamp the orientation is wanted for, same clock as
++	 *                                   @ref get_tracked_pose's own @c when_ns.
++	 * @param[out] out_orientation       The trusted orientation, in the SAME xrt world/tracking-
++	 *                                   origin frame and body-frame convention as the poses
++	 *                                   @ref get_tracked_pose returns (NOT necessarily the same
++	 *                                   convention as whatever internal reference the tracking
++	 *                                   source computed this from -- converting between the two
++	 *                                   is this callback's job, not the tracker's).
++	 * @param[out] out_yaw_threshold_rad Maximum |yaw error| (about the local up/gravity axis,
++	 *                                   see @ref pose_metrics_trusted_orientation) the tracker
++	 *                                   should tolerate before rejecting/deprioritising a
++	 *                                   candidate pose against this reference.
++	 *
++	 * @return true if both out params were filled in and should be trusted right now, false if
++	 * no trustworthy reference is available yet (e.g. not converged/locked) -- the tracker then
++	 * behaves exactly as if this callback were NULL for this call.
++	 */
++	bool (*get_trusted_orientation)(struct t_constellation_tracker_tracking_source *,
++	                                int64_t when_ns,
++	                                struct xrt_quat *out_orientation,
++	                                float *out_yaw_threshold_rad);
+ };
+ 
+ /*!
+@@ -240,6 +272,28 @@ t_constellation_tracker_tracking_source_get_tracked_pose(
+ 	tracking_source->get_tracked_pose(tracking_source, when_ns, out_relation);
+ }
+ 
++/*!
++ * Helper function for @ref t_constellation_tracker_tracking_source::get_trusted_orientation.
++ * Handles NULL (the common case: most tracking sources don't implement this), returning false.
++ *
++ * @copydoc t_constellation_tracker_tracking_source::get_trusted_orientation
++ *
++ * @public @memberof t_constellation_tracker_tracking_source
++ */
++XRT_NONNULL_ALL static inline bool
++t_constellation_tracker_tracking_source_get_trusted_orientation(
++    struct t_constellation_tracker_tracking_source *tracking_source,
++    int64_t when_ns,
++    struct xrt_quat *out_orientation,
++    float *out_yaw_threshold_rad)
++{
++	if (tracking_source->get_trusted_orientation == NULL) {
++		return false;
++	}
++	return tracking_source->get_trusted_orientation(tracking_source, when_ns, out_orientation,
++	                                                out_yaw_threshold_rad);
++}
++
+ 
+ struct t_constellation_tracker_led
+ {
+diff --git a/src/xrt/tracking/constellation/correspondence_search.c b/src/xrt/tracking/constellation/correspondence_search.c
+index 3a92e9114..5c89a94fb 100644
+--- a/src/xrt/tracking/constellation/correspondence_search.c
++++ b/src/xrt/tracking/constellation/correspondence_search.c
+@@ -215,15 +215,18 @@ correspondence_search_project_pose(struct correspondence_search *cs,
+ 
+ 	struct pose_metrics score;
+ 
++	const struct pose_metrics_trusted_orientation *trusted_orientation =
++	    (mi->search_flags & CS_FLAG_HAVE_TRUSTED_ORIENTATION) ? &mi->trusted_orientation : NULL;
++
+ 	// Check how many LEDs have matching blobs in this pose, if there's enough we have a good match
+ 	// @todo: It would be better to be able to pass a list of undistorted blob points
+ 	if (mi->search_flags & CS_FLAG_HAVE_POSE_PRIOR) {
+ 		pose_metrics_evaluate_pose_with_prior(&score, pose, false, &mi->pose_prior, mi->pos_error_thresh,
+ 		                                      mi->rot_error_thresh, cs->blobs, cs->num_points, leds,
+-		                                      model->device_id, cs->calib, NULL);
++		                                      model->device_id, cs->calib, NULL, trusted_orientation);
+ 	} else {
+ 		pose_metrics_evaluate_pose(&score, pose, cs->blobs, cs->num_points, leds, model->device_id, cs->calib,
+-		                           NULL);
++		                           NULL, trusted_orientation);
+ 	}
+ 
+ 	// If this pose is any good, test it further
+@@ -974,7 +977,8 @@ correspondence_search_find_one_pose(struct correspondence_search *cs,
+                                     struct xrt_vec3 *rot_error_thresh,
+                                     struct xrt_vec3 *gravity_vector,
+                                     float gravity_tolerance_rad,
+-                                    struct pose_metrics *score)
++                                    struct pose_metrics *score,
++                                    const struct pose_metrics_trusted_orientation *trusted_orientation)
+ {
+ 	assert(pose != NULL);
+ 	assert(score != NULL);
+@@ -1015,6 +1019,11 @@ correspondence_search_find_one_pose(struct correspondence_search *cs,
+ 		                                &pose_gravity_twist);
+ 	}
+ 
++	if (search_flags & CS_FLAG_HAVE_TRUSTED_ORIENTATION) {
++		assert(trusted_orientation != NULL);
++		mi.trusted_orientation = *trusted_orientation;
++	}
++
+ 	if (search_pose_for_model(cs, &mi) && (mi.match_flags & POSE_MATCH_GOOD)) {
+ 		*pose = mi.best_pose;
+ 		*score = mi.best_score;
+diff --git a/src/xrt/tracking/constellation/correspondence_search.h b/src/xrt/tracking/constellation/correspondence_search.h
+index 0321dfef9..325c82f73 100644
+--- a/src/xrt/tracking/constellation/correspondence_search.h
++++ b/src/xrt/tracking/constellation/correspondence_search.h
+@@ -38,6 +38,12 @@ enum correspondence_search_flags
+ 	CS_FLAG_HAVE_POSE_PRIOR = 0x10,
+ 	//! Use the provided gravity vector to check pose verticality. Depends on CS_FLAG_HAVE_POSE_PRIOR.
+ 	CS_FLAG_MATCH_GRAVITY = 0x20,
++	//! If the input trusted_orientation (passed to correspondence_search_find_one_pose) contains a
++	//! trusted yaw reference candidates should be checked against. Independent of
++	//! CS_FLAG_HAVE_POSE_PRIOR/CS_FLAG_MATCH_GRAVITY -- a trusted orientation can be available even
++	//! for an ab-initio search with no position prior at all. See pose_metrics.h's
++	//! pose_metrics_trusted_orientation.
++	CS_FLAG_HAVE_TRUSTED_ORIENTATION = 0x40,
+ };
+ 
+ struct cs_image_point
+@@ -86,6 +92,9 @@ struct cs_model_info
+ 	struct xrt_vec3 gravity_vector;
+ 	struct xrt_quat gravity_swing;
+ 	float gravity_tolerance_rad;
++
++	/* Valid when CS_FLAG_HAVE_TRUSTED_ORIENTATION is set */
++	struct pose_metrics_trusted_orientation trusted_orientation;
+ };
+ 
+ struct correspondence_search
+@@ -124,7 +133,8 @@ correspondence_search_find_one_pose(struct correspondence_search *cs,
+                                     struct xrt_vec3 *rot_error_thresh,
+                                     struct xrt_vec3 *gravity_vector,
+                                     float gravity_tolerance_rad,
+-                                    struct pose_metrics *score);
++                                    struct pose_metrics *score,
++                                    const struct pose_metrics_trusted_orientation *trusted_orientation);
+ 
+ #ifdef __cplusplus
+ }
+diff --git a/src/xrt/tracking/constellation/pose_metrics.c b/src/xrt/tracking/constellation/pose_metrics.c
+index ff8488828..eaaeea657 100644
+--- a/src/xrt/tracking/constellation/pose_metrics.c
++++ b/src/xrt/tracking/constellation/pose_metrics.c
+@@ -32,6 +32,19 @@
+ #define LOG_SPEW(...)
+ #endif
+ 
++// Rate-limited diagnostic counters for the trusted-orientation yaw check (reverb-g2 T213, patch
++// 0074 follow-up) -- logged once for the first occurrence, then every 100th, so a session log
++// shows this firing without being spammy under a real search (which can test many candidates per
++// frame). Plain statics, not atomics: this file is called concurrently from more than one
++// processing thread (see t_constellation_tracker.cpp's slow/fast threads), but an occasionally
++// under/over-counted diagnostic tally is a fine trade against the complexity of proper atomics --
++// same "benign race" tolerance correspondence_search.c's own search_budget_ns init already uses.
++// Distinguishable in the log from the WMR driver's OWN device-side reject line
++// (wmr_controller_base.c's "yaw prior: rejected sample...", patch 0074): this one is the
++// generic tracker's search-level decision, not the device's post-hoc sample gate.
++static uint64_t trusted_yaw_reject_count = 0;
++static uint64_t trusted_yaw_deprioritize_count = 0;
++
+ static void
+ expand_rect(struct pose_rect *bounds, double x, double y, double w, double h)
+ {
+@@ -353,6 +366,54 @@ pose_metrics_match_pose_to_blobs(const struct xrt_pose *pose,
+ 	}
+ }
+ 
++/*!
++ * Yaw-only disagreement between a candidate's orientation and a trusted reference, isolated via
++ * swing-twist about @p trusted's up_vector -- mirrors the WMR driver's own
++ * wmr_constellation_solve_yaw_error_rad (reverb-g2 patch 0074), just operating in whatever frame
++ * the caller's poses are already in (camera frame, from this file's callers) instead of world
++ * frame, and with a caller-supplied axis instead of a hardcoded world-Y, since this file has no
++ * notion of "world" at all -- see CS_FLAG_MATCH_GRAVITY's own gravity_vector in
++ * correspondence_search.c for the established pattern of doing exactly that kind of
++ * frame-agnostic swing-twist decomposition.
++ */
++static float
++trusted_orientation_yaw_error_rad(const struct xrt_quat *pose_orientation,
++                                  const struct pose_metrics_trusted_orientation *trusted)
++{
++	struct xrt_quat trusted_inv;
++	math_quat_invert(&trusted->orientation, &trusted_inv);
++
++	// Frame-local rotation taking the trusted reference to the candidate -- same
++	// "target * inverse(current)" pattern the WMR driver's own yaw-error helper uses.
++	struct xrt_quat full_delta;
++	math_quat_rotate(pose_orientation, &trusted_inv, &full_delta);
++
++	struct xrt_vec3 axis = trusted->up_vector;
++	math_vec3_normalize(&axis);
++
++	struct xrt_quat swing_discarded, yaw_only;
++	math_quat_decompose_swing_twist(&full_delta, &axis, &swing_discarded, &yaw_only);
++
++	// yaw_only's vector part is guaranteed parallel to `axis` by construction (see
++	// math_quat_decompose_swing_twist: it's built as `axis * dot(orig_axis, axis)`, then
++	// renormalized) -- its signed projection onto axis, paired with .w, gives the same
++	// atan2(sin(theta/2), cos(theta/2)) pair the WMR helper reads directly off .y/.w for its
++	// hardcoded world-Y axis, generalized here to an arbitrary one.
++	struct xrt_vec3 yaw_vec = {yaw_only.x, yaw_only.y, yaw_only.z};
++	float signed_sin_half = (float)m_vec3_dot(yaw_vec, axis);
++
++	float yaw_error_rad = 2.0f * atan2f(signed_sin_half, yaw_only.w);
++
++	// Wrap to (-pi, pi] -- 2*atan2 spans (-2pi, 2pi], and an unwrapped error beyond +-180 steps
++	// the long way around the circle (see the WMR helper's own comment, caught live there).
++	if (yaw_error_rad > (float)M_PI) {
++		yaw_error_rad -= 2.0f * (float)M_PI;
++	} else if (yaw_error_rad < -(float)M_PI) {
++		yaw_error_rad += 2.0f * (float)M_PI;
++	}
++	return yaw_error_rad;
++}
++
+ void
+ pose_metrics_evaluate_pose(struct pose_metrics *score,
+                            const struct xrt_pose *pose,
+@@ -361,10 +422,11 @@ pose_metrics_evaluate_pose(struct pose_metrics *score,
+                            struct t_constellation_tracker_led_model *led_model,
+                            t_constellation_device_id_t device_id,
+                            struct camera_model *calib,
+-                           struct pose_rect *out_bounds)
++                           struct pose_rect *out_bounds,
++                           const struct pose_metrics_trusted_orientation *trusted_orientation)
+ {
+ 	pose_metrics_evaluate_pose_with_prior(score, pose, false, NULL, NULL, NULL, blobs, num_blobs, led_model,
+-	                                      device_id, calib, out_bounds);
++	                                      device_id, calib, out_bounds, trusted_orientation);
+ }
+ 
+ void
+@@ -379,7 +441,8 @@ pose_metrics_evaluate_pose_with_prior(struct pose_metrics *score,
+                                       struct t_constellation_tracker_led_model *led_model,
+                                       t_constellation_device_id_t device_id,
+                                       struct camera_model *calib,
+-                                      struct pose_rect *out_bounds)
++                                      struct pose_rect *out_bounds,
++                                      const struct pose_metrics_trusted_orientation *trusted_orientation)
+ {
+ 	/*
+ 	 * 1. Project the LED points with the provided pose
+@@ -416,6 +479,24 @@ pose_metrics_evaluate_pose_with_prior(struct pose_metrics *score,
+ 		check_pose_prior(score, pose, pose_prior, pos_error_thresh, rot_error_thresh);
+ 	}
+ 
++	// If a trusted orientation was supplied, measure yaw agreement unconditionally (regardless
++	// of pose_prior/prior_must_match, and regardless of which branch below ends up granting
++	// POSE_MATCH_GOOD) -- see pose_metrics_trusted_orientation's own comment for what this is
++	// and pose_metrics_score_is_better_pose for the other consumer of these flags. Computed
++	// before the matched_blobs<3 early exit purely so the flags are always set consistently
++	// whenever trusted_orientation != NULL, even though a <3-blob score can never become GOOD
++	// anyway.
++	bool trusted_yaw_ok = true; // vacuously true when no trusted_orientation was supplied
++	if (trusted_orientation != NULL) {
++		score->match_flags |= POSE_HAD_TRUSTED_ORIENTATION;
++		float yaw_error_rad = trusted_orientation_yaw_error_rad(&pose->orientation, trusted_orientation);
++		score->trusted_yaw_error_rad = (double)yaw_error_rad;
++		trusted_yaw_ok = fabsf(yaw_error_rad) <= trusted_orientation->yaw_threshold_rad;
++		if (trusted_yaw_ok) {
++			score->match_flags |= POSE_MATCH_TRUSTED_YAW;
++		}
++	}
++
+ 	// Don't add GOOD/STRONG flags if matched fewer than 3 blobs
+ 	if (score->matched_blobs < 3) {
+ 		goto done;
+@@ -450,8 +531,34 @@ pose_metrics_evaluate_pose_with_prior(struct pose_metrics *score,
+ 		/*
+ 		 * If we matched all the blobs in the pose bounding box (allowing 25% noise / overlapping blobs)
+ 		 * or if we matched a large proportion (2/3) of the LEDs we expect to be visible, then consider this a
+-		 * good pose match
++		 * good pose match.
++		 *
++		 * This branch grants POSE_MATCH_GOOD on reprojection quality and blob count ALONE -- unlike the
++		 * POSE_MATCH_POSITION|POSE_MATCH_ORIENT branch above, it never checks orientation against
++		 * anything. That is the exact loophole reverb-g2's T213 traced a yaw-flipped correspondence
++		 * ghost through (a wrong-heading pose can fit the same handful of blobs just as well as the
++		 * true one): if a trusted orientation reference is available, it MUST also agree here before
++		 * this branch is allowed to accept -- see pose_metrics_trusted_orientation's own comment.
+ 		 */
++		if (!trusted_yaw_ok) {
++			trusted_yaw_reject_count++;
++			if (trusted_yaw_reject_count == 1 || (trusted_yaw_reject_count % 100) == 0) {
++				U_LOG_I(
++				    "pose_metrics: trusted-yaw REJECTED a reprojection-only candidate (yaw error "
++				    "%.1f deg > %.1f deg threshold, %u matched blobs, %.2f px/LED; %llu rejected so "
++				    "far)",
++				    (double)RAD_TO_DEG(score->trusted_yaw_error_rad),
++				    (double)RAD_TO_DEG((double)trusted_orientation->yaw_threshold_rad),
++				    score->matched_blobs, error_per_led,
++				    (unsigned long long)trusted_yaw_reject_count);
++			}
++			LOG_SPEW(
++			    "Rejected reprojection-only match (%d visible LEDs, %d matched blobs) on trusted-yaw "
++			    "disagreement (%f rad)",
++			    score->visible_leds, score->matched_blobs, score->trusted_yaw_error_rad);
++			goto done;
++		}
++
+ 		score->match_flags |= POSE_MATCH_GOOD;
+ 
+ 		// If we had no pose prior, but a close reprojection error, allow a STRONG match
+@@ -491,6 +598,41 @@ pose_metrics_score_is_better_pose(struct pose_metrics *old_score, struct pose_me
+ 		return true;
+ 	}
+ 
++	// Trusted-orientation yaw preference (reverb-g2 T213, patch 0074 follow-up): among two
++	// candidates that are BOTH already "good" matches, one that agrees with an available
++	// trusted yaw reference always beats one that doesn't -- decided before any
++	// reprojection-based tie-break below, so a lower-error yaw-ghost can never win the search
++	// purely on reprojection quality. Deliberately placed after the two rules above (which
++	// already correctly decide the "no real candidate yet" case: every caller of this function
++	// only calls it once new_score already has POSE_MATCH_GOOD, so this only ever discriminates
++	// between two already-good candidates, never blocks the first real match from replacing an
++	// empty/never-matched old_score). A score that never had a trusted orientation to check
++	// (POSE_HAD_TRUSTED_ORIENTATION clear) is treated as "agrees" -- this rule only ever
++	// narrows the field among trusted-checked candidates, it never penalises a caller that
++	// didn't supply one.
++	if (POSE_HAS_FLAGS(old_score, POSE_MATCH_GOOD) && POSE_HAS_FLAGS(new_score, POSE_MATCH_GOOD)) {
++		bool old_yaw_ok = !POSE_HAS_FLAGS(old_score, POSE_HAD_TRUSTED_ORIENTATION) ||
++		                  POSE_HAS_FLAGS(old_score, POSE_MATCH_TRUSTED_YAW);
++		bool new_yaw_ok = !POSE_HAS_FLAGS(new_score, POSE_HAD_TRUSTED_ORIENTATION) ||
++		                  POSE_HAS_FLAGS(new_score, POSE_MATCH_TRUSTED_YAW);
++
++		if (old_yaw_ok && !new_yaw_ok) {
++			trusted_yaw_deprioritize_count++;
++			if (trusted_yaw_deprioritize_count == 1 || (trusted_yaw_deprioritize_count % 100) == 0) {
++				U_LOG_I(
++				    "pose_metrics: trusted-yaw DEPRIORITIZED a candidate in favour of the current "
++				    "best (candidate yaw error %.1f deg, %u matched blobs vs best's %u; %llu "
++				    "deprioritized so far)",
++				    (double)RAD_TO_DEG(new_score->trusted_yaw_error_rad), new_score->matched_blobs,
++				    old_score->matched_blobs, (unsigned long long)trusted_yaw_deprioritize_count);
++			}
++			return false;
++		}
++		if (!old_yaw_ok && new_yaw_ok) {
++			return true;
++		}
++	}
++
+ 	double new_error_per_led = new_score->reprojection_error / new_score->matched_blobs;
+ 	double best_error_per_led = WORST_REPROJECTION_ERROR;
+ 
+diff --git a/src/xrt/tracking/constellation/pose_metrics.h b/src/xrt/tracking/constellation/pose_metrics.h
+index 3b1612a7c..6ed69569f 100644
+--- a/src/xrt/tracking/constellation/pose_metrics.h
++++ b/src/xrt/tracking/constellation/pose_metrics.h
+@@ -53,6 +53,16 @@ enum pose_match_flags
+ 	POSE_HAD_PRIOR = 0x100,
+ 	//! The LED IDs on the blobs all matched the LEDs we thought (or were unassigned)
+ 	POSE_MATCH_LED_IDS = 0x200,
++	//! A @ref pose_metrics_trusted_orientation was supplied for this evaluation (i.e.
++	//! pose_metrics_evaluate_pose[_with_prior]'s trusted_orientation param was non-NULL) --
++	//! lets callers (e.g. pose_metrics_score_is_better_pose) tell "the check ran and this pose
++	//! failed it" (this flag set, POSE_MATCH_TRUSTED_YAW clear) apart from "no trusted
++	//! orientation was available for this comparison at all" (this flag clear, in which case
++	//! POSE_MATCH_TRUSTED_YAW is meaningless and must not be consulted).
++	POSE_HAD_TRUSTED_ORIENTATION = 0x400,
++	//! Only meaningful together with POSE_HAD_TRUSTED_ORIENTATION: the pose's yaw (about the
++	//! trusted orientation's up_vector) agreed with it within yaw_threshold_rad.
++	POSE_MATCH_TRUSTED_YAW = 0x800,
+ };
+ 
+ #define POSE_SET_FLAG(score, f) ((score)->match_flags |= (f))
+@@ -73,6 +83,44 @@ struct pose_metrics
+ 	struct xrt_vec3 orient_error;
+ 	//! Translation error (compared to a prior)
+ 	struct xrt_vec3 pos_error;
++
++	//! Signed yaw error (radians) against a supplied trusted_orientation, about its up_vector.
++	//! Only meaningful when POSE_HAD_TRUSTED_ORIENTATION is set in match_flags -- otherwise
++	//! left uninitialized by pose_metrics_evaluate_pose[_with_prior], same as orient_error/
++	//! pos_error above are only meaningful under POSE_HAD_PRIOR.
++	double trusted_yaw_error_rad;
++};
++
++/*!
++ * An OPTIONAL, independent orientation reference a tracking source may supply alongside (or
++ * instead of) the ordinary position/orientation pose_prior that @ref
++ * pose_metrics_evaluate_pose_with_prior already accepts. Unlike that prior (a single
++ * possibly-stale predicted pose, needing tolerant thresholds to accommodate real motion since
++ * the last visual fix), this is meant for a reference that stays fresh regardless of how long
++ * ago the last visual fix was -- e.g. gyro-integrated IMU fusion -- so it can be checked with a
++ * tight, staleness-blind, YAW-ONLY tolerance. Pitch/roll are deliberately never checked here:
++ * they are gravity-truth already (see WMR_CONSTELLATION_GRAVITY_GATE_DEG) and must not be
++ * conflated with this measurement.
++ *
++ * Motivating case (reverb-g2 project, T213, following on from patch 0074's device-side gate): a
++ * near-180-degree yaw-flipped correspondence-search ghost, which a position/orientation-tolerant
++ * pose_prior alone cannot catch without also rejecting genuine fast motion, and which the
++ * existing CS_FLAG_MATCH_GRAVITY check cannot see at all (a rotation about the vertical axis
++ * leaves the down vector fixed).
++ */
++struct pose_metrics_trusted_orientation
++{
++	//! Absolute orientation, in the SAME frame/convention as the `pose` argument being
++	//! evaluated (i.e. camera-frame, Tcv_cam_device convention -- NOT world frame). Converting
++	//! into this frame is the caller's job; this file has no notion of "world" at all.
++	struct xrt_quat orientation;
++	//! Unit vector, in that SAME frame, about which to isolate the yaw (twist) component via
++	//! math_quat_decompose_swing_twist -- e.g. "world up as seen from this camera", the same
++	//! vector CS_FLAG_MATCH_GRAVITY's own gravity_vector already is (see
++	//! correspondence_search.h).
++	struct xrt_vec3 up_vector;
++	//! Maximum allowed |yaw error| in radians before a candidate is rejected/deprioritized.
++	float yaw_threshold_rad;
+ };
+ 
+ struct pose_metrics_visible_led_info
+@@ -115,7 +163,8 @@ pose_metrics_evaluate_pose(struct pose_metrics *score,
+                            struct t_constellation_tracker_led_model *leds_model,
+                            t_constellation_device_id_t device_id,
+                            struct camera_model *calib,
+-                           struct pose_rect *out_bounds);
++                           struct pose_rect *out_bounds,
++                           const struct pose_metrics_trusted_orientation *trusted_orientation);
+ 
+ void
+ pose_metrics_evaluate_pose_with_prior(struct pose_metrics *score,
+@@ -129,7 +178,8 @@ pose_metrics_evaluate_pose_with_prior(struct pose_metrics *score,
+                                       struct t_constellation_tracker_led_model *led_model,
+                                       t_constellation_device_id_t device_id,
+                                       struct camera_model *calib,
+-                                      struct pose_rect *out_bounds);
++                                      struct pose_rect *out_bounds,
++                                      const struct pose_metrics_trusted_orientation *trusted_orientation);
+ 
+ /*!
+  * Compares whether new_score is a better pose than old_score.
+diff --git a/src/xrt/tracking/constellation/t_constellation_tracker.cpp b/src/xrt/tracking/constellation/t_constellation_tracker.cpp
+index fbde8b8a8..3285ce632 100644
+--- a/src/xrt/tracking/constellation/t_constellation_tracker.cpp
++++ b/src/xrt/tracking/constellation/t_constellation_tracker.cpp
+@@ -295,7 +295,8 @@ Camera::tryDevicePose(std::unique_ptr<Device> &device,
+                       DeviceState &device_state,
+                       xrt_pose &Tcv_cam_world,
+                       std::optional<xrt_pose> &Tcv_world_device_prior,
+-                      xrt_pose &Tcv_world_device_candidate)
++                      xrt_pose &Tcv_world_device_candidate,
++                      const pose_metrics_trusted_orientation *trusted_orientation)
+ {
+ 	xrt_pose Tcv_cam_device_candidate;
+ 	math_pose_transform(&Tcv_cam_world, &Tcv_world_device_candidate, &Tcv_cam_device_candidate);
+@@ -308,10 +309,11 @@ Camera::tryDevicePose(std::unique_ptr<Device> &device,
+ 		pose_metrics_evaluate_pose_with_prior(&score, &Tcv_cam_device_candidate, false, &Tcv_cam_device_prior,
+ 		                                      &device->prior_pos_error, &device->prior_rot_error, sample.blobs,
+ 		                                      sample.blob_count, &device->params.led_model, device->id,
+-		                                      &this->model, NULL);
++		                                      &this->model, NULL, trusted_orientation);
+ 	} else {
+ 		pose_metrics_evaluate_pose(&score, &Tcv_cam_device_candidate, sample.blobs, sample.blob_count,
+-		                           &device->params.led_model, device->id, &this->model, NULL);
++		                           &device->params.led_model, device->id, &this->model, NULL,
++		                           trusted_orientation);
+ 	}
+ 
+ 
+@@ -321,7 +323,8 @@ Camera::tryDevicePose(std::unique_ptr<Device> &device,
+ 		               device,                   //
+ 		               score,                    //
+ 		               Tcv_cam_device_candidate, //
+-		               false);                   //
++		               false,                    //
++		               trusted_orientation);      //
+ 		return true;
+ 	}
+ 
+@@ -408,10 +411,10 @@ Camera::tryDeviceBlobRecovery(std::unique_ptr<Device> &device,
+ 		pose_metrics_evaluate_pose_with_prior(&score, &Tcv_cam_device, true, &Tcv_cam_device_prior,
+ 		                                      &pos_window, &rot_window, sample.blobs,
+ 		                                      sample.blob_count, &device->params.led_model, device->id,
+-		                                      &this->model, NULL);
++		                                      &this->model, NULL, NULL);
+ 	} else {
+ 		pose_metrics_evaluate_pose(&score, &Tcv_cam_device, sample.blobs, sample.blob_count,
+-		                           &device->params.led_model, device->id, &this->model, NULL);
++		                           &device->params.led_model, device->id, &this->model, NULL, NULL);
+ 	}
+ 
+ 	if (POSE_HAS_FLAGS(&score, POSE_MATCH_GOOD)) {
+@@ -484,6 +487,17 @@ Camera::processSampleSlow(CameraSample &sample)
+ 
+ 	auto Txr_world_cam = sample.Txr_world_cam;
+ 
++	// OpenCV-convention camera pose in world, computed once per sample (not per device/pass) --
++	// used both by the CS_FLAG_MATCH_GRAVITY block below (which used to compute its own copy
++	// inline) and by getTrustedOrientation's frame conversion, which needs it regardless of
++	// whether a gravity-matching pose prior happens to be available this frame.
++	std::optional<xrt_pose> Tcv_world_cam = std::nullopt;
++	if (Txr_world_cam.has_value()) {
++		xrt_pose tmp;
++		math_pose_convert_opencv(&Txr_world_cam.value(), &tmp);
++		Tcv_world_cam = tmp;
++	}
++
+ 	for (int i = 0; i < 2; i++) {
+ 		for (std::unique_ptr<Device> &device : tracker->devices) {
+ 			auto search_model = device->search_model;
+@@ -596,12 +610,9 @@ Camera::processSampleSlow(CameraSample &sample)
+ 			    device->gravity_error_rad < DEG_TO_RAD(gravity_error_threshold_deg)) {
+ 				// If we have a pose for the camera and we have a prior pose
+ 				// (required by correspondence for search gravity matching)
+-				if (Txr_world_cam.has_value()) {
+-					xrt_pose Tcv_world_cam;
+-					math_pose_convert_opencv(&Txr_world_cam.value(), &Tcv_world_cam);
+-
++				if (Tcv_world_cam.has_value()) {
+ 					// Acquire the camera's gravity vector under the processing lock
+-					get_pose_gravity_vector(Tcv_world_cam, cv_camera_gravity_vector);
++					get_pose_gravity_vector(Tcv_world_cam.value(), cv_camera_gravity_vector);
+ 
+ 					// Add in to check gravity
+ 					search_flags =
+@@ -609,6 +620,22 @@ Camera::processSampleSlow(CameraSample &sample)
+ 				}
+ 			}
+ 
++			// Trusted-orientation yaw reference (reverb-g2 T213, patch 0074 follow-up), if the
++			// device's tracking source has one available -- independent of CS_FLAG_HAVE_POSE_PRIOR/
++			// CS_FLAG_MATCH_GRAVITY above (a device can have a locked fusion heading well before it
++			// ever has a position prior). See getTrustedOrientation's own doc comment.
++			std::optional<pose_metrics_trusted_orientation> trusted_orientation = std::nullopt;
++			if (Tcv_world_cam.has_value()) {
++				trusted_orientation =
++				    this->getTrustedOrientation(device, Tcv_world_cam.value(), sample.timestamp_ns);
++			}
++			if (trusted_orientation.has_value()) {
++				search_flags =
++				    (correspondence_search_flags)(search_flags | CS_FLAG_HAVE_TRUSTED_ORIENTATION);
++			}
++			const pose_metrics_trusted_orientation *trusted_orientation_ptr =
++			    trusted_orientation.has_value() ? &trusted_orientation.value() : nullptr;
++
+ 			pose_metrics score;
+ 			bool found_pose = correspondence_search_find_one_pose( //
+ 			    data.cs,                                           //
+@@ -619,14 +646,16 @@ Camera::processSampleSlow(CameraSample &sample)
+ 			    &device->prior_rot_error,                          //
+ 			    &cv_camera_gravity_vector,                         //
+ 			    device->gravity_error_rad,                         //
+-			    &score);                                           //
++			    &score,                                            //
++			    trusted_orientation_ptr);                          //
+ 			if (found_pose) {
+-				this->pushPose(sample,         //
+-				               *device_state,  //
+-				               device,         //
+-				               score,          //
+-				               Tcv_cam_device, //
+-				               false);         //
++				this->pushPose(sample,               //
++				               *device_state,        //
++				               device,               //
++				               score,                //
++				               Tcv_cam_device,       //
++				               false,                //
++				               trusted_orientation_ptr); //
+ 
+ 				// We found a pose for this device in this sample
+ 				device_state->needs_slow_processing = false;
+@@ -707,6 +736,15 @@ Camera::processSampleFast(CameraSample &sample)
+ 		                                          ? std::optional<xrt_pose>(device_predicted_relation.pose)
+ 		                                          : std::nullopt;
+ 
++		// Trusted-orientation yaw reference (reverb-g2 T213, patch 0074 follow-up), if the device's
++		// tracking source has one available -- see getTrustedOrientation's own doc comment and
++		// processSampleSlow's identical use of it. Computed once per device per sample, independent
++		// of Tcv_world_device_predicted above (a locked fusion heading can exist well before any
++		// position prior does).
++		auto trusted_orientation = this->getTrustedOrientation(device, Tcv_world_cam, sample.timestamp_ns);
++		const pose_metrics_trusted_orientation *trusted_orientation_ptr =
++		    trusted_orientation.has_value() ? &trusted_orientation.value() : nullptr;
++
+ 		bool wipe_blob_associations = false;
+ 		if (this->tryDeviceBlobRecovery(device, sample, device_state, Tcv_cam_world,
+ 		                                Tcv_world_device_predicted)) {
+@@ -719,7 +757,7 @@ Camera::processSampleFast(CameraSample &sample)
+ 		// if we have a valid prior pose, try to use it for fast matching
+ 		if (Tcv_world_device_predicted.has_value() &&
+ 		    this->tryDevicePose(device, sample, device_state, Tcv_cam_world, Tcv_world_device_predicted,
+-		                        Tcv_world_device_predicted.value())) {
++		                        Tcv_world_device_predicted.value(), trusted_orientation_ptr)) {
+ 			CT_DEBUG(tracker, "Fast processing for device %d succeeded", device->id);
+ 			continue; // try the next device, we found a pose!
+ 		}
+@@ -737,8 +775,9 @@ Camera::processSampleFast(CameraSample &sample)
+ 			}
+ 		}
+ 
+-		if (has_last_known && this->tryDevicePose(device, sample, device_state, Tcv_cam_world,
+-		                                          Tcv_world_device_predicted, Tcv_world_device_last_known)) {
++		if (has_last_known &&
++		    this->tryDevicePose(device, sample, device_state, Tcv_cam_world, Tcv_world_device_predicted,
++		                        Tcv_world_device_last_known, trusted_orientation_ptr)) {
+ 			CT_DEBUG(tracker, "Fast processing for device %d succeeded with last known pose", device->id);
+ 			continue; // try the next device, we found a pose!
+ 		}
+@@ -783,7 +822,8 @@ Camera::pushPose(CameraSample &camera_sample,
+                  std::unique_ptr<Device> &device,
+                  pose_metrics &score,
+                  xrt_pose &Tcv_cam_device,
+-                 bool was_optimized)
++                 bool was_optimized,
++                 const pose_metrics_trusted_orientation *trusted_orientation)
+ {
+ 	// We should never find two poses for the same device in a single frame
+ 	assert(device_state.found_pose.has_value() == false);
+@@ -824,8 +864,11 @@ Camera::pushPose(CameraSample &camera_sample,
+ 		}
+ 
+ 		// We need to re-evaluate the pose after optimization, since the reprojection error may have changed.
++		// Re-checked against trusted_orientation too: RANSAC-PnP can move the pose, so a candidate that
++		// agreed with the trusted heading before refinement is not guaranteed to still agree after it.
+ 		pose_metrics_evaluate_pose(&score, &Tcv_cam_device, camera_sample.blobs, camera_sample.blob_count,
+-		                           &device->params.led_model, device->id, &this->model, NULL);
++		                           &device->params.led_model, device->id, &this->model, NULL,
++		                           trusted_orientation);
+ 	}
+ 
+ 	// Move to OpenXR space
+@@ -897,6 +940,13 @@ Camera::pushPose(CameraSample &camera_sample,
+ 	// Only the publication is suppressed: found_pose, the marked blobs and the rest of the
+ 	// tracker's per-frame bookkeeping are left exactly as they were, so this changes what the
+ 	// device is told and nothing about how the tracker searches.
++	//
++	// trusted_orientation (reverb-g2 T213, patch 0074 follow-up) rides this SAME gate for free:
++	// pose_metrics_evaluate_pose above was given trusted_orientation, so a refined pose that
++	// disagrees with it on yaw already comes back without POSE_MATCH_GOOD (see
++	// pose_metrics_evaluate_pose_with_prior's loophole-branch check) -- no separate check needed
++	// here. What trusted_orientation ALSO does, unlike an ordinary failed prior match, is gate
++	// the locked_data update just below -- see that block's own comment.
+ 	if (POSE_HAS_FLAGS(&score, POSE_MATCH_GOOD)) {
+ 		// Push the sample to the device
+ 		t_constellation_tracker_sample sample = {
+@@ -918,22 +968,95 @@ Camera::pushPose(CameraSample &camera_sample,
+ 	{
+ 		std::unique_lock<os::Mutex> lock(device->data_lock);
+ 
+-		// If we already found a pose in the future, then don't mark blobs, since the device has definitely
+-		// moved.
+-		if (!device->locked_data.last_known_pose.has_value() ||
+-		    device->locked_data.last_known_pose->timestamp_ns <= camera_sample.timestamp_ns) {
+-			// Call back to the blobwatch to update the blobs for this device. Done after pose optimization
+-			// since the RANSAC process will unlabel any outliers.
+-			auto tbo = camera_sample.toBlobObservation();
+-			t_blobwatch_mark_blob_device(camera_sample.source, &tbo, device->id);
+-		}
++		// last_known_pose/blob-marking below are normally updated UNCONDITIONALLY, even for a pose
++		// that didn't pass POSE_MATCH_GOOD after refinement (see the publication gate above, added
++		// 2026-08-12): only the publication to the device is suppressed, deliberately, so a
++		// so-so pose still feeds the tracker's own internal recovery prior. Do NOT relax that for
++		// the general case -- it is load-bearing for ordinary reacquisition.
++		//
++		// trusted_orientation (reverb-g2 T213) is the one narrow exception, and only when it was
++		// actually supplied for this call: a candidate that disagrees with a LOCKED, always-fresh
++		// fusion heading on yaw is not "so-so", it's the yaw-ghost this whole feature exists to
++		// keep out of the tracker's own state -- 0074's own follow-up note named this exact update
++		// as the residual way a rejected ghost still poisons future searches. When
++		// trusted_orientation is nullptr (every device/camera that hasn't opted in, i.e. almost
++		// all of them), trusted_yaw_ok is unconditionally true and this block is BYTE IDENTICAL to
++		// before.
++		bool trusted_yaw_ok = trusted_orientation == nullptr || POSE_HAS_FLAGS(&score, POSE_MATCH_TRUSTED_YAW);
++
++		if (trusted_yaw_ok) {
++			// If we already found a pose in the future, then don't mark blobs, since the device has
++			// definitely moved.
++			if (!device->locked_data.last_known_pose.has_value() ||
++			    device->locked_data.last_known_pose->timestamp_ns <= camera_sample.timestamp_ns) {
++				// Call back to the blobwatch to update the blobs for this device. Done after pose
++				// optimization since the RANSAC process will unlabel any outliers.
++				auto tbo = camera_sample.toBlobObservation();
++				t_blobwatch_mark_blob_device(camera_sample.source, &tbo, device->id);
++			}
+ 
+-		device->locked_data.last_known_pose = DeviceLastPose(Txr_world_device, camera_sample.timestamp_ns);
++			device->locked_data.last_known_pose = DeviceLastPose(Txr_world_device, camera_sample.timestamp_ns);
++		} else {
++			CT_DEBUG(tracker,
++			         "Device %d: pose disagreed with trusted orientation on yaw (%.1f deg) -- not letting "
++			         "it poison last_known_pose/blob associations",
++			         device->id, RAD_TO_DEG(score.trusted_yaw_error_rad));
++		}
+ 	}
+ 
+ 	CT_DEBUG(tracker, "Found pose for device %d", device->id);
+ }
+ 
++std::optional<pose_metrics_trusted_orientation>
++Camera::getTrustedOrientation(std::unique_ptr<Device> &device, xrt_pose &Tcv_world_cam, int64_t when_ns)
++{
++	if (device->params.tracking_source == nullptr) {
++		return std::nullopt;
++	}
++
++	// Contract (see t_constellation.h): out_orientation comes back in the SAME xrt world/
++	// tracking-origin frame and body-frame convention get_tracked_pose's own poses use --
++	// converting from whatever internal reference the tracking source has (e.g. a WMR
++	// controller's IMU fusion) into that convention is the tracking source's own job, not ours.
++	xrt_quat Txr_world_trusted_orientation;
++	float yaw_threshold_rad = 0.0f;
++	if (!t_constellation_tracker_tracking_source_get_trusted_orientation(
++	        device->params.tracking_source, when_ns, &Txr_world_trusted_orientation, &yaw_threshold_rad)) {
++		return std::nullopt;
++	}
++	if (!(yaw_threshold_rad > 0.0f)) {
++		// A non-positive threshold can't ever be satisfied meaningfully -- treat it the same as
++		// "nothing trustworthy right now" rather than rejecting every single candidate.
++		return std::nullopt;
++	}
++
++	// Convert into THIS camera's frame -- the exact same convert-then-transform-then-invert shape
++	// tryDevicePose's own Tcv_cam_device_prior conversion uses a few lines above this function's
++	// callers, just applied to an orientation-only pose (position is irrelevant to the result: pose
++	// composition's rotation output never depends on the child pose's translation).
++	xrt_pose Txr_world_trusted_pose = XRT_POSE_IDENTITY;
++	Txr_world_trusted_pose.orientation = Txr_world_trusted_orientation;
++	xrt_pose Tcv_world_trusted_pose;
++	math_pose_convert_opencv(&Txr_world_trusted_pose, &Tcv_world_trusted_pose);
++
++	xrt_pose Tcv_cam_world;
++	math_pose_invert(&Tcv_world_cam, &Tcv_cam_world);
++
++	xrt_pose Tcv_cam_trusted_pose;
++	math_pose_transform(&Tcv_cam_world, &Tcv_world_trusted_pose, &Tcv_cam_trusted_pose);
++
++	pose_metrics_trusted_orientation trusted{};
++	trusted.orientation = Tcv_cam_trusted_pose.orientation;
++	// "World up as seen from this camera" -- identical quantity to CS_FLAG_MATCH_GRAVITY's own
++	// cv_camera_gravity_vector (processSampleSlow), computed independently here since that one is
++	// only ever filled in conditionally (gated on device->gravity_error_rad and a position prior
++	// existing), neither of which trusted_orientation depends on.
++	get_pose_gravity_vector(Tcv_world_cam, trusted.up_vector);
++	trusted.yaw_threshold_rad = yaw_threshold_rad;
++
++	return trusted;
++}
++
+ /*
+  *
+  * CameraMosaic implementations
+diff --git a/src/xrt/tracking/constellation/t_constellation_tracker_internal.hpp b/src/xrt/tracking/constellation/t_constellation_tracker_internal.hpp
+index 81394999b..8ffcb0329 100644
+--- a/src/xrt/tracking/constellation/t_constellation_tracker_internal.hpp
++++ b/src/xrt/tracking/constellation/t_constellation_tracker_internal.hpp
+@@ -323,7 +323,8 @@ public: // Methods (t_constellation_tracker.cpp)
+ 	              DeviceState &device_state,
+ 	              xrt_pose &Tcv_cam_world,
+ 	              std::optional<xrt_pose> &Tcv_world_device_prior,
+-	              xrt_pose &Tcv_world_device_candidate);
++	              xrt_pose &Tcv_world_device_candidate,
++	              const pose_metrics_trusted_orientation *trusted_orientation = nullptr);
+ 
+ 	bool
+ 	tryDeviceBlobRecovery(std::unique_ptr<Device> &device,
+@@ -345,7 +346,19 @@ public: // Methods (t_constellation_tracker.cpp)
+ 	         std::unique_ptr<Device> &device,
+ 	         pose_metrics &score,
+ 	         xrt_pose &Tcv_cam_device,
+-	         bool was_optimized);
++	         bool was_optimized,
++	         const pose_metrics_trusted_orientation *trusted_orientation = nullptr);
++
++	//! Queries @p device's tracking_source (if any) for a trusted absolute orientation (@ref
++	//! t_constellation_tracker_tracking_source::get_trusted_orientation), and if one is
++	//! available, converts it into THIS camera's frame (Tcv_cam_device convention, matching the
++	//! candidates pose_metrics evaluates) plus a camera-frame up_vector to isolate yaw with --
++	//! the same conversion tryDevicePose's own Tcv_cam_device_prior already does, and the same
++	//! "world up as seen from this camera" get_pose_gravity_vector already computes for
++	//! CS_FLAG_MATCH_GRAVITY. Returns std::nullopt if the device has no such hook, or it has
++	//! nothing trustworthy to report right now.
++	std::optional<pose_metrics_trusted_orientation>
++	getTrustedOrientation(std::unique_ptr<Device> &device, xrt_pose &Tcv_world_cam, int64_t when_ns);
+ 
+ public: // Methods (constellation_debug_scribble.cpp)
+ 	void
+-- 
+2.47.3
+

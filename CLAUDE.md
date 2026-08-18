@@ -1,6 +1,74 @@
 # Context for the 90Hz lab agent
 
-> ## START HERE NEXT SESSION (2026-08-17, ~08:00, lab machine) — optimization round 1
+> ## START HERE NEXT SESSION (2026-08-18, ~05:45, lab machine) — the ghost-saga night:
+> mapping machine-complete, the parked-hands mechanism found and two defense layers
+> shipped, plus a parallel research fleet. Read `docs/pruebas.jsonl` T210-T215 + the
+> plan in NEXT-STEP.md first.
+>
+> **The controller arc, in one breath**: 0071 closed the left matrix from pure machine
+> data (half-turn about −Y, wearer: "el 8 vuelve", "los ejes están bien"); the physical
+> QUORUM test (three gyros, one rigid plane on the chair — user's design) confirmed the
+> controllers unanimous (gain L/R 0.9905, wobble <1°) and REFUTED T211's HMD 9%-leak
+> premise (0072 shelved default-off forever, worn roll drift back to OPEN, hypothesis
+> = Basalt gyro-bias-under-dynamics); the WS3 trace capture (T213, docs/40's recipe,
+> 20-min 5-phase wearer protocol) converted "hands park" into a mechanism — **~180°
+> yaw-GHOST correspondence assignments, gravity-gate-blind by construction, left 13×
+> worse** — and located the code loophole (`pose_metrics_evaluate_pose_with_prior`'s
+> reprojection-only else-if). Defenses shipped: 0074 (device-side ghost gate,
+> `WMR_CONSTELLATION_YAW_PRIOR_DEG=60`, drew first blood at 178.8°/158.6°) and 0076
+> (the deep fix: trusted fusion-heading prior INSIDE the search — loophole closed,
+> lobe-aware candidate preference, pushPose poisoning stopped). Measured: left position
+> presence 0.77→4.55% (6×), right 15.9→30.3%, 334 tracker-side interventions with the
+> 0074 layer down to 2 (layering works). **Wearer's honest verdict: what shows is true
+> and follows, right "bastante bien", left still ~95% parked — TRUE-solve scarcity
+> survives correct selection. NEXT LEVER, named: SEED the correspondence search with
+> the prior (generate the assignment from fusion attitude, not just judge candidates)
+> — the full assignment-prior, major surgery, fresh brains.** Also open: P3/P4's total
+> correspondence collapse (hands still/crossed = flat ZERO both hands, 320s, separate
+> mechanism). At rest, settled controllers are pixel-stable (bias settling; polish
+> lever queued).
+>
+> **Also landed tonight**: 0073 (battery line names the hand — earned by a live
+> failure); 0075 + xrizer 0003 (proximity → XR_EXT_user_presence end-to-end, UNTESTED,
+> first don/doff calibrates the threshold; unblocks War Robots VR + doff-to-pause);
+> docs/47 (calibration onboarding: generic vs self-calibrating vs per-unit + the
+> 10-min new-unit checklist); docs/48 (GPU "heat without frames" landscape: the
+> closed loop on measured pacing does NOT exist for desktop/VR — our power.conf niche
+> is publishable); docs/19 additions (driver verdict: STAY on 595.71.05+patches, PR
+> #1275 dead-quiet, ⚠️ the CUDA apt repo now offers 610.57.04 and an unpinned upgrade
+> silently kills 90Hz; live RT audit: exactly 3 threads at SCHED_FIFO:99, Basalt
+> workers unnamed — thread-naming patch + per-title pinning design queued); docs/49
+> (controller input map + the legacy-API dead-buttons diagnosis, agent report —
+> Blade Runner 9732 case). Battery: mik DIED validating docs/46's cliff model
+> (byte-79-under-load set collapsed in hours; series-pair physics written up), fleet
+> thin (kub+rio in service, bob ok, kos+mar on watch, mik recycled, right currently
+> on TEST ALKALINES byte 152=1.47V/cell — linear model validated, no clamp at 127);
+> buy 2-4 NiMH cells. Keepalive: survives 35+ min motionless while the service runs
+> but controllers die in the down/up gap between sessions; wake = HOLD Windows button
+> 3 s.
+>
+> **Process rules born tonight**: (1) two agents + one build tree = torn binary — a
+> mid-edit compile framed 0074 for an hour; rebuild only after ALL agents settle,
+> before any session launch. (2) The quorum instrument is for controller gyros; the
+> HMD needs its chair pass ALONE (board+LEDs in camera view diverged SLAM 72 m).
+> (3) Session launches: controllers must be awake BEFORE the service starts (no
+> hot-add), and the launch env of record is in T215's sessions (YAW_PRIOR=60 now part
+> of the settled stack).
+>
+> **Wearer-first queue for next session**: (1) height calibration at start (tape
+> measure + `XRT_TRACKING_ORIGIN_OFFSET_Y = height − 1.6` — 2 min, also tests the
+> controller-height hypothesis); (2) presence don/doff calibration (`WMR_USER_PRESENCE=1`,
+> watch the raw byte lines); (3) the assignment-prior seeding build + its A/B; (4)
+> WS6 3-title smoke validation on the frozen stack (SUPERHOT / Propagation / Blast
+> the Past) with power-log + pacing windows + docs/23 rows — the affinity A/B rides
+> along (0058 knobs untested).
+
+> ## SUPERSEDED (2026-08-17, ~08:00) — optimization round 1 header below; its
+> next-round map items 1/2/6 advanced massively tonight (snap smoothing shipped as
+> spread=60; roll drift reopened honestly; constellation solve-rate cracked as the
+> ghost mechanism).
+
+> ## START HERE PREVIOUS (2026-08-17, ~08:00, lab machine) — optimization round 1
 > DONE on top of the closed saga (read T199-T203 + `docs/44`): machine pinned
 > (`vr-power-setup.sh --apply`, first time ever — governor was schedutil all along),
 > `SLAM_THREADS` default now **4** (per-stage timing went live for the first time via

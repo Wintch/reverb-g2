@@ -46,6 +46,12 @@
 > 3. **Experience polish**: fast-turn correction visibility (spread=60 shipping; the
 >    motion-amplified snap component remains), the docs/45 display-artifact protocol
 >    (test patterns built, wearer + 240fps phone pending), the 2-3s rare stall class.
+>    **Controller stillness settling (wearer-observed 2026-08-18 ~05:30)**: at rest
+>    both joys drift slowly on several axes then settle to pixel-perfect once the
+>    gyro bias converges — polish lever: stillness-detected aggressive bias update
+>    (low gyro variance → fast bias snapshot) so settling takes seconds, not a long
+>    window. Positive datapoint: the settled state is pixel-stable — the whole
+>    orientation arc (0062+0071+0066/0067) lands rock solid at rest.
 > 4. **Performance & cost calibration (the arcade economics)**: pacing is CPU-bound —
 >    105W GPU cap plays Aircar as well as 210W (T209); `scripts/power-log.sh` measures
 >    real Wh/h; RT-throttle REFUTED by clean A/B (T209 — the 5% match was coincidence);
