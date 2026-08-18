@@ -267,3 +267,5 @@ The catalog is a ROTATING pipeline with a disk budget, not a static install base
 Rule of thumb settled with the budget: the download-test-discard loop targets titles
 that fit the 10-15G working budget; anything bigger waits for the permanent/mechanical
 tier decision (the Alyx class).
+
+| OpenVR Benchmark | [955610](https://steamdb.info/app/955610/) | ✓ | **Runs perfectly through the stack (2026-08-18, T217) — but its score is runtime-capped, NOT a GPU measurement here**: identical 111.11 avg/0.1%/0.3% at BOTH 3024² and 2160² render targets = the frame loop is granted xrWaitFrame every exactly 9.00ms by Monado's app pacer (111 fps rendered, 90 displayed, ~19% discarded — a named investigation, see NEXT-STEP). Useful as a deterministic loop-pacing instrument and as the future beat-Windows head-to-head ONCE the pacer question is settled. Its supersampling "fix" buttons spawn an Overlay helper — xrizer's no-overlay gap (fpsVR class), second motivator. `XRT_COMPOSITOR_SCALE_PERCENTAGE=100` is the universal-resolution knob (2160×2160 confirmed in its Info panel). First title ever run FROM RAM via vr-prewarm.sh ram mode. |
