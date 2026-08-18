@@ -269,3 +269,31 @@ current assignment). `scripts/controller-battery-check.py` (current alert thresh
 `~/vr/monado/src/xrt/drivers/wmr/wmr_controller_hp.c` (read only — driver source as it
 stands 2026-08-17, being actively edited by another agent this same night; nothing in this
 document required touching it).
+
+## Field failure case study (2026-08-18): mik, and the series-pair physics
+
+First real-world validation of this doc's model, hours after it was written. The
+right controller began powering itself off at power-on (three service launches saw
+only the left register; misread at first as a radio fault). Diagnosis by the user:
+cell **mik** dead — its sibling **mar** tested perfect individually.
+
+**Why ONE bad cell kills the pair**: the pack voltage is the series SUM, but a
+degraded NiMH cell's internal resistance spikes under load. At the radio's power-on
+TX burst the dead cell collapses (and can be driven into **polarity reversal** by
+the healthy sibling pushing current through it — damaging both). Pack sags below
+the controller's brownout threshold → instant self-power-off, while a voltage-only
+tester at rest still reads the pack "alive".
+
+**The model called it**: mar+mik was the worked set that sagged 113→79 under load
+the previous evening — 79 sits inside this doc's extrapolated cliff zone (byte
+65-83). The set went over the cliff within hours.
+
+Rules distilled:
+1. **Pre-session gate**: an in-session raw byte in the 70s under load = swap before
+   any demo/session. (Showcase gate rule, empirical basis: this failure.)
+2. **A voltage-only tester at rest proves nothing about load capacity** — mik read
+   "good" 7 h before dying. Runtime-under-load history (this roster) is the judge.
+3. **Pair discipline**: pair cells of similar health/charge; test individually;
+   swap pairwise. A mismatched pair stresses the good cell (reverse-charging risk).
+4. A cell that fails goes to **tester → RECYCLING**, and its sibling goes to the
+   pool for an individual verdict before re-service (mar's current status).

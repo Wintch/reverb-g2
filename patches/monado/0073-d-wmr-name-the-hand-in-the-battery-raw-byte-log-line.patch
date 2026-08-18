@@ -1,0 +1,32 @@
+From ed13e139521e21b4d601dd326b651d18faa96acc Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Tue, 18 Aug 2026 03:14:02 -0300
+Subject: [PATCH] d/wmr: name the hand in the battery raw-byte log line
+
+Tonight's mik cell failure was diagnosed blind: the battery byte log said
+81->79 but not WHICH controller -- the reader had to infer from context.
+Costed real time during a live failure. %s from base.base.str, same as the
+keepalive line.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/xrt/drivers/wmr/wmr_controller_hp.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_controller_hp.c b/src/xrt/drivers/wmr/wmr_controller_hp.c
+index c45d3216b..cafbdca0d 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_hp.c
++++ b/src/xrt/drivers/wmr/wmr_controller_hp.c
+@@ -328,7 +328,8 @@ wmr_controller_hp_packet_parse(struct wmr_controller_hp *ctrl, const unsigned ch
+ 		// Scale unverified -- see the long comment in wmr_controller_hp_get_battery_status()
+ 		// below. Logged on every CHANGE (not every packet) specifically so a real
+ 		// charge/discharge cycle can be correlated against this byte later.
+-		WMR_INFO(ctrl, "Controller battery raw byte: %u -> %u", last_input->battery, new_battery);
++		WMR_INFO(ctrl, "Controller battery raw byte [%s]: %u -> %u", ctrl->base.base.str,
++		         last_input->battery, new_battery);
+ 	}
+ 	last_input->battery = new_battery;
+ 	ctrl->has_battery_sample = true;
+-- 
+2.47.3
+

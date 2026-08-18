@@ -1,0 +1,130 @@
+From b016ce4d28b48aa356e61923b73b6e13cd6c2d0e Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Tue, 18 Aug 2026 01:55:00 -0300
+Subject: [PATCH] d/wmr: WMR_HMD_GYRO_MOUNT_FIX -- correct the HMD gyro's
+ 7.34deg mounting misalignment (default off)
+
+T211's chair-oscillation test measured a ~9pct yaw->roll/pitch cross-axis leak
+(axis0 +0.09116, axis2 -0.08948 per radian of cumulative yaw). The naive
+coefficient-to-axis reading is BACKWARDS -- verified three independent ways
+(exact kinematics dR/dt = R[w]x, small-tilt-restricted regression on the real
+data, nonlinear replay): axis0's coefficient is the misaligned axis's Z
+component, axis2's is minus its X. V = (+0.08948, 0.99181, +0.09116),
+|leak| = 0.12774 -> 7.339deg. R_fix = minimal rotation taking V onto true up,
+left-composed into calib.gyro.transform in wmr_hmd_get_imu_calib (Basalt
+consumes it as M @ raw). Gyro-only per 0065's accel lesson. Validation:
+repeat the chair test with the fix on -- leak slopes should collapse to ~0;
+predicted worn effect: roll drift +0.84..0.93 deg/min -> ~rest noise.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/xrt/drivers/wmr/wmr_hmd.c | 86 +++++++++++++++++++++++++++++++++++
+ 1 file changed, 86 insertions(+)
+
+diff --git a/src/xrt/drivers/wmr/wmr_hmd.c b/src/xrt/drivers/wmr/wmr_hmd.c
+index 9427aa41e..13dd89edd 100644
+--- a/src/xrt/drivers/wmr/wmr_hmd.c
++++ b/src/xrt/drivers/wmr/wmr_hmd.c
+@@ -96,6 +96,14 @@ DEBUG_GET_ONCE_OPTION(slam_submit_from_start, "SLAM_SUBMIT_FROM_START", NULL)
+ DEBUG_GET_ONCE_NUM_OPTION(left_view_y_offset, "WMR_LEFT_DISPLAY_VIEW_Y_OFFSET", 0)
+ DEBUG_GET_ONCE_NUM_OPTION(right_view_y_offset, "WMR_RIGHT_DISPLAY_VIEW_Y_OFFSET", 0)
+ 
++//! T211 chair-oscillation test: yaw motion leaks into the delivered roll/pitch axes (fit R2
++//! 0.60/0.44 against cumulative yaw, persists after motion stops -- a fixed-direction gyro
++//! mounting misalignment, not noise/bias; the factory gyro mix_matrix itself is near-identity,
++//! see the "IMU factory calib" INFO line above). Composes a small constant rotation into the
++//! gyro transform to cancel it. Default off pending live re-verification with the fix on
++//! (docs/pruebas.jsonl T211/T212); see the derivation comment on wmr_hmd_get_imu_calib().
++DEBUG_GET_ONCE_BOOL_OPTION(wmr_hmd_gyro_mount_fix, "WMR_HMD_GYRO_MOUNT_FIX", false)
++
+ 
+ #define WMR_TRACE(d, ...) U_LOG_XDEV_IFL_T(&d->base, d->log_level, __VA_ARGS__)
+ #define WMR_DEBUG(d, ...) U_LOG_XDEV_IFL_D(&d->base, d->log_level, __VA_ARGS__)
+@@ -1747,6 +1755,84 @@ wmr_hmd_get_imu_calib(struct wmr_hmd *wh)
+ 	         gt[0], gt[1], gt[2], gt[3], gt[4], gt[5], gt[6], gt[7], gt[8], go.x, go.y, go.z);
+ 	WMR_INFO(wh, "IMU factory calib: accel mix [%f %f %f; %f %f %f; %f %f %f] bias [%f %f %f]", //
+ 	         at[0], at[1], at[2], at[3], at[4], at[5], at[6], at[7], at[8], ao.x, ao.y, ao.z);
++
++	if (debug_get_bool_option_wmr_hmd_gyro_mount_fix()) {
++		// WMR_HMD_GYRO_MOUNT_FIX -- T211 gyro mounting-misalignment correction.
++		//
++		// T211 (chair-oscillation test, headset static on a rotating chair) fit the
++		// gravity-projection tilt angles (t211's own convention: axis0=atan2(g_body.x,
++		// g_body.y), axis2=atan2(g_body.z,g_body.y), body-Y up, g_body = world-up expressed
++		// in the current body frame) against cumulative yaw and found a real, motion-
++		// proportional, non-decaying leak: axis0 = +0.09116*cum_yaw (R2=0.60), axis2 =
++		// -0.08948*cum_yaw (R2=0.44). This is NOT explained by the factory gyro mix_matrix
++		// (near-identity, off-diagonals <=0.0016, see the INFO line above) -- it's a real
++		// mechanical rotation of the gyro die relative to the true head-up axis that the
++		// factory linear-gain/orthogonality calibration doesn't model at all.
++		//
++		// Getting from those two fit coefficients to the actual misaligned axis is NOT the
++		// naive "read them off as the (x,z) components of the tilt" -- that reading has the
++		// axes backwards. The exact kinematics of the gravity-projection measure (from
++		// dR/dt = R[omega_body]_x, verified here by direct zero-order numerical
++		// differentiation from identity orientation, and confirmed on T211's own real data
++		// via a small-tilt-restricted instantaneous regression) give, at zero tilt:
++		//   d(axis0)/dt = omega_body.z         d(axis2)/dt = -omega_body.x
++		// i.e. axis0's coefficient is the misaligned axis's Z-component and axis2's
++		// coefficient is MINUS its X-component -- so:
++		//   Vx = -(axis2 coeff) = +0.08948      Vz = +(axis0 coeff) = +0.09116
++		// (same sign on both, not opposite -- the small-tilt-restricted regression on the
++		// real T211 data independently confirms Vx and Vz are both positive and comparable
++		// in size, contradicting the naive same-axis/opposite-sign reading). The magnitude
++		// is unaffected by the axis correction: |leak| = sqrt(Vx^2+Vz^2) = 0.12774 ->
++		// misalignment angle = asin(0.12774) = 7.339 deg.
++		//
++		// R_fix is the minimal rotation taking the misaligned axis V=(Vx,Vy,Vz), Vy =
++		// sqrt(1-Vx^2-Vz^2), back onto true up (0,1,0): axis = normalize(V x (0,1,0)) =
++		// normalize((-Vz,0,Vx)) = (-0.71365, 0, 0.70050), angle = acos(Vy) = 7.339 deg.
++		// Baked below via the standard Rodrigues formula, row-major, verified orthogonal
++		// (det=1, R^T R = I) and R_fix @ V = (0,1,0) to double-precision epsilon.
++		//
++		// Composed as R_fix @ existing_transform (left-multiply: applied AFTER the factory
++		// mix, on already-factory-calibrated samples) so a near-identity factory matrix
++		// leaves this close to a pure R_fix, and any real factory correction underneath is
++		// preserved rather than overwritten.
++		//
++		// Gyro only, deliberately -- the leak evidence is entirely gyro-axis (it persists
++		// motionless and tracks yaw rate specifically). Per the 0064/0065 lesson (controller
++		// left-hand reflection: extending an unverified frame fix to the accelerometer and
++		// having to revert it after measuring worse precession), do NOT co-flip the accel
++		// transform on gyro-only evidence -- accel touches gravity anchoring and has its own,
++		// separate error surface; it gets no fix here without its own measurement.
++		//
++		// Off by default. Validation plan (not yet done): repeat the T211 chair-oscillation
++		// test with this env var set; a working fix should collapse the axis0/axis2 vs.
++		// cum_yaw leak fit toward ~0 slope, and should reduce the worn-gameplay roll drift
++		// (T203: +0.84 to +0.93 deg/min) toward the motionless-rest baseline (~-0.03 deg/min).
++		static const double gyro_mount_fix[3][3] = {
++		    {0.9959801998, -0.0894800000, -0.0040952726},
++		    {0.0894800000, 0.9918080379, 0.0911600000},
++		    {-0.0040952726, -0.0911600000, 0.9958278381},
++		};
++
++		double composed[3][3];
++		for (int i = 0; i < 3; i++) {
++			for (int j = 0; j < 3; j++) {
++				double sum = 0.0;
++				for (int k = 0; k < 3; k++) {
++					sum += gyro_mount_fix[i][k] * calib.gyro.transform[k][j];
++				}
++				composed[i][j] = sum;
++			}
++		}
++		memcpy(calib.gyro.transform, composed, sizeof(composed));
++
++		WMR_INFO(wh,
++		         "WMR_HMD_GYRO_MOUNT_FIX active: composed gyro transform "
++		         "[%f %f %f; %f %f %f; %f %f %f]",
++		         calib.gyro.transform[0][0], calib.gyro.transform[0][1], calib.gyro.transform[0][2],
++		         calib.gyro.transform[1][0], calib.gyro.transform[1][1], calib.gyro.transform[1][2],
++		         calib.gyro.transform[2][0], calib.gyro.transform[2][1], calib.gyro.transform[2][2]);
++	}
++
+ 	return calib;
+ }
+ 
+-- 
+2.47.3
+

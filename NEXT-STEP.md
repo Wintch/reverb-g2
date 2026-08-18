@@ -30,9 +30,11 @@
 >    constant offset is dead. Residual: left yaw winds slowly under HEAVY handling
 >    (~4° full-stream residual integrating); its healer is the solve-yaw anchor, which
 >    starves when hands park — workstream 1's position acquisition cures both at once.
->    HMD twin finding (T211): the head's own roll drift is a ~9% yaw→roll/pitch
->    cross-axis leak (~7.3° gyro mounting misalignment), proven by chair oscillation —
->    `WMR_HMD_GYRO_MOUNT_FIX` fit in flight; validation = second chair pass ≈ 0 leak.
+>    HMD twin finding REFUTED same night (T212): the T211 "9% mounting leak" did not
+>    reproduce in two held-out chair passes (slope <0.3% over 9518° yaw) and t211's own
+>    slope was session-unstable — `WMR_HMD_GYRO_MOUNT_FIX` (0072) is shelved default-off
+>    as a negative result, NEVER enable it. Worn roll drift (+0.9°/min) reverts to OPEN;
+>    leading hypothesis again Basalt gyro-bias-under-dynamics (`gyro_bias_std`, WS5).
 >    Fixture catalog: turntable (controllers, constant-rate), cradle box (second axis),
 >    **gamer chair (headset weight class — oscillation ONLY, the tether winds)**; the
 >    rigid-plane quorum test (headset + both joys on one board, three gyros, one shared
@@ -45,6 +47,12 @@
 >    real Wh/h; RT-throttle REFUTED by clean A/B (T209 — the 5% match was coincidence);
 >    remaining suspect: the affinity split A/B (0058 knobs, untested); per-box
 >    power.conf shipping. Wall-wattmeter validation closes system-total.
+>    **Per-title VR profiles (user-named 2026-08-18)**: titles played with the Xbox
+>    gamepad (Aircar-class) should run with `WMR_CONSTELLATION_CONTROLLERS=0` —
+>    constellation costs real CPU (~140 solves/s at good geometry, sank SLAM to
+>    9.9 Hz in T180; T190 already logged the off-switch as mitigation). The tty4
+>    picker knows the title BEFORE monado launches: give each docs/23 row a profile
+>    column (constellation, threads, controllers-needed) and pass it to the launcher.
 > 5. **Battery lifecycle / recycling**: per-cell roster live (kos/kub/mar/mik/bob/rio);
 >    when a cell's runtime falls well below its siblings' across charges, it graduates
 >    to RECYCLING (not trash) — the e-waste ethos is a selling point of the showcase
