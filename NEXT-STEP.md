@@ -4,7 +4,10 @@
 > VR-solutions business. "Vendemos soluciones VR, es muy importante que el showcase sea
 > lo mejor, que impresione." Every workstream below is now judged against that: a demo
 > where a controller dies mid-session, parks in the air, or a frame stutters is a lost
-> sale, not a bug ticket. Read `docs/pruebas.jsonl` T196-T209 for how far 2026-08-17's
+> sale, not a bug ticket. THE TARGET IS BETTER THAN WINDOWS, ideal -- explicitly beyond
+> the old "on par" cutoff: Windows WMR is deprecated and frozen forever; this stack
+> improves weekly and already carries knobs Windows never had. Experimental layers are
+> acceptable en route; the wearer experience is the judge. Read `docs/pruebas.jsonl` T196-T209 for how far 2026-08-17's
 > marathon moved everything (clock-skew root cause fixed and wearer-verified; both
 > hands' rotation dynamics correct; heading anchored to constellation; machine-grade
 > turntable calibration bootstrapped; per-cell battery tracking live; per-stage timing
