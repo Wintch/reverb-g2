@@ -57,6 +57,14 @@
 >    real Wh/h; RT-throttle REFUTED by clean A/B (T209 — the 5% match was coincidence);
 >    remaining suspect: the affinity split A/B (0058 knobs, untested); per-box
 >    power.conf shipping. Wall-wattmeter validation closes system-total.
+>    **Strategic direction (user-sparked 2026-08-18 ~05:50): offload vision stages to
+>    the half-idle GPU.** The measured irony: GPU sits at ~50% headroom (105W==210W)
+>    while pacing is CPU-bound and the CPU drowns (Basalt tracking 28ms×4 threads,
+>    constellation blob matching ~140 solves/s pure CPU). Blob detection and optical
+>    flow are image processing — the most GPU-friendly work there is. A CUDA path for
+>    either attacks WS4 (pacing) and WS3 (solve rate) at once with watts already paid.
+>    Major surgery (neither Basalt nor the constellation tracker has a GPU path);
+>    scope it before the showcase freeze, don't start it casually.
 >    **Tooling queue (2026-08-18, user-prompted)**: (a) synthetic render benchmark —
 >    add a tunable GPU-load dial (fragment-heavy shader knob) to hello_xr's test
 >    patterns and sweep GPU utilization vs pacing, no Steam needed — answers "how low
