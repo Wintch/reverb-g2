@@ -86,6 +86,21 @@ GAMES = [
 ]
 DEFAULT_GAME = "Aircar"
 
+# Per-title VR resource profiles (user-named 2026-08-18, NEXT-STEP WS4): env
+# overrides applied to the SERVICE launch (jack-in-wayland.sh inherits our
+# environ), decided by which title was picked -- the picker knows the title
+# BEFORE Monado comes up, which is the only moment constellation can be chosen.
+# Rationale: constellation costs real CPU (~140 solves/s at good geometry, sank
+# SLAM to 9.9 Hz in T180); a title flown on the Xbox gamepad pays that for
+# nothing. Default for unlisted titles: constellation ON (hands-drawing titles
+# are the majority of the catalog).
+TITLE_PROFILES = {
+    # Aircar: the reference gamepad title -- controllers optional, hands never
+    # needed. Constellation off = fewer subsystems live during a demo.
+    "1073390": {"WMR_CONSTELLATION_CONTROLLERS": "0"},
+}
+PROFILE_DEFAULT = {"WMR_CONSTELLATION_CONTROLLERS": "1"}
+
 
 JACKIN_OUT_LOG = LOG_DIR / "jack-in-launcher.log"
 
@@ -262,6 +277,17 @@ def main():
     else:
         print("Opcion invalida.")
         return
+
+    # Apply the selected title's VR resource profile BEFORE the service comes up
+    # (constellation on/off is a service-launch decision, not changeable after).
+    # Ambient env wins over the profile: an operator exporting the var explicitly
+    # is doing an experiment and the picker must not fight them.
+    _name, _appid = selected
+    profile = TITLE_PROFILES.get(_appid, PROFILE_DEFAULT)
+    for k, v in profile.items():
+        if k not in os.environ:
+            os.environ[k] = v
+            print(f"perfil de titulo: {k}={v}")
 
     if not bring_up_monado():
         print("No lanzo nada -- Monado no quedo listo.")

@@ -1,0 +1,742 @@
+From 48fc243ce353722d38d09f85a9ae45a44fff4a54 Mon Sep 17 00:00:00 2001
+From: iam <iam@iashur.internal>
+Date: Tue, 18 Aug 2026 06:14:20 -0300
+Subject: [PATCH] input: legacy state coexists with action manifests + menu
+ passes through to games
+
+Two structural fixes from docs/49's diagnosis (the Blade Runner 9732 case:
+pose works, every button dead):
+
+1) InputSessionData held a single OnceLock<LoadedActions> enum (Legacy XOR
+Manifest) -- structurally nowhere to serve legacy state once a manifest
+loaded, and get_legacy_controller_state hard-returned false forever. Now
+two independent slots; the legacy set is created idempotently and attached
+IN THE SAME attach_action_sets call as the manifest's sets (OpenXR's
+call-once constraint), synced every frame. Real SteamVR tolerates titles
+mixing both APIs -- now so do we. Bonus discovery: check_system_recenter_hold
+was only reachable from the legacy-only branch, so the hold-3s recenter
+(patch 0001) was silently dead in every manifest title -- now runs always.
+
+2) The Windows/menu buttons were consumed exclusively by the recenter
+shortcut, never surfacing to games (docs/49: SUPERHOT's dead menu class).
+Short presses now pass through via EVRButtonId::System (advertised in every
+profile's mask, never populated before); the instant a 3s hold fires
+recenter, the exposed value force-clears the same frame.
+
+84 unit + 1 integration tests pass (2 added, 2 updated that pinned the old
+buggy exclusive model).
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/input.rs                 |  56 +++--
+ src/input/action_manifest.rs |  41 ++--
+ src/input/legacy.rs          | 384 +++++++++++++++++++++++++++--------
+ src/input/tests.rs           |   6 +-
+ 4 files changed, 374 insertions(+), 113 deletions(-)
+
+diff --git a/src/input.rs b/src/input.rs
+index fd83b57..2602beb 100644
+--- a/src/input.rs
++++ b/src/input.rs
+@@ -209,9 +209,7 @@ impl<C: openxr_data::Compositor> Input<C> {
+         }
+ 
+         let session = self.openxr.session_data.get();
+-        let LoadedActions::Manifest(loaded_actions) = session.input_data.actions.get()? else {
+-            return None;
+-        };
++        let loaded_actions = session.input_data.actions.get()?;
+ 
+         let interaction_profile = session
+             .session
+@@ -246,7 +244,15 @@ impl<C: openxr_data::Compositor> Input<C> {
+ 
+ #[derive(Default)]
+ pub struct InputSessionData {
+-    actions: OnceLock<LoadedActions>,
++    // NOTE: these two used to be a single `OnceLock<LoadedActions>` enum (Legacy XOR
++    // Manifest), which was *why* GetControllerState went permanently dead the moment a game
++    // loaded an action manifest -- there was structurally nowhere to keep serving legacy
++    // state from once the slot held a Manifest. They're independent now: a session can (and,
++    // once frame_start_update or load_action_manifest has run once, always does) have both
++    // attached and synced simultaneously, so legacy polling keeps working for titles that mix
++    // both APIs. See action_manifest::load_action_manifest and legacy::get_or_create_legacy_actions.
++    actions: OnceLock<ManifestLoadedActions>,
++    legacy_actions: OnceLock<LegacyActionData>,
+     estimated_skeleton_actions: OnceLock<SkeletalInputActionData>,
+     pose_data: OnceLock<PoseData>,
+     devices: RwLock<TrackedDeviceList>,
+@@ -255,17 +261,11 @@ pub struct InputSessionData {
+ impl InputSessionData {
+     #[inline]
+     fn get_loaded_actions(&self) -> Option<&ManifestLoadedActions> {
+-        match self.actions.get()? {
+-            LoadedActions::Manifest(m) => Some(m),
+-            _ => None,
+-        }
++        self.actions.get()
+     }
+     #[inline]
+     fn get_legacy_actions(&self) -> Option<&LegacyActionData> {
+-        match self.actions.get()? {
+-            LoadedActions::Legacy(l) => Some(l),
+-            _ => None,
+-        }
++        self.legacy_actions.get()
+     }
+ 
+     pub(crate) fn interaction_profile_changed(&self) {
+@@ -374,13 +374,17 @@ impl<C: openxr_data::Compositor> vr::IVRInput011_Interface for Input<C> {
+         vr::EVRInputError::None
+     }
+     fn IsUsingLegacyInput(&self) -> bool {
++        // Legacy actions are now always attached+synced once the session's first frame has
++        // run, manifest or not (see InputSessionData's doc comment), so `get_legacy_actions`
++        // is no longer a reliable signal here. What actually matters per the OpenVR contract
++        // is whether the game has loaded an action manifest at all.
+         return self
+             .openxr
+             .session_data
+             .get()
+             .input_data
+-            .get_legacy_actions()
+-            .is_some();
++            .get_loaded_actions()
++            .is_none();
+     }
+     fn GetComponentStateForBinding(
+         &self,
+@@ -1497,6 +1501,25 @@ impl<C: openxr_data::Compositor> Input<C> {
+                     .sync_actions(&[xr::ActiveActionSet::new(&loaded.info_set)])
+                     .unwrap();
+             }
++            drop(devices);
++
++            // A manifest is loaded, but keep the legacy action set alive and synced too: some
++            // titles mix both APIs (call SetActionManifestPath defensively but still poll
++            // GetControllerState per-frame for the buttons they actually care about -- see
++            // docs on load_action_manifest's legacy-set attach). load_action_manifest
++            // guarantees the legacy set exists by the time we get here, so this is normally
++            // always `Some`; the `if let` is just defensive. Cheap: one extra sync_actions
++            // call per frame for titles that never touch the legacy API at all.
++            if let Some(legacy) = input_data.get_legacy_actions() {
++                data.session
++                    .sync_actions(&[xr::ActiveActionSet::new(&legacy.set)])
++                    .unwrap();
++                self.legacy_state.on_action_sync();
++            }
++            drop(data);
++            // Keep the recenter shortcut working regardless of whether the game is using the
++            // legacy API, the modern one, or both.
++            self.check_system_recenter_hold();
+             return;
+         }
+         drop(devices);
+@@ -1615,11 +1638,6 @@ impl<C: openxr_data::Compositor> Input<C> {
+     }
+ }
+ 
+-enum LoadedActions {
+-    Legacy(LegacyActionData),
+-    Manifest(ManifestLoadedActions),
+-}
+-
+ struct ManifestLoadedActions {
+     sets: SecondaryMap<ActionSetKey, xr::ActionSet>,
+     actions: SecondaryMap<ActionKey, ActionData>,
+diff --git a/src/input/action_manifest.rs b/src/input/action_manifest.rs
+index 8c23ceb..230b2fa 100644
+--- a/src/input/action_manifest.rs
++++ b/src/input/action_manifest.rs
+@@ -48,15 +48,14 @@ impl<C: openxr_data::Compositor> Input<C> {
+                 }
+             }
+             None => {
+-                if let Some(loaded) = session_data.input_data.actions.get() {
+-                    error!(
+-                        "{} actions are already loaded!",
+-                        if matches!(loaded, super::LoadedActions::Legacy(_)) {
+-                            "Legacy"
+-                        } else {
+-                            "Manifest"
+-                        }
+-                    );
++                // Note: legacy actions being already attached is no longer an error here --
++                // they can coexist with a manifest (see get_or_create_legacy_actions below).
++                // A manifest specifically already being loaded with no `loaded_actions_path`
++                // set would mean this function's own invariant (always set the path before
++                // storing manifest actions, below) was violated somewhere -- still worth
++                // catching.
++                if session_data.input_data.actions.get().is_some() {
++                    error!("Manifest actions are already loaded!");
+                     return Err(vr::EVRInputError::MismatchedActionManifest);
+                 }
+                 self.loaded_actions_path
+@@ -158,6 +157,18 @@ impl<C: openxr_data::Compositor> Input<C> {
+             ..
+         } = binding_context;
+ 
++        // Fold the legacy action set into this SAME attach call: xrAttachSessionActionSets is
++        // call-once per session, so this is the only chance to have both live together. This
++        // is what keeps GetControllerState/GetControllerStateWithPose working for titles that
++        // load a manifest but still poll legacy state per-frame for some/all of their input
++        // (e.g. a defensively-registered stub manifest alongside real hellovr-style legacy
++        // polling) -- see get_or_create_legacy_actions and get_legacy_controller_state.
++        // Idempotent: if legacy was already attached in an EARLIER session generation (a game
++        // used legacy first, then called SetActionManifestPath), SetActionManifestPath already
++        // forced a session restart before calling us, so there's nothing stale to carry over
++        // here -- this always creates a fresh one for the new session.
++        let legacy = self.get_or_create_legacy_actions(&session_data.input_data);
++
+         let xr_sets: Vec<_> = sets
+             .values()
+             .chain([
+@@ -165,14 +176,20 @@ impl<C: openxr_data::Compositor> Input<C> {
+                 &info_set,
+                 &haptic_set,
+                 &skeletal_input.set,
++                &legacy.set,
+             ])
+             .collect();
+         session_data.session.attach_action_sets(&xr_sets).unwrap();
+ 
+-        // Try forcing an interaction profile now
++        // Try forcing an interaction profile now; also do the legacy set's first sync here
++        // rather than waiting for the next frame_start_update, so legacy state is valid the
++        // instant a game calls GetControllerState even before its first WaitGetPoses.
+         session_data
+             .session
+-            .sync_actions(&[xr::ActiveActionSet::new(&info_set)])
++            .sync_actions(&[
++                xr::ActiveActionSet::new(&info_set),
++                xr::ActiveActionSet::new(&legacy.set),
++            ])
+             .unwrap();
+ 
+         // Transform actions and sets into maps
+@@ -242,7 +259,7 @@ impl<C: openxr_data::Compositor> Input<C> {
+         session_data
+             .input_data
+             .actions
+-            .set(super::LoadedActions::Manifest(loaded))
++            .set(loaded)
+             .unwrap_or_else(|_| unreachable!());
+         Ok(())
+     }
+diff --git a/src/input/legacy.rs b/src/input/legacy.rs
+index ebf89aa..01a76ec 100644
+--- a/src/input/legacy.rs
++++ b/src/input/legacy.rs
+@@ -1,9 +1,6 @@
+ use super::{Input, PoseData, WriteOnDrop};
+ use crate::{
+-    input::{
+-        LoadedActions, ManifestLoadedActions,
+-        profiles::{self, RunWithProfile},
+-    },
++    input::{ManifestLoadedActions, profiles::{self, RunWithProfile}},
+     openxr_data::{self},
+ };
+ use log::{debug, info, trace, warn};
+@@ -16,6 +13,14 @@ use std::time::Instant;
+ pub(super) struct LegacyState {
+     packet_num: AtomicU32,
+     got_state_this_frame: [AtomicBool; 2],
++    // Derived, once-per-frame state for the Menu/Home short-press pass-through (see
++    // check_system_recenter_hold and get_legacy_controller_state's System-button block).
++    // `menu_passthrough_pressed` is recomputed every frame by check_system_recenter_hold;
++    // `menu_passthrough_reported` is the value last actually surfaced to a game, used purely
++    // to detect the press/release transition for event generation (it persists across
++    // frames, unlike `got_state_this_frame`, which resets every frame).
++    menu_passthrough_pressed: [AtomicBool; 2],
++    menu_passthrough_reported: [AtomicBool; 2],
+ }
+ 
+ impl LegacyState {
+@@ -39,56 +44,83 @@ macro_rules! button_mask_from_ids {
+ }
+ 
+ impl<C: openxr_data::Compositor> Input<C> {
+-    pub fn setup_legacy_actions(&self) {
+-        debug!("setting up legacy actions");
++    /// Returns this session's legacy action data, creating it (and suggesting its interaction
++    /// profile bindings) if it doesn't exist yet. Does NOT attach or sync it -- the caller is
++    /// responsible for including `.set` in its own `attach_action_sets`/`sync_actions` calls,
++    /// since `xrAttachSessionActionSets` is call-once per session and callers of this function
++    /// (`setup_legacy_actions` below, and `action_manifest::load_action_manifest`) each need
++    /// to fold it into whichever single attach call they're the one making.
++    ///
++    /// This is the fix for legacy `GetControllerState` going permanently dead once a game
++    /// loaded an action manifest: previously the legacy action set was ONLY ever created here,
++    /// exclusively from setup_legacy_actions, which frame_start_update only called when NO
++    /// manifest was loaded. Now load_action_manifest calls this too, so the legacy set exists
++    /// and is attached+synced (see frame_start_update and get_legacy_controller_state)
++    /// regardless of whether a manifest is also loaded.
++    pub(super) fn get_or_create_legacy_actions<'a>(
++        &self,
++        input_data: &'a super::InputSessionData,
++    ) -> &'a LegacyActionData {
++        let pose_data = input_data.pose_data.get().unwrap();
++        input_data.legacy_actions.get_or_init(|| {
++            // LegacyActionData::new logs "creating legacy actions" itself.
++            let legacy = LegacyActionData::new(
++                &self.openxr.instance,
++                self.subaction_paths.left,
++                self.subaction_paths.right,
++            );
+ 
+-        let session_data = self.openxr.session_data.get();
+-        let session = &session_data.session;
+-        let legacy = LegacyActionData::new(
+-            &self.openxr.instance,
+-            self.subaction_paths.left,
+-            self.subaction_paths.right,
+-        );
+-        let input_data = &session_data.input_data;
++            profiles::run_for_all_profiles(&mut Runner {
++                openxr: &self.openxr,
++                pose_data,
++                legacy: &legacy,
++            });
+ 
+-        profiles::run_for_all_profiles(&mut Runner {
+-            openxr: &self.openxr,
+-            input_data,
+-            legacy: &legacy,
+-        });
++            struct Runner<'a, C: openxr_data::Compositor> {
++                openxr: &'a super::OpenXrData<C>,
++                pose_data: &'a PoseData,
++                legacy: &'a LegacyActionData,
++            }
+ 
+-        struct Runner<'a, C: openxr_data::Compositor> {
+-            openxr: &'a super::OpenXrData<C>,
+-            input_data: &'a super::InputSessionData,
+-            legacy: &'a LegacyActionData,
+-        }
++            impl<C: openxr_data::Compositor> RunWithProfile for Runner<'_, C> {
++                fn run<P: super::InteractionProfile>(&mut self) {
++                    if !P::has_required_extensions(&self.openxr.enabled_extensions) {
++                        return;
++                    }
+ 
+-        impl<C: openxr_data::Compositor> RunWithProfile for Runner<'_, C> {
+-            fn run<P: super::InteractionProfile>(&mut self) {
+-                if !P::has_required_extensions(&self.openxr.enabled_extensions) {
+-                    return;
++                    let conv = super::profiles::InputToXrPath::new(&self.openxr.instance);
++                    let bindings = P::legacy_bindings(&conv);
++                    self.openxr
++                        .instance
++                        .suggest_interaction_profile_bindings(
++                            self.openxr
++                                .instance
++                                .string_to_path(P::profile_path())
++                                .unwrap(),
++                            &bindings
++                                .into_iter(&self.legacy.actions, self.pose_data)
++                                .collect::<Vec<_>>(),
++                        )
++                        .unwrap();
+                 }
+-
+-                let conv = super::profiles::InputToXrPath::new(&self.openxr.instance);
+-                let bindings = P::legacy_bindings(&conv);
+-                self.openxr
+-                    .instance
+-                    .suggest_interaction_profile_bindings(
+-                        self.openxr
+-                            .instance
+-                            .string_to_path(P::profile_path())
+-                            .unwrap(),
+-                        &bindings
+-                            .into_iter(
+-                                &self.legacy.actions,
+-                                self.input_data.pose_data.get().unwrap(),
+-                            )
+-                            .collect::<Vec<_>>(),
+-                    )
+-                    .unwrap();
+             }
+-        }
+ 
++            legacy
++        })
++    }
++
++    /// Sets up legacy actions as the ONLY thing attached to the session (the no-manifest-ever
++    /// path -- see frame_start_update's `None` branch). Titles that later load a manifest via
++    /// SetActionManifestPath force a session restart specifically because this already did a
++    /// call-once `attach_action_sets`; the restarted session's legacy set is then created fresh
++    /// (via get_or_create_legacy_actions above) as part of THAT attach call instead, so it
++    /// isn't dropped.
++    pub fn setup_legacy_actions(&self) {
++        let session_data = self.openxr.session_data.get();
++        let session = &session_data.session;
++        let input_data = &session_data.input_data;
++
++        let legacy = self.get_or_create_legacy_actions(input_data);
+         let pose_set = &input_data.pose_data.get().unwrap().set;
+ 
+         session
+@@ -100,11 +132,6 @@ impl<C: openxr_data::Compositor> Input<C> {
+                 xr::ActiveActionSet::new(pose_set),
+             ])
+             .unwrap();
+-
+-        input_data
+-            .actions
+-            .set(LoadedActions::Legacy(legacy))
+-            .unwrap_or_else(|_| panic!("Actions unexpectedly set up"));
+     }
+ 
+     pub fn legacy_haptic(
+@@ -198,11 +225,10 @@ impl<C: openxr_data::Compositor> Input<C> {
+         let state = &mut state.value;
+ 
+         let data = self.openxr.session_data.get();
+-        if data.input_data.get_loaded_actions().is_some() {
+-            debug!("not returning legacy controller state due to loaded actions");
+-            return false;
+-        }
+-
++        // Note: this used to unconditionally return false once a manifest was loaded
++        // (`data.input_data.get_loaded_actions().is_some()`). Legacy actions are now always
++        // attached and synced alongside a manifest (see load_action_manifest and
++        // frame_start_update), so the only real gate left is whether they're ready yet.
+         let Some(legacy) = data.input_data.get_legacy_actions() else {
+             debug!("tried getting controller state, but legacy actions aren't ready");
+             return false;
+@@ -279,6 +305,43 @@ impl<C: openxr_data::Compositor> Input<C> {
+         read_button(vr::EVRButtonId::Grip, &actions.squeeze_click, None);
+         read_button(vr::EVRButtonId::Axis2, &actions.squeeze_click, None);
+ 
++        // Short-press pass-through of the physical Menu/Home button (see
++        // check_system_recenter_hold, which recomputes menu_passthrough_pressed once per
++        // frame). It can't reuse read_button above because its value is a derived/overridden
++        // signal (real hardware state gets force-cleared the instant a hold completes and
++        // recenter fires), not a raw OpenXR action's own changed_since_last_sync -- so
++        // transitions are tracked by hand here via menu_passthrough_reported instead.
++        //
++        // Exposed via System: ApplicationMenu is already Y/B (app_menu, above) and A is
++        // already X/A on this profile (see profiles::oculus_touch), so System is the one
++        // legacy button slot with no other claim on it -- and every profile's
++        // `legacy_buttons_mask` already advertises System as present, it was just never
++        // actually populated (see profiles::ProfileProperties::legacy_buttons_mask).
++        {
++            let pressed = self.legacy_state.menu_passthrough_pressed[hand as usize - 1]
++                .load(Ordering::Relaxed);
++            state.ulButtonPressed |=
++                button_mask_from_id(vr::EVRButtonId::System) & (pressed as u64 * u64::MAX);
++
++            let prev = self.legacy_state.menu_passthrough_reported[hand as usize - 1]
++                .swap(pressed, Ordering::Relaxed);
++            if pressed != prev
++                && let Some(events) = &mut events
++            {
++                events.push_back(super::InputEvent {
++                    ty: if pressed {
++                        vr::EVREventType::ButtonPress
++                    } else {
++                        vr::EVREventType::ButtonUnpress
++                    },
++                    index: device_index,
++                    data: vr::VREvent_Controller_t {
++                        button: vr::EVRButtonId::System as u32,
++                    },
++                });
++            }
++        }
++
+         let j = actions.main_xy.state(&data.session, hand_path).unwrap();
+         state.rAxis[0] = vr::VRControllerAxis_t {
+             x: j.current_state.x,
+@@ -303,34 +366,50 @@ impl<C: openxr_data::Compositor> Input<C> {
+     /// No dashboard/vrmonitor exists in this reimplementation, so there's normally no way
+     /// to recenter a game that doesn't expose its own in-game recenter option -- SLAM
+     /// origin drift just stays baked in for the whole session. Real SteamVR provides a
+-    /// global "hold the menu button" shortcut for this via its dashboard, intercepting the
+-    /// button before the game ever sees it -- this reproduces that using system_recenter, a
+-    /// dedicated action bound only to the real physical menu button where one exists,
+-    /// deliberately never read by get_legacy_controller_state above, so games never see it
+-    /// (first version of this reused app_menu directly and broke in-game input on real
+-    /// hardware -- games received real menu-press events during every recenter hold and got
+-    /// stuck in their own paused/menu state). Called once per frame from
+-    /// Input::frame_start_update, regardless of which game is running, so it works the same
+-    /// way real SteamVR's shortcut does.
++    /// global "hold the menu button" shortcut for this via its dashboard; this reproduces
++    /// that using system_recenter, a dedicated action bound to the real physical menu
++    /// button(s) where one exists (see each profile's `legacy_bindings`).
++    ///
++    /// The physical button is passed through to games as a short press/release (see
++    /// get_legacy_controller_state's System-button block, fed by menu_passthrough_pressed
++    /// below) and only suppressed once a hold actually completes and recenter fires -- so
++    /// a game never sees the button "stuck" down for the rest of a multi-second hold, but
++    /// does see the press start, the same way real SteamVR's own dashboard shortcut lets an
++    /// app see a press begin before the compositor takes over. This is a deliberate change
++    /// from the very first version of this feature, which reused the app_menu action
++    /// directly instead of a dedicated one and broke in-game input on real hardware --
++    /// games received real menu-press events for the entire recenter hold and got stuck in
++    /// their own paused/menu state. That failure mode was about reusing the WRONG action
++    /// (app_menu is already Y/B's ApplicationMenu semantic), not about exposing the
++    /// physical button at all -- system_recenter has always been a separate, dedicated
++    /// action, so passing ITS state through under a separate button ID (System, see
++    /// get_legacy_controller_state) doesn't reintroduce that bug.
++    ///
++    /// Called once per frame from Input::frame_start_update, regardless of which game is
++    /// running or whether it has a manifest loaded, so both the recenter shortcut and the
++    /// pass-through work the same way in every mode.
+     pub fn check_system_recenter_hold(&self) {
+-        let held = {
++        let (held_left, held_right) = {
+             let data = self.openxr.session_data.get();
+             let Some(legacy) = data.input_data.get_legacy_actions() else {
++                self.legacy_state.menu_passthrough_pressed[0].store(false, Ordering::Relaxed);
++                self.legacy_state.menu_passthrough_pressed[1].store(false, Ordering::Relaxed);
+                 return;
+             };
+-            [openxr_data::Hand::Left, openxr_data::Hand::Right]
+-                .into_iter()
+-                .any(|hand| {
+-                    let hand_path = self.get_subaction_path(hand);
+-                    legacy
+-                        .actions
+-                        .system_recenter
+-                        .state(&data.session, hand_path)
+-                        .map(|s| s.current_state)
+-                        .unwrap_or(false)
+-                })
++            let held = |hand: openxr_data::Hand| {
++                let hand_path = self.get_subaction_path(hand);
++                legacy
++                    .actions
++                    .system_recenter
++                    .state(&data.session, hand_path)
++                    .map(|s| s.current_state)
++                    .unwrap_or(false)
++            };
++            (held(openxr_data::Hand::Left), held(openxr_data::Hand::Right))
+         }; // session_data read guard dropped here -- reset_tracking_space below takes a write lock
+ 
++        let held = held_left || held_right;
++
+         let mut hold_since = self.system_recenter_hold.lock().unwrap();
+         if held {
+             let since = *hold_since.get_or_insert_with(Instant::now);
+@@ -348,6 +427,11 @@ impl<C: openxr_data::Compositor> Input<C> {
+             *hold_since = None;
+             self.system_recenter_fired.store(false, Ordering::Relaxed);
+         }
++        drop(hold_since);
++
++        let fired = self.system_recenter_fired.load(Ordering::Relaxed);
++        self.legacy_state.menu_passthrough_pressed[0].store(held_left && !fired, Ordering::Relaxed);
++        self.legacy_state.menu_passthrough_pressed[1].store(held_right && !fired, Ordering::Relaxed);
+     }
+ }
+ 
+@@ -497,11 +581,14 @@ impl LegacyActionData {
+ 
+ #[cfg(test)]
+ mod tests {
+-    use crate::input::profiles::{knuckles::Knuckles, simple_controller::SimpleController};
++    use crate::input::profiles::{
++        knuckles::Knuckles, oculus_touch::OculusTouch, simple_controller::SimpleController,
++    };
+     use crate::input::tests::{Fixture, compare_pose};
+     use crate::openxr_data::Hand;
+     use openvr as vr;
+     use openxr as xr;
++    use std::sync::atomic::Ordering;
+ 
+     #[repr(C)]
+     #[derive(Default)]
+@@ -780,8 +867,15 @@ mod tests {
+     );
+     test_button!(a, vr::EVRButtonId::A);
+ 
++    // Regression test for the "legacy input goes permanently dead once a game loads an action
++    // manifest" bug (see legacy.rs's module-level fix notes / docs/49 in the reverb-g2
++    // project): get_legacy_controller_state used to unconditionally return false forever the
++    // instant ANY manifest was loaded, even for titles that mix both APIs -- real SteamVR
++    // tolerates that mix fine. This pins both halves of the fix: the call must keep
++    // succeeding, AND the state it returns must be live (react to real input), not just a
++    // permanently-true-but-zeroed struct.
+     #[test]
+-    fn no_legacy_input_with_manifest() {
++    fn legacy_input_still_works_with_manifest() {
+         let mut f = Fixture::new();
+ 
+         f.input.openxr.restart_session();
+@@ -798,14 +892,142 @@ mod tests {
+             std::mem::size_of_val(&state) as u32
+         ));
+ 
++        // Legacy was already attached above, so this forces a session restart internally
++        // (SetActionManifestPath, input.rs) before loading the manifest on the fresh session.
+         f.load_actions(c"actions.json");
++
++        // The restart above is a genuinely new fake session, so (like a real runtime
++        // re-announcing interaction profiles after a session is recreated) the harness needs
++        // to be told about the controllers' profile again before device lookups will resolve.
++        // fakexr only turns a pending profile change into a real event during sync_actions
++        // (see fakexr's own sync_actions), so frame_start_update (which syncs the legacy set
++        // now that a manifest is loaded, see load_action_manifest/frame_start_update) has to
++        // run BEFORE poll_events can drain it and (re-)create the devices.
++        f.set_interaction_profile::<SimpleController>(fakexr::UserPath::LeftHand);
++        f.set_interaction_profile::<SimpleController>(fakexr::UserPath::RightHand);
++        f.input.frame_start_update();
+         f.input.openxr.poll_events();
++
++        assert!(
++            f.input.get_legacy_controller_state(
++                1,
++                &mut state,
++                std::mem::size_of_val(&state) as u32
++            ),
++            "legacy controller state must still be served after a manifest is loaded"
++        );
++
++        // Confirm it's not just returning `true` over stale/zeroed data: drive a real button
++        // press through the (freshly re-created, post-restart) legacy action and check it's
++        // observed via the legacy API.
++        let action = f
++            .input
++            .openxr
++            .session_data
++            .get()
++            .input_data
++            .get_legacy_actions()
++            .unwrap()
++            .actions
++            .a
++            .as_raw();
++        fakexr::set_action_state(action, fakexr::ActionState::Bool(true), fakexr::UserPath::LeftHand);
+         f.input.frame_start_update();
+-        assert!(!f.input.get_legacy_controller_state(
++
++        assert!(f.input.get_legacy_controller_state(
++            1,
++            &mut state,
++            std::mem::size_of_val(&state) as u32
++        ));
++        assert_eq!(
++            { state.ulButtonPressed },
++            super::button_mask_from_id(vr::EVRButtonId::A),
++            "legacy button state should reflect real input after a manifest is loaded"
++        );
++    }
++
++    // Regression/behavior test for the Menu/Home short-press pass-through (see
++    // check_system_recenter_hold's doc comment). Drives the post-fired suppression directly
++    // (see the comment inline below) instead of a real sleep or the XRIZER_RECENTER_HOLD_SECS
++    // env var, which would race other tests running in parallel -- stays fast and
++    // deterministic.
++    #[test]
++    fn menu_button_short_press_passes_through_then_suppressed_on_recenter() {
++        let mut f = Fixture::new();
++        f.input.openxr.restart_session();
++        f.set_interaction_profile::<OculusTouch>(fakexr::UserPath::LeftHand);
++        f.set_interaction_profile::<OculusTouch>(fakexr::UserPath::RightHand);
++        f.input.frame_start_update();
++        f.input.openxr.poll_events();
++
++        let system_recenter = f
++            .input
++            .openxr
++            .session_data
++            .get()
++            .input_data
++            .get_legacy_actions()
++            .unwrap()
++            .actions
++            .system_recenter
++            .as_raw();
++
++        // Press and hold the left controller's Menu button (OculusTouch only binds
++        // system_recenter on the left -- see profiles::oculus_touch::legacy_bindings).
++        fakexr::set_action_state(
++            system_recenter,
++            fakexr::ActionState::Bool(true),
++            fakexr::UserPath::LeftHand,
++        );
++        f.input.frame_start_update();
++
++        // Short hold so far: a game polling legacy state should see a normal press on the
++        // System slot, and recenter must not have fired yet.
++        let mut state = vr::VRControllerState_t::default();
++        assert!(f.input.get_legacy_controller_state(
+             1,
+             &mut state,
+             std::mem::size_of_val(&state) as u32
+         ));
++        assert_eq!(
++            { state.ulButtonPressed },
++            super::button_mask_from_id(vr::EVRButtonId::System),
++            "a short Menu press must pass through to the game"
++        );
++        assert!(!f.input.system_recenter_fired.load(Ordering::Relaxed));
++
++        // Simulate recenter having just fired. fakexr doesn't implement view-space locate,
++        // so actually driving a real 3s+ hold through reset_tracking_space isn't possible in
++        // this harness (see reset_tracking_space -> view_space.locate) -- setting the flag
++        // directly and re-running check_system_recenter_hold exercises the same suppression
++        // logic that runs once `fired` is set, which is the part specific to this feature
++        // (the hold-timing/reset_tracking_space call itself is pre-existing, untouched code).
++        f.input.system_recenter_fired.store(true, Ordering::Relaxed);
++        f.input.check_system_recenter_hold();
++
++        // The instant recenter fires, the game must stop seeing the button as pressed, even
++        // though it's still physically held -- this is what avoids the original bug (games
++        // getting stuck in their own paused/menu state for the whole hold duration).
++        let mut state = vr::VRControllerState_t::default();
++        assert!(f.input.get_legacy_controller_state(
++            1,
++            &mut state,
++            std::mem::size_of_val(&state) as u32
++        ));
++        assert_eq!(
++            { state.ulButtonPressed },
++            0,
++            "menu button must be reported released once recenter has fired"
++        );
++
++        // Release the physical button -- the recenter latch should reset for next time.
++        fakexr::set_action_state(
++            system_recenter,
++            fakexr::ActionState::Bool(false),
++            fakexr::UserPath::LeftHand,
++        );
++        f.input.frame_start_update();
++        assert!(!f.input.system_recenter_fired.load(Ordering::Relaxed));
+     }
+ 
+     #[test]
+diff --git a/src/input/tests.rs b/src/input/tests.rs
+index c2160e7..0dbb732 100644
+--- a/src/input/tests.rs
++++ b/src/input/tests.rs
+@@ -403,6 +403,10 @@ fn input_state_flow() {
+ 
+     f.load_actions(c"actions.json");
+ 
++    // load_action_manifest now always creates+attaches the legacy action set alongside the
++    // manifest (see get_or_create_legacy_actions), so titles that mix both APIs keep working
++    // via GetControllerState -- this used to be `is_none()` back when legacy and manifest
++    // actions were mutually exclusive.
+     assert!(
+         f.input
+             .openxr
+@@ -410,7 +414,7 @@ fn input_state_flow() {
+             .get()
+             .input_data
+             .get_legacy_actions()
+-            .is_none()
++            .is_some()
+     );
+ 
+     f.sync(vr::VRActiveActionSet_t {
+-- 
+2.47.3
+

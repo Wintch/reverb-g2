@@ -58,3 +58,21 @@ hardcoded behavior. **Pairs with monado 0075 (`WMR_USER_PRESENCE=1`)** — the G
 nose-bridge proximity sensor feeds Monado's generic presence machinery. The
 `proximity != 0` threshold is provisional; the first live don/doff with logging
 calibrates it. Showcase value: doff-to-pause/attract-mode. cargo clean, 83/83 tests.
+
+## 0004 — legacy input coexists with manifests + menu pass-through (2026-08-18, docs/49)
+
+The Blade Runner 9732 diagnosis implemented. **Fix 1**: `InputSessionData` held a
+single `OnceLock<LoadedActions>` (Legacy XOR Manifest) — structurally nowhere to
+serve legacy button state once a title loaded a manifest, and
+`get_legacy_controller_state` hard-returned `false` forever after. Now two
+independent slots; the legacy set attaches IN THE SAME `attach_action_sets` call
+as the manifest's (OpenXR attach-once), synced every frame. **Bonus discovery**:
+the hold-3s recenter (0001) was only reachable from the legacy-only branch — it
+was silently DEAD in every manifest-loading title (explains SafeZoneVR's
+never-firing recenter); now runs always. **Fix 2**: short menu presses pass
+through to games via `EVRButtonId::System` (advertised in every profile's mask,
+never populated); a 3s hold fires recenter and force-clears the exposed value the
+same frame. 84+1 tests pass (2 added, 2 rewritten that pinned the old buggy
+model). Known cost: one extra `sync_actions` per frame for manifest titles.
+Commit `48fc243`. **Hardware validation pending**: Blade Runner 9732 buttons +
+SUPERHOT menu + a recenter check in any manifest title.

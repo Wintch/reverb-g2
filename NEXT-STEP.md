@@ -1669,3 +1669,10 @@ drop it, and reverb-g2's rewritten history is already force-pushed to GitHub).
   (it's Matthieu Bucchianeri's, not HP's); HP Omnicept noted as a related test target in
   `docs/10-resources.md` (same WMR display path per Monado's prober — a 90 Hz result there
   would show whether this is G2-wide or unit-specific) but not being pursued (no hardware).
+
+> **Tooling addendum (2026-08-18 ~06:40, user-named)**: an fpsVR-equivalent — log
+> compositor-side per-frame telemetry (app render time vs pacing deadline, re-shown
+> frame events = "reprojection" count) so the felt micro-snaps have a first-class
+> log, not just frame-pacing.sh sampling windows. User's HAGS parallel is apt: the
+> measured one-slot-miss mechanism is scheduling-class, same feel as Windows HAGS
+> stutter — the affinity A/B tests it directly.
