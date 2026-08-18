@@ -269,3 +269,13 @@ that fit the 10-15G working budget; anything bigger waits for the permanent/mech
 tier decision (the Alyx class).
 
 | OpenVR Benchmark | [955610](https://steamdb.info/app/955610/) | ✓ | **Runs perfectly through the stack (2026-08-18, T217) — but its score is runtime-capped, NOT a GPU measurement here**: identical 111.11 avg/0.1%/0.3% at BOTH 3024² and 2160² render targets = the frame loop is granted xrWaitFrame every exactly 9.00ms by Monado's app pacer (111 fps rendered, 90 displayed, ~19% discarded — a named investigation, see NEXT-STEP). Useful as a deterministic loop-pacing instrument and as the future beat-Windows head-to-head ONCE the pacer question is settled. Its supersampling "fix" buttons spawn an Overlay helper — xrizer's no-overlay gap (fpsVR class), second motivator. `XRT_COMPOSITOR_SCALE_PERCENTAGE=100` is the universal-resolution knob (2160×2160 confirmed in its Info panel). First title ever run FROM RAM via vr-prewarm.sh ram mode. |
+
+### Per-title "kit config" direction (user-named, 2026-08-18)
+
+Every verdict row should eventually carry its perfect triple: (1) exact launch
+options, (2) recommended controller mapping for THIS kit (G2 sticks/buttons —
+custom binding JSONs versioned in this repo, consumed via xrizer's action-manifest
+machinery; no paid remappers needed), (3) VR resource profile (constellation,
+threads — vr-launcher.py's TITLE_PROFILES). Overlay-class tools (OVR Advanced
+Settings — free+FOSS, fpsVR, the benchmark's settings helper) all wait on ONE
+xrizer gap: overlay application support — three motivators and counting.
