@@ -76,3 +76,20 @@ same frame. 84+1 tests pass (2 added, 2 rewritten that pinned the old buggy
 model). Known cost: one extra `sync_actions` per frame for manifest titles.
 Commit `48fc243`. **Hardware validation pending**: Blade Runner 9732 buttons +
 SUPERHOT menu + a recenter check in any manifest title.
+
+## 0005 — real frame timing (2026-08-18, T217-T219) — REVERTED ON TOP, returns with a lock redesign
+
+`GetFrameTiming` filled `Compositor_FrameTiming` with hardcoded constants
+(`TotalRenderGpu=9.0` → OpenVR Benchmark's eternal fictional 111.11 = 1000/9.0,
+identical at every resolution and load — T217/T218). 0005 implements honest values
+(real WaitGetPoses interval, real blocked wait, real Submit copy time, real
+xrEndFrame time; honest zeros for the unmeasurable; 128-entry ring buffer;
+`GetFrameTimings` implemented — was a `todo!()` that PANICKED callers; `frames_ago`
+honored; `m_nNumDroppedFrames` finally written — games read stack garbage before).
+**Proved measurement works**: first real varying scores in stack history (4.66
+warm-up → 19.25 avg / 9.80 low). **Reverted on top** (`782e72b`) pending a
+contention-free redesign: the metrics mutex sits in the frame path while benchmarks
+hammer `GetFrameTiming` every frame — a real contention shape, though T219 proved it
+was NOT that night's freeze (the second-run wedge reproduces on the stub build too;
+that bug is the XR-session-re-cycle suspect, separate). Bring 0005 back with
+atomics/seqlock or out-of-frame-path ring writes. Commits `d467454` + revert `782e72b`.

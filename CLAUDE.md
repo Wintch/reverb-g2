@@ -1,5 +1,26 @@
 # Context for the 90Hz lab agent
 
+> ## FINAL ADDENDUM (2026-08-18, ~09:10) — the benchmark hour (T217-T219), read before
+> the ~08:30 header below: OpenVR Benchmark (955610, installed, first title ever run
+> FROM RAM via vr-prewarm) exposed that **xrizer's GetFrameTiming was a hardcoded stub**
+> (111.11 = 1000/9.0 constant — the user's "es un chamullo" beat two wrong agent
+> theories, including T217's retracted pacer claim). xrizer 0005 implemented honest
+> timing and PROVED measurement works (first real varying scores: 4.66 warm-up →
+> 19.25/9.80) but is **reverted on top** (782e72b) pending a contention-free redesign
+> (metrics mutex vs GetFrameTiming-hammering apps — a real shape, though NOT tonight's
+> freeze). **The night's last named bug: the SECOND benchmark run in one OpenVR app
+> instance wedges** (stub build too; ~21% GPU, CPU-side; also seen at benchmark close)
+> — XR session re-cycle within one process is the suspect; forensics = tracing build
+> + TRACY_ON_DEMAND (docs/50 lesson: one capture per process lifetime without it).
+> Free-run pacing (U_PACING_APP_IMMEDIATE_WAIT_FRAME_RETURN) makes OpenVR apps crawl —
+> dead experiment, never use for benchmarks. `XRT_COMPOSITOR_SCALE_PERCENTAGE=100` =
+> the universal-resolution knob (verified in the benchmark's own Info). Launch-options
+> recipe hardening: the Steam UI paste can silently not persist (recheck the field);
+> steam -shutdown cures the client's offline wedge. Overlay support now has THREE
+> motivators (fpsVR, the benchmark's settings helper, OVR Advanced Settings — FOSS).
+> Per-title "kit config" direction is in docs/23 (launch options + bindings + profile
+> per row).
+
 > ## START HERE NEXT SESSION (2026-08-18, ~08:30, lab machine) — the marathon's second
 > act ran on robots: WS2 closed by the wearer in-game, the frame thief cornered by a
 > triple negative, and the ARkade data/storage era opened. Read T216 + the 05:45 header

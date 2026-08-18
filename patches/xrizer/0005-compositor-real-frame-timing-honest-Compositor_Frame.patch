@@ -1,0 +1,574 @@
+From d467454e4b9008bb731058c22380eb6e25dd8a4e Mon Sep 17 00:00:00 2001
+From: iam <iam@iashur.internal>
+Date: Tue, 18 Aug 2026 08:37:36 -0300
+Subject: [PATCH] compositor: real frame timing -- honest
+ Compositor_FrameTiming from measured values
+
+GetFrameTiming filled the struct with hardcoded constants (TotalRenderGpu=9.0
+etc.) -- OpenVR Benchmark reported exactly 1000/9.0=111.11 'FPS' at any
+resolution and load (T217/T218): fiction. Now: real WaitGetPoses interval,
+real blocked-wait duration, real Submit copy time, real xrEndFrame time;
+TotalRenderGpuMs = the real CPU frame interval (xrizer cannot fence the
+app's own GPU work -- documented compromise: a load-tracking number beats a
+constant); honest zeros for the unmeasurable; 128-entry ring buffer;
+GetFrameTimings implemented (was todo!() -- panicked any caller) honoring
+the header's per-entry-stride contract; frames_ago honored (was ignored);
+m_nNumDroppedFrames now written (was NEVER set -- games read stack garbage).
+87+1 tests including 3 new.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/compositor.rs | 407 ++++++++++++++++++++++++++++++++++++++++------
+ 1 file changed, 358 insertions(+), 49 deletions(-)
+
+diff --git a/src/compositor.rs b/src/compositor.rs
+index 6eaebd6..6ad9f57 100644
+--- a/src/compositor.rs
++++ b/src/compositor.rs
+@@ -12,14 +12,18 @@ use crate::{
+ use log::{debug, info, trace, warn};
+ use openvr as vr;
+ use openxr as xr;
++use std::collections::VecDeque;
+ use std::mem::offset_of;
+ use std::sync::{
+     Arc, Mutex, Once,
+     atomic::{AtomicU32, Ordering},
+ };
+-use std::time::Instant;
++use std::time::{Duration, Instant};
+ use std::{ffi::c_char, ops::Deref};
+ 
++/// Matches OpenVR's documented 128-frame history for `GetFrameTimings`.
++const FRAME_TIMING_HISTORY_LEN: usize = 128;
++
+ #[derive(Default)]
+ pub struct CompositorSessionData(Mutex<Option<DynFrameController>>);
+ 
+@@ -67,10 +71,131 @@ impl FrameState {
+     }
+ }
+ 
++/// Real, per-frame timing data, built up over the course of one WaitGetPoses -> Submit(s) ->
++/// PostPresentHandoff cycle and then frozen into a [`FrameTimingEntry`] when the frame is
++/// actually handed off to the runtime. See [`write_frame_timing`]'s doc comment for what each
++/// field honestly measures.
+ struct FrameMetrics {
+     system_start: Instant,
+     index: AtomicU32,
+     time: AtomicF64,
++    /// Wall-clock time of the previous `WaitGetPoses` call, used to compute
++    /// `m_flClientFrameIntervalMs` as a *real* measured interval instead of a constant derived
++    /// from the nominal refresh rate.
++    last_wait_get_poses_call: Mutex<Option<Instant>>,
++    /// Accumulates measurements for the frame currently being built, from the moment
++    /// `WaitGetPoses` starts it until `PostPresentHandoff` freezes it into `history`.
++    in_progress: Mutex<InProgressFrame>,
++    /// Ring buffer of the last [`FRAME_TIMING_HISTORY_LEN`] completed frames, oldest first,
++    /// used to answer `GetFrameTiming`/`GetFrameTimings`.
++    history: Mutex<VecDeque<FrameTimingEntry>>,
++}
++
++#[derive(Default, Clone, Copy)]
++struct InProgressFrame {
++    client_frame_interval_ms: f32,
++    /// Real wall-clock time spent blocked inside the OpenXR `xrWaitFrame` call for this frame
++    /// (i.e. `FrameController::wait_frame`'s `self.waiter.wait()`).
++    wait_get_poses_called_ms: f32,
++    /// In xrizer's model, poses are considered "ready" the instant `xrWaitFrame` returns (there
++    /// is no further asynchronous pose-computation step to wait on), so this is always 0.0 --
++    /// kept as a distinct field to match the OpenVR struct rather than folding it into
++    /// `wait_get_poses_called_ms`.
++    new_poses_ready_ms: f32,
++    /// Real, summed wall-clock CPU time spent inside `IVRCompositor::Submit` for both eyes this
++    /// frame (the texture copy/blit into the OpenXR swapchain).
++    submit_frame_ms: f32,
++}
++
++/// A frozen snapshot of one completed frame's real timing data.
++#[derive(Default, Clone, Copy)]
++struct FrameTimingEntry {
++    frame_index: u32,
++    system_time_seconds: f64,
++    client_frame_interval_ms: f32,
++    wait_get_poses_called_ms: f32,
++    new_poses_ready_ms: f32,
++    submit_frame_ms: f32,
++    /// Real wall-clock CPU time spent inside the `xrEndFrame` call (the closest thing xrizer
++    /// has to OpenVR's "present").
++    present_call_cpu_ms: f32,
++}
++
++/// Writes `entry`'s real data into a `Compositor_FrameTiming` at `timing`.
++///
++/// ## What is real, what is derived, and what is honestly zero
++///
++/// GPU timing (`m_flPreSubmitGpuMs`, `m_flPostSubmitGpuMs`, `m_flCompositorRenderGpuMs`) is left
++/// at an honest `0.0`: xrizer does not own a GPU timeline spanning the app's own rendering. The
++/// app submits its swapchain image on its own graphics queue, and by the time control reaches
++/// `Submit`/`PostPresentHandoff` there's no fence xrizer waits on to bracket the app's GPU work
++/// with `vkCmdWriteTimestamp` -- the only GPU work xrizer itself could time is its own texture
++/// copy/blit into the OpenXR swapchain, and reporting *that* as "app render time" would be its
++/// own kind of dishonest. `0.0` is a real "not measured", not a plausible-looking fake number.
++///
++/// `m_flTotalRenderGpuMs` -- the field OpenVR Benchmark and fpsVR-style tools read to compute
++/// FPS as `1000 / m_flTotalRenderGpuMs` -- is deliberately filled with the real, measured
++/// CPU-side frame interval (WaitGetPoses-to-WaitGetPoses) instead. It's not a GPU measurement,
++/// but unlike the old hardcoded `9.0` it actually varies with real load and converges on the
++/// real frame rate, which is what every consumer of this field actually cares about.
++///
++/// CPU timings (`m_flSubmitFrameMs`, `m_flPresentCallCpuMs`, `m_flCompositorRenderCpuMs`,
++/// `m_flWaitGetPosesCalledMs`, `m_flClientFrameIntervalMs`) are real wall-clock measurements
++/// taken around the corresponding calls (see `FrameTimingEntry`/`InProgressFrame`). xrizer does
++/// not distinguish a separate "compositor render" phase from the `xrEndFrame` submission call,
++/// so both `m_flPresentCallCpuMs` and `m_flCompositorRenderCpuMs` report the same real
++/// `xrEndFrame` duration.
++///
++/// Everything else (`m_flCompositorIdleCpuMs`, `m_flWaitForPresentCpuMs`,
++/// `m_flNewFrameReadyMs`, `m_flCompositorUpdateStartMs`/`EndMs`/`RenderStartMs`,
++/// `m_nNumDroppedFrames`, `m_nNumMisPresented`, `m_nReprojectionFlags`) has no real signal
++/// available and is set to an honest `0`, never a fabricated nonzero constant.
++unsafe fn write_frame_timing(
++    timing: *mut vr::Compositor_FrameTiming,
++    entry: &FrameTimingEntry,
++    client_frame_interval_fallback_ms: f32,
++) {
++    macro_rules! set {
++        ($member:ident, $value:expr) => {{
++            let ptr = &raw mut (*timing).$member;
++            ptr.write_unaligned($value)
++        }};
++    }
++
++    let frame_interval_ms = if entry.client_frame_interval_ms > 0.0 {
++        entry.client_frame_interval_ms
++    } else {
++        client_frame_interval_fallback_ms
++    };
++
++    unsafe {
++        set!(m_nFrameIndex, entry.frame_index);
++        set!(m_nNumFramePresents, 1);
++        set!(m_nNumMisPresented, 0);
++        set!(m_nNumDroppedFrames, 0);
++        set!(m_nReprojectionFlags, 0);
++        set!(m_flSystemTimeInSeconds, entry.system_time_seconds);
++
++        set!(m_flPreSubmitGpuMs, 0.0);
++        set!(m_flPostSubmitGpuMs, 0.0);
++        set!(m_flTotalRenderGpuMs, frame_interval_ms);
++
++        set!(m_flCompositorRenderGpuMs, 0.0);
++        set!(m_flCompositorRenderCpuMs, entry.present_call_cpu_ms);
++        set!(m_flCompositorIdleCpuMs, 0.0);
++
++        set!(m_flClientFrameIntervalMs, frame_interval_ms);
++        set!(m_flPresentCallCpuMs, entry.present_call_cpu_ms);
++        set!(m_flWaitForPresentCpuMs, 0.0);
++        set!(m_flSubmitFrameMs, entry.submit_frame_ms);
++
++        set!(m_flWaitGetPosesCalledMs, entry.wait_get_poses_called_ms);
++        set!(m_flNewPosesReadyMs, entry.new_poses_ready_ms);
++        set!(m_flNewFrameReadyMs, 0.0); // second call to IVRCompositor::Submit
++        set!(m_flCompositorUpdateStartMs, 0.0);
++        set!(m_flCompositorUpdateEndMs, 0.0);
++        set!(m_flCompositorRenderStartMs, 0.0);
++    }
+ }
+ 
+ struct TempBackendData<G: GraphicsBackend> {
+@@ -92,6 +217,9 @@ impl Compositor {
+                 system_start: Instant::now(),
+                 index: 0.into(),
+                 time: 0.0.into(),
++                last_wait_get_poses_call: Mutex::new(None),
++                in_progress: Mutex::new(InProgressFrame::default()),
++                history: Mutex::new(VecDeque::with_capacity(FRAME_TIMING_HISTORY_LEN)),
+             },
+             timing_mode: vr::EVRCompositorTimingMode::Implicit.into(),
+             frame_state: FrameState::Submitted.into(),
+@@ -114,15 +242,20 @@ impl Compositor {
+         #[macros::any_graphics(DynFrameController)]
+         fn wait_frame<G: GraphicsBackend + 'static>(
+             ctrl: &mut FrameController<G>,
+-        ) -> (xr::Time, i64) {
++        ) -> (xr::Time, i64, Duration) {
+             ctrl.wait_frame()
+         }
+ 
+-        let (display_time, display_period) = ctrl.with_any_graphics_mut::<wait_frame>(());
++        let (display_time, display_period, wait_duration) =
++            ctrl.with_any_graphics_mut::<wait_frame>(());
+         self.openxr.display_time.set(display_time);
+         self.openxr
+             .display_period_nanos
+             .store(display_period, Ordering::Relaxed);
++
++        let mut in_progress = self.metrics.in_progress.lock().unwrap();
++        in_progress.wait_get_poses_called_ms = wait_duration.as_secs_f32() * 1000.0;
++        in_progress.new_poses_ready_ms = 0.0;
+     }
+ 
+     fn maybe_begin_frame(&self, session_data: &SessionData) {
+@@ -582,10 +715,38 @@ impl vr::IVRCompositor029_Interface for Compositor {
+         crate::warn_unimplemented!("GetFrameTimeRemaining");
+         0.0
+     }
+-    fn GetFrameTimings(&self, _pTiming: *mut vr::Compositor_FrameTiming, _nFrames: u32) -> u32 {
+-        todo!()
++    /// "Only the first entry's m_nSize needs to be set, as the rest will be inferred from
++    /// that." -- we take that literally: the first entry's size is also the per-entry stride
++    /// used to walk the caller's array, exactly like `GetFrameTiming` tolerates a
++    /// smaller-than-current struct.
++    fn GetFrameTimings(&self, pTiming: *mut vr::Compositor_FrameTiming, nFrames: u32) -> u32 {
++        if pTiming.is_null() || !pTiming.is_aligned() || nFrames == 0 {
++            return 0;
++        }
++
++        let size = unsafe { (&raw const (*pTiming).m_nSize).read() } as usize;
++        let min_size = offset_of!(vr::Compositor_FrameTiming, m_HmdPose)
++            + std::mem::size_of::<vr::TrackedDevicePose_t>();
++        if size < min_size {
++            return 0;
++        }
++
++        let refresh_rate_ms = 1000.0 / self.openxr.get_refresh_rate();
++        let history = self.metrics.history.lock().unwrap();
++        let count = (nFrames as usize).min(history.len());
++        let start = history.len() - count;
++
++        // Ascending order (oldest to newest), last entry is the most recent frame, per the
++        // documented contract.
++        for (i, entry) in history.iter().skip(start).take(count).enumerate() {
++            let out = unsafe { pTiming.byte_add(i * size) };
++            unsafe { write_frame_timing(out, entry, refresh_rate_ms) };
++        }
++
++        count as u32
+     }
+-    fn GetFrameTiming(&self, timing: *mut vr::Compositor_FrameTiming, _frames_ago: u32) -> bool {
++
++    fn GetFrameTiming(&self, timing: *mut vr::Compositor_FrameTiming, frames_ago: u32) -> bool {
+         if timing.is_null() || !timing.is_aligned() {
+             return false;
+         }
+@@ -603,44 +764,27 @@ impl vr::IVRCompositor029_Interface for Compositor {
+         // We're using raw pointers here because the Compositor_FrameTiming struct can be a
+         // varaible size, so we don't want to create a reference to a struct with an incorrect
+         // (to us) size, because that would be Undefined Behavior.
+-        macro_rules! set {
+-            ($member:ident, $value:expr) => {{
+-                let ptr = &raw mut (*timing).$member;
+-                ptr.write_unaligned($value)
+-            }};
+-        }
+ 
+-        unsafe {
+-            // TODO: These values are copy/pasted from OpenComposite, determine if real values are
+-            // necessary/better
+-            set!(m_nFrameIndex, self.metrics.index.load(Ordering::Relaxed));
+-            set!(m_nNumFramePresents, 1);
+-            set!(m_nNumMisPresented, 0);
+-            set!(m_nReprojectionFlags, 0);
+-            set!(m_flSystemTimeInSeconds, self.metrics.time.load());
+-            set!(m_flPreSubmitGpuMs, 8.0);
+-            set!(m_flPostSubmitGpuMs, 1.0);
+-            set!(m_flTotalRenderGpuMs, 9.0);
+-
+-            set!(m_flCompositorRenderGpuMs, 1.5);
+-            set!(m_flCompositorRenderCpuMs, 3.0);
+-            set!(m_flCompositorIdleCpuMs, 0.1);
+-
+-            set!(
+-                m_flClientFrameIntervalMs,
+-                1000.0 / self.openxr.get_refresh_rate()
+-            );
+-            set!(m_flPresentCallCpuMs, 0.0);
+-            set!(m_flWaitForPresentCpuMs, 0.0);
+-            set!(m_flSubmitFrameMs, 0.0);
++        let refresh_rate_ms = 1000.0 / self.openxr.get_refresh_rate();
++
++        // frames_ago = 0 is the most recently completed frame (the back of the ring buffer).
++        // If we don't have that much history yet (e.g. no frame has completed, or the app is
++        // asking further back than we've recorded), fall back to a synthetic entry built from
++        // the current live metrics rather than returning false -- SteamVR games generally don't
++        // expect GetFrameTiming to start failing just because the session is young, and this
++        // preserves that behavior while still reporting real data once it exists.
++        let entry = {
++            let history = self.metrics.history.lock().unwrap();
++            history.iter().rev().nth(frames_ago as usize).copied()
++        }
++        .unwrap_or(FrameTimingEntry {
++            frame_index: self.metrics.index.load(Ordering::Relaxed),
++            system_time_seconds: self.metrics.time.load(),
++            client_frame_interval_ms: refresh_rate_ms,
++            ..Default::default()
++        });
+ 
+-            set!(m_flWaitGetPosesCalledMs, 0.0);
+-            set!(m_flNewPosesReadyMs, 0.0);
+-            set!(m_flNewFrameReadyMs, 0.0); // second call to IVRCompositor::Submit
+-            set!(m_flCompositorUpdateStartMs, 0.0);
+-            set!(m_flCompositorUpdateEndMs, 0.0);
+-            set!(m_flCompositorRenderStartMs, 0.0);
+-        }
++        unsafe { write_frame_timing(timing, &entry, refresh_rate_ms) };
+ 
+         true
+     }
+@@ -675,22 +819,45 @@ impl vr::IVRCompositor029_Interface for Compositor {
+         let display_time = self.openxr.display_time.get();
+         let overlays = self.overlays.get();
+ 
++        // Real wall-clock CPU time spent in the xrEndFrame call -- the closest thing xrizer has
++        // to OpenVR's "present". Used for both m_flPresentCallCpuMs and m_flCompositorRenderCpuMs
++        // (see write_frame_timing's doc comment for why those share one measurement here).
++        let present_start = Instant::now();
+         ctrl.with_any_graphics_mut::<end_frame>((
+             &session_data,
+             &system,
+             display_time,
+             overlays.as_deref(),
+         ));
++        let present_call_cpu_ms = present_start.elapsed().as_secs_f32() * 1000.0;
+ 
+         self.frame_state
+             .lock()
+             .unwrap()
+             .advance_to(FrameState::Submitted);
+ 
+-        self.metrics.index.fetch_add(1, Ordering::Relaxed);
+-        self.metrics
+-            .time
+-            .store(self.metrics.system_start.elapsed().as_secs_f64());
++        let frame_index = self.metrics.index.fetch_add(1, Ordering::Relaxed);
++        let system_time_seconds = self.metrics.system_start.elapsed().as_secs_f64();
++        self.metrics.time.store(system_time_seconds);
++
++        let in_progress = std::mem::take(&mut *self.metrics.in_progress.lock().unwrap());
++        let entry = FrameTimingEntry {
++            frame_index,
++            system_time_seconds,
++            client_frame_interval_ms: in_progress.client_frame_interval_ms,
++            wait_get_poses_called_ms: in_progress.wait_get_poses_called_ms,
++            new_poses_ready_ms: in_progress.new_poses_ready_ms,
++            submit_frame_ms: in_progress.submit_frame_ms,
++            present_call_cpu_ms,
++        };
++        {
++            let mut history = self.metrics.history.lock().unwrap();
++            if history.len() >= FRAME_TIMING_HISTORY_LEN {
++                history.pop_front();
++            }
++            history.push_back(entry);
++        }
++
+         #[cfg(feature = "tracing")]
+         {
+             tracy_client::frame_mark();
+@@ -798,13 +965,21 @@ impl vr::IVRCompositor029_Interface for Compositor {
+             )
+         }
+ 
+-        if let Err(e) = ctrl.with_any_graphics_mut::<submit>((
++        // Real wall-clock CPU time spent copying/blitting the app's texture into the OpenXR
++        // swapchain. Summed across both eyes into m_flSubmitFrameMs -- genuinely varies with
++        // resolution and backend load, unlike the old hardcoded value.
++        let submit_start = Instant::now();
++        let result = ctrl.with_any_graphics_mut::<submit>((
+             &session_lock,
+             eye,
+             texture,
+             bounds,
+             submit_flags,
+-        )) {
++        ));
++        let submit_ms = submit_start.elapsed().as_secs_f32() * 1000.0;
++        self.metrics.in_progress.lock().unwrap().submit_frame_ms += submit_ms;
++
++        if let Err(e) = result {
+             return e;
+         }
+         vr::EVRCompositorError::None
+@@ -878,6 +1053,18 @@ impl vr::IVRCompositor029_Interface for Compositor {
+         // This should be called every frame - we must regularly poll events
+         self.openxr.poll_events();
+         self.focused.call_once(|| {});
++
++        // Real "time between calls to WaitGetPoses" (m_flClientFrameIntervalMs). Computed here,
++        // before PostPresentHandoff below finalizes and resets `in_progress` for the PREVIOUS
++        // frame, but only written into `in_progress` after that reset so it lands on the frame
++        // that's about to be waited for, not the one being finalized.
++        let now = Instant::now();
++        let client_frame_interval_ms = {
++            let mut last_call = self.metrics.last_wait_get_poses_call.lock().unwrap();
++            let interval = last_call.map(|prev| (now - prev).as_secs_f32() * 1000.0);
++            *last_call = Some(now);
++            interval
++        };
+         {
+             let session_data = self.openxr.session_data.get();
+             let timing_mode = *self.timing_mode.lock().unwrap();
+@@ -890,6 +1077,10 @@ impl vr::IVRCompositor029_Interface for Compositor {
+                 self.PostPresentHandoff();
+             }
+ 
++            if let Some(interval) = client_frame_interval_ms {
++                self.metrics.in_progress.lock().unwrap().client_frame_interval_ms = interval;
++            }
++
+             if *self.frame_state.lock().unwrap() == FrameState::Waited {
+                 // discard frame
+                 self.maybe_begin_frame(&session_data);
+@@ -1172,15 +1363,18 @@ impl<G: GraphicsBackend> FrameController<G> {
+         self.image_acquired = true;
+     }
+ 
+-    fn wait_frame(&mut self) -> (xr::Time, i64) {
++    fn wait_frame(&mut self) -> (xr::Time, i64, Duration) {
++        let wait_start = Instant::now();
+         let frame_state = {
+             tracy_span!("wait frame");
+             self.waiter.wait().unwrap()
+         };
++        let wait_duration = wait_start.elapsed();
+         self.should_render = frame_state.should_render && !self.app_suspend_render;
+         (
+             frame_state.predicted_display_time,
+             frame_state.predicted_display_period.as_nanos(),
++            wait_duration,
+         )
+     }
+ 
+@@ -1574,6 +1768,15 @@ mod tests {
+             )
+         }
+ 
++        /// Runs one implicit-timing frame (WaitGetPoses, Submit both eyes). The frame is only
++        /// actually finalized into `metrics.history` on the *next* call that reaches
++        /// PostPresentHandoff (either another `run_frame`/`wait_get_poses`, or an explicit call).
++        fn run_frame(&self) {
++            assert_eq!(self.wait_get_poses(), None);
++            assert_eq!(self.submit(vr::EVREye::Left), None);
++            assert_eq!(self.submit(vr::EVREye::Right), None);
++        }
++
+         fn ensure_real_session(&self, explicit: bool) {
+             // synchronize session
+             assert_eq!(self.wait_get_poses(), None);
+@@ -1755,6 +1958,112 @@ mod tests {
+         assert!(!f.comp.GetFrameTiming(timing.as_mut_ptr(), 1));
+     }
+ 
++    #[test]
++    fn frame_timing_no_longer_hardcoded() {
++        let f = Fixture::new();
++        f.run_frame();
++        // Finalizes frame 0's entry via the implicit PostPresentHandoff at the top of this
++        // WaitGetPoses, and starts frame 1.
++        f.run_frame();
++
++        let mut timing = vr::Compositor_FrameTiming {
++            m_nSize: std::mem::size_of::<vr::Compositor_FrameTiming>() as u32,
++            ..Default::default()
++        };
++        assert!(f.comp.GetFrameTiming(&mut timing, 0));
++
++        // The old implementation always reported exactly these constants, regardless of load or
++        // resolution. A benchmark reading m_flTotalRenderGpuMs should now see real, varying data.
++        assert_ne!(timing.m_flTotalRenderGpuMs, 9.0);
++        assert_ne!(timing.m_flPreSubmitGpuMs, 8.0);
++        assert_ne!(timing.m_flCompositorRenderGpuMs, 1.5);
++        assert!(timing.m_flTotalRenderGpuMs > 0.0);
++        // GPU timing genuinely isn't measurable here -- honest zero, not a fake nonzero
++        // constant.
++        assert_eq!(timing.m_flPreSubmitGpuMs, 0.0);
++        assert_eq!(timing.m_flPostSubmitGpuMs, 0.0);
++    }
++
++    #[test]
++    fn frame_timing_history_ring_buffer_and_get_frame_timings() {
++        let f = Fixture::new();
++
++        const FRAMES: usize = 6;
++        for _ in 0..FRAMES {
++            // Guarantee a measurable (non-zero-duration) gap between WaitGetPoses calls so
++            // m_flClientFrameIntervalMs is provably real, not just structurally present.
++            std::thread::sleep(Duration::from_millis(2));
++            f.run_frame();
++        }
++        // One more call to finalize the last frame run above into history.
++        assert_eq!(f.wait_get_poses(), None);
++
++        let history_len = f.comp.metrics.history.lock().unwrap().len();
++        assert_eq!(history_len, FRAMES);
++
++        // Frame indices in history must be strictly increasing (monotonic).
++        {
++            let history = f.comp.metrics.history.lock().unwrap();
++            let indices: Vec<u32> = history.iter().map(|e| e.frame_index).collect();
++            for pair in indices.windows(2) {
++                assert!(
++                    pair[1] > pair[0],
++                    "frame index did not strictly increase: {indices:?}"
++                );
++            }
++            // Skip the very first frame: with no prior WaitGetPoses call to diff against, its
++            // interval is legitimately unmeasured (0.0), not a bug.
++            for entry in history.iter().skip(1) {
++                assert!(
++                    entry.client_frame_interval_ms > 0.0,
++                    "expected a real measured interval, got {}",
++                    entry.client_frame_interval_ms
++                );
++            }
++        }
++
++        // GetFrameTimings: ascending oldest -> newest, "last is most recent".
++        let mut buf = vec![vr::Compositor_FrameTiming::default(); FRAMES];
++        buf[0].m_nSize = std::mem::size_of::<vr::Compositor_FrameTiming>() as u32;
++        let filled = f.comp.GetFrameTimings(buf.as_mut_ptr(), buf.len() as u32);
++        assert_eq!(filled as usize, FRAMES);
++        for pair in buf.windows(2) {
++            assert!(pair[1].m_nFrameIndex > pair[0].m_nFrameIndex);
++        }
++        for t in &buf {
++            assert!(t.m_flTotalRenderGpuMs > 0.0);
++        }
++
++        // Asking for more than exist returns only what's available (no panic, no garbage).
++        let mut buf2 = vec![vr::Compositor_FrameTiming::default(); 128];
++        buf2[0].m_nSize = std::mem::size_of::<vr::Compositor_FrameTiming>() as u32;
++        let filled2 = f.comp.GetFrameTimings(buf2.as_mut_ptr(), buf2.len() as u32);
++        assert_eq!(filled2 as usize, history_len);
++
++        // GetFrameTiming's frames_ago should walk the same history backwards from the most
++        // recent frame.
++        let mut latest = vr::Compositor_FrameTiming {
++            m_nSize: std::mem::size_of::<vr::Compositor_FrameTiming>() as u32,
++            ..Default::default()
++        };
++        assert!(f.comp.GetFrameTiming(&mut latest, 0));
++        let mut previous = vr::Compositor_FrameTiming {
++            m_nSize: std::mem::size_of::<vr::Compositor_FrameTiming>() as u32,
++            ..Default::default()
++        };
++        assert!(f.comp.GetFrameTiming(&mut previous, 1));
++        assert!(latest.m_nFrameIndex > previous.m_nFrameIndex);
++    }
++
++    #[test]
++    fn get_frame_timings_with_no_history_returns_zero() {
++        let f = Fixture::new();
++        let mut buf = vec![vr::Compositor_FrameTiming::default(); 4];
++        buf[0].m_nSize = std::mem::size_of::<vr::Compositor_FrameTiming>() as u32;
++        assert_eq!(f.comp.GetFrameTimings(buf.as_mut_ptr(), buf.len() as u32), 0);
++        assert_eq!(f.comp.GetFrameTimings(std::ptr::null_mut(), 4), 0);
++    }
++
+     #[test]
+     fn zero_dims_texture() {
+         let f = Fixture::new();
+-- 
+2.47.3
+
