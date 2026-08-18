@@ -1676,3 +1676,13 @@ drop it, and reverb-g2's rewritten history is already force-pushed to GitHub).
 > log, not just frame-pacing.sh sampling windows. User's HAGS parallel is apt: the
 > measured one-slot-miss mechanism is scheduling-class, same feel as Windows HAGS
 > stutter — the affinity A/B tests it directly.
+
+> **ARkade storage line (user-directed 2026-08-18 ~07:30)**: demos must never lose a
+> frame to storage. Infrastructure landed same hour: 10G tmpfs at /mnt/vrtmp (fstab,
+> survives reboots), session CSVs live there (launcher auto-detects, SSD fallback),
+> `down` + `VR_ARCHIVE_CSV=1` compresses to SSD else data evaporates (SSD write-cycle
+> preservation), old logs purged 5.7G→1.4G. `scripts/vr-prewarm.sh` (agent-built):
+> cache mode = page-cache warm via vmtouch (works from mechanical disks too — the
+> cheap universal path), ram mode = rsync to tmpfs + symlink swap in steamapps/common
+> (the hard guarantee, ≤12G titles). Games mapped on slow storage + prewarmed to RAM
+> at pick time = the ARkade boot flow.

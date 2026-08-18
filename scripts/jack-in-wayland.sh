@@ -140,10 +140,24 @@ if [ "$ACTION" = down ]; then
         echo "  Not running."
     fi
     rm -f "$SOCKET"
-    # Writes nothing to disk: no DRM-lease/monitor state to restore (the compositor owns
-    # the lease under Wayland, unlike jack-in.sh's X11 direct-mode path), and $LOG is left
-    # untouched on purpose -- a session that just failed is exactly the one you don't want
-    # a teardown silently erasing.
+    # Ramdisk CSV lifecycle (user directive 2026-08-18): session CSVs live on the
+    # 10G tmpfs; at close they either get compressed to the SSD (only when the
+    # operator says this session's data matters: VR_ARCHIVE_CSV=1) or simply
+    # evaporate at reboot/overwrite. Archiving is zstd (fast, ~5-10x on these
+    # CSVs); nothing here ever touches dirs already on the SSD path.
+    if [ "${VR_ARCHIVE_CSV:-0}" = 1 ] && mountpoint -q /mnt/vrtmp 2>/dev/null; then
+        NEWEST="$(ls -dt /mnt/vrtmp/slam-* 2>/dev/null | head -1)"
+        if [ -n "$NEWEST" ]; then
+            ARCH="$VR/logs/$(basename "$NEWEST").tar.zst"
+            tar -C /mnt/vrtmp -cf - "$(basename "$NEWEST")" | zstd -q -o "$ARCH" \
+                && echo "CSVs archived: $ARCH" \
+                || echo "WARNING: CSV archive failed for $NEWEST" >&2
+        fi
+    fi
+    # Writes nothing else to disk: no DRM-lease/monitor state to restore (the compositor
+    # owns the lease under Wayland, unlike jack-in.sh's X11 direct-mode path), and $LOG is
+    # left untouched on purpose -- a session that just failed is exactly the one you don't
+    # want a teardown silently erasing.
     echo "Socket removed ($SOCKET). $LOG left untouched."
     exit 0
 fi
@@ -543,7 +557,17 @@ fi
 # few hundred KB over a long session. VR_POSE_CSVS=0 turns them off on their own.
 CSV_ENV=()
 if [ "$POSE_CSVS" = 1 ]; then
-    SLAM_CSV_DIR="$VR/logs/slam-$(date +%Y%m%d-%H%M%S)"
+    # Big-temporary data goes to the 10G tmpfs when mounted (user directive
+    # 2026-08-18: save SSD write cycles + speed; ~190 MB/h of CSVs per session,
+    # 5.7 GB had silently accumulated in ~/vr/logs). RAM contents die on
+    # reboot/umount BY DESIGN -- copy a session's dir to $VR/logs before reboot
+    # if it matters (analysis scripts take the path as an argument either way).
+    # Fallback to the SSD path when the ramdisk isn't mounted: never break.
+    if mountpoint -q /mnt/vrtmp 2>/dev/null; then
+        SLAM_CSV_DIR="/mnt/vrtmp/slam-$(date +%Y%m%d-%H%M%S)"
+    else
+        SLAM_CSV_DIR="$VR/logs/slam-$(date +%Y%m%d-%H%M%S)"
+    fi
     mkdir -p "$SLAM_CSV_DIR"
     CSV_ENV=(
         SLAM_WRITE_CSVS=1

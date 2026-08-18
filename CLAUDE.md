@@ -1,6 +1,49 @@
 # Context for the 90Hz lab agent
 
-> ## START HERE NEXT SESSION (2026-08-18, ~05:45, lab machine) — the ghost-saga night:
+> ## START HERE NEXT SESSION (2026-08-18, ~08:30, lab machine) — the marathon's second
+> act ran on robots: WS2 closed by the wearer in-game, the frame thief cornered by a
+> triple negative, and the ARkade data/storage era opened. Read T216 + the 05:45 header
+> below (the ghost saga) + NEXT-STEP.md.
+>
+> **Closed this stretch**: stick input drift RESOLVED in-game (Aircar's own dashboard
+> as instrument, deadzone 0.15 suffices — "vuelo en línea recta como se manda"); the
+> pacing thief CORNERED: affinity A/B no-effect + synthetic GPU-load sweep FLAT
+> (0.096-0.213% late at ALL levels 0-100 with clocks pegged — HELLO_XR_GPU_LOAD dial
+> built and SPIR-V-verified) + RT-throttle already refuted ⇒ the in-game ~7% lives in
+> the GAME's CPU frame production; hunt it with the NEW tools: Tracy tracing (isolated
+> worktree binary + capture CLI + GUI compiled, docs/50 — short dedicated sessions
+> only, unbounded buffer) + UE stat unit via Engine.ini. Best flight verdict ever: "se
+> mantuvo no solo dentro de la cabina, sino en el asiento".
+>
+> **Wearer A/B queue for next session** (all built, none hardware-validated): (1)
+> seeded recovery `WMR_CONSTELLATION_SEED_PRIOR=1` (0077 — the layer that should
+> unpark the left); (2) rumble `WMR_CONTROLLER_HAPTICS=1` (0078 — wire format is a
+> labeled guess, buzz-or-not decides, fuzz plan in the option comment); (3) presence
+> don/doff `WMR_USER_PRESENCE=1` (0075+xrizer 0003 — calibrates the threshold,
+> unblocks War Robots VR); (4) xrizer 0004 field tests: Blade Runner 9732 buttons,
+> SUPERHOT menu, recenter-in-manifest-titles (it was silently dead in ALL of them);
+> (5) height calibration (tape measure + XRT_TRACKING_ORIGIN_OFFSET_Y).
+>
+> **ARkade data/storage era (user-directed, all live)**: 10G tmpfs at /mnt/vrtmp
+> (fstab); session CSVs auto-land there (launcher detects, SSD fallback); `down` +
+> `VR_ARCHIVE_CSV=1` = zstd archive to SSD, else data evaporates (SSD write-cycle
+> preservation — the stack writes ~190MB/h of CSVs); ~/vr/logs purged 5.7G→1.4G;
+> `scripts/vr-prewarm.sh` (cache=vmtouch / ram=tmpfs+symlink-swap ≤12G) for
+> zero-storage-hitch demos; per-title VR profiles in vr-launcher.py (Aircar =
+> constellation OFF); docs/23 rotating-sweep methodology + retest queue mapped to
+> landed fixes + the user's next batch (CyberPilot, Tank Mechanic re-verdict, Droid
+> Repair Bay, Sniper Elite VR). Batteries: alkalines retired (152→75 in one session,
+> emergency tier), kos+mik second-chance running, fleet thin — buy NiMH cells.
+>
+> **Process lessons paid for this stretch**: (1) a background wrapper's until-grep can
+> spin forever on a tail-truncated file while `pgrep -f` matches the wrapper itself —
+> "the sweep is running" was my own reflection (~25 min lost; launch long scripts
+> plain, log to a file, grep the file); (2) games launched via `steam -applaunch`
+> survive a monado restart as XR-orphans — client_connected=0 + "title: unknown" in
+> frame-pacing = the 0.00% is a lie; Force Quit + relaunch after any service cycle.
+
+> ## PREVIOUS same night (~05:45) — the ghost-saga act, still the tracking-truth
+> reference for this era:
 > mapping machine-complete, the parked-hands mechanism found and two defense layers
 > shipped, plus a parallel research fleet. Read `docs/pruebas.jsonl` T210-T215 + the
 > plan in NEXT-STEP.md first.

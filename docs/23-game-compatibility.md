@@ -228,3 +228,42 @@ add them here the same way — they don't need a SteamDB link, just where the bi
 Full session-by-session detail for every entry above is in `docs/pruebas.jsonl` — search by
 game name or by the T-numbers cited per row (T063-T086 cover this sweep as of
 2026-08-08).
+
+## Sweep methodology & storage tiers (user-directed, 2026-08-18)
+
+The catalog is a ROTATING pipeline with a disk budget, not a static install base:
+
+1. **Small titles (the majority)**: download in batches → launch-test → verdict lands
+   in this file → **discard unless working/showcase-worthy**. Storage is rented, the
+   verdict is what we keep.
+2. **Retest triggers**: every stack fix that kills a named failure class triggers
+   re-downloading exactly the titles that died of it. Current queue:
+   | fix (landed) | retest |
+   |---|---|
+   | Presence end-to-end (monado 0075 + xrizer 0003, needs first don/doff calibration) | War Robots VR: The Skirmish (672640) |
+   | Legacy input resurrection (xrizer 0004) | Blade Runner 9732 (non-Steam); any legacy-API title |
+   | Menu pass-through (xrizer 0004) | SUPERHOT VR menu button (installed) |
+   | Launch options completed | NVIDIA VR Funhouse (468700) — its FAIL verdict was measured broken |
+   | 10-second Steam-UI toggle (force Proton) | BlazeRush (302710) |
+   | Chaperone GetPlayAreaSize/Rect (small fix, not yet built) | Microsoft Maquette (967490) |
+   | IVRSystem_007 legacy interface (real project, not built) | Surgeon Simulator VR (457420) |
+3. **Big titles (Alyx class)**: live on a separate/permanent tier (mechanical disk
+   candidate), prewarmed to RAM via `scripts/vr-prewarm.sh` at pick time (cache mode
+   works from mechanical). Half-Life: Alyx specifically is the ultimate showcase exam
+   for this stack — native OpenVR, heavyweight — plan its tier before downloading ~70G.
+4. **Prewarm discipline**: demo titles get `vr-prewarm.sh` before a session (page-cache
+   or tmpfs mode) — zero frames lost to storage, same philosophy as the CSV ramdisk.
+
+### Next sweep batch (user-picked candidates, 2026-08-18)
+
+| candidate | size note | tier thought |
+|---|---|---|
+| CyberPilot VR | ~15G — "entra apenas" | too big for the 10G tmpfs ram-mode; cache-mode prewarm only (or bump tmpfs — RAM is 31G total, careful) |
+| Tank Mechanic Simulator VR (1463010) | already a ✓ row (2026-08-09, 3dof era) | "tema serio ahí" — re-verdict on the current full-6dof stack |
+| Star Wars: Droid Repair Bay | small (the big Star Wars titles don't fit the budget) | free title, showcase-friendly |
+| Sniper Elite VR | fits | fresh test |
+| OpenVR Benchmark (955610) | tiny, FREE | ⭐ deterministic 60s score, per GPU+headset leaderboard -- THE "better than Windows" head-to-head metric (dual-boot same machine) + full OpenVR-path exercise |
+
+Rule of thumb settled with the budget: the download-test-discard loop targets titles
+that fit the 10-15G working budget; anything bigger waits for the permanent/mechanical
+tier decision (the Alyx class).
