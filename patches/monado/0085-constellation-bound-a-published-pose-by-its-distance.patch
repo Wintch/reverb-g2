@@ -1,0 +1,324 @@
+From df93406f912f3bf58fe9fb3e2afb0f5d3e63e8e6 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Wed, 19 Aug 2026 15:12:40 -0300
+Subject: [PATCH] constellation: bound a published pose by its distance to the
+ CAMERA, not to the world origin
+
+T223 (2026-08-19, worn session) lost controller position entirely, silently, for
+minutes at a time, and the cause was a frame confusion in a sanity check.
+
+constellation_sample_store's guard compared the sample's WORLD-frame position
+against a hardcoded 5 m -- i.e. distance from the SLAM tracking origin. Measured
+live with the wearer sitting still, the SLAM head pose had walked to
+(-3.50, +1.07, +7.66), 8.4 m from origin, with no divergence reset logged. Every
+controller solve is published as Txr_world_device, so every CORRECT solve was
+also >5 m from origin and was dropped. The tracker kept producing good
+camera-relative poses (two hands 26 cm apart, 45 cm in front) at ~38/s while the
+driver's sample_count stayed frozen: total, permanent loss of controller position
+for the rest of that session, cured only by a relaunch, which re-anchors the
+origin near the wearer. The wearer's own report -- both hands parked at one
+shared point off to the side, occasionally blinking to the right place -- is
+exactly what this drop path produces, since a controller with no fresh sample
+reports the shared placeholder.
+
+It was invisible because the drop logged at WMR_DEBUG, a per-poll firehose level
+no real session runs at. An hour of the investigation went into inferring, from
+counters that had to be diffed by hand, what one visible line would have said.
+
+The fix splits one check into the two different jobs it was doing:
+
+  * Physical plausibility, camera-relative, in the tracker (Camera::pushPose):
+    what bounds a tracked object is its distance to the camera that saw it, which
+    is independent of wherever the tracking origin has drifted to. Carried as a
+    new per-device params field, max_camera_range_m, NOT a tracker-wide constant,
+    because the right value is a property of the rig topology: wmr sets 3 m (a
+    handheld object seen by head-mounted cameras -- the same value and argument
+    the seeding clamp in trySeededRecovery already used), while an external-
+    stationary-camera rig (rift, pssense) legitimately tracks objects metres away
+    from the sensor and is left unbounded (0) exactly as before. It gates the
+    last_known_pose update as well as the publication: an impossible pose must not
+    become the prior the next search starts from either, which is the poisoning
+    path 0082 exists to keep closed.
+
+  * Absurdity, world-frame, still in the driver: the finite-but-astronomical
+    solves its own comment describes (pos=(-3432890, -7235085, -15194503),
+    thousands of km, with 7 matched blobs). Now env-overridable and defaulted to
+    1000 m so a legitimately-drifted origin can never trip it, and logged at
+    throttled WMR_INFO, naming the drift interpretation explicitly.
+    WMR_CONSTELLATION_MAX_RANGE_M=5 restores the old behaviour for an A/B.
+
+Also logs the one remaining fully-silent drop path in pushPose (camera has no
+world pose for the frame, i.e. the tracking-origin device had no valid pose),
+which had to be ruled out by elimination during this investigation.
+
+Measured, worn, same session, same rig, 60 s windows:
+
+    baseline (bug live)        left  1.3%  right  2.0% positional presence
+    range fix                  left 46.3%  right 47.2%
+    range fix + 0084 gate 14   left 27.0%  right  1.8%
+    range fix + 0084 gate 30   left 47.7%  right 45.5%
+
+Best worn numbers this project has measured, and the first time both hands are
+present at the same time. Forced-failure control: WMR_CONSTELLATION_MAX_RANGE_M=0.5
+reproduces the exact wearer-visible symptom on demand.
+
+Residual, characterised and NOT addressed here: jumps that are 79-100%
+horizontal, p50 0.35 m, both hands -- the near-pure-yaw ghost class the gravity
+gates are blind to by construction. The yaw-prior gate that should catch it
+logged zero rejections all session while 3900 solve-yaw corrections ran, so it is
+inert; whether solve_yaw_locked ever forms is not observable from any log line
+today. That is the next lever.
+
+Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
+---
+ src/xrt/drivers/wmr/wmr_controller_base.c     | 65 +++++++++++++++--
+ .../constellation/t_constellation_tracker.cpp | 70 ++++++++++++++++++-
+ .../constellation/t_constellation_tracker.h   | 15 ++++
+ 3 files changed, 142 insertions(+), 8 deletions(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
+index a4e0dd0a7..6ea580a45 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.c
++++ b/src/xrt/drivers/wmr/wmr_controller_base.c
+@@ -66,6 +66,11 @@ DEBUG_GET_ONCE_BOOL_OPTION(wmr_controller_orient_fix, "WMR_CONTROLLER_ORIENT_FIX
+ //! pose. See the use site: 200 ms was shorter than the interval samples actually arrive at.
+ DEBUG_GET_ONCE_NUM_OPTION(wmr_constellation_max_age_ms, "WMR_CONSTELLATION_MAX_AGE_MS", 500)
+ DEBUG_GET_ONCE_FLOAT_OPTION(wmr_constellation_gravity_gate_deg, "WMR_CONSTELLATION_GRAVITY_GATE_DEG", 14.0f)
++
++//! World-frame absurdity guard for an arriving constellation sample, in metres (reverb-g2 T223).
++//! NOT a plausibility bound: see the long comment at its use site in constellation_sample_store.
++//! 0 disables it entirely; 5 restores the pre-T223 hardcoded value.
++DEBUG_GET_ONCE_FLOAT_OPTION(wmr_constellation_max_range_m, "WMR_CONSTELLATION_MAX_RANGE_M", 1000.0f)
+ //! TRACKER-side twin of the gravity gate above (T221's trigger-blindness fix): when > 0, the
+ //! constellation tracker asks for our fusion's down vector and rejects wrong-lobe candidates
+ //! BEFORE committing/delivering them, so its recovery ladder actually runs during a ghost flood
+@@ -1616,16 +1621,59 @@ constellation_sample_store(struct t_constellation_tracker_device *device, struct
+ 	// 2026-08-12 in a real game session: pos=(-3432890, -7235085, -15194503), i.e. thousands of
+ 	// kilometres, with 7 matched blobs. Finite, so the check below never sees it, and it would
+ 	// enter the history and therefore the tracker's own prior exactly like a NaN would.
+-	static const float WMR_CONSTELLATION_MAX_RANGE_M = 5.0f;
++	/*
++	 * WORLD-frame absurdity guard. Deliberately NOT the physical plausibility bound -- that
++	 * one is camera-relative and lives in the tracker (Camera::pushPose's
++	 * WMR_CONSTELLATION_MAX_CAM_RANGE_M), because it is the hand-to-CAMERA distance that
++	 * physics bounds, not the hand-to-ORIGIN distance.
++	 *
++	 * reverb-g2 T223 (2026-08-19), the failure that motivated splitting the two: this check
++	 * was a hardcoded 5 m against the WORLD-frame position, i.e. distance from the SLAM
++	 * tracking origin. Measured live with the headset worn and the wearer sitting still, the
++	 * SLAM head pose had walked to (-3.50, +1.07, +7.66) -- 8.4 m from origin, no divergence
++	 * reset logged. Every controller solve is published as Txr_world_device, so every
++	 * CORRECT solve was then >5 m from origin too and was dropped here. The tracker kept
++	 * producing perfectly good camera-relative poses (two hands 26 cm apart, 45 cm in front)
++	 * at ~38/s while the driver's sample_count stayed frozen for minutes: total, permanent,
++	 * silent loss of controller position for the rest of the session, cured only by a
++	 * relaunch (which re-anchors the origin near the wearer). The wearer's report -- both
++	 * hands parked at one shared point off to the side, occasionally blinking to the right
++	 * place -- is exactly the placeholder this drop path produces.
++	 *
++	 * It was silent because the drop logged at WMR_DEBUG, a per-poll firehose level nobody
++	 * runs a real session at: an hour of the session that found it went into re-deriving,
++	 * from counters that could only be inferred, what one visible log line would have said.
++	 * Hence WMR_INFO here, throttled -- a drop path with no visible counter is a trap, and
++	 * this one had been armed since the check was written.
++	 *
++	 * COUPLING, worth stating because it is not obvious: this guard is only safe at a value this
++	 * large BECAUSE the camera-relative bound upstream (t_constellation_tracker.h's
++	 * max_camera_range_m, 3 m for WMR) already filters the ordinary bad solves. The two are load-
++	 * bearing together, not independently. Disabling the upstream one while leaving this at 1000 m
++	 * would let a moderate-magnitude bad solve -- say 500 m, well short of "absurd" -- into the
++	 * relation history, where m_relation_history's velocity estimate would turn it into an implied
++	 * ~19 km/s and feed that to prediction. That is the "fling" class this project already knows.
++	 *
++	 * The remaining job of this check is the one its own comment above describes: catching
++	 * finite-but-absurd solves (observed 2026-08-12: pos=(-3432890, -7235085, -15194503),
++	 * thousands of kilometres, with 7 matched blobs) before they enter the relation history
++	 * and therefore the tracker's own prior. That needs a bound big enough to never fire on
++	 * a legitimately-drifted origin. 0 disables; WMR_CONSTELLATION_MAX_RANGE_M=5 restores
++	 * the pre-T223 behaviour exactly, for an A/B.
++	 */
++	const float max_range_m = debug_get_float_option_wmr_constellation_max_range_m();
+ 	const struct xrt_vec3 *sp = &sample->pose.position;
+-	if (fabsf(sp->x) > WMR_CONSTELLATION_MAX_RANGE_M || fabsf(sp->y) > WMR_CONSTELLATION_MAX_RANGE_M ||
+-	    fabsf(sp->z) > WMR_CONSTELLATION_MAX_RANGE_M) {
++	if (max_range_m > 0.0f && (fabsf(sp->x) > max_range_m || fabsf(sp->y) > max_range_m ||
++	                           fabsf(sp->z) > max_range_m)) {
+ 		wcb->constellation.out_of_range_count++;
+ 		if (wcb->constellation.out_of_range_count == 1 ||
+ 		    (wcb->constellation.out_of_range_count % 100) == 0) {
+-			WMR_DEBUG(wcb, "constellation sample %.0f m away, dropping it [%llu so far]",
+-			          (double)fmaxf(fmaxf(fabsf(sp->x), fabsf(sp->y)), fabsf(sp->z)),
+-			          (unsigned long long)wcb->constellation.out_of_range_count);
++			WMR_INFO(wcb,
++			         "constellation sample [%s]: %.2f m from the tracking ORIGIN exceeds the %.2f m "
++			         "absurdity guard, dropping it -- if the wearer has not moved that far, the SLAM "
++			         "origin has drifted and this is dropping GOOD samples [%llu so far]",
++			         wcb->base.str, (double)fmaxf(fmaxf(fabsf(sp->x), fabsf(sp->y)), fabsf(sp->z)),
++			         (double)max_range_m, (unsigned long long)wcb->constellation.out_of_range_count);
+ 		}
+ 		return;
+ 	}
+@@ -2030,6 +2078,11 @@ wmr_controller_base_add_to_constellation_tracker(struct wmr_controller_base *wcb
+ 	struct t_constellation_tracker_device_params params = {
+ 	    .led_model = wcb->constellation.led_model,
+ 	    .tracking_source = &wcb->constellation.tracking_source,
++	    // A WMR controller is handheld and the cameras are on the wearer's head: 3 m is already
++	    // generous for arm's length. Same value and same argument as the seeding clamp in
++	    // Camera::trySeededRecovery, which got there first. See T223 for what this replaces --
++	    // a world-frame bound that also counted however far the SLAM origin had drifted.
++	    .max_camera_range_m = 3.0f,
+ 	};
+ 
+ 	int ret = t_constellation_tracker_add_device(tracker, &params, &wcb->constellation.device,
+diff --git a/src/xrt/tracking/constellation/t_constellation_tracker.cpp b/src/xrt/tracking/constellation/t_constellation_tracker.cpp
+index e28059f4b..1036c3946 100644
+--- a/src/xrt/tracking/constellation/t_constellation_tracker.cpp
++++ b/src/xrt/tracking/constellation/t_constellation_tracker.cpp
+@@ -56,6 +56,21 @@ DEBUG_GET_ONCE_NUM_OPTION(constellation_lost_search_div, "WMR_CONSTELLATION_LOST
+ // WMR_CONSTELLATION_YAW_PRIOR_DEG's own enablement, not a replacement for it.
+ DEBUG_GET_ONCE_BOOL_OPTION(constellation_seed_prior, "WMR_CONSTELLATION_SEED_PRIOR", false)
+ 
++// Global OVERRIDE of the per-device camera-relative plausibility bound, in metres (reverb-g2 T223).
++// Negative (the default) = no override: each device's own params.max_camera_range_m decides, which is
++// where the value belongs, since the right bound is a property of the rig topology (see that field's
++// comment in t_constellation_tracker.h). Set >= 0 to force one bound on every device for an A/B; 0
++// disables the check outright.
++// The same physical argument the seed clamp in Camera::trySeededRecovery already uses, and
++// the same 3 m value: what bounds a tracked object's position is its distance to the CAMERA
++// that saw it, not its distance to the world origin -- the latter also counts however far the
++// SLAM tracking origin has drifted, which says nothing about whether the solve is real.
++// T223 measured a whole worn session lost to that conflation (see the driver-side comment in
++// constellation_sample_store). 0 disables.
++// Revisit -- as the seed clamp's own comment says -- if an external-camera rig ever needs a
++// tracked object legitimately further than this from the camera that observes it.
++DEBUG_GET_ONCE_FLOAT_OPTION(constellation_max_cam_range_m, "WMR_CONSTELLATION_MAX_CAM_RANGE_M", -1.0f)
++
+ /*
+  *
+  * Helper functions
+@@ -103,6 +118,8 @@ static uint64_t seed_recovery_attempt_count[XRT_CONSTELLATION_MAX_DEVICES] = {};
+ static uint64_t seed_recovery_skip_count[XRT_CONSTELLATION_MAX_DEVICES] = {};
+ static uint64_t seed_recovery_success_count[XRT_CONSTELLATION_MAX_DEVICES] = {};
+ static uint64_t tracker_gravity_reject_count[XRT_CONSTELLATION_MAX_DEVICES] = {};
++static uint64_t cam_range_reject_count[XRT_CONSTELLATION_MAX_DEVICES] = {};
++static uint64_t no_world_pose_count[XRT_CONSTELLATION_MAX_DEVICES] = {};
+ 
+ static uint64_t *
+ seed_recovery_counter_slot(uint64_t *counters, t_constellation_device_id_t device_id)
+@@ -1158,6 +1175,32 @@ Camera::pushPose(CameraSample &camera_sample,
+ 	         Txr_cam_device.orientation.y, Txr_cam_device.orientation.z, Txr_cam_device.orientation.w,
+ 	         Txr_cam_device.position.x, Txr_cam_device.position.y, Txr_cam_device.position.z);
+ 
++	// Camera-relative plausibility (reverb-g2 T223) -- see the option's own comment above. This is
++	// deliberately measured HERE, on Txr_cam_device, which is the refined pose expressed relative
++	// to the camera that observed it, and therefore independent of where the tracking origin
++	// happens to be. A hand cannot be 8 m from the headset that is looking at it; a ghost lobe
++	// routinely is. Gates BOTH the publication below and the last_known_pose update further down:
++	// an impossible pose must not become the prior the next search starts from either.
++	const float cam_range_override_m = debug_get_float_option_constellation_max_cam_range_m();
++	const float max_cam_range_m =
++	    cam_range_override_m >= 0.0f ? cam_range_override_m : device->params.max_camera_range_m;
++	bool cam_range_ok = true;
++	if (max_cam_range_m > 0.0f) {
++		const xrt_vec3 &cp = Txr_cam_device.position;
++		float cam_dist_m = sqrtf(cp.x * cp.x + cp.y * cp.y + cp.z * cp.z);
++		if (cam_dist_m > max_cam_range_m) {
++			cam_range_ok = false;
++			uint64_t *count = seed_recovery_counter_slot(cam_range_reject_count, device->id);
++			(*count)++;
++			if (*count == 1 || (*count % 100) == 0) {
++				CT_INFO(tracker,
++				        "camera-range gate: device %d pose %.2f m from the camera exceeds the "
++				        "%.1f m plausibility bound -- not publishing it (%llu so far)",
++				        device->id, cam_dist_m, max_cam_range_m, (unsigned long long)*count);
++			}
++		}
++	}
++
+ 	std::shared_ptr<CameraMosaic> mosaic = this->mosaic.lock();
+ 	U_ASSERT_WEAK_PTR_RET(mosaic,
+ 	                      "Camera mosaic was destroyed while processing a sample, this should never happen since "
+@@ -1188,6 +1231,22 @@ Camera::pushPose(CameraSample &camera_sample,
+ 	auto Txr_world_cam = camera_sample.Txr_world_cam;
+ 	if (!Txr_world_cam.has_value()) {
+ 		// Can't do anything if we can't locate the camera in the world.
++		//
++		// This used to be the single most silent drop path in the whole pipeline: no log at ANY
++		// verbosity, so a device could be solving perfectly while nothing ever reached the driver
++		// and no counter anywhere moved. Found during T223's investigation, where it had to be
++		// ruled out by elimination rather than read off a line. Throttled INFO now -- it fires
++		// whenever the tracking-origin device (the headset) has no valid pose for this frame's
++		// timestamp, i.e. SLAM relocalising or not yet converged, which is worth knowing.
++		uint64_t *count = seed_recovery_counter_slot(no_world_pose_count, device->id);
++		(*count)++;
++		if (*count == 1 || (*count % 500) == 0) {
++			CT_INFO(tracker,
++			        "device %d: camera has no world pose for this frame -- the tracking origin "
++			        "(headset) pose was unavailable, so a solved pose cannot be placed in the "
++			        "world and is dropped (%llu so far)",
++			        device->id, (unsigned long long)*count);
++		}
+ 		return;
+ 	}
+ 
+@@ -1226,7 +1285,7 @@ Camera::pushPose(CameraSample &camera_sample,
+ 	// pose_metrics_evaluate_pose_with_prior's loophole-branch check) -- no separate check needed
+ 	// here. What trusted_orientation ALSO does, unlike an ordinary failed prior match, is gate
+ 	// the locked_data update just below -- see that block's own comment.
+-	if (POSE_HAS_FLAGS(&score, POSE_MATCH_GOOD)) {
++	if (POSE_HAS_FLAGS(&score, POSE_MATCH_GOOD) && cam_range_ok) {
+ 		// Push the sample to the device
+ 		t_constellation_tracker_sample sample = {
+ 		    .timestamp_ns = camera_sample.timestamp_ns,
+@@ -1263,7 +1322,7 @@ Camera::pushPose(CameraSample &camera_sample,
+ 		// before.
+ 		bool trusted_yaw_ok = trusted_orientation == nullptr || POSE_HAS_FLAGS(&score, POSE_MATCH_TRUSTED_YAW);
+ 
+-		if (trusted_yaw_ok) {
++		if (trusted_yaw_ok && cam_range_ok) {
+ 			// If we already found a pose in the future, then don't mark blobs, since the device has
+ 			// definitely moved.
+ 			if (!device->locked_data.last_known_pose.has_value() ||
+@@ -1275,6 +1334,13 @@ Camera::pushPose(CameraSample &camera_sample,
+ 			}
+ 
+ 			device->locked_data.last_known_pose = DeviceLastPose(Txr_world_device, camera_sample.timestamp_ns);
++		} else if (!cam_range_ok) {
++			// Reported separately from the yaw case: same suppression, different reason, and a
++			// log line that names the wrong one costs an investigation (T223's own lesson).
++			CT_DEBUG(tracker,
++			         "Device %d: pose implausibly far from the camera -- not letting it poison "
++			         "last_known_pose/blob associations",
++			         device->id);
+ 		} else {
+ 			CT_DEBUG(tracker,
+ 			         "Device %d: pose disagreed with trusted orientation on yaw (%.1f deg) -- not letting "
+diff --git a/src/xrt/tracking/constellation/t_constellation_tracker.h b/src/xrt/tracking/constellation/t_constellation_tracker.h
+index 78e19af9e..76c61d48c 100644
+--- a/src/xrt/tracking/constellation/t_constellation_tracker.h
++++ b/src/xrt/tracking/constellation/t_constellation_tracker.h
+@@ -85,6 +85,21 @@ struct t_constellation_tracker_device_params
+ 	 * guesses when finding the device.
+ 	 */
+ 	struct t_constellation_tracker_tracking_source *tracking_source;
++
++	/*!
++	 * Optional plausibility bound, in metres, on how far from the OBSERVING CAMERA this device
++	 * may legitimately be. A pose solved further away than this is discarded before it is
++	 * published or allowed to become the search's own prior. 0 (the default for a zero- or
++	 * partially-initialised params struct) means unbounded -- the pre-existing behaviour.
++	 *
++	 * This is deliberately per-device and not a tracker-wide constant, because the right value
++	 * is a property of the RIG TOPOLOGY, not of the tracker: a headset-mounted-camera driver
++	 * (wmr) is looking at a handheld object at arm's length and can bound it tightly, while an
++	 * external-stationary-camera rig (rift, pssense) legitimately tracks objects several metres
++	 * across a room from the sensor that sees them. A tracker-wide default would silently
++	 * degrade the latter -- reverb-g2 T223 shipped one for a day and this field is the fix.
++	 */
++	float max_camera_range_m;
+ };
+ 
+ enum t_constellation_tracker_flags
+-- 
+2.47.3
+

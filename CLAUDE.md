@@ -1,5 +1,47 @@
 # Context for the 90Hz lab agent
 
+> ## START HERE (2026-08-19, ~15:40, T223 — WORN, supersedes the T222 addendum below):
+> **the constellation range check was measured in the wrong frame, and fixing it took worn
+> positional presence from 1.3%/2.0% to 47.7%/45.5%** — the best this project has recorded
+> and the first time BOTH hands are present at once. Read `docs/58` + T223 + NEXT-STEP.
+>
+> `constellation_sample_store`'s 5 m guard compared the **WORLD-frame** position, i.e.
+> distance from the SLAM *origin* — a quantity that also contains however far the origin
+> drifted. Measured worn, wearer seated still: head at 8.4 m from origin, **zero divergence
+> resets**, so every CORRECT solve was >5 m out and was dropped — at `WMR_DEBUG`, invisibly,
+> for minutes at a time, cured only by a relaunch (which re-anchors the origin). That is why
+> sessions decayed over their length. **Patch 0085** splits it: plausibility is now
+> **camera-relative** and **per-device** (`max_camera_range_m`; wmr 3 m, rift/pssense
+> unbounded — a tracker-wide constant would have degraded external-camera rigs), gating
+> `last_known_pose` too; the world check stays as an absurdity guard
+> (`WMR_CONSTELLATION_MAX_RANGE_M`, default 1000 m, throttled `WMR_INFO`).
+> **`WMR_CONSTELLATION_MAX_RANGE_M=0.5` reproduces the wearer-visible symptom on demand** —
+> that is the regression test.
+>
+> **0084 finally has a verdict**: at its suggested **14° it is a NET NEGATIVE** (right hand
+> 47.2%→1.8%) because that default was calibrated on a *static desk* capture; worn+in-motion
+> gravity is noisier and 16/70 rejects sit at 15-30° (true lobe). Real ghosts are at 75-105°
+> and 135-180°. **Use `WMR_CONSTELLATION_TRACKER_GRAVITY_GATE_DEG=30`.**
+>
+> **Next lever, with numbers**: residual jumps are **79-100% horizontal, p50 0.35 m, both
+> hands** = near-pure-yaw ghosts, gravity-blind by construction. The yaw prior that should
+> catch them is **provably inert** (0 rejections all session vs 3900 solve-yaw corrections),
+> its gate needs `solve_yaw_locked`, and **nothing logs whether that lock forms** — make the
+> lock observable FIRST, then judge the yaw layer. 0083's exposure A/B is still unrun.
+>
+> **Two traps re-earned**: (1) the USB2 storm *escalates within a session* (6-18/min → 28-62
+> /min, 796 in 25 min) and ended in a total constellation blackout — PC-end USB-C replug
+> cured it 62→3/min; four service relaunches preceded it, so batch measurements per launch.
+> (2) Controllers auto-slept mid-session and cost a 272 s window (all counters zero); a
+> window with sleeping controllers or the headset on the desk **is not a control** — re-run
+> it, never read its zeros as a result.
+>
+> **Method note worth keeping**: two subagents were used and both changed the outcome — an
+> adversarial one REFUTED the first causal framing (the drift window used as evidence had
+> the controllers powered off), forcing the claim down to what the forced reproduction
+> supports; a blast-radius one caught that the fix as first written would have silently
+> degraded rift/pssense. Neither the claim nor the patch survived contact unchanged.
+
 > ## FINAL ADDENDUM (2026-08-19, ~03:55, T222 — autonomous stretch after the header
 > below): read T222 + NEXT-STEP's ~03:45 update first. **The silent windowed-fallback
 > is ROOT-CAUSED: `XRT_COMPOSITOR_LOG=debug` is load-bearing timing** — warn = 6/6 real

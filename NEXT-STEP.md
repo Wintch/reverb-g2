@@ -1,5 +1,56 @@
 # Next step
 
+> ## UPDATE (2026-08-19, ~15:40, lab, WORN — T223): the session-killing bug is FOUND, FIXED
+> and the numbers are the best this project has recorded. Read T223 + `docs/58` first.
+>
+> **What was wrong**: `constellation_sample_store`'s 5 m sanity guard compared the sample's
+> **WORLD-frame** position — i.e. distance from the SLAM *origin*, which silently includes
+> however far the origin has drifted. Measured worn with the wearer seated still: head pose
+> 8.4 m from origin, zero divergence resets, so every CORRECT controller solve was also
+> >5 m out and was dropped, at `WMR_DEBUG`, invisibly. Patch **0085** splits it: physical
+> plausibility is now **camera-relative** and **per-device** (`params.max_camera_range_m`,
+> wmr 3 m, rift/pssense unbounded as before), and the world-frame check stays as a pure
+> absurdity guard (`WMR_CONSTELLATION_MAX_RANGE_M`, default 1000 m, throttled `WMR_INFO`).
+>
+> **Worn, 60 s windows, same session** — positional presence L/R:
+> baseline **1.3% / 2.0%** → range fix **46.3% / 47.2%** → fix+0084@14° **27.0% / 1.8%** →
+> **fix+0084@30° 47.7% / 45.5%** (first time both hands present at once; previous project
+> best was 37.2/22.2 on the everyday rig). `WMR_CONSTELLATION_MAX_RANGE_M=0.5` reproduces
+> the wearer-visible symptom on demand — use it as the regression test.
+>
+> **0084's verdict, first real one**: at its suggested **14° it is a net negative** (right
+> 47.2→1.8%). Its default was calibrated on a STATIC DESK capture (true lobe p90 4.3-6.5°);
+> worn and in motion the gravity estimate is noisier, and 16 of 70 logged rejects sit at
+> 15-30°, i.e. true-lobe samples. Real ghosts live at 75-105° and 135-180°. **Use 30°.**
+>
+> ## THE NAMED NEXT LEVER (with numbers, not adjectives)
+> Residual jumps are **79-100% horizontal, p50 0.35 m, both hands** — the near-pure-yaw
+> ghost class, which every gravity gate is blind to *by construction*. The layer that
+> should catch it, the yaw prior, is **provably inert**: zero rejections all session while
+> 3900 solve-yaw corrections ran with errors to 22.8°. Its gate only engages once
+> `solve_yaw_locked` forms, and **nothing logs whether that lock ever forms**. So:
+> 1. Make the lock state observable (a log line + a counter — cheap, and today it is the
+>    blocker on *measuring* anything about the yaw layer).
+> 2. Then re-test the yaw prior worn, and only then judge 0076/0077.
+>
+> ## Still queued from T222, untouched today
+> **0083's exposure A/B** (`WMR_CONTROLLER_CAM_EXPOSURE_US` 2000-3000 vs the fixed 6000)
+> never ran — the session went to the range bug instead. It is still the standing candidate
+> for the in-motion collapse, and it is now much cheaper to judge because there is finally a
+> working baseline to compare against.
+>
+> ## Ops rules re-earned today
+> - **The USB2 storm escalates within a session**: 6-18 events/min early → 28-62/min two
+>   hours later, 796 in 25 min, ending in a total constellation blackout that invalidated a
+>   whole control arm. **PC-end USB-C replug cured it instantly (62→3/min)** — T186's lever
+>   holds. Four service relaunches preceded the escalation; the documented "repeated cycling
+>   aggravates this" risk is a live suspect, so batch measurements per launch.
+> - **Controllers auto-sleep mid-session** and cost a 272 s window entirely (all counters
+>   zero). The wearer caught it, not the instrumentation. Check liveness per arm, not per
+>   session.
+> - A measurement window whose controllers were off, or whose headset was on the desk, is
+>   **not a control** — say so and re-run it rather than reading zeros as a result.
+
 > ## UPDATE (2026-08-19, ~03:45, lab/dev, autonomous post-close stretch — T222): three
 > deliverables built and one root cause nailed, all awaiting their A/B:
 > 1. **T221's trigger-blindness fix IMPLEMENTED**: new optional `get_trusted_gravity`
