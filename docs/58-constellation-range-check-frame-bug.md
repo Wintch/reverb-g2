@@ -161,16 +161,47 @@ baseline underneath it. With one:
 
 ## What is still open
 
-Residual jumps, measured from the delivered poses: **79-100% horizontal, p50 0.35 m, both
-hands**. A purely horizontal displacement at near-constant magnitude is the geometric
+Residual jumps, measured from the delivered poses: **79-100% horizontal, both hands**.
+
+> **CORRECTION (T224, same day):** this section originally read "p50 0.35 m". That figure is
+> **inflated and should not be used** — it came from player POSE samples **one second apart**,
+> so it measured the jump *plus* whatever the hand genuinely moved in that second. The wearer,
+> shown the fixed build, described the shifts as **10-20 cm**, which matches T181's directly
+> measured 20-30 cm bimodal clusters. Take 10-20 cm as the honest magnitude.
+>
+> This makes the problem **harder**, not easier: a 15 cm displacement at ~0.45 m radius implies
+> a ghost yaw of **~19°**, not the ~45° that 0.35 m implied — i.e. squarely inside the 10-30°
+> band where 90% of *legitimate* samples live (T224 measured the distribution: 0-10° 8.2%,
+> 10-20° 62.0%, 20-30° 27.8%, >30° 2.4%). No single global threshold can separate two
+> populations that occupy the same band.
+>
+> The wearer also separated a residual this section had conflated: a **~1 cm high-frequency
+> jitter on both hands**, which is the re-triangulation "breathe" already on T203's round map
+> (item 6), is a *different class* from the 10-20 cm horizontal shifts and needs its own fix. A purely horizontal displacement at near-constant magnitude is the geometric
 signature of a rotation about the vertical axis — the **near-pure-yaw ghost**, which every
 gravity gate is blind to by construction (yaw does not move the down vector).
 
 The layer that should catch it is the yaw prior, and it is **provably inert**: `yaw prior`
 logged **zero** rejections across the whole session while 3900 solve-yaw corrections ran with
-errors up to 22.8°. Its gate only engages once `solve_yaw_locked` is established, and **no
-log line anywhere reports whether that lock ever forms** — so the chicken-and-egg T221 named
-cannot even be observed today. First step on that thread: make the lock state visible.
+errors up to 22.8°.
+
+> **ANSWERED (T224, patch 0086's first hardware run).** Two candidate explanations existed and
+> they had opposite consequences. The instrument settled it:
+>
+> - **The lock is NOT the blocker.** It forms under motion, on **both** hands, worn:
+>   `yaw lock status [Left]: LOCKED (99 corrections, 600 gated samples)`,
+>   `[Right]: LOCKED (1745 corrections, 2100 gated samples)`. T221's chicken-and-egg
+>   hypothesis — that `solve_yaw_locked` only establishes at rest — is **dead**.
+> - **The threshold is unreachable, and unfixably so.** With the lock established, the 60° gate
+>   still rejects nothing because 98.8% of samples sit below 30°. Lowering it to 30° would
+>   reject ~28% of *good* samples to chase a ghost living in the same band.
+>
+> So the yaw prior is not mistuned — it is **the wrong instrument for this class**. The next
+> lever is the correspondence assignment itself (generate the assignment from the trusted
+> heading rather than judging candidates after the fact), which is the major surgery T215
+> already named. Also worth knowing, found while adding the instrument: `solve_yaw_locked` is
+> **monotonic** — set once a gate-accepted sample lands within 15° of the fusion heading, and
+> never cleared by any code path. "Locked" means *has ever converged*, not *is converged now*.
 
 ## Lesson, generalised
 
