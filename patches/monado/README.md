@@ -456,3 +456,19 @@ neutral on presence while still killing ghosts (~400 rejects): that is the measu
 **Next question this opens, and it is not the one we started with:** before asking why the yaw
 prior never rejects, ask whether the lock it depends on is *honest*. A monotonic lock in a
 ghost-flood regime can latch onto a wrong heading early and never let go.
+
+## 0087-0088 — presence debounce, and letting the seeded hypothesis compete (2026-08-19, T224)
+
+| # | What & why |
+|---|---|
+| 0087 | **Debounce for `XR_EXT_user_presence`.** T224's first hardware run of 0075 confirmed the chain works (worn = raw 1, resting = 0) and immediately showed why it could not be shipped as-is: through a real donning gesture the raw byte alternated **0,1,0,1** before settling. A title turns a presence toggle into a pause, so that flicker is a game pausing and unpausing in the wearer's face while they are still putting the headset on. Windows are **asymmetric on purpose** — `WMR_USER_PRESENCE_DON_MS` (250) to enter *worn*, `WMR_USER_PRESENCE_DOFF_MS` (1000) to leave it: a spurious resume is invisible, a spurious pause interrupts a session. Also stamps the **arrival** time of every proximity message (not just changes) and logs a throttled notice after 30 s of silence — the message is change-driven, so "the sensor calmly reports the same value" and "the companion died" are indistinguishable from the value alone, and T224 lost the doff measurement **twice** to exactly that ambiguity. The committed state is deliberately not cleared when the channel goes quiet: for a worn headset that is the safe direction. Still unmeasured (twice attempted): the doff transition itself, so both windows are choices made for their failure mode, not calibrated values. Commit `3fa3cc2b6`. |
+| 0088 | **Two ways the heading-seeded hypothesis never got to compete.** (a) `pose_metrics_evaluate_pose_with_prior` granted `POSE_MATCH_GOOD` from two branches and only the else-if one (T213's loophole, closed by 0076) checked `trusted_yaw_ok`; the **prior-match branch accepted on reprojection alone** while a trusted heading disagreed, purely because the candidate landed inside the prior's own window — and that prior is fed by previously accepted samples, so one admitted mis-assignment becomes the reference that admits the next. Both branches now gate on the same already-computed boolean (vacuously true without a trusted orientation ⇒ rift/pssense byte-identical). (b) `WMR_CONSTELLATION_SEED_FIRST` (default **off**): the seeding layer 0077/0082 *is* "generate the assignment from the heading", but it runs only after every ordinary attempt fails — and the ordinary attempts seed PnP with the PREVIOUS orientation, so one that converges to a small-angle wrong local minimum inside the prior window returns first and seeding is never reached. The flag exists to A/B the reorder rather than to assert it. Commit `15214e63f`. |
+
+**The ceiling, measured, and it is the honest headline of this pair:** the residual ghost is
+**~13-25° of yaw ≈ a 1-2 LED slip around a 32-LED ring (~11° spacing)**, while the trusted
+heading's own noise floor under worn motion is **10-30°**. Seeding can *narrow* the candidate
+pool to the LEDs inside that cone; it cannot pick the right one within it. **Expect a better hit
+rate, not the ghost's elimination.** The real lever is the heading's noise floor under dynamics —
+the same gyro-bias-under-motion class as T203's round-map item 2 for the head channel — not the
+correspondence search's architecture. This is the third time a threshold calibrated at rest has
+failed under worn motion in this subsystem (0084 at 14°, the yaw prior at 60°, and now this).
