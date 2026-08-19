@@ -1,0 +1,56 @@
+From 6f63e9296b5f1571b6a334a33023ccc6eb3c8e37 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Tue, 18 Aug 2026 22:55:56 -0300
+Subject: [PATCH 3/4] d/wmr: make the get_tracked_pose log throttle counter
+ per-device
+
+The 2026-08-11 note at the use site already documents this exact bug (a
+function-local static shared by both hands mutes whichever one misses the
+modulo boundary), but the shared static had crept back in. With calls from
+the two hands interleaving evenly and an even modulo (90), the SAME hand
+wins the boundary every time -- the other hand never logs at all, which
+masked the left controller's entire accepted-sample stream in tonight's
+phase-A/B measurements. Move the counter into wcb->constellation.
+
+Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
+---
+ src/xrt/drivers/wmr/wmr_controller_base.c | 5 ++---
+ src/xrt/drivers/wmr/wmr_controller_base.h | 6 ++++++
+ 2 files changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
+index d7f872d43..01aab2ff3 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.c
++++ b/src/xrt/drivers/wmr/wmr_controller_base.c
+@@ -1091,9 +1091,8 @@ wmr_controller_base_get_tracked_pose(struct xrt_device *xdev,
+ 	// happens to be sitting on a multiple of 30 -- so it stayed completely silent whenever samples
+ 	// stopped arriving, i.e. exactly when the delta is worth reading. Gate on this device's own call
+ 	// count instead; sample_count > 0 still keeps it quiet until there is something to report.
+-	static uint64_t get_tracked_pose_call_count = 0;
+-	++get_tracked_pose_call_count;
+-	if (wcb->constellation.sample_count > 0 && get_tracked_pose_call_count % 90 == 0) {
++	++wcb->constellation.get_tracked_pose_call_count;
++	if (wcb->constellation.sample_count > 0 && wcb->constellation.get_tracked_pose_call_count % 90 == 0) {
+ 		bool pos_tracked = (out_relation->relation_flags & XRT_SPACE_RELATION_POSITION_TRACKED_BIT) != 0;
+ 		WMR_INFO(wcb,
+ 		        "get_tracked_pose [%s]: pos=(%.3f, %.3f, %.3f) position_tracked=%s at_ts=%lld "
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.h b/src/xrt/drivers/wmr/wmr_controller_base.h
+index 48ad2784d..c349d2a60 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.h
++++ b/src/xrt/drivers/wmr/wmr_controller_base.h
+@@ -168,6 +168,12 @@ struct wmr_controller_base
+ 		uint64_t gravity_gate_drop_count;
+ 		//! Gate-accepted solves that fed WMR_CONTROLLER_SOLVE_YAW_CORRECT (0 while off).
+ 		uint64_t solve_yaw_correction_count;
++		//! Per-device get_tracked_pose call counter for the throttled output log. MUST be
++		//! per-device: a function-local static is shared by both controllers, and with the
++		//! two hands' calls interleaving evenly, an even modulo lands on the same hand every
++		//! time -- silently muting the other (the exact bug the 2026-08-11 note below the
++		//! use site describes; it had crept back in via a shared static).
++		uint64_t get_tracked_pose_call_count;
+ 		//! Set once the solve-yaw error has been observed small (heading acquired);
+ 		//! afterwards, huge sudden errors are distrusted as 0047's yaw-ghost solves.
+ 		bool solve_yaw_locked;
+-- 
+2.47.3
+
