@@ -35,14 +35,24 @@
 > hand is worse"*, carried since T215, may not be a property of the hand at all. (2) A **~1 cm
 > high-frequency jitter on both hands**, distinct from the shifts — T203's item 6, never worked.
 >
-> **The USB2 storm is a LINUX-SIDE problem, not the cable** (user correction at session close,
-> and the control is strong: the same cable and headset run long Windows sessions normally).
-> **The rev2A recommendation is retracted** — and T189/T190's already-recorded finding that the
-> storm is *universal* (same rate at complete idle, no tracking, no app) says it is not our
-> service under load either. Suspect the Linux USB stack: companion HID handling, autosuspend,
-> host controller. Next step: `usbmon` during a live storm vs a Windows USBPcap capture of the
-> same idle state — `windows-kit/` has the tooling and the OS is the only variable. The
-> behaviour still holds: it degrades within a session, and presence freezes when it dies.
+> **The USB2 storm is the LINK, not the Linux stack — the Windows control RAN and it reversed
+> the call made a few hours earlier** (T226, `docs/60`, capture in `windows-kit/captures/`).
+> Same physical box (SSD swapped), same cable, same headset, OS the only variable: Windows logs
+> **3.47 USB2 drops/min, p50 outage 2.9 s, branch incomplete 27% of a 79-min session**, against
+> Linux's 0.92-4.63/min and p50 3.0 s — and on both, the **USB3 branch never drops** and the
+> rate **escalates within the session** (Windows: 0 events in the first 10 min, then 38-52 per
+> 10 min). The decision rule was written before the data, so apply it as written: **the rev2A
+> cable is BACK on the suspect list, and the retraction of that recommendation is itself
+> retracted.** The user felt it on Windows too — audio dropping out = the audio device's 274
+> disconnects — while five titles played fine, so *"Windows runs normally"* was about gameplay,
+> not about the link. What is excluded is "the Linux stack does this to itself"; what is NOT
+> identified is which element (cable, connector, the active cable's Cypress hub, or the visor's
+> USB2 PHY). T189/T190's *universal at idle* rules out load as the trigger **on either OS** and
+> was never evidence for a Linux cause. Our stack is still the AMPLIFIER (~83 HID read
+> failures/s, presence freezes), so 0049's backoff + a real reconnect path stay worth doing.
+> Next step is now about RECOVERY, not cause: `usbmon` vs USBPcap on the same idle state, to
+> learn how fast Windows re-enumerates the companion. **Lesson: a control you did not
+> instrument is not a control, it is a memory.**
 >
 > **Method notes that paid for themselves today**: take the fragile measurement FIRST (the
 > presence doff was lost twice by leaving it for later, captured in the first minute on the

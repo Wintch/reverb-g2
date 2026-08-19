@@ -860,3 +860,34 @@ CPU pin; controller and headset
 auto-standby timing on Windows specifically (measured on Linux/Monado only, T181, ~15 min);
 whether Oasis's native Windows stack implements HMD worn/presence detection where
 Monado/xrizer does not (see `docs/03`'s War Robots VR finding).
+
+---
+
+## 2026-08-19 (T226) — the Windows control, and the verdict this document has been waiting for
+
+Everything above debated the cable from **one side of the link only**: every measurement in
+this file was taken on Linux, and every time the recommendation moved ("buy rev2A" → "premature"
+→ "still-open, not retired" → "retracted") it moved on reasoning, not on a Windows number.
+
+**That number now exists.** `windows-kit/usb-storm-monitor.ps1` was run for 79 minutes on the
+*same physical machine* with the SSD swapped — same board, same USB host controllers, same
+cable, same headset, **OS as the only variable**:
+
+* USB2 branch: **274 drops, 3.47/min, outage p50 2.9 s, p90 10.5 s, incomplete 27% of the
+  session**, twelve of them passing through Windows' own `PROBLEM:Error` state.
+* USB3 branch (hub-ss + hololens-sensors): **zero drops**, as on Linux.
+* Escalates within the session exactly like Linux: 0 events in the first 10 minutes after
+  enumeration, then 38-52 per 10 minutes.
+
+Against Linux's 0.92-4.63/min and p50 3.0 s (`~/vr/logs/hw-monitor.log`), that is the same
+fault. **The storm is the link.** Per the rule written before the data was taken, the rev2A
+cable goes back on the suspect list and the swap is justified — with the caveat this document
+has earned the right to state: it discriminates *cable* from *connector/visor*, and if a new
+cable changes nothing, the remaining suspects are the visor-side USB2 PHY and this unit's
+connector, not the host.
+
+The counterpart finding is that the *consequences* are ours: Windows rode 274 disconnects while
+five titles played normally, and the only thing the user noticed was audio cutting out. On
+Linux the same outages produce ~83 companion HID read failures/s and a frozen presence sensor.
+Full analysis and the archived capture: `docs/60-windows-usb-storm-control.md`,
+`windows-kit/captures/`.

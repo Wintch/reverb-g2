@@ -39,33 +39,50 @@
 > 2. **A ~1 cm high-frequency jitter on both hands**, wearer-reported, distinct from the 10-20 cm
 >    shifts. That is the re-triangulation breathe, T203's item 6, and it has never been worked.
 >
-> **The USB2 storm is OURS, not the cable — corrected by the user at session close, and the
-> control is strong**: the same cable and headset run long sessions on Windows normally. If the
-> cable were degraded, Windows would suffer too. **The rev2A purchase recommendation written
-> earlier in this file is RETRACTED.** Weigh it together with a project measurement that already
-> pointed the same way and was under-weighted: T189/T190 found the storm **universal** — same
-> rate at complete idle, zero tracking, zero app, headset untouched — so it is not our service
-> under load either. That leaves the Linux USB stack: kernel HID handling of the companion,
-> autosuspend, or host-controller behaviour. **Better news than a cable, because a bug can be
-> fixed.** The observations still stand and are worth keeping: it degrades within a session (a
-> PC-end replug bought >1 h at 14:30 and ~1 min at 15:52; a 220V cut calmed it best, 62/min →
-> 1-3/min), and presence rides that channel and freezes when it dies. Named next step: capture
-> `usbmon` during a live storm and diff it against a Windows USBPcap capture of the same idle
-> state — `windows-kit/` already has the tooling, and the OS is the only variable.
+> **THE USB2 STORM IS THE LINK — the Windows control ran, and it reversed the call made at
+> T225's close** (T226, full analysis in `docs/60`, capture archived in `windows-kit/captures/`).
+> The retraction of the rev2A recommendation made at T225's close — which used to occupy this
+> spot in the file — is **itself retracted**. The measurement: same physical machine with the SSD swapped (Ryzen 5 3600 / RTX
+> 3060 Ti / TUF B450M-PLUS II), same cable, same headset, **OS the only variable**, 79 minutes,
+> 250 ms polling.
 >
-> **THE WINDOWS CONTROL, now a real measurement instead of an impression** (user-proposed at
-> close): `windows-kit/usb-storm-monitor.ps1` polls the USB2 branch every 250 ms for a full
-> session and cross-checks against the Kernel-PnP event log, so the storm rate on Windows can be
-> put next to Linux's on the same cable and the same PC. Run it while actually playing for an
-> hour — an idle capture answers a different question, and on Linux the fault was measured in
-> both states. 250 ms is deliberate: Linux measured dropouts lasting ~3 s, and polling slower
-> than the event you are hunting is how you prove an absence you could never have seen.
-> **Decision rule, written before the data**: a comparable rate on Windows means the link is
-> unstable and Linux is merely more sensitive (cable back on the suspect list); near-zero over a
-> real session of similar length means the fault is in the Linux USB stack — companion HID
-> handling, autosuspend, host-controller behaviour — and it is a bug, not a purchase. Caveat
-> recorded in the script: this counts ENUMERATION events, not the ~83/s HID read failures Linux
-> counts, so a clean Windows result plus a good session is two signals, not one.
+> | | Linux (18 h, 938 drops) | Windows (79 min, 274 drops) |
+> |---|---|---|
+> | USB2 drop starts | 0.92 – 4.63 /min | **3.47 /min** |
+> | outage p50 / p90 | 3.0 s / 12 s | **2.9 s / 10.5 s** |
+> | USB3 branch | never dropped | **never dropped** |
+> | escalates within session | yes | **yes** (0 → 38-52 per 10 min) |
+> | branch degraded | — | **27% of the session** |
+>
+> Windows even flagged twelve of them with its own `PROBLEM:Error` state, so this is not a
+> polling artifact. **The decision rule was pre-registered in this file: comparable rate ⇒ the
+> link is unstable and Linux is merely more sensitive ⇒ the cable/connector goes back on the
+> table.** Applied as written. What is *not* identified is which element — cable conductor,
+> connector, the active cable's Cypress hub silicon (docs/22's standing hypothesis), or the
+> visor-side USB2 PHY; the rev2A swap is the cheap discriminator, and if a new cable changes
+> nothing the visor is service territory.
+>
+> **What survives on our side**: the Linux stack is cleared as the *cause*, not as the
+> *amplifier*. We count ~83 companion HID read failures/s and freeze presence when the channel
+> dies; Windows rode the same outages while five titles played fine and SteamVR cycled cleanly.
+> That difference in consequence is ours to fix — 0049's backoff plus a real reconnect path.
+> **The next capture is therefore about RECOVERY, not cause**: `usbmon` vs USBPcap on the same
+> idle state, to learn how fast Windows re-enumerates the companion and whether its driver
+> re-opens HID handles transparently. One gap left: the Windows capture had the G2 connected but
+> *idle* (a Quest 2 drove the benchmark that hour), which matches T189/T190's universal-at-idle
+> Linux measurement but leaves a Windows-with-Oasis-driving-the-G2 capture unrun.
+>
+> **Two lessons, both cheap to state and expensive to relearn**: an uninstrumented control is a
+> memory, not a control — T225 retracted a real recommendation on the strength of an impression;
+> and "Windows runs fine" described *gameplay*, while the user's own unprompted report of audio
+> cutting out was the fault being felt and not counted.
+>
+> **Benchmark side-finding, same photos**: OpenVR Benchmark's **second run inside one process is
+> broken on Windows too** — pass 1 = 26.02 FPS, pass 2 = 354.77 FPS on a 3060 Ti at 2576x2520,
+> both stamped "normal for this config". On Linux the second run *wedges* (T217-T219). Different
+> symptom, same locus: the app's own second-run path. This downgrades — does not clear — the
+> suspicion that our XR-session re-cycle causes the wedge. **Standing rule for benchmark work:
+> one run per process lifetime, restart the app between measurements.**
 >
 > **Still unrun, and now cheap to judge because a working baseline exists**: 0083's exposure
 > sweep, and docs/59's three fixture protocols (absolute scale — never validated, and one
