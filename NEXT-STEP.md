@@ -121,6 +121,29 @@
 > produces the first honest Linux-vs-Windows number this project has ever had, on one headset and
 > one machine.
 >
+> **QUEUED, user-requested (2026-08-19, T227): the battery readout may have been lying for
+> months.** On Windows, with `using_1v2_batteries` **validated at 1.2 V**, the same cells showed
+> **90%+** — against the standing impression that the readout "always reads low, even with
+> alkalines". That flag picks a *display curve* (docs/46 §1), so NiMH read through the alkaline
+> curve displays near-empty: a switch left in the wrong position would produce exactly the
+> historical complaint, and the cells may have been fine all along. **The test costs one session
+> boundary**: note the Windows % with the switch confirmed, then — no recharge, no swap — boot
+> Linux and read the raw byte for both hands. A settled-NiMH byte (~110-115) alongside 90%+
+> cross-validates our linear fit against the only independent readout that exists; a
+> disagreement is itself the finding. Also capture whether the setting is per-controller or
+> global, and whether it survives an Oasis update — "capaz quedó mal el switch" implies it can
+> end up wrong with nobody touching it. Until then, **no battery verdict from before today is
+> known to have been taken with the switch in the right position.** Detail and protocol in
+> `docs/46`'s newest addendum; observation row in `docs/battery.jsonl`.
+>
+> **Instruments corrected the same evening, downstream of 0090** (no hardware needed, done):
+> `scripts/constellation-session-report.py` and `scripts/hw-monitor.sh` no longer present
+> `companion_errors` as a storm rate — they report **companion RECONNECTS** (one per survived
+> re-enumeration, with p50/worst dead time) and say plainly what many failures with *no* reconnect
+> line means (pre-0090 build, or the reopen is failing). `scripts/vr-power-setup.sh`'s restore
+> path got the same `[ -e "$f" ]` guard its apply path already had, so a box without EPP (or an
+> unmatched glob) cannot leave the machine on whatever `--apply` set.
+>
 > **Still unrun, and now cheap to judge because a working baseline exists**: 0083's exposure
 > sweep, and docs/59's three fixture protocols (absolute scale — never validated, and one
 > reading of 0.556 m where the tape said 0.750 m says it may be wrong; visibility cliff between

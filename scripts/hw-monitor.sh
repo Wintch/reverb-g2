@@ -73,10 +73,15 @@ while true; do
     # Reads the live log's current line count, never copies it -- no disk growth of its own.
     now_epoch=$(date +%s)
     if [ "$cur_ms_up" = "up" ] && [ $((now_epoch - last_snapshot)) -ge 30 ] && [ -f "$LOG" ]; then
+        # companion_errors is NOT a storm rate. Before patch 0090 a single re-enumeration
+        # killed the hidraw fd for good, so this counter measured the driver polling a dead
+        # handle, not the device dropping (docs/61, T227). reconnects is the honest count:
+        # one per re-enumeration the driver actually survived.
         errs=$(grep -c "control_read_packets.*os_hid_read returned -1" "$LOG" 2>/dev/null)
+        recon=$(grep -c "Companion device RECONNECTED" "$LOG" 2>/dev/null)
         calib_left_age=$(grep "CALIB hand=left" "$LOG" 2>/dev/null | tail -1 | grep -oE "imu_age_ms=[0-9]+")
         calib_right_age=$(grep "CALIB hand=right" "$LOG" 2>/dev/null | tail -1 | grep -oE "imu_age_ms=[0-9]+")
-        echo "$(ts)  SNAPSHOT     companion_errors=${errs:-0} left.${calib_left_age:-imu_age_ms=NA} right.${calib_right_age:-imu_age_ms=NA}" >> "$MONLOG"
+        echo "$(ts)  SNAPSHOT     companion_errors=${errs:-0} companion_reconnects=${recon:-0} left.${calib_left_age:-imu_age_ms=NA} right.${calib_right_age:-imu_age_ms=NA}" >> "$MONLOG"
         last_snapshot=$now_epoch
     fi
 

@@ -112,8 +112,28 @@ def report_service(lines):
         print("  threshold cannot separate them. Read this distribution before tuning anything.")
 
     section("channel health")
+    # READ THIS COUNT CORRECTLY, because it used to be read wrong for months. A companion read
+    # failure does NOT measure the storm: before patch 0090 a single re-enumeration killed the
+    # hidraw fd permanently, so every later read failed forever and the counter measured our own
+    # polling of a corpse (docs/61, T227 -- and it is why T183 saw 400-600 failures/s during
+    # stretches where lsusb already read 5/5). With 0090 the driver reopens the device, so the
+    # honest storm proxy is the RECONNECT count -- one per survived re-enumeration -- and the
+    # failure count is just how noisy each detection was.
     comp = joined.count("Error reading from companion")
-    print(f"  {comp:6d}  companion HID read failures" + ("   <-- storming; presence is frozen, not reporting" if comp > 100 else ""))
+    recon = re.findall(r"Companion device RECONNECTED on (\S+) after (\d+) ms dead", joined)
+    print(f"  {comp:6d}  companion HID read failures")
+    if recon:
+        dead = sorted(int(d) for _, d in recon)
+        mid = dead[len(dead) // 2]
+        print(f"  {len(recon):6d}  companion RECONNECTS (survived re-enumerations; p50 {mid} ms dead,")
+        print(f"          worst {dead[-1]} ms) -- this is the storm rate, not the failure count above")
+    elif comp > 100:
+        print("          <-- many failures and NO reconnect line: either this is a pre-0090 build,")
+        print("          in which case the channel died once and everything on it (panel control,")
+        print("          IPD, XR_EXT_user_presence) has been dead since, or the reopen is failing.")
+    if joined.count("could NOT be re-synced"):
+        print(f"  {joined.count('could NOT be re-synced'):6d}  reconnects left presence on its pre-outage value (expected on this")
+        print("          unit: the device answers -1 to a feature read of the proximity report)")
     prox = re.findall(r"Proximity sensor (\d+) IPD: (\d+)", joined)
     if prox:
         print(f"  {len(prox):6d}  proximity messages (change-driven: few is normal, zero after a")

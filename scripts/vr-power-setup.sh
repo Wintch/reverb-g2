@@ -203,7 +203,7 @@ apply() {
 	fi
 
 	for f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
-		echo performance > "$f" 2>/dev/null
+		[ -e "$f" ] && echo performance > "$f" 2>/dev/null
 	done
 	for f in /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference; do
 		# Doesn't exist under acpi-cpufreq (no EPP knob there) -- guard instead of letting
@@ -256,10 +256,13 @@ restore() {
 	# shellcheck disable=SC1090
 	. "$STATE"
 	for f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
-		echo "${governor:-powersave}" > "$f" 2>/dev/null
+		[ -e "$f" ] && echo "${governor:-powersave}" > "$f" 2>/dev/null
 	done
 	for f in /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference; do
-		echo "${epp:-balance_performance}" > "$f" 2>/dev/null
+		# Same guard as --apply: the knob does not exist under acpi-cpufreq, and an
+		# unmatched glob leaves the literal path with a '*' in it. Restore must be at
+		# least as careful as apply, or the box is left on whatever apply set.
+		[ -e "$f" ] && echo "${epp:-balance_performance}" > "$f" 2>/dev/null
 	done
 	echo "${aspm:-default}" > /sys/module/pcie_aspm/parameters/policy 2>/dev/null
 	[ -n "${gpu_w:-}" ] && nvidia-smi -pl "$gpu_w" >/dev/null 2>&1

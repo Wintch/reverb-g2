@@ -337,3 +337,46 @@ fresh-alkaline ceiling band** (208, this doc's 2026-08-19 header note), so:
   charging**, not a pair straight off the charger. (T221's ghost flood hit the settled-NiMH
   left hand equally, though — under that night's regime, brightness was not the dominant
   factor. The queued voltage-vs-ghost-fraction experiment stands.)
+
+## Addendum 2026-08-19 (~19:30, T227, user report): Windows showed 90%+ on the same cells — and the 1.2 V switch is the suspect
+
+Reported by the user after the Windows control session of T226 (same cells, same controllers,
+`using_1v2_batteries` **validated as set to 1.2 V**):
+
+> *"las pilas en windows esta vez mostraron 90%+ de carga, raro. en seteo de 1.2v, lo validé.
+> Por lo general siempre miden bajo, hasta con alcalinas. Capaz quedó mal el switch."*
+
+Two things make this worth chasing rather than filing as noise.
+
+**1. It is a coherent explanation for a long-standing annoyance.** Section 1 of this document
+established that `using_1v2_batteries` selects a *display calibration curve*, not a different
+measurement. A pack of NiMH sitting at its 1.2 V plateau, read through the **alkaline** curve
+(which expects ~1.5 V fresh and treats 1.2 V as nearly flat), displays as almost empty. So
+"they always read low, even with alkalines" is exactly what a wrongly-set switch produces —
+and setting it correctly producing 90%+ on cells the project believed were mediocre is the
+same observation from the other side. **The cells may have been fine all along and the readout
+wrong.** That is a hypothesis with an obvious test, not a conclusion.
+
+**2. It is a free calibration anchor for our own model.** Oasis's percentage is the only
+independent readout of these cells that exists; everything else in this document is our own
+linear fit from raw bytes. If Windows says 90%+ while our raw byte for the *same* cells sits
+in the settled-NiMH band (~110-115, ≈1.2 V/cell by the fit in section 3), the two agree and
+the fit gains an external check it has never had. If they disagree, one of them is wrong and
+the disagreement itself is the finding.
+
+**The test, and it costs one session-boundary** (queued, not run):
+
+1. On Windows, with `using_1v2_batteries` **confirmed** at 1.2 V, note the displayed % per
+   controller and photograph it.
+2. Without recharging or swapping anything, boot Linux and read the raw byte for both hands
+   (`grep -E "battery|BATT"` in the service log; patch 0073 names the hand).
+3. Record the pair in `docs/battery.jsonl`. Repeat once near the top of the pack's charge and
+   once well into a session, so the comparison has two points and not one.
+4. Also worth capturing while there: whether the 1.2 V setting is **per controller or global**,
+   and whether it survives an Oasis update — "capaz quedó mal el switch" implies it can end up
+   wrong without anyone touching it, and a setting that silently resets is worth knowing about.
+
+Until that runs, treat this as: **the historical "reads low" impression is now suspect, on both
+OSes, and no battery verdict from before today should be trusted to have been taken with the
+switch in the right position.** It does not retract the cliff model or the linear fit — those
+were built on our own raw bytes, which the Windows setting cannot touch.
