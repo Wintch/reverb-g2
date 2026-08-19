@@ -92,8 +92,9 @@ def report_service(lines):
         print("  no yaw-lock lines -- either patch 0086 is not in this binary, or no gated")
         print("  sample was ever checked (the gravity gate must be ON for the lock to form).")
     for l in locks:
-        print("  " + l.strip()[l.find("yaw lock"):][:100] if "yaw lock" in l else "")
-    for hand, name in ((LC, "right" if False else "left"), (RC, "right")):
+        i = l.find("yaw lock")
+        print("  " + l[i:i + 110])
+    for hand, name in ((LC, "left"), (RC, "right")):
         last = [l for l in status if hand in l]
         if last:
             state = "LOCKED" if "LOCKED" in last[-1] else "not locked"
