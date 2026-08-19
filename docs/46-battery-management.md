@@ -320,3 +320,20 @@ Consequences applied same night (`docs/56` has the full session context):
 - User-facing feature spec (per-profile battery type + mAh → estimated remaining session
   TIME, unmixed-pair assumption, proactive charge-before-session warnings) captured in
   `docs/56`.
+
+## Addendum 2026-08-19 (~02:30, T221): fresh-off-charger NiMH reads ~204 — the >150 band is chemistry-ambiguous
+
+The lab/dev wearer session ran the right controller on kub+rio (NiMH) **fresh off the
+charger**: first reading raw **206**, sagging to **191 over ~40 min** of LEDs-on — the
+classic NiMH surface-charge overshoot (~1.44 V/cell) burning off. That lands **inside the
+fresh-alkaline ceiling band** (208, this doc's 2026-08-19 header note), so:
+
+- **A raw byte above ~150 does not identify chemistry.** Fresh alkaline ≈ 208; fresh-off-
+  charger NiMH ≈ 204–206; the linear NiMH fit stays valid only in its settled band
+  (~65–150). Don't infer "alkaline!" from a high byte — T221 did, and retracted it.
+- The two-sided brightness hazard above therefore isn't alkaline-specific: a
+  fresh-off-charger NiMH pair drives the LEDs nearly as hot as fresh alkalines. If a
+  session needs the calm 1.2 V sweet spot, use NiMH that has **rested/settled after
+  charging**, not a pair straight off the charger. (T221's ghost flood hit the settled-NiMH
+  left hand equally, though — under that night's regime, brightness was not the dominant
+  factor. The queued voltage-vs-ghost-fraction experiment stands.)

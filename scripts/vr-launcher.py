@@ -189,6 +189,24 @@ def check_controller_battery():
         print(f"(no pude correr controller-battery-check.py: {e} -- no bloquea, sigo igual)")
 
 
+def check_network_link():
+    """Runs network-link-check.py before anything else: online titles feel a
+    lossy link as lag/rubber-banding with no error anywhere, and the 2026-08-19
+    dual-WAN session measured the loss arriving in periodic multi-second bursts
+    a user only discovers mid-match. Single-player titles don't depend on it --
+    so, same contract as check_controller_battery(): informational, never
+    blocks, a missing script or dead network just prints and moves on."""
+    check_py = HERE / "network-link-check.py"
+    try:
+        r = subprocess.run([sys.executable, str(check_py)], timeout=15)
+        if r.returncode != 0:
+            print("(network-link-check.py salio con error -- no bloquea, sigo igual)")
+    except subprocess.TimeoutExpired:
+        print("(network-link-check.py no termino en 15s -- no bloquea, sigo igual)")
+    except OSError as e:
+        print(f"(no pude correr network-link-check.py: {e} -- no bloquea, sigo igual)")
+
+
 def find_steamapps_dir():
     """A handful of real, common install locations -- Steam itself has used
     different ones across distros/versions. None found -> None, callers must
@@ -238,6 +256,11 @@ def main():
     print("==================================================")
     print("  VR launcher")
     print("==================================================")
+    # Link verdict on screen while the user picks a title (or the timeout
+    # picks for them): a single-player pick can ignore an AMARILLO/ROJO,
+    # an online pick shouldn't be surprised by it mid-match.
+    check_network_link()
+    print()
     print("  [1] Player 360/VR180 (contenido de prueba)")
     default_n = None
     for i, (name, _appid) in enumerate(games):

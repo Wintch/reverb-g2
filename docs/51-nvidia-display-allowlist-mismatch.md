@@ -93,4 +93,23 @@ already mitigated — and may be related to the still-not-root-caused
 acquire the display with no user-visible error). Not chased further this session; worth
 instrumenting a repeated probe-then-real-launch loop (10-20x) to get a real failure rate
 before trying a fix, rather than patching on a single repro.
-</content>
+
+## Addendum 2026-08-19 (~02:30, T221): the silent-windowed class hits the WAYLAND launcher too — override now baked into jack-in-wayland.sh
+
+The same failure shape appeared on the lab/dev machine's **Wayland lease path**
+(`jack-in-wayland.sh`, which did NOT carry the override this doc's fix section describes
+for `jack-in.sh`): launcher pre-checks all green (connector non-desktop=1 up, compositor
+offering the lease), tracking side fully healthy — but **no `found display mode` in any of
+the 3 attempts**, the fake pacer running at the HMD's *nominal* 11.11 ms, and the launcher
+correctly declaring failure and tearing down. A relaunch with
+`XRT_COMPOSITOR_FORCE_NVIDIA_DISPLAY="HP Inc."` + `XRT_COMPOSITOR_LOG=debug` then took
+**wayland-direct at 4320x2160@90 on attempt 1/3** (`Lease granted` →
+`Target backend wayland-direct initialized!` → `Started vblank event thread!`).
+
+**Attribution is NOT settled**: the rival explanation is panel-activation/hotplug timing
+recovering on the second service cycle (a known pattern). What changed as a result:
+`jack-in-wayland.sh` now sets `XRT_COMPOSITOR_FORCE_NVIDIA_DISPLAY="HP Inc."`
+launch-scoped by default (env-overridable), same rationale as `jack-in.sh`'s — harmless
+when the allowlist would have matched, decisive when it wouldn't. The repeated
+probe-then-launch loop this doc already recommends remains the way to get a real failure
+rate; tonight adds one data point on the Wayland side of the ledger.

@@ -1,5 +1,43 @@
 # Context for the 90Hz lab agent
 
+> ## START HERE NEXT SESSION (2026-08-19, ~02:30, lab/dev) — the 0082 wearer run
+> answered the seed-layer question with an architectural NO, and named the fix. Read
+> T221 + docs/55's dev-rig addendum + NEXT-STEP first.
+>
+> **Handoff integrated**: bundle FF → `lab-full` = `9a797315a` (0079-0082), clean
+> rebuild, launcher binary current. **The worn T215 re-run (SOLVE_YAW_CORRECT=0.05 +
+> YAW_PRIOR_DEG=60 + SEED_PRIOR=1) could not measure the seed layer: 0 seed attempts
+> all night.** Two gates: (1) **trigger blindness** — seeding fires on tracker-side
+> "no pose found", but in the ghost-flood regime the tracker ALWAYS finds a wrong-lobe
+> pose that the DRIVER-side gravity gate then discards (+3800/hand per window,
+> 93-99.7% of candidates); the tracker never learns it is failing. **Next lever,
+> named: feed the driver-gate rejection signal back to the tracker (or evaluate the
+> yaw prior tracker-side pre-delivery) so rescue triggers on "pose delivered but
+> rejected".** (2) lock chicken-and-egg — solve_yaw_locked only forms at REST (both
+> hands locked in ~3 min on the desk; never under motion). **Rest-vs-motion,
+> quantified: right hand 17k+ accepted samples in 15 min stationary vs +0 in a
+> 4.9-min worn window** (left +3; pos_tracked 0.7%/0%) — far below even T215's own
+> 4.55/30.3, regime difference unexplained, only within-night deltas trusted. Wearer:
+> "casi nunca se registraron bien". **Battery retraction**: right ran kub+rio NiMH
+> FRESH OFF CHARGER reading raw 191-206 — fresh NiMH overlaps the alkaline ceiling
+> (208); raw >150 is chemistry-ambiguous (docs/46 addendum); brightness did NOT
+> explain the regime (settled-NiMH left drowned equally).
+>
+> **Ops landed this session**: silent windowed-compositor fallback hit the WAYLAND
+> launcher (docs/51 addendum; recovered with `XRT_COMPOSITOR_FORCE_NVIDIA_DISPLAY=
+> "HP Inc."` + retry, attribution unsettled — override now baked into
+> jack-in-wayland.sh, env-overridable). `hello_xr` self-exits at ~300 s even with
+> stdin open — fresh player per instrumented window (trap entry updated below). A
+> companion USB2 re-enumeration preceded one total constellation-candidate blackout
+> (stale-fd class; relaunch cures). **Network**: LAN cut over to the Claro CPE
+> (192.168.100.1, egress AS11664, 791 Mbps, rtt ~5.5 ms); the old dual-router-VM
+> subnet is gone; `scripts/net-monitor.sh` (burst-loss monitor, env-parameterized,
+> single-link mode) runs detached logging to `~/vr/logs/net-monitor.log`, and
+> `scripts/network-link-check.py` now runs at every vr-launcher start (online titles
+> care; single-player doesn't; never blocks). **New session rule: check link health
+> at session start** — a lossy gateway is invisible from inside and just makes
+> everything slow.
+
 > ## ADDENDUM (2026-08-19, everyday/comms box) — read docs/55 + T220 before touching
 > constellation code: the yaw-ghost stack was A/B'd cross-rig. 0074+0076 validated (left
 > 5x accepted / 3.4x pos_tracked); **0077's first-ever hardware run found a seed-poisoning
@@ -1568,7 +1606,11 @@ blocker.
   with no `BEGIN_SESSION` from the app at all — it looks like a compositor failure and it
   isn't. Use `sleep N | hello_xr ...`. Note that **monado-service** needs the opposite
   (`XRT_NO_STDIN=1`, otherwise it dies with `epoll_ctl(stdin) failed`): the service gets
-  stdin taken away, the player gets it kept alive.
+  stdin taken away, the player gets it kept alive. **And keeping stdin open is NOT
+  enough** (found 2026-08-19, T221): the timed run itself ends at **~300 s** — the player
+  exits cleanly at ~5 min even with `sleep 14400 |` feeding it, twice observed, killing
+  the client mid-measurement with zero error lines. Any instrumented window longer than a
+  couple of minutes needs a freshly launched player, started right before the window.
 - **For Wayland you need to pick the right session in SDDM:** there are **two** entries
   both just labeled "GNOME", one Wayland and one X11. Pick "GNOME on Wayland". And KWin
   doesn't work for the lease. `scripts/check-lease.sh` verifies it in two seconds before you

@@ -91,3 +91,48 @@ Two changes inside `trySeededRecovery`, `pushPose` deliberately untouched:
   startup. Looks exactly like "tracking dead". Relaunch with controllers already awake.
 5. Controllers die in the service down/up gap (T215's keepalive nuance) — re-wake before
   every phase relaunch, verify `Registered with constellation tracker` count == 2.
+
+## ADDENDUM 2026-08-19 (~02:30, lab/dev, WORN) — the dev-rig re-run: the seed layer never fired, and the reason is architectural (T221)
+
+T220's closing instruction was executed on the lab/dev machine, headset actually worn:
+0082 build (`lab-full` = `9a797315a`), `SOLVE_YAW_CORRECT=0.05 YAW_PRIOR_DEG=60
+SEED_PRIOR=1`, constellation on, marked choreography windows.
+
+**Result: the A/B could not measure the seed layer, because the seed layer never
+engaged — 0 `trySeededRecovery` attempts across the whole night.** Two gates blocked it:
+
+1. **Trigger blindness (the finding that matters).** Seeding triggers on the tracker-side
+   fast path *failing to find a pose*. In tonight's regime the tracker **always found a
+   pose** — a wrong-lobe ghost — which the **driver-side** gravity gate (0074) then
+   discarded (+3800/+3750 drops per hand in one 4.6-min window; 93–99.7% of candidates).
+   The tracker never learns its poses are being thrown away downstream, so the rescue
+   layer is structurally blind to exactly the failure mode it exists for. The everyday
+   rig's T220 test never hit this because its failure mode was "no solves at all" (which
+   does trip the trigger). **Named fix direction: feed the driver-gate rejection signal
+   back to the tracker (or evaluate the yaw prior tracker-side, before delivery), so
+   seeding triggers on "pose delivered but rejected", not only on "no pose found".**
+2. **Lock chicken-and-egg.** Seeding also requires `solve_yaw_locked`. Under motion the
+   lock never formed on either hand (left crawling 53°→18.7°, right oscillating ±30°);
+   at rest both hands locked within ~3 min (L 0.7°, R −0.8°). The precondition for
+   rescue only becomes true when rescue is no longer needed.
+
+**Rest vs motion, quantified (the sharpest such measurement the project has):** the right
+hand accepted **17k+ samples in ~15 min stationary on the desk**, then **+0 accepted in a
+4.9-min worn choreography window** (left: +3). pos_tracked in the final locked-at-pickup
+window: **left 1/145 (0.7%), right 0/145 (0%)** — far below even T215's own worn baseline
+(4.55%/30.3%), a regime difference this session could not explain (environment,
+choreography and build all differ; only within-night deltas are trusted, and T215's
+numbers keep their pre-0081 asterisk).
+
+**Battery chemistry retraction:** the right hand ran kub+rio **NiMH fresh off the
+charger**, reading raw **191–206** — fresh NiMH overlaps docs/46's fresh-alkaline ceiling
+(208). The early-night "hot alkalines" attribution was wrong; raw >150 does not identify
+chemistry. Both hands (settled NiMH left at ~103 included) drowned in ghosts equally under
+motion, so brightness alone does not explain this regime.
+
+**Ops facts from the same night** (details in T221): a silent windowed-compositor fallback
+hit the *Wayland* launcher (docs/51's class; recovered with
+`XRT_COMPOSITOR_FORCE_NVIDIA_DISPLAY="HP Inc."` + retry, attribution unsettled, override
+now baked into `jack-in-wayland.sh`); `hello_xr` self-exits at ~300 s even with stdin held
+open (instrumented windows need a fresh player per run); a companion USB2 re-enumeration
+mid-session preceded a total constellation-candidate blackout once (stale-fd class).

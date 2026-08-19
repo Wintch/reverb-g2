@@ -419,6 +419,17 @@ TRACKING_ENV+=("WMR_CONSTELLATION_CONTROLLERS=$CONSTELLATION")
 # until now. 0.15 masks it; the real fix (per-stick auto-centering, WMR_STICK_AUTOCENTER)
 # will let this shrink to ~0.05.
 TRACKING_ENV+=("WMR_STICK_DEADZONE=${WMR_STICK_DEADZONE:-0.15}")
+
+# docs/51's per-launch NVIDIA direct-mode override, now on the Wayland launcher too
+# (2026-08-19, T221): a launch on this path fell back to a SILENT windowed compositor
+# -- no "found display mode", fake pacer at the HMD's nominal 11.11ms, all three
+# attempts -- while tracking looked perfectly healthy. The relaunch that added this
+# override took direct mode (wayland-direct, 4320x2160@90) on attempt 1. Attribution
+# is NOT settled (panel-activation timing after a failed attempt is the rival
+# explanation), but the override is the sanctioned, launch-scoped mitigation and is
+# harmless when the allowlist would have matched anyway. Never widen the compiled-in
+# allowlist instead -- upstream removed "HP Inc." deliberately (real desktop monitors).
+TRACKING_ENV+=("XRT_COMPOSITOR_FORCE_NVIDIA_DISPLAY=${XRT_COMPOSITOR_FORCE_NVIDIA_DISPLAY:-HP Inc.}")
 if [ "$CONSTELLATION" = 1 ]; then
     echo "  Controller constellation tracking: ON (WMR_CONSTELLATION_CONTROLLERS=0 disables)"
     echo "    verify with: grep -E 'get_tracked_pose:|position_tracked' $LOG"

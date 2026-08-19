@@ -1,6 +1,27 @@
 # Next step
 
-> ## UPDATE (2026-08-19, everyday/comms box): yaw-ghost stack cross-rig A/B DONE — 0074+0076
+> ## UPDATE (2026-08-19, ~02:30, lab/dev, WORN): the dev re-run below was EXECUTED and
+> the answer is architectural — **the seed layer (0077/0082) never fired: 0 attempts all
+> night** (full story: T221 + docs/55 dev-rig addendum). Its trigger only sees
+> tracker-side "no pose found", but the worn regime is a GHOST FLOOD: the tracker always
+> "finds" a wrong-lobe pose, the driver-side gravity gate discards it (93-99.7% of
+> candidates), and the tracker never learns it is failing. Plus the lock chicken-and-egg:
+> `solve_yaw_locked` (seeding's other gate) only forms at REST. **The next constellation
+> lever is therefore: feed the driver-gate rejection signal back to the tracker (or
+> evaluate the yaw prior tracker-side, pre-delivery) so rescue triggers on "pose
+> delivered but rejected"** — fresh-brains work on the 0074/0076/0077 signal plumbing.
+> Also quantified: rest-vs-motion acceptance is 17k+ samples in 15 min stationary vs +0
+> in a 4.9-min worn window (right hand) — in-motion correspondence collapse is the real
+> enemy; detection and geometry are fine at rest. Battery note: fresh-off-charger NiMH
+> reads raw ~204-206 — the >150 band is chemistry-ambiguous (docs/46 addendum), and the
+> "hot alkalines" suspicion from earlier in the night is retracted. Ops: the silent
+> windowed-compositor fallback hit the Wayland launcher once (docs/51 addendum;
+> `XRT_COMPOSITOR_FORCE_NVIDIA_DISPLAY="HP Inc."` now baked into jack-in-wayland.sh);
+> hello_xr self-exits at ~300 s even with stdin open (fresh player per instrumented
+> window); link-health check now runs at every vr-launcher start (network-link-check.py,
+> after the LAN's cutover to the Claro CPE — 192.168.100.x, 791 Mbps).
+>
+> ## PREVIOUS UPDATE (2026-08-19, everyday/comms box): yaw-ghost stack cross-rig A/B DONE — 0074+0076
 > validated (left 5x accepted / 3.4x pos_tracked over baseline), and **0077's first hardware
 > run found a seed-poisoning runaway, fixed same night as monado patch 0082** (seed positions
 > ran 4m→12m off the `last_known_pose` poison loop; hardened config = best measured on that
