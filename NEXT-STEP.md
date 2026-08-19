@@ -62,6 +62,32 @@
 > visor-side USB2 PHY; the rev2A swap is the cheap discriminator, and if a new cable changes
 > nothing the visor is service territory.
 >
+> **THE AMPLIFIER IS FIXED — patch 0090, `docs/61`, T227.** The reconnect handling Windows has
+> and we lacked now exists: a companion silent for 500 ms is treated as dead, the driver re-finds
+> the device's CURRENT hidraw node by the VID/PID recorded from the prober, swaps the handle under
+> `hid_lock`, re-asserts the panel state, and tries to re-sync proximity. **13/13 forced
+> re-enumerations recovered, 3.34 s each (n=13, σ≈5 ms), 0 failed opens, 9 read errors for 7
+> outages** — against "never, relaunch only". The 3.34 s is the kernel's, not ours: halving the
+> retry interval did not move it and every earlier attempt failed to *find* the device, not to
+> open it. `scripts/usb-reset-device.py` reproduces the fault on demand without root
+> (`plugdev` suffices), which is what makes it a regression test.
+>
+> **Two by-products worth as much as the patch.** (1) **`companion_errors` is retired as a
+> metric** — past the first re-enumeration it counted our own polling of a dead fd, which is
+> exactly why T183 saw 400-600 errors/s during stretches where `lsusb` already read 5/5. Every
+> historical companion-error number should be read as "the channel died at some point", not as a
+> storm rate. (2) **A companion re-enumeration perturbs the headset's IMU/camera clock**: 13
+> reconnects, 11 camera-clock recoveries, 10 IMU-clock recoveries, on the USB3 stream that never
+> drops. That gives the standing "a companion re-enumeration preceded a total constellation
+> blackout" note a mechanism. Measured under a forced `USBDEVFS_RESET`, so the cheap confirmation
+> is to grep a real stormy session log for the same 1:1 pattern.
+>
+> **Still pending on this thread**: a WEARER session on 0090 — panel, presence and controllers
+> through *natural* storm events, not forced ones. And presence re-sync after a reconnect is
+> answered NEGATIVE (the device returns −1 to a feature read of the proximity report), so
+> presence stays on its pre-outage value until the sensor next changes; bounded, and the debounce
+> already fails toward WORN.
+>
 > **What survives on our side**: the Linux stack is cleared as the *cause*, not as the
 > *amplifier*. We count ~83 companion HID read failures/s and freeze presence when the channel
 > dies; Windows rode the same outages while five titles played fine and SteamVR cycled cleanly.

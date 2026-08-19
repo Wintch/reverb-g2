@@ -55,6 +55,20 @@
 > learn how fast Windows re-enumerates the companion. **Lesson: a control you did not
 > instrument is not a control, it is a memory.**
 >
+> **And the amplifier is now FIXED — patch 0090, `docs/61`, T227.** A re-enumeration invalidated
+> the companion's hidraw fd **permanently**: the node genuinely moves (`hidraw6`→`hidraw7`→…),
+> so every later read returned −1 forever and panel control, IPD and `XR_EXT_user_presence`
+> stayed dead until a relaunch. The driver now notices 500 ms of silence, re-finds the device by
+> its prober-recorded VID/PID, swaps the handle under `hid_lock`, and re-asserts the panel.
+> **13/13 forced re-enumerations recovered, 3.34 s each, 0 failed opens, 9 read errors for 7
+> outages** (was: unbounded, 472175 in 17 min). Reproduce the fault on demand with
+> `scripts/usb-reset-device.py` (no root — `plugdev` suffices). **Retire `companion_errors` as a
+> metric**: past the first re-enumeration it counted our own polling of a corpse, which is why
+> T183 saw errors during `5/5` stretches. **New, testable side-finding**: reconnects and
+> IMU/camera clock recoveries ran ~1:1 (13 vs 11/10), i.e. a companion re-enumeration perturbs
+> the headset's clock domain — a mechanism for the old "re-enumeration preceded a constellation
+> blackout" note. Wearer verification still pending.
+>
 > **Method notes that paid for themselves today**: take the fragile measurement FIRST (the
 > presence doff was lost twice by leaving it for later, captured in the first minute on the
 > third try); a window with sleeping controllers or a headset on the desk is NOT a control, and
