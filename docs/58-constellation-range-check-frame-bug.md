@@ -187,3 +187,58 @@ codebase:
    real session runs at, and a log line names the *reason it fired*, not a generic one — the
    `else` branch that would have blamed the yaw gate for a range rejection was fixed for the
    same reason.
+
+## ADDENDUM (same session, ~16:00) — what a tape measure was worth
+
+The user offered a tape. Three things came out of twenty minutes with it, and one of them
+cost a claim made earlier in this very document.
+
+### The height profile was wrong, and had been since 2026-08-12
+
+`~/vr/vr-profile.conf` carried `EYE_HEIGHT_STANDING_M=1.76`, with its own comment already
+suspecting the number was *stature* rather than eye height. Measured: **1.70 m standing,
+1.35 m seated** (the seated value had been an unverified 1.40). Every session since then
+anchored the world **6 cm too high** standing, 5 cm seated. Small, and exactly the kind of
+bias that gets blamed on tracking when a virtual object does not sit where it should.
+
+### There is a visibility cliff between 50 and 75 cm, and it is a hard edge
+
+With the headset deliberately aimed at two awake controllers (HID-verified online):
+
+| distance | camera samples reaching the tracker |
+|---|---|
+| 50 cm | healthy — 118 poses / 20 s, `processSampleFast +93` |
+| 75 cm | **zero** — `processSampleFast +0` |
+| 100 cm | **zero** |
+
+Not "searches and fails" — *no samples at all*. Note the trap this creates, which cost a
+wrong call for a few minutes here: **no blobs at all is indistinguishable from a dead
+pipeline** in every counter available. It was diagnosed as a blackout and retracted as soon
+as bringing the controllers back to 50 cm restored everything instantly.
+
+An arm's reach is ~70 cm. If this edge is real in normal use, half of a natural pose is
+outside the tracking volume — a showcase-grade limit, and not what a G2 does on Windows.
+
+### 0083's first hardware run: gain buys range, and pays in solve quality
+
+With the controllers left untouched at 75 cm, `WMR_CONTROLLER_CAM_GAIN=255` (override
+confirmed live: `Controller-tracking exposure/gain OVERRIDE: 6000/255`) turned that zero into
+**87 poses**. The lever works.
+
+But the poses disagree with the tape: left **0.556 m** for a tape-measured **0.75 m** (20 cm
+short, far beyond the ~5 cm optical-centre offset), right **0.057 m** (impossible). So gain
+buys *detections*, of poor quality — consistent with docs/46's already-recorded correlation
+between over-bright LEDs and ghost solves. The real experiment is a sweep (150 / 200 / 255)
+against a **fixture**, not a hand.
+
+### The claim this cost
+
+At 50 cm the right controller reads **0.551 m ± 0.002**, and on a second placement
+**0.525 m ± 0.001**. That is *repeatability* of 1-2 mm — and it is **not accuracy**. Two
+placements a human called "50 cm" differed by 26 mm, so this method cannot resolve scale
+better than ±3 cm anyway; and the left hand reading 0.556 m where the tape says 0.750 m says
+the solve's absolute scale may be wrong in a way that self-consistency would never reveal.
+
+**Absolute scale of the constellation solve has never been validated in this project.** It
+is now an explicit open question rather than an unexamined assumption. Closing it needs a
+fixture that holds a controller at exact, repeatable distances — not a hand and a tape.
