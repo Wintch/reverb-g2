@@ -68,21 +68,32 @@
 > That difference in consequence is ours to fix — 0049's backoff plus a real reconnect path.
 > **The next capture is therefore about RECOVERY, not cause**: `usbmon` vs USBPcap on the same
 > idle state, to learn how fast Windows re-enumerates the companion and whether its driver
-> re-opens HID handles transparently. One gap left: the Windows capture had the G2 connected but
-> *idle* (a Quest 2 drove the benchmark that hour), which matches T189/T190's universal-at-idle
-> Linux measurement but leaves a Windows-with-Oasis-driving-the-G2 capture unrun.
+> re-opens HID handles transparently. **No gap left on the load side**: the user confirmed the G2
+> itself was under Oasis+SteamVR for the whole capture, five titles played, so this is a *loaded*
+> Windows session, the direct counterpart of a real Linux one. (The benchmark's "Oculus Quest2"
+> label is the app mislabelling the G2 — worth knowing, because docs/23 planned to use its
+> per-headset leaderboard as the beat-Windows metric.)
 >
 > **Two lessons, both cheap to state and expensive to relearn**: an uninstrumented control is a
 > memory, not a control — T225 retracted a real recommendation on the strength of an impression;
 > and "Windows runs fine" described *gameplay*, while the user's own unprompted report of audio
 > cutting out was the fault being felt and not counted.
 >
-> **Benchmark side-finding, same photos**: OpenVR Benchmark's **second run inside one process is
-> broken on Windows too** — pass 1 = 26.02 FPS, pass 2 = 354.77 FPS on a 3060 Ti at 2576x2520,
-> both stamped "normal for this config". On Linux the second run *wedges* (T217-T219). Different
-> symptom, same locus: the app's own second-run path. This downgrades — does not clear — the
-> suspicion that our XR-session re-cycle causes the wedge. **Standing rule for benchmark work:
+> **Benchmark side-finding, same photos, same G2**: OpenVR Benchmark's **second run inside one
+> process is broken on Windows too** — pass 1 = 26.02 avg / 19.70 (0.3% low) at 2576x2520, pass 2
+> = 354.77 FPS, which on a 3060 Ti at 6.49 Mpx is not physical. On Linux the second run *wedges*
+> (T217-T219). Different symptom, same locus: the app's own second-run path. This downgrades —
+> does not clear — the suspicion that our XR-session re-cycle causes the wedge. **Standing rule:
 > one run per process lifetime, restart the app between measurements.**
+>
+> **And the head-to-head is not valid yet, for that same reason.** Our 19.25 avg / 9.80 low was at
+> 2160² (4.67 Mpx) *and was itself a second pass* (4.66 warm-up before it) — the exact run class
+> now known to be unreliable. Naive normalisation says Windows delivers ~1.9× our pixel throughput
+> and that its **0.3% low equals our average**, which is a gap worth chasing but is not a
+> measurement. **Cheap next action: re-run OpenVR Benchmark on Linux at 2576x2520
+> (`XRT_COMPOSITOR_SCALE_PERCENTAGE`), first run only, app restarted between measurements** — that
+> produces the first honest Linux-vs-Windows number this project has ever had, on one headset and
+> one machine.
 >
 > **Still unrun, and now cheap to judge because a working baseline exists**: 0083's exposure
 > sweep, and docs/59's three fixture protocols (absolute scale — never validated, and one

@@ -871,7 +871,8 @@ this file was taken on Linux, and every time the recommendation moved ("buy rev2
 
 **That number now exists.** `windows-kit/usb-storm-monitor.ps1` was run for 79 minutes on the
 *same physical machine* with the SSD swapped — same board, same USB host controllers, same
-cable, same headset, **OS as the only variable**:
+cable, same headset, **OS as the only variable** — and with the G2 actually driven by Oasis +
+SteamVR throughout, five titles played, so it is a loaded session and not an idle one:
 
 * USB2 branch: **274 drops, 3.47/min, outage p50 2.9 s, p90 10.5 s, incomplete 27% of the
   session**, twelve of them passing through Windows' own `PROBLEM:Error` state.

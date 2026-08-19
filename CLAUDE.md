@@ -43,9 +43,10 @@
 > rate **escalates within the session** (Windows: 0 events in the first 10 min, then 38-52 per
 > 10 min). The decision rule was written before the data, so apply it as written: **the rev2A
 > cable is BACK on the suspect list, and the retraction of that recommendation is itself
-> retracted.** The user felt it on Windows too — audio dropping out = the audio device's 274
-> disconnects — while five titles played fine, so *"Windows runs normally"* was about gameplay,
-> not about the link. What is excluded is "the Linux stack does this to itself"; what is NOT
+> retracted.** And it is a **loaded** capture: the G2 itself was under Oasis+SteamVR the whole
+> time, five titles played. The user felt it on Windows too — audio dropping out = the audio
+> device's 274 disconnects — while the games did not care, so *"Windows runs normally"* was about
+> gameplay, not about the link. What is excluded is "the Linux stack does this to itself"; what is NOT
 > identified is which element (cable, connector, the active cable's Cypress hub, or the visor's
 > USB2 PHY). T189/T190's *universal at idle* rules out load as the trigger **on either OS** and
 > was never evidence for a Linux cause. Our stack is still the AMPLIFIER (~83 HID read

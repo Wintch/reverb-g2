@@ -27,12 +27,15 @@ could not be bent afterwards:
   the five G2 USB endpoints, transitions only.
 * **Capture**: `windows-kit/captures/usb-storm-20260819-200956.csv` (1077 transitions),
   console transcript in `usb-storm-20260819-console.txt`. Window 20:10:34 → 21:29:34 = 79 min.
-* **What the machine was doing**: SteamVR up and down a couple of times, five different titles
-  launched and played. Per the OpenVR Benchmark screenshots from the same hour, the headset
-  *driving those sessions was a Quest 2*, so the G2 was connected and idle for most or all of
-  the capture. That is not a weakness of the result: **T189/T190 already measured the Linux
-  storm as universal — same rate at complete idle, no tracking, no app** — so idle-vs-idle is
-  precisely the comparison that was needed.
+* **What the machine was doing**: **the G2 itself, under Oasis + SteamVR, for the whole 79
+  minutes** — five different titles launched and played, SteamVR cycled up and down a couple of
+  times, both controllers working normally. This is a *loaded* capture, the direct counterpart
+  of a real Linux session, not an idle one.
+  *(The OpenVR Benchmark screenshots from the same hour report the headset as "Oculus - Oculus
+  Quest2". That is the benchmark mislabelling the device: there is no Quest 2 in the lab, and
+  its own reported render target, 2576×2520@90, matches SteamVR's G2 target. Noted here because
+  docs/23 planned to use that app's per-GPU+headset leaderboard as the beat-Windows metric — on
+  the Oasis path it would file the result under the wrong hardware.)*
 
 ## The result
 
@@ -101,9 +104,38 @@ ledger.
 * **Which physical element.** A rev2A cable swap is the cheap discriminator and is now
   justified; if a new cable changes nothing, the visor-side USB2 PHY is next and that is
   service territory.
-* **Why Windows tolerates it.** Worth knowing, because it is the model for our own recovery
-  path: how fast does the Windows stack re-enumerate the companion, and does Oasis re-open its
-  HID handles transparently? `usbmon` versus USBPcap on the same idle state, still the named
-  next step, but now it is a question about *recovery* rather than about *cause*.
+* **Why Windows tolerates it.** This is the sharpest open question left, and now it is very
+  sharply posed: Windows took 274 disconnects *while driving the headset and playing five
+  titles*, and the only symptom the wearer noticed was audio cutting out. How fast does the
+  Windows stack re-enumerate the companion, and does Oasis re-open its HID handles
+  transparently? `usbmon` versus USBPcap, still the named next step, but it is now a question
+  about *recovery* rather than about *cause* — and that recovery path is the model for ours.
 * **The `PROBLEM:Error` states**, 12 of them: what error code Windows assigned would say
   whether these are the same enumeration failures Linux reports as `error -71`.
+
+## Addendum — the benchmark numbers from the same hour, and why they are not yet a comparison
+
+The two OpenVR Benchmark screenshots are the same G2 on the same machine, so they look like the
+long-wanted Linux-vs-Windows head-to-head. They are not one yet, for a reason this capture itself
+uncovered.
+
+| | render target | avg | 1% low | 0.3% low |
+|---|---|---|---|---|
+| Windows, pass 1 | 2576×2520 (6.49 Mpx) | 26.02 | 20.39 | 19.70 |
+| Windows, pass 2 *(same process)* | 2576×2520 | **354.77** | 40.05 | 19.16 |
+| Linux (T219), *not a first pass* | 2160² (4.67 Mpx) | 19.25 | — | 9.80 |
+
+354 FPS at 6.49 Mpx on a 3060 Ti is not a physical result, so **the benchmark's second run inside
+one process is broken on Windows too** — on Linux the same second run *wedges* instead. Different
+symptom, same locus: the app's own second-run path. That downgrades, without clearing, T219's
+suspicion that our XR-session re-cycle causes the wedge.
+
+It also contaminates the comparison: our 19.25 was itself measured after a 4.66 warm-up run in the
+same process, i.e. exactly the run class now known to be unreliable. Naive normalisation would put
+Windows at ~1.9× our pixel throughput, with its 0.3% low (19.70) equal to our average — a gap worth
+chasing, but not yet a measurement.
+
+**The valid comparison is pass 1 versus pass 1, one run per process, same render target.** Cheap to
+obtain: re-run on Linux at 2576×2520 (`XRT_COMPOSITOR_SCALE_PERCENTAGE`), take the first run only,
+restart the app between measurements. Standing rule either way: **one benchmark run per process
+lifetime.**
