@@ -33,6 +33,30 @@
 >    blocker on *measuring* anything about the yaw layer).
 > 2. Then re-test the yaw prior worn, and only then judge 0076/0077.
 >
+> ## UPDATE (2026-08-19, ~16:45 — T224 ran the checklist's items 3 and 4; the lever MOVED)
+> - **Item 3 is DONE and the answer inverts it.** The yaw lock is **not** the blocker: 0086's
+>   first hardware run shows it LOCKED on both hands under motion, worn. T221's chicken-and-egg
+>   is dead. With the lock established the 60° prior still rejects zero, because the yaw-error
+>   distribution is 8.2% / 62.0% / 27.8% in the 0-10 / 10-20 / 20-30° bands — 98.8% never
+>   approaches the gate, and the ghost's own error sits INSIDE that legitimate band.
+>   **So the yaw prior is not mistuned, it is the wrong instrument for this class.** Do not
+>   spend another session tuning its threshold.
+> - **The real next lever is therefore T215's named major surgery**: generate the correspondence
+>   assignment FROM the trusted heading, instead of judging blind-search candidates after the
+>   fact. Everything cheaper has now been tried and measured.
+> - **Also now separated, and it is a different problem**: the wearer reports a **~1 cm
+>   high-frequency jitter on both hands** distinct from the 10-20 cm horizontal shifts. That is
+>   the re-triangulation "breathe", item 6 of T203's round map, and it needs its own fix.
+> - **Item 4 (presence doff) is BLOCKED ON HARDWARE, not on method.** Two attempts, both lost
+>   the same way: the companion survives only ~1-3 min per session now, and the proximity
+>   message is change-driven, so a dead channel means the doff never arrives. When it dies the
+>   state freezes at WORN — safe direction, feature silently off. Retry only on a session that
+>   opens with a genuinely calm branch, and take the doff reading FIRST, in the first minute.
+> - **Ops**: the cold 220V cut calmed the storm better than the PC-end replug (1-3/min vs a
+>   62/min peak). One observation; confirm before making it procedure. And the 6dof launch mode
+>   still leaves `WMR_CONSTELLATION_CONTROLLERS` at 0 — it bit again and cost a relaunch.
+>   Pass it explicitly, or use `ctrl`.
+>
 > ## RESUME CHECKLIST (session ended 2026-08-19 ~16:10 with a 220V power-cut of the headset)
 > The build tree is CURRENT (`lab-full` = `3854f3ac7`, binary rebuilt after it) and the
 > launcher now carries the measured stack by default — a bare `up 1 6dof` is the good config.

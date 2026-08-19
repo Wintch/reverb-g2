@@ -23,11 +23,17 @@
 > gravity is noisier and 16/70 rejects sit at 15-30° (true lobe). Real ghosts are at 75-105°
 > and 135-180°. **Use `WMR_CONSTELLATION_TRACKER_GRAVITY_GATE_DEG=30`.**
 >
-> **Next lever, with numbers**: residual jumps are **79-100% horizontal, p50 0.35 m, both
-> hands** = near-pure-yaw ghosts, gravity-blind by construction. The yaw prior that should
-> catch them is **provably inert** (0 rejections all session vs 3900 solve-yaw corrections),
-> its gate needs `solve_yaw_locked`, and **nothing logs whether that lock forms** — make the
-> lock observable FIRST, then judge the yaw layer. 0083's exposure A/B is still unrun.
+> **Next lever — RESOLVED SAME DAY by T224, and it moved**: the residual is the near-pure-yaw
+> ghost class (**10-20 cm horizontal**, wearer-reported; T223's own "p50 0.35 m" is RETRACTED,
+> it was contaminated by real hand motion between 1 Hz samples). Patch 0086 made the lock
+> observable and the answer inverted the plan: **the lock is NOT the blocker** — it forms under
+> motion on both hands — and the yaw prior rejects nothing because 98.8% of samples sit below
+> 30° while the ghost's own error lives INSIDE that same legitimate band (8.2/62.0/27.8% at
+> 0-10/10-20/20-30°). **The yaw prior is the wrong instrument, not a mistuned one; stop tuning
+> it.** The real lever is T215's named surgery: generate the correspondence assignment FROM the
+> trusted heading instead of judging blind candidates. Separately, the wearer's **~1 cm
+> high-frequency jitter on both hands** is a DIFFERENT class (re-triangulation breathe, T203
+> item 6). 0083's exposure A/B is still unrun; `solve_yaw_locked` is monotonic and never clears.
 >
 > **Two traps re-earned**: (1) the USB2 storm *escalates within a session* (6-18/min → 28-62
 > /min, 796 in 25 min) and ended in a total constellation blackout — PC-end USB-C replug
