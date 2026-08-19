@@ -53,6 +53,20 @@
 > `usbmon` during a live storm and diff it against a Windows USBPcap capture of the same idle
 > state — `windows-kit/` already has the tooling, and the OS is the only variable.
 >
+> **THE WINDOWS CONTROL, now a real measurement instead of an impression** (user-proposed at
+> close): `windows-kit/usb-storm-monitor.ps1` polls the USB2 branch every 250 ms for a full
+> session and cross-checks against the Kernel-PnP event log, so the storm rate on Windows can be
+> put next to Linux's on the same cable and the same PC. Run it while actually playing for an
+> hour — an idle capture answers a different question, and on Linux the fault was measured in
+> both states. 250 ms is deliberate: Linux measured dropouts lasting ~3 s, and polling slower
+> than the event you are hunting is how you prove an absence you could never have seen.
+> **Decision rule, written before the data**: a comparable rate on Windows means the link is
+> unstable and Linux is merely more sensitive (cable back on the suspect list); near-zero over a
+> real session of similar length means the fault is in the Linux USB stack — companion HID
+> handling, autosuspend, host-controller behaviour — and it is a bug, not a purchase. Caveat
+> recorded in the script: this counts ENUMERATION events, not the ~83/s HID read failures Linux
+> counts, so a clean Windows result plus a good session is two signals, not one.
+>
 > **Still unrun, and now cheap to judge because a working baseline exists**: 0083's exposure
 > sweep, and docs/59's three fixture protocols (absolute scale — never validated, and one
 > reading of 0.556 m where the tape said 0.750 m says it may be wrong; visibility cliff between
