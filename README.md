@@ -38,7 +38,7 @@ and this project produced four confidently wrong conclusions that were all reach
 | Head tracking, 6DoF | ✅ real Basalt SLAM, confirmed across multiple full game sessions (`docs/23`) — occasional divergence on long-uptime sessions, see `docs/06` |
 | 360 / VR180 player | ✅ our own, built on `hello_xr`; 8K stereo at 60 fps |
 | Headset audio | ✅ works electrically; shares a marginal USB2 contact with the panel, see `docs/22` |
-| Controllers | ✅ 6DoF — constellation optical position tracking fused into the output pose, verified live in a real game (Aircar), `docs/03`; near-pure-yaw mis-assignments can still bounce position between clusters 20-30cm apart |
+| Controllers | ✅ 6DoF — constellation optical position tracking fused into the output pose, verified live in a real game (Aircar), `docs/03`. The near-pure-yaw "ghost" mis-assignments now have a 3-layer defense (reject gate 0074, in-search trusted prior 0076, seeded recovery 0077+0082) validated cross-rig 2026-08-19 — best measured config took a desk-rig baseline of L 7.9% / R 0.8% pos_tracked to **L 37.2% / R 22.2%** (`docs/55`); wearer re-validation on dev pending |
 | SteamVR (native) | ❌ `driver_monado` loads and sees the G2, but blocked acquiring the display lease; xrizer remains the working path |
 | SteamVR titles (via [xrizer](https://github.com/The-personified-devil/xrizer)) | ✅ multiple titles confirmed working end to end, bypassing `vrmonitor` entirely — see `docs/23` |
 | Cable/connector | ⚠️ known marginal contact (USB2 branch + panel power); reseat procedure in `docs/22`, not yet replaced |

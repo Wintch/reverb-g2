@@ -4,6 +4,12 @@
 > (`processImu`). Fix = `BASALT_IMU_NONBLOCK_CATCHUP` (non-blocking `try_pop`), **validated
 > over a >15 min turntable soak with zero collapse** (see "Validation — PASSED" below).
 > Default flip ON pending a drift/quality A/B.
+>
+> **Dev-side delivery CONFIRMED (2026-08-18):** the fix commit (`2a67f76`, default ON) and
+> the constellation-budget commit (`560cc6e21`) are ancestors of dev's own `lab`/`lab-full`
+> branches, verified by direct `git merge-base --is-ancestor` against the lab disk — the
+> 2026-08-17 handoff bundles were delivered; only this prose had never been updated to say
+> so.
 
 Root-caused on the everyday system (KDE/X11/NVIDIA-550/60Hz, same physical rig, SSD
 swap) with staged env-gated instrumentation in Basalt (`VIT_COLLAPSE_LOG=1`; commits on

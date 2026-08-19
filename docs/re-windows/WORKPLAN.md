@@ -29,6 +29,10 @@ from logs/FPS alone. Pin the machine first (`scripts/vr-power-setup.sh`).
 
 ## Phase 1 — SLAM pose-rate collapse  (PRIORITY)
 
+> **STATUS: RESOLVED (2026-08-17), dev-merge confirmed 2026-08-18.** Root cause was NOT the
+> clock model but a blocking IMU catch-up in Basalt's optical-flow frontend; fixed by
+> `BASALT_IMU_NONBLOCK_CATCHUP` (default ON since basalt `2a67f76`). Canonical: `docs/39`.
+
 Why first: it drops head tracking to ~1.5 Hz permanently mid-session, so any pops/mag
 validation is meaningless while it can fire. T194 reproduces it in <1 s with
 SLAM+constellation alone (no app); T195 **ruled out the scheduler** → it's a
@@ -54,6 +58,15 @@ a **fixed timeout firing repeatedly**.
 
 ## Phase 2 — Position pops
 
+> **STATUS: CLOSED AS A NEGATIVE RESULT (2026-08-18), do not re-test as-is.** Implemented as
+> `WMR_CLOCK_MIN_LATENCY` (commit `eba16b4f0`): first flagged known-bad (accelerated the
+> then-unfixed Phase 1 collapse ~10min→27s), then a clean re-test after Phase 1's fix
+> **crashed outright in ~15-30s** — an unbounded first-window seed produced a ~2523s offset
+> jump, the frame-bundle re-baseline net accepted it, and Basalt SIGABRT'd (Eigen OOB).
+> Canonical: `docs/52`. Deliberately dropped from every dev sync. Any retry needs a real
+> redesign first: sanity-bound the seed, add `IMU_JITTER_MAX_NS`-class bounds to the
+> windowed path (it has none).
+
 - 🖥️ Implement in `src/xrt/drivers/wmr/wmr_source.c` (the `m_clock_offset_a2b` /
   `hw2mono` path, ~line 180):
   - (a) **Decouple the offset-EMA update cadence from the IMU sample rate** — pre-filter
@@ -68,6 +81,14 @@ a **fixed timeout firing repeatedly**.
   14.7 ms) before/after. Headset-on: does rotation feel like Windows? Log Txxx.
 
 ## Phase 3 — Magnetometer decode  (small, high-confidence)
+
+> **STATUS: BLOCKED — live capture CONTRADICTS the premise (2026-08-18).** The battery-scale
+> half is done and committed (patch 0079). The mag half was captured live with
+> `WMR_CONTROLLER_TAIL_LOG=1` (also 0079): 15,646 packets through a full multi-axis rotation
+> show **10 of the 12 trailing bytes flat zero the entire time** — no continuous 3-axis
+> signal exists in this report on real hardware ("small, high-confidence" was wrong).
+> Canonical: `docs/54`. Unblock path: a Windows-side USB capture of the live input reports
+> to diff byte-for-byte; do NOT probe enable-commands blind.
 
 - 🖥️ Decode the real **3-axis mag** triplet from the controller report's undecoded
   trailing bytes (`03-controller-packets.md`); resolve the battery "UNVERIFIED SCALE"

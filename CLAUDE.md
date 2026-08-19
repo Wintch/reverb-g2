@@ -1,5 +1,18 @@
 # Context for the 90Hz lab agent
 
+> ## ADDENDUM (2026-08-19, everyday/comms box) — read docs/55 + T220 before touching
+> constellation code: the yaw-ghost stack was A/B'd cross-rig. 0074+0076 validated (left
+> 5x accepted / 3.4x pos_tracked); **0077's first-ever hardware run found a seed-poisoning
+> runaway (seeds 4m→12m off the unconditional last_known_pose update), hardened same night
+> as patch 0082** — best measured config L 37.2% / R 22.2% pos_tracked. Bundle for dev:
+> `~/Documents/handoff-20260819-yawghost.bundle` + `HANDOFF-20260819.md` (docs/30 protocol,
+> never hand-apply). Instrumentation warning: pre-0081 `get_tracked_pose` log lines could
+> silently mute one hand entirely (shared-static parity bug) — historical parses of that
+> line are suspect. New setup criterion (docs/56): ≤3 spurious blobs/cam with zero
+> controllers visible + 0 SLAM resets/30s; PC status/RGB LEDs in camera view are permanent
+> spurious blobs. Battery: fresh-alkaline ceiling raw 208; over-bright LEDs correlate with
+> ghost solves (docs/46 addendum).
+
 > ## FINAL ADDENDUM (2026-08-18, ~09:10) — the benchmark hour (T217-T219), read before
 > the ~08:30 header below: OpenVR Benchmark (955610, installed, first title ever run
 > FROM RAM via vr-prewarm) exposed that **xrizer's GetFrameTiming was a hardcoded stub**

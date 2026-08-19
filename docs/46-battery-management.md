@@ -145,17 +145,15 @@ different: a low reading that does **not** recover after the controller sits idl
 minute or two, or a rest-reading trend that itself declines run over run — not a
 load-coupled dip.
 
-`scripts/controller-battery-check.py`'s current `BATTERY_LOW_THRESHOLD = 0.20` (raw/255 ≈
-byte 51) predates this whole per-cell/voltage investigation and was deliberately picked
-conservative *because* the scale was totally unknown at the time (its own comment: *"low
-enough that even a generous misreading of the true scale still catches a controller that's
-actually dying"*). Against tonight's model, byte 51 corresponds to a predicted ~0.79 V —
-well below even the pessimistic 0.9 V cliff estimate above, meaning that threshold is almost
-certainly still safely conservative, but it is checked once, whenever the script happens to
-run, with no load/rest distinction at all. **Not changed in this pass** — flagged for
-whoever next touches the alert logic: the check should ideally either run right after a
-quiet moment (controller not actively tracking) or track a short rolling window instead of
-one instantaneous sample, once the cliff's real signature is known from a first observed
+`scripts/controller-battery-check.py`'s original `BATTERY_LOW_THRESHOLD = 0.20` (raw/255 ≈
+byte 51) predated this whole per-cell/voltage investigation. **UPDATED same day
+(2026-08-18, `docs/53`): the threshold is now `85/255` (~0.333)**, derived from this doc's
+own model (byte ~83 ≈ 1.0 V floor) and validated by the same-day field failure below — the
+old byte-51 trigger (~0.79 V predicted) would have fired only deep inside the cliff, too
+late. The remaining structural caveat still stands: the check runs once, whenever the
+script happens to run, with no load/rest distinction — it should ideally either run right
+after a quiet moment (controller not actively tracking) or track a short rolling window
+instead of one instantaneous sample, once the cliff's real signature is known from a first observed
 case.
 
 ## 4. Charge advisor math (this charger, these cells)
@@ -297,3 +295,26 @@ Rules distilled:
    swap pairwise. A mismatched pair stresses the good cell (reverse-charging risk).
 4. A cell that fails goes to **tester → RECYCLING**, and its sibling goes to the
    pool for an individual verdict before re-service (mar's current status).
+
+## Addendum 2026-08-19 — the model's ceiling found: fresh alkaline reads raw 208, the linear fit is NiMH-band-only
+
+A genuinely-new (0 km) Energizer MAX pair installed in the right controller read **raw byte
+208** on its first packet (2026-08-19 00:34). Under this doc's linear fit that would imply
+~1.85 V/cell — impossible for alkaline chemistry (≤1.6 V open-circuit) — so **the byte is
+not linear across the full range; the fit above is valid only in the NiMH band it was
+fitted on (~byte 65-150)**. Prior context correction from the user: the earlier "fresh
+alkaline = 152" observation (T216) was actually an already-worn pair; 208 is the first
+true-fresh data point this project has.
+
+Consequences applied same night (`docs/56` has the full session context):
+- `controller-battery-check.py` now displays percent against a **visual ceiling of 208**
+  (`min(100, raw/208)`) — raw/255 showed a brand-new cell as a misleading "82%". Alert
+  thresholds stay on the raw scale this doc calibrated.
+- **New two-sided hazard**: over-bright LEDs (3.1 V fresh alkaline) correlated with a 97%
+  gravity-gate ghost fraction on the same hand that ran 8% on 2.5 V NiMH — suspected blob
+  bloom/saturation corrupting correspondence. Dim starves detection (T167); hot corrupts
+  matching. NiMH's flat 1.2 V band is the sweet spot. Controlled experiment queued: same
+  controller, same scene, cells at ~3.1/2.6/2.4 V, measure ghost fraction.
+- User-facing feature spec (per-profile battery type + mAh → estimated remaining session
+  TIME, unmixed-pair assumption, proactive charge-before-session warnings) captured in
+  `docs/56`.
