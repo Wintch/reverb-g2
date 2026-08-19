@@ -44,15 +44,17 @@ if (Path.home() / "vr" / "monado").is_dir():
 
 LIBMONADO = VR / "monado" / "build" / "src" / "xrt" / "targets" / "libmonado" / "libmonado.so"
 
-# UNVERIFIED SCALE, same caveat as patches/monado/0040's own comment: nothing found so far
-# documents whether the controller's raw battery byte is already a 0-100 percentage, a raw
-# ADC count, or something else. The driver reports it here as raw/255 (least-committal, not
-# calibrated). 20% is a conservative pick against that uncertainty -- low enough that even a
-# generous misreading of the true scale still catches a controller that's actually dying,
-# not so low that a merely-below-full reading gets missed. Revisit once patches/monado/0040's
-# own change-logging has actually caught a real charge/discharge cycle and the true scale is
-# known.
-BATTERY_LOW_THRESHOLD = 0.20
+# SCALE CONFIRMED (2026-08-18): raw/255 matches Windows' own HidP scaling exactly
+# (percent = raw*100/255, the same ratio), see the driver's wmr_controller_hp_get_battery_status
+# comment and docs/re-windows/03+06. Threshold updated the same day from the original
+# deliberately-conservative 0.20 (byte ~51, picked before the scale was confirmed) to match
+# docs/46's fitted voltage model (V ~= 0.00679*byte + 0.436) and its cliff prediction: byte ~83
+# ~= 1.0V ("still usable" floor), byte ~68 ~= 0.9V (deep-discharge risk under load). The SAME DAY
+# a real field failure (docs/46) showed a pair sag to byte 79 under load right before one cell
+# caught a catastrophic internal-resistance spike -- i.e. the mid-70s is not a safe margin,
+# it's where failures have actually happened. Trigger a bit above the cliff's own top (83) so
+# the warning fires with lead time instead of exactly at the danger zone.
+BATTERY_LOW_THRESHOLD = 85 / 255  # ~0.333 -- fires entering the cliff, not inside it
 
 TTY = sys.stdout.isatty()
 C_OK = "\033[1;92m" if TTY else ""
@@ -180,13 +182,12 @@ def main():
             pct = round(charge * 100)
             if charge < BATTERY_LOW_THRESHOLD:
                 any_low = True
-                bad(f"{hand.upper()} CONTROLLER BATTERY LOW ({pct}%, raw scale unverified -- "
-                    f"see patches/monado/0040).")
+                bad(f"{hand.upper()} CONTROLLER BATTERY LOW ({pct}%, cliff zone -- see docs/46).")
                 dim(f"Consequence: optical constellation tracking will degrade as the LEDs dim --")
                 dim(f"expect the {hand} hand to drift or 'anchor' meters off mid-session. Swap the")
                 dim(f"battery before starting, or watch that hand for exactly this symptom.")
             else:
-                ok(f"{hand}: {pct}% (raw scale unverified, see patches/monado/0040)")
+                ok(f"{hand}: {pct}%")
     finally:
         mnd.close()
 
