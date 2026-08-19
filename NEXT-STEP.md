@@ -1,5 +1,60 @@
 # Next step
 
+> ## START HERE (2026-08-19, ~18:20 — end of a five-hour, three-session day: T223, T224, T225)
+>
+> **The day's one structural fix**: the constellation range check was measured against the
+> WORLD ORIGIN instead of the camera, so a drifted SLAM origin silently discarded every correct
+> controller solve. Patch **0085**. Worn positional presence went **1.3%/2.0% → ~50-60%**, and
+> in the best single window **74.5%** on one hand. `WMR_CONSTELLATION_MAX_RANGE_M=0.5`
+> reproduces the old failure on demand — that is the regression test. Full story: `docs/58`.
+>
+> **Settled, do not re-litigate:**
+> - `WMR_CONSTELLATION_TRACKER_GRAVITY_GATE_DEG=30` (14° is a net negative worn). Now the
+>   launcher default, along with the rest of the T215 stack — a bare `up 1 6dof` is the good
+>   config, and it echoes what it applied.
+> - **The yaw prior is the wrong instrument, not a mistuned one.** The lock forms fine under
+>   motion (0086); 98.8% of samples sit below 30° and the ghost's own error lives inside that
+>   same band. Stop tuning its threshold.
+> - **`WMR_CONSTELLATION_SEED_FIRST` is a measured negative** (presence 49/59% → 7/6%): a
+>   FAILING seeded attempt strips blob associations the ordinary path needs. Same call is
+>   harmless last, harmful first. Stays off.
+> - **`XR_EXT_user_presence` is fully validated**, both directions, sensor confirmed binary
+>   (1 worn / 0 resting), debounce measured (0087). Unblocks War Robots VR and doff-to-pause.
+>
+> **The open problem, stated as narrowly as the evidence allows**: the residual is a
+> near-pure-yaw ghost of **10-20 cm horizontal**, which is a **1-2 LED slip around a 32-LED
+> ring** (~11° spacing). The trusted heading's own noise floor under worn motion is **10-30°**
+> — two to three times too coarse to pick the right LED. Seeding narrows the candidate pool;
+> it cannot choose within it. **So the next real lever is the heading's noise floor under
+> dynamics (gyro-bias-under-motion, the same class as T203's round-map item 2 for the head),
+> not the correspondence search's architecture and not another threshold.**
+>
+> **Two measured facts still unexplained — do not paper over them:**
+> 1. **The hands invert.** Two consecutive windows, identical build and config, wearer changing
+>    nothing: L 3.6%/R 62.1% then L 74.5%/R 0.0%. A blob-ownership competition was proposed and
+>    then **refuted by its own instrument** (0089): ~30 blobs sit unclaimed while neither hand
+>    reaches the 4-blob floor, so nobody is starving anybody. The inversion is real and the
+>    explanation is not. **Every historical left-vs-right comparison should be re-read with the
+>    possibility that the asymmetry is not a property of the hand.**
+> 2. **A ~1 cm high-frequency jitter on both hands**, wearer-reported, distinct from the 10-20 cm
+>    shifts. That is the re-triangulation breathe, T203's item 6, and it has never been worked.
+>
+> **Hardware reality check, and it is getting worse**: the USB2 companion branch degrades
+> WITHIN a session — a PC-end replug bought >1 h at 14:30 and ~1 min at 15:52. A full 220V cut
+> calmed it best (62/min → 1-3/min). Presence rides that channel and freezes when it dies.
+> **The rev2A cable is a live purchase candidate again**, and worth pricing before the next
+> session rather than mid-session.
+>
+> **Still unrun, and now cheap to judge because a working baseline exists**: 0083's exposure
+> sweep, and docs/59's three fixture protocols (absolute scale — never validated, and one
+> reading of 0.556 m where the tape said 0.750 m says it may be wrong; visibility cliff between
+> 50 and 75 cm; gain-vs-quality). All three need the fixture, which is cardboard and 15 minutes.
+>
+> **Instrument to use from now on**: `scripts/constellation-session-report.py` turns a session's
+> logs into every number above in one command. It deliberately refuses to interpret zeros — a
+> window with sleeping controllers reads identically to a real measurement, and docs/59's
+> invalidation rules are the reader's job.
+
 > ## UPDATE (2026-08-19, ~15:40, lab, WORN — T223): the session-killing bug is FOUND, FIXED
 > and the numbers are the best this project has recorded. Read T223 + `docs/58` first.
 >
