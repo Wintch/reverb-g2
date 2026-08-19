@@ -1,0 +1,174 @@
+From 3854f3ac791f1fd03ba00baa8d7b20aae1926656 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Wed, 19 Aug 2026 15:44:03 -0300
+Subject: [PATCH] d/wmr: make solve_yaw_locked observable -- T223's named next
+ lever
+
+T223 (2026-08-19, docs/58) characterised the residual worn-tracking defect as
+near-pure-yaw ghosts (79-100% horizontal jumps, p50 0.35 m, both hands) -- the
+class the gravity gate is blind to by construction (a rotation about the
+vertical axis leaves the down vector unchanged). The layer meant to catch
+exactly this, WMR_CONSTELLATION_YAW_PRIOR_DEG, was measured INERT: zero
+rejection lines across a whole worn session while 3900 solve-yaw corrections
+ran with errors up to 22.8 deg. Its gate is conditioned on
+wcb->constellation.solve_yaw_locked, and nothing anywhere logged whether that
+lock ever forms, when, or why -- so "the gate never fired" was
+indistinguishable from "the lock never formed" was indistinguishable from "no
+sample ever qualified". Diagnosing it before this patch meant hand-diffing
+counters across log windows, the same trap docs/58 had just paid an hour for
+on a different check.
+
+Read what actually establishes/clears the lock (apply_solve_yaw_correction,
+wmr_controller_base.c): it is set exactly once, when a gate-accepted sample's
+yaw error against the current fusion heading is under 15 deg, and there is no
+code path anywhere that ever clears it back to false -- the >60 deg
+distrust-window return skips learning from a sample without touching the
+flag. So the lock is monotonic for the life of the device object: "locked"
+means "has ever converged", not "is currently converged". That fact was
+itself unverifiable before this patch.
+
+Two additions, instrumentation only, no threshold or gating changes:
+
+  * An unconditional (not throttled -- the event is rare by construction)
+    WMR_INFO line the moment the lock transitions false->true, naming the
+    hand, the converged error, and the correction count it took. The
+    existing convergence log also now carries the current locked=true/false
+    state on every throttled line, for a session already producing that log.
+
+  * A periodic WMR_INFO heartbeat in constellation_sample_store itself,
+    independent of apply_solve_yaw_correction -- that function only runs on
+    gate-accepted samples with the correction feature enabled, so a session
+    where it is never called (feature off, or the gravity gate is dropping
+    every single sample) would otherwise never print a single "yaw lock"
+    line: silence, not a verdict. This one fires on every sample the gravity
+    gate evaluates, throttled every 300 (a few-seconds cadence at the
+    measured 38-140 solves/s), so a lock that never forms says so explicitly
+    and repeatedly for the whole session instead of being inferred from
+    absence of output.
+
+New per-device counter, yaw_lock_status_log_count, added to struct
+wmr_controller_base for the heartbeat's own throttle -- matching
+get_tracked_pose_call_count's already-documented reasoning (0081): a
+function-local static shared by both controllers silently mutes one hand
+under interleaved calls, so this MUST live on the per-device struct, not as
+a local static.
+
+WMR_INFO throughout, not DEBUG -- the whole reason this state was
+unobservable is that this project's own diagnostics keep landing at a log
+level no real session runs at (docs/58's own range-check bug, T222's
+compositor-fallback bug).
+
+Not done here: re-running the yaw prior A/B with this instrumentation live,
+which is the next step now that the lock's own state is finally visible.
+
+Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
+---
+ src/xrt/drivers/wmr/wmr_controller_base.c | 53 ++++++++++++++++++++++-
+ src/xrt/drivers/wmr/wmr_controller_base.h |  7 +++
+ 2 files changed, 58 insertions(+), 2 deletions(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
+index 6ea580a45..dadff0388 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.c
++++ b/src/xrt/drivers/wmr/wmr_controller_base.c
+@@ -1561,9 +1561,22 @@ apply_solve_yaw_correction(struct wmr_controller_base *wcb,
+ 		os_mutex_unlock(&wcb->data_lock);
+ 		return;
+ 	}
++	// T223 (2026-08-19, docs/58): this is the ONLY place solve_yaw_locked is ever written, and
++	// there is no code path anywhere that clears it back to false once set -- the distrust-window
++	// return just above skips learning from a sample without touching the flag. So the lock is
++	// monotonic for the life of this device object (i.e. for the session, since wcb is allocated
++	// fresh per launch): "locked" means "has ever converged", not "is currently converged". That
++	// was itself unverifiable before this patch -- T223 found 3900 accepted corrections and ZERO
++	// WMR_CONSTELLATION_YAW_PRIOR_DEG rejections in the same worn session and could not tell
++	// whether the prior gate was silently declining to engage (lock never formed) or engaging and
++	// never finding a disagreement (lock formed and every sample agreed) -- those are opposite
++	// diagnoses. Logging the transition below answers that question directly instead of by
++	// inference from a downstream counter.
++	bool was_locked = wcb->constellation.solve_yaw_locked;
+ 	if (fabsf(yaw_error_rad) < yaw_lock_rad) {
+ 		wcb->constellation.solve_yaw_locked = true;
+ 	}
++	bool just_locked = wcb->constellation.solve_yaw_locked && !was_locked;
+ 
+ 	float step_rad = gain * yaw_error_rad;
+ 	if (step_rad > max_step_rad) {
+@@ -1598,11 +1611,23 @@ apply_solve_yaw_correction(struct wmr_controller_base *wcb,
+ 	uint64_t count = wcb->constellation.solve_yaw_correction_count;
+ 	os_mutex_unlock(&wcb->data_lock);
+ 
++	// Unconditional, not throttled: a lock/unlock transition is rare (once per session, in
++	// practice, since the flag is monotonic -- see the comment at the write site above) and is
++	// exactly the event this patch exists to make visible, so it is never worth losing to a
++	// modulo. WMR_INFO, not DEBUG -- the whole reason this was unobservable in T223 is that the
++	// project's own diagnostics are repeatedly hidden at a level a real session doesn't run at.
++	if (just_locked) {
++		WMR_INFO(wcb,
++		         "yaw lock ACQUIRED [%s]: converged to %.1f deg after %llu accepted corrections -- "
++		         "WMR_CONSTELLATION_YAW_PRIOR_DEG can now engage for this hand",
++		         wcb->base.str, (double)(yaw_error_rad * 180.0 / M_PI), (unsigned long long)count);
++	}
++
+ 	if (count == 1 || (count % log_every) == 0) {
+ 		WMR_INFO(wcb,
+-		         "solve-yaw correct [%s]: error=%.1f deg step=%.2f deg gain=%.3f (%llu corrections so far)",
++		         "solve-yaw correct [%s]: error=%.1f deg step=%.2f deg gain=%.3f locked=%s (%llu corrections so far)",
+ 		         wcb->base.str, (double)(yaw_error_rad * 180.0 / M_PI), (double)(step_rad * 180.0 / M_PI),
+-		         (double)gain, (unsigned long long)count);
++		         (double)gain, was_locked || just_locked ? "true" : "false", (unsigned long long)count);
+ 	}
+ }
+ 
+@@ -1730,6 +1755,30 @@ constellation_sample_store(struct t_constellation_tracker_device *device, struct
+ 		solve_yaw_locked = wcb->constellation.solve_yaw_locked;
+ 		os_mutex_unlock(&wcb->data_lock);
+ 
++		// T223 (2026-08-19, docs/58): heartbeat, deliberately placed HERE and not only inside
++		// apply_solve_yaw_correction -- that function only runs on gate-accepted samples with
++		// WMR_CONTROLLER_SOLVE_YAW_CORRECT set, so a session where it is never called (the
++		// option is off, or every sample is a ghost the gravity gate above is about to drop)
++		// would otherwise never print a single "yaw lock" line at all: silence, not a verdict.
++		// This runs on every sample the gravity gate evaluates, so it fires unconditionally
++		// whenever WMR_CONSTELLATION_GRAVITY_GATE_DEG is on, independent of whether the
++		// correction feature is even enabled -- exactly the case T221/T223 could not tell apart
++		// ("the gate never fired" vs. "the lock never formed" vs. "no sample ever qualified").
++		// Throttled at a few hundred samples (the tracker runs at ~38-140 solves/s per
++		// controller per docs/03/T223, so this is roughly a once-every-few-seconds line, cheap
++		// enough to leave on for a whole session) so a session that never locks says so
++		// explicitly and repeatedly instead of once and possibly missed.
++		wcb->constellation.yaw_lock_status_log_count++;
++		uint64_t yaw_status_count = wcb->constellation.yaw_lock_status_log_count;
++		if (yaw_status_count == 1 || (yaw_status_count % 300) == 0) {
++			WMR_INFO(wcb,
++			         "yaw lock status [%s]: %s (%llu corrections applied so far, %llu gated samples "
++			         "checked)",
++			         wcb->base.str, solve_yaw_locked ? "LOCKED" : "not locked",
++			         (unsigned long long)wcb->constellation.solve_yaw_correction_count,
++			         (unsigned long long)yaw_status_count);
++		}
++
+ 		if (imu_ts != 0) {
+ 			struct xrt_quat solve_inv, imu_inv;
+ 			math_quat_invert(&sample->pose.orientation, &solve_inv);
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.h b/src/xrt/drivers/wmr/wmr_controller_base.h
+index c349d2a60..56d2869da 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.h
++++ b/src/xrt/drivers/wmr/wmr_controller_base.h
+@@ -180,6 +180,13 @@ struct wmr_controller_base
+ 		//! Gate-accepted solves further rejected by WMR_CONSTELLATION_YAW_PRIOR_DEG for
+ 		//! disagreeing with the locked fusion heading (0 while off, or before lock).
+ 		uint64_t yaw_prior_reject_count;
++		//! T223 (2026-08-19, docs/58): reverb-g2's own instrumentation, not upstream. Counts
++		//! every gravity-gated sample seen while WMR_CONSTELLATION_GRAVITY_GATE_DEG is on, purely
++		//! to throttle the "yaw lock status" heartbeat log -- see its use site in
++		//! constellation_sample_store. MUST be per-device, same reasoning as
++		//! get_tracked_pose_call_count just above: a shared static would silently mute one hand's
++		//! heartbeat under interleaved calls.
++		uint64_t yaw_lock_status_log_count;
+ 
+ 		/*!
+ 		 * Every constellation sample this controller receives, keyed by the sample's own
+-- 
+2.47.3
+

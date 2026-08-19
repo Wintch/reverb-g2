@@ -446,3 +446,13 @@ is INERT without `WMR_CONTROLLER_SOLVE_YAW_CORRECT` (launcher sets it; a bare en
 of 70 logged rejects sit at 15-30° — true-lobe samples with worn/in-motion gravity noise, far above
 the 4.3-6.5° p90 the 14° default was calibrated from on a STATIC DESK capture. **At 30° the gate is
 neutral on presence while still killing ghosts (~400 rejects): that is the measured value to use.**
+
+## 0086 — make the yaw lock observable (2026-08-19, T223)
+
+| # | What & why |
+|---|---|
+| 0086 | T223's named next lever needed an instrument before it could be worked at all. The residual after 0085 is the near-pure-yaw ghost class (jumps 79-100% horizontal, p50 0.35 m, both hands), the layer meant to catch it is the yaw prior, and it measured **inert**: zero rejections across a worn session while 3900 solve-yaw corrections ran. That was **ambiguous by construction** — "never locked" and "locked, and every sample agreed" are opposite diagnoses and produced identical logs. **What reading the code found is bigger than the missing log line: `solve_yaw_locked` is MONOTONIC.** It is set true the first time a gate-accepted sample lands within 15° of the fusion heading and **no code path ever clears it** (the 60° distrust window skips *learning* from a suspect sample but does not unlock). So "locked" means *has ever converged once*, not *is currently converged* — a lock acquired onto a wrong heading keeps asserting itself for the rest of the session. Two silent preconditions also surfaced: `apply_solve_yaw_correction` is reachable **only** from inside the gravity gate's sample-passed path (gate off ⇒ the lock can never form, silently), and it needs `WMR_CONTROLLER_SOLVE_YAW_CORRECT > 0`, whose own default is 0. Patch adds an unconditional `WMR_INFO` on acquisition (naming the hand per 0080, per-device counter per 0081) plus a throttled heartbeat every 300 gated samples, so a session that never locks **says so, repeatedly**, instead of being silent. Instrumentation only, no behaviour change. Built; not yet hardware-run. Commit `3854f3ac7`. |
+
+**Next question this opens, and it is not the one we started with:** before asking why the yaw
+prior never rejects, ask whether the lock it depends on is *honest*. A monotonic lock in a
+ghost-flood regime can latch onto a wrong heading early and never let go.
