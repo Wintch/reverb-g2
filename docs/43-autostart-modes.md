@@ -96,6 +96,26 @@ Teardown, not a launch. It:
   `FAIL_MARKER` — diagnostic state is preserved, and only a real jack-in that reaches
   "Jacked in" clears the marker.
 
+> **Implemented 2026-08-19 (T228).** Until then everything this document said about
+> `FAIL_MARKER` described a design, not code — a grep found the name only in prose, in no
+> launcher. It now exists in `jack-in-wayland.sh` (and is synced to `scripts/`), with the
+> details this document left unstated:
+>
+> * **Path**: `$VR/.jack-in-failed`. Contents: timestamp, action, mode, tracking, the reason,
+>   and the path of the log to read.
+> * **Written by** a `fail()` helper that *every* launch-path exit goes through — missing
+>   Basalt, wrong session type, missing service binary, no usable compositor — so "the marker
+>   exists" and "the last launch failed" cannot drift apart.
+> * **Cleared by** exactly one thing: a launch that reached a usable compositor. Not an
+>   attempt, not a teardown, not time passing. `--force` also clears it and launches.
+> * **Why it is worth refusing at all**: this project has twice measured that relaunching a
+>   sick headset makes it worse — T183 lost ~6 restart cycles to a storm that a single mains
+>   power-cycle then cleared, and T074's USB2 branch died after a burst of service restarts and
+>   needed every connector reseated. On the unattended tty4 path nothing else stops that loop.
+>
+> Verified against a real failure (headset powered off): the gate refuses with exit 1 and prints
+> the record, `down` works with the marker set and leaves it intact, `--force` clears it.
+
 Two ordering details make `down` robust, via two *different* mechanisms. The FAIL_MARKER
 stop-gate sits **above** the teardown dispatch but excludes `down` explicitly — its
 condition is `[ "$MODE" != down ]` — so a config-read failure that left a marker cannot

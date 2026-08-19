@@ -63,6 +63,7 @@ Examples:
   $(basename "${BASH_SOURCE[0]}") dev 6dof
   $(basename "${BASH_SOURCE[0]}") quiet 1 6dof
   $(basename "${BASH_SOURCE[0]}") down
+  $(basename "${BASH_SOURCE[0]}") --force up          # clear a recorded failure and launch
 EOF
 }
 
@@ -79,9 +80,11 @@ EOF
 ACTION=up
 MODE=""
 TRACKING=""
+FORCE=0
 for arg in "$@"; do
     case "$arg" in
         -h|--help) usage; exit 0 ;;
+        --force|-f) FORCE=1 ;;
         up|start) ACTION=up ;;
         dev|--verbose|-v) ACTION=dev ;;
         quiet|unattended) ACTION=quiet ;;
@@ -108,6 +111,61 @@ VR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVICE="$VR/monado/build/src/xrt/targets/service/monado-service"
 LOG="$VR/jack-in-wayland.log"
 SOCKET="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/monado_comp_ipc"
+
+# FAIL_MARKER (docs/43). WHY IT EXISTS, and it is not defensive programming for its own sake:
+# this project has measured, twice, that hammering a sick headset with more launches makes it
+# WORSE, not better -- T183 lost ~6 restart cycles to a dense USB storm that a single mains
+# power-cycle then cleared, and T074's USB2 branch died after a burst of service restarts and
+# needed every connector reseated. On an unattended station (the tty4 autostart path) nothing
+# stops that loop: the launcher fails, something relaunches it, and the retry itself is the
+# damage. So the FIRST failure writes a marker, and the next launch refuses and shows what
+# happened instead of trying again.
+#
+# Semantics, per docs/43's table:
+#   * up / dev / quiet  -- gated; the marker is CLEARED only by a launch that actually reaches
+#                          a usable compositor. A failure that leaves it set is a diagnosis.
+#   * down              -- skips the gate entirely and never touches the marker: a teardown must
+#                          work when things are broken, which is exactly when the marker is set,
+#                          and its diagnostic content must survive the cleanup.
+#   * --force           -- clears the marker and launches anyway. One token, because the human
+#                          in front of the headset has information the marker does not.
+FAIL_MARKER="$VR/.jack-in-failed"
+
+# Records why a launch died, then exits. Every early exit on the launch path goes through this,
+# so "the marker exists" and "the last launch failed" cannot drift apart.
+fail() {
+    local reason="$1"
+    {
+        echo "when:   $(date -Is)"
+        echo "action: $ACTION  mode: $MODE  tracking: $TRACKING"
+        echo "reason: $reason"
+        echo "log:    $LOG"
+    } > "$FAIL_MARKER" 2>/dev/null || true
+    echo "!! $reason" >&2
+    echo "!! Recorded in $FAIL_MARKER -- the next launch will refuse until it is cleared." >&2
+    echo "!! Clear it with '--force' (which also relaunches) once the cause is understood." >&2
+    exit 1
+}
+
+# The stop-gate. Placed ABOVE the teardown dispatch but excluding 'down' explicitly, so a
+# marker left by a failed launch can never block a shutdown -- the one action that has to keep
+# working when everything else is broken.
+if [ -f "$FAIL_MARKER" ] && [ "$ACTION" != down ]; then
+    if [ "$FORCE" = 1 ]; then
+        echo "Previous failure recorded, --force given -- clearing it and launching anyway:"
+        sed 's/^/    /' "$FAIL_MARKER"
+        rm -f "$FAIL_MARKER"
+    else
+        echo "!! Refusing to launch: the previous attempt failed and nothing has said it is fixed." >&2
+        sed 's/^/    /' "$FAIL_MARKER" >&2
+        echo >&2
+        echo "   Relaunching a sick headset is measured to make it worse (T074, T183), which is" >&2
+        echo "   why this stops instead of retrying. Look at the log above, fix the cause, then:" >&2
+        echo "     $(basename "${BASH_SOURCE[0]}") --force $ACTION   # clears the marker and launches" >&2
+        echo "   'down' always works and never touches the marker." >&2
+        exit 1
+    fi
+fi
 
 # 'down' teardown (docs/43), dispatched here -- before the Wayland-session guard, the
 # basalt/6dof check and the USB census below, none of which a plain stop needs. MODE and
@@ -168,8 +226,7 @@ fi
 # real .so, not just the directory, before promising 6dof.
 BASALT_LIB="$VR/basalt/build/libbasalt.so"
 if [ "$TRACKING" = "6dof" ] && [ ! -e "$BASALT_LIB" ]; then
-    echo "6dof requested but $BASALT_LIB doesn't exist -- build it first (docs/01, 'Basalt's own deps')." >&2
-    exit 1
+    fail "6dof requested but $BASALT_LIB doesn't exist -- build it first (docs/01, 'Basalt's own deps')."
 fi
 
 if [ "${XDG_SESSION_TYPE:-}" != "wayland" ]; then
@@ -177,10 +234,10 @@ if [ "${XDG_SESSION_TYPE:-}" != "wayland" ]; then
     echo "Log out and choose 'GNOME on Wayland' in SDDM." >&2
     echo "NOTE: there are TWO entries called just 'GNOME' -- one is Wayland and the other is X11." >&2
     echo "     KWin doesn't work for this: it doesn't offer the connector for lease (chap. 04)." >&2
-    exit 1
+    fail "not a Wayland session (XDG_SESSION_TYPE=${XDG_SESSION_TYPE:-unset})"
 fi
 
-[ -x "$SERVICE" ] || { echo "Can't find monado-service at $SERVICE" >&2; exit 1; }
+[ -x "$SERVICE" ] || fail "can't find monado-service at $SERVICE"
 
 # The headset's five devices (chap. 00). If the companion is missing, it's the USB port, not Monado.
 FOUND=$(lsusb | grep -cE "03f0:0580|045e:0659|04b4:650[46]|0bda:4c15")
@@ -814,6 +871,9 @@ OUT="$(grep -E "found display mode|frame interval" "$LOG" | tail -3)"
 
 echo
 if [ "$SUCCESS" = 1 ]; then
+    # The ONLY thing that clears the marker: a launch that actually reached a usable
+    # compositor. Not an attempt, not a teardown, not the passage of time.
+    rm -f "$FAIL_MARKER"
     if [ "$ACTION" = quiet ]; then
         # quiet suppresses the dev usage banner (docs/43) -- no human is reading it on an
         # unattended station.
@@ -828,5 +888,5 @@ else
     tail -15 "$LOG" >&2
     for p in $(pgrep -x monado-service); do kill -9 "$p" 2>/dev/null; done
     rm -f "$SOCKET"
-    exit 1
+    fail "no usable compositor after $MAX_ATTEMPTS attempts (no leasable connector / no mode found / wmr builder fell back to Simulated)"
 fi

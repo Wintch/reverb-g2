@@ -1,0 +1,289 @@
+From 387c43f51acebbdc745772e02e041bd50bc00a43 Mon Sep 17 00:00:00 2001
+From: iam <iam@iashur.internal>
+Date: Wed, 19 Aug 2026 20:09:11 -0300
+Subject: [PATCH 6/6] compositor: keep frame-timing history off the frame path
+ (contention-free ring)
+
+The honest FrameTiming from the previous commit was reverted on 782e72b for a
+lock shape: GetFrameTiming is not a rare call -- a benchmark asks for it every
+frame and an fpsVR-class overlay polls it continuously -- and a single mutex
+around the whole history put that reader on the same lock as WaitGetPoses,
+Submit and PostPresentHandoff. A caller merely asking what happened could stall
+the frame that is happening.
+
+The freeze that prompted the revert was NOT this: it was reproduced afterwards
+on the stub build too, and reproduced again on Windows/SteamVR (the same
+benchmark's second run in one process returns 354.77 FPS at 2576x2520 on a 3060
+Ti, which is not a physical number). That belongs to the app's own second-run
+path. But the lock shape was real, so it is fixed here rather than left standing
+as a reason to keep the timing fictional.
+
+One RwLock per ring slot instead of one around the history. The writer touches
+only the slot it fills; a reader touches only the slot it was asked for. They
+can meet only on the same slot, which needs the reader to be a full ring behind
+the writer -- 128 frames, ~1.4 s at 90 Hz -- and both critical sections are a
+copy of a handful of floats. An AtomicU64 of total frames completed doubles as
+the length, so no separate count can fall out of sync, and it is published with
+Release after the slot is written.
+
+Deliberately not a seqlock: that is the textbook answer and would make the
+writer strictly wait-free, but it needs UnsafeCell and hand-reasoned orderings
+and nothing measured justifies that yet. Named as the upgrade if contention is
+ever actually observed.
+
+New test drives a writer thread and a reader thread against the ring with every
+field of an entry derived from its index, so a torn read is detectable without
+depending on timing. 88 tests pass.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ src/compositor.rs | 175 +++++++++++++++++++++++++++++++++++++++-------
+ 1 file changed, 150 insertions(+), 25 deletions(-)
+
+diff --git a/src/compositor.rs b/src/compositor.rs
+index 6ad9f57..8b3f7fb 100644
+--- a/src/compositor.rs
++++ b/src/compositor.rs
+@@ -12,11 +12,10 @@ use crate::{
+ use log::{debug, info, trace, warn};
+ use openvr as vr;
+ use openxr as xr;
+-use std::collections::VecDeque;
+ use std::mem::offset_of;
+ use std::sync::{
+-    Arc, Mutex, Once,
+-    atomic::{AtomicU32, Ordering},
++    Arc, Mutex, Once, RwLock,
++    atomic::{AtomicU32, AtomicU64, Ordering},
+ };
+ use std::time::{Duration, Instant};
+ use std::{ffi::c_char, ops::Deref};
+@@ -86,9 +85,72 @@ struct FrameMetrics {
+     /// Accumulates measurements for the frame currently being built, from the moment
+     /// `WaitGetPoses` starts it until `PostPresentHandoff` freezes it into `history`.
+     in_progress: Mutex<InProgressFrame>,
+-    /// Ring buffer of the last [`FRAME_TIMING_HISTORY_LEN`] completed frames, oldest first,
+-    /// used to answer `GetFrameTiming`/`GetFrameTimings`.
+-    history: Mutex<VecDeque<FrameTimingEntry>>,
++    /// Ring of the last [`FRAME_TIMING_HISTORY_LEN`] completed frames, used to answer
++    /// `GetFrameTiming`/`GetFrameTimings` without putting the reader on the frame path.
++    history: FrameTimingRing,
++}
++
++/// A ring of completed frames that a reader can sample without blocking the frame path.
++///
++/// WHY NOT ONE MUTEX, because that is what this replaced. `GetFrameTiming` is not a rare call:
++/// a benchmark asks for it every frame, and an overlay of the fpsVR class polls it continuously.
++/// With a single mutex around the whole history, that reader shares a lock with
++/// `WaitGetPoses`/`Submit`/`PostPresentHandoff` -- so a caller merely *asking* what happened can
++/// stall the frame that is happening. That is a latency hazard regardless of who wins the lock,
++/// and it is the reason the first honest-timing implementation was reverted (xrizer 782e72b).
++///
++/// (The freeze that prompted that revert was NOT this: it was later reproduced on the stub build
++/// too, and reproduced again on Windows/SteamVR in 2026-08-19's capture, so it belongs to the
++/// benchmark's own second-run path. The lock shape was still real, and is fixed here rather than
++/// left as a reason to keep the timing fictional.)
++///
++/// One lock per slot instead. The writer touches exactly the slot it is filling; a reader
++/// touches exactly the slot it is asked for. They can only meet on the same slot, which needs
++/// the reader to be a full ring -- 128 frames, ~1.4 s at 90 Hz -- behind the writer, and both
++/// critical sections are a copy of a handful of floats. Deliberately NOT a seqlock: that is the
++/// textbook answer and it would make the writer strictly wait-free, but it needs `UnsafeCell`
++/// and hand-reasoned orderings, and nothing measured here justifies that yet. If contention is
++/// ever actually observed, the seqlock is the named upgrade.
++struct FrameTimingRing {
++    slots: [RwLock<FrameTimingEntry>; FRAME_TIMING_HISTORY_LEN],
++    /// Total frames ever completed. `count % LEN` is the next slot to write, and the value
++    /// doubles as "how much history exists", so no separate length needs to stay in sync.
++    count: AtomicU64,
++}
++
++impl Default for FrameTimingRing {
++    fn default() -> Self {
++        Self {
++            slots: std::array::from_fn(|_| RwLock::new(FrameTimingEntry::default())),
++            count: AtomicU64::new(0),
++        }
++    }
++}
++
++impl FrameTimingRing {
++    /// Number of frames available to read, saturating at the ring size.
++    fn len(&self) -> usize {
++        (self.count.load(Ordering::Acquire) as usize).min(FRAME_TIMING_HISTORY_LEN)
++    }
++
++    fn push(&self, entry: FrameTimingEntry) {
++        let idx = (self.count.load(Ordering::Relaxed) as usize) % FRAME_TIMING_HISTORY_LEN;
++        *self.slots[idx].write().unwrap() = entry;
++        // Published last, with Release, so a reader that observes the new count also observes
++        // the slot contents it points at.
++        self.count.fetch_add(1, Ordering::Release);
++    }
++
++    /// `frames_ago` = 0 is the most recently completed frame. `None` once it runs past the
++    /// history that exists.
++    fn get(&self, frames_ago: usize) -> Option<FrameTimingEntry> {
++        let count = self.count.load(Ordering::Acquire) as usize;
++        if frames_ago >= count.min(FRAME_TIMING_HISTORY_LEN) {
++            return None;
++        }
++        let idx = (count - 1 - frames_ago) % FRAME_TIMING_HISTORY_LEN;
++        Some(*self.slots[idx].read().unwrap())
++    }
+ }
+ 
+ #[derive(Default, Clone, Copy)]
+@@ -219,7 +281,7 @@ impl Compositor {
+                 time: 0.0.into(),
+                 last_wait_get_poses_call: Mutex::new(None),
+                 in_progress: Mutex::new(InProgressFrame::default()),
+-                history: Mutex::new(VecDeque::with_capacity(FRAME_TIMING_HISTORY_LEN)),
++                history: FrameTimingRing::default(),
+             },
+             timing_mode: vr::EVRCompositorTimingMode::Implicit.into(),
+             frame_state: FrameState::Submitted.into(),
+@@ -732,15 +794,18 @@ impl vr::IVRCompositor029_Interface for Compositor {
+         }
+ 
+         let refresh_rate_ms = 1000.0 / self.openxr.get_refresh_rate();
+-        let history = self.metrics.history.lock().unwrap();
+-        let count = (nFrames as usize).min(history.len());
+-        let start = history.len() - count;
++        let count = (nFrames as usize).min(self.metrics.history.len());
+ 
+         // Ascending order (oldest to newest), last entry is the most recent frame, per the
+-        // documented contract.
+-        for (i, entry) in history.iter().skip(start).take(count).enumerate() {
++        // documented contract -- so entry i counts back (count - 1 - i) frames from now.
++        for i in 0..count {
++            let Some(entry) = self.metrics.history.get(count - 1 - i) else {
++                // The ring wrapped underneath us mid-read; stop at what we did fill rather
++                // than reporting frames we did not write.
++                return i as u32;
++            };
+             let out = unsafe { pTiming.byte_add(i * size) };
+-            unsafe { write_frame_timing(out, entry, refresh_rate_ms) };
++            unsafe { write_frame_timing(out, &entry, refresh_rate_ms) };
+         }
+ 
+         count as u32
+@@ -773,11 +838,11 @@ impl vr::IVRCompositor029_Interface for Compositor {
+         // the current live metrics rather than returning false -- SteamVR games generally don't
+         // expect GetFrameTiming to start failing just because the session is young, and this
+         // preserves that behavior while still reporting real data once it exists.
+-        let entry = {
+-            let history = self.metrics.history.lock().unwrap();
+-            history.iter().rev().nth(frames_ago as usize).copied()
+-        }
+-        .unwrap_or(FrameTimingEntry {
++        let entry = self
++            .metrics
++            .history
++            .get(frames_ago as usize)
++            .unwrap_or(FrameTimingEntry {
+             frame_index: self.metrics.index.load(Ordering::Relaxed),
+             system_time_seconds: self.metrics.time.load(),
+             client_frame_interval_ms: refresh_rate_ms,
+@@ -851,11 +916,7 @@ impl vr::IVRCompositor029_Interface for Compositor {
+             present_call_cpu_ms,
+         };
+         {
+-            let mut history = self.metrics.history.lock().unwrap();
+-            if history.len() >= FRAME_TIMING_HISTORY_LEN {
+-                history.pop_front();
+-            }
+-            history.push_back(entry);
++            self.metrics.history.push(entry);
+         }
+ 
+         #[cfg(feature = "tracing")]
+@@ -1998,12 +2059,17 @@ mod tests {
+         // One more call to finalize the last frame run above into history.
+         assert_eq!(f.wait_get_poses(), None);
+ 
+-        let history_len = f.comp.metrics.history.lock().unwrap().len();
++        let history_len = f.comp.metrics.history.len();
+         assert_eq!(history_len, FRAMES);
+ 
++        // Oldest to newest, the way GetFrameTimings reports them.
++        let history: Vec<FrameTimingEntry> = (0..history_len)
++            .rev()
++            .map(|ago| f.comp.metrics.history.get(ago).unwrap())
++            .collect();
++
+         // Frame indices in history must be strictly increasing (monotonic).
+         {
+-            let history = f.comp.metrics.history.lock().unwrap();
+             let indices: Vec<u32> = history.iter().map(|e| e.frame_index).collect();
+             for pair in indices.windows(2) {
+                 assert!(
+@@ -2064,6 +2130,65 @@ mod tests {
+         assert_eq!(f.comp.GetFrameTimings(std::ptr::null_mut(), 4), 0);
+     }
+ 
++    /// The property the whole ring exists for: a reader hammering the history the way a
++    /// benchmark or an fpsVR-class overlay does must never block the writer, and must never
++    /// observe a half-written frame.
++    ///
++    /// Every field of a pushed entry is derived from its index, so a torn read is detectable
++    /// without depending on timing: any entry whose fields disagree with each other was
++    /// assembled from two different frames. The assertions hold no matter how the two threads
++    /// interleave, so this is a real concurrency test and not a flaky one.
++    #[test]
++    fn frame_timing_ring_reads_do_not_block_or_tear() {
++        use std::sync::Arc;
++
++        const PUSHES: u32 = 20_000;
++        let ring = Arc::new(FrameTimingRing::default());
++
++        let writer = {
++            let ring = ring.clone();
++            std::thread::spawn(move || {
++                for i in 0..PUSHES {
++                    ring.push(FrameTimingEntry {
++                        frame_index: i,
++                        system_time_seconds: i as f64,
++                        client_frame_interval_ms: i as f32,
++                        wait_get_poses_called_ms: i as f32,
++                        new_poses_ready_ms: i as f32,
++                        submit_frame_ms: i as f32,
++                        present_call_cpu_ms: i as f32,
++                    });
++                }
++            })
++        };
++
++        let mut reads = 0u32;
++        while !writer.is_finished() {
++            for ago in 0..FRAME_TIMING_HISTORY_LEN {
++                let Some(e) = ring.get(ago) else { break };
++                let i = e.frame_index;
++                assert_eq!(e.system_time_seconds, i as f64, "torn read at {i}");
++                assert_eq!(e.client_frame_interval_ms, i as f32, "torn read at {i}");
++                assert_eq!(e.wait_get_poses_called_ms, i as f32, "torn read at {i}");
++                assert_eq!(e.new_poses_ready_ms, i as f32, "torn read at {i}");
++                assert_eq!(e.submit_frame_ms, i as f32, "torn read at {i}");
++                assert_eq!(e.present_call_cpu_ms, i as f32, "torn read at {i}");
++                reads += 1;
++            }
++        }
++        writer.join().unwrap();
++
++        assert!(reads > 0, "the reader never got to run; the test proved nothing");
++        assert_eq!(ring.len(), FRAME_TIMING_HISTORY_LEN);
++        // Newest entry is the last one pushed, and the ring holds exactly the last LEN frames.
++        assert_eq!(ring.get(0).unwrap().frame_index, PUSHES - 1);
++        assert_eq!(
++            ring.get(FRAME_TIMING_HISTORY_LEN - 1).unwrap().frame_index,
++            PUSHES - FRAME_TIMING_HISTORY_LEN as u32
++        );
++        assert!(ring.get(FRAME_TIMING_HISTORY_LEN).is_none());
++    }
++
+     #[test]
+     fn zero_dims_texture() {
+         let f = Fixture::new();
+-- 
+2.47.3
+

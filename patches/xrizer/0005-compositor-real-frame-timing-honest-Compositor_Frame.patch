@@ -1,7 +1,7 @@
 From d467454e4b9008bb731058c22380eb6e25dd8a4e Mon Sep 17 00:00:00 2001
 From: iam <iam@iashur.internal>
 Date: Tue, 18 Aug 2026 08:37:36 -0300
-Subject: [PATCH] compositor: real frame timing -- honest
+Subject: [PATCH 5/6] compositor: real frame timing -- honest
  Compositor_FrameTiming from measured values
 
 GetFrameTiming filled the struct with hardcoded constants (TotalRenderGpu=9.0

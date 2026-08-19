@@ -1,0 +1,154 @@
+From 7a0985833c6c2fc5fc3b10bb9d34f3ccce7ad802 Mon Sep 17 00:00:00 2001
+From: iam <iam@iashur.internal>
+Date: Wed, 19 Aug 2026 20:15:42 -0300
+Subject: [PATCH] utils: name the worker threads, so a scheduling audit can
+ tell them apart
+
+A live RT audit of the running stack (reverb-g2 docs/19) could account for
+exactly three threads at SCHED_FIFO:99 and then stopped: every Basalt worker
+appeared under the host process's own name, so ps -L, top -H, perf sched and any
+per-thread pinning plan could not distinguish the optical-flow front end -- the
+pipeline's measured #1 cost at 48.5 ms p50 -- from the VIO back end at ~12 ms.
+Threads that cannot be told apart cannot be measured or pinned, which blocks the
+per-title pinning design and any future "which stage is starving" question.
+
+set_thread_name() in a new header, applied at the entry of the three threads the
+library actually spawns when Monado loads it: bslt-optflow, bslt-vio, bslt-vo.
+Linux caps the name at 15 characters and FAILS the call rather than truncating
+when it is longer, so the helper truncates defensively and the names are short.
+
+Compiled in and present in the .so; runtime confirmation (ps -L on a live
+session) still pending -- it needs a headset.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ include/basalt/optical_flow/optical_flow.h | 10 +++++-
+ include/basalt/utils/thread_name.h         | 38 ++++++++++++++++++++++
+ src/vi_estimator/sqrt_keypoint_vio.cpp     |  6 +++-
+ src/vi_estimator/sqrt_keypoint_vo.cpp      |  6 +++-
+ 4 files changed, 57 insertions(+), 3 deletions(-)
+ create mode 100644 include/basalt/utils/thread_name.h
+
+diff --git a/include/basalt/optical_flow/optical_flow.h b/include/basalt/optical_flow/optical_flow.h
+index d90847f..b446f5c 100644
+--- a/include/basalt/optical_flow/optical_flow.h
++++ b/include/basalt/optical_flow/optical_flow.h
+@@ -56,6 +56,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ #include <basalt/calibration/calibration.hpp>
+ #include <basalt/camera/stereographic_param.hpp>
+ #include <basalt/utils/sophus_utils.hpp>
++#include <basalt/utils/thread_name.h>
+ #include <vit_implementation_helper.hpp>
+ #include "sophus/se3.hpp"
+ 
+@@ -132,7 +133,14 @@ class OpticalFlowBase {
+ 
+   virtual void processingLoop() = 0;
+ 
+-  void start() { processing_thread.reset(new std::thread(&OpticalFlowBase::processingLoop, this)); }
++  void start() {
++    processing_thread.reset(new std::thread([this]() {
++      // Named so a scheduling audit can find the pipeline's most expensive stage by name
++      // instead of by guessing which unnamed thread it is (see thread_name.h).
++      set_thread_name("bslt-optflow");
++      processingLoop();
++    }));
++  }
+ 
+   virtual inline void drain_input_queues() {
+     while (!input_img_queue.empty()) {
+diff --git a/include/basalt/utils/thread_name.h b/include/basalt/utils/thread_name.h
+new file mode 100644
+index 0000000..c736eb4
+--- /dev/null
++++ b/include/basalt/utils/thread_name.h
+@@ -0,0 +1,38 @@
++#pragma once
++
++/*
++ * Naming Basalt's worker threads, so a scheduling audit can tell them apart.
++ *
++ * WHY: a live RT audit of the running stack (reverb-g2 docs/19) could account for exactly three
++ * threads at SCHED_FIFO:99 and then hit a wall -- every Basalt worker showed up under the host
++ * process's own name, so `ps -L`, `top -H`, `perf sched` and any per-thread pinning plan could
++ * not distinguish the optical-flow front end (measured as the pipeline's real #1 cost, 48.5 ms
++ * p50) from the VIO back end (~12 ms) or from a UI helper. Threads that cannot be told apart
++ * cannot be measured or pinned, which blocks both the per-title pinning design and any future
++ * "which stage is starving" question.
++ *
++ * Linux caps the name at 15 characters plus the terminator and silently FAILS the call if the
++ * string is longer -- not truncates it -- so the names below are short on purpose and the helper
++ * truncates defensively rather than leaving a thread unnamed.
++ */
++
++#include <cstring>
++
++#ifdef __linux__
++#include <pthread.h>
++#endif
++
++namespace basalt {
++
++inline void set_thread_name(const char* name) {
++#ifdef __linux__
++  char buf[16];
++  std::strncpy(buf, name, sizeof(buf) - 1);
++  buf[sizeof(buf) - 1] = '\0';
++  pthread_setname_np(pthread_self(), buf);
++#else
++  (void)name;
++#endif
++}
++
++}  // namespace basalt
+diff --git a/src/vi_estimator/sqrt_keypoint_vio.cpp b/src/vi_estimator/sqrt_keypoint_vio.cpp
+index 480fe30..ca90705 100644
+--- a/src/vi_estimator/sqrt_keypoint_vio.cpp
++++ b/src/vi_estimator/sqrt_keypoint_vio.cpp
+@@ -46,6 +46,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ #include <basalt/utils/time_utils.hpp>
+ 
+ #include <basalt/linearization/linearization_base.hpp>
++#include <basalt/utils/thread_name.h>
+ #include <memory>
+ #include <chrono>
+ #include <cstdlib>
+@@ -365,7 +366,10 @@ void SqrtKeypointVioEstimator<Scalar_>::initialize(const Eigen::Vector3d& bg_, c
+     std::cout << "Finished VIOFilter " << std::endl;
+   };
+ 
+-  processing_thread = std::make_shared<std::thread>(proc_func);
++  processing_thread = std::make_shared<std::thread>([proc_func]() {
++    set_thread_name("bslt-vio");
++    proc_func();
++  });
+ }
+ 
+ template <class Scalar_>
+diff --git a/src/vi_estimator/sqrt_keypoint_vo.cpp b/src/vi_estimator/sqrt_keypoint_vo.cpp
+index 4253b58..da0413f 100644
+--- a/src/vi_estimator/sqrt_keypoint_vo.cpp
++++ b/src/vi_estimator/sqrt_keypoint_vo.cpp
+@@ -45,6 +45,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ #include <vit_implementation_helper.hpp>
+ 
+ #include <basalt/linearization/linearization_base.hpp>
++#include <basalt/utils/thread_name.h>
+ 
+ #include <tbb/blocked_range.h>
+ #include <tbb/parallel_for.h>
+@@ -265,7 +266,10 @@ void SqrtKeypointVoEstimator<Scalar_>::initialize(const Eigen::Vector3d& bg, con
+     std::cout << "Finished VIOFilter " << std::endl;
+   };
+ 
+-  processing_thread = std::make_shared<std::thread>(proc_func);
++  processing_thread = std::make_shared<std::thread>([proc_func]() {
++    set_thread_name("bslt-vo");
++    proc_func();
++  });
+ }
+ 
+ template <class Scalar_>
+-- 
+2.47.3
+

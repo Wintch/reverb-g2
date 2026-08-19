@@ -121,6 +121,25 @@
 > produces the first honest Linux-vs-Windows number this project has ever had, on one headset and
 > one machine.
 >
+> **BUILT 2026-08-19 EVENING (T228), ALL AWAITING THE WEARER SESSION** — three code items, no
+> hardware touched:
+> 1. **xrizer honest frame timing is back** (`patches/xrizer/0005`+`0006`). The revert's stated
+>    cause was refuted twice (the freeze reproduces on the stub build, and the same benchmark's
+>    second run returns 354.77 FPS on Windows), so the feature returns — with the lock hazard
+>    that motivated the revert actually fixed: the history is a ring of per-slot `RwLock`s plus
+>    an `AtomicU64` count, so a caller polling `GetFrameTiming` every frame no longer shares a
+>    lock with `WaitGetPoses`/`Submit`/`PostPresentHandoff`. 88 tests, including a writer/reader
+>    concurrency test whose assertions hold under any interleaving. **Test: OpenVR Benchmark at
+>    2576×2520, FIRST RUN ONLY, app restarted between measurements** — that also produces the
+>    first honest Linux-vs-Windows number.
+> 2. **`FAIL_MARKER` exists** (docs/43 had described it since T200; it was only prose). First
+>    failure records `$VR/.jack-in-failed`; `up`/`dev`/`quiet` refuse and print it, `--force`
+>    clears and launches, `down` skips the gate and never touches it, only a launch that reaches
+>    a usable compositor clears it. Validated against a real failure with the headset off.
+> 3. **Basalt worker threads are named** — `bslt-optflow`, `bslt-vio`, `bslt-vo`
+>    (`patches/basalt/0012`). Unblocks per-title pinning and any "which stage is starving"
+>    question. **Test: `ps -L -p $(pgrep -x monado-service)` on a live session.**
+>
 > **QUEUED, user-requested (2026-08-19, T227): the battery readout may have been lying for
 > months.** On Windows, with `using_1v2_batteries` **validated at 1.2 V**, the same cells showed
 > **90%+** — against the standing impression that the readout "always reads low, even with
