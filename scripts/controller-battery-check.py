@@ -179,7 +179,11 @@ def main():
                 continue
 
             any_present = True
-            pct = round(charge * 100)
+            # Visual ceiling 208 (docs/56, 2026-08-19): a genuinely-new alkaline pair reads raw
+            # byte 208, and raw/255 displays it as a misleading "82%". Show percent against the
+            # measured real-world ceiling instead; the LOW threshold below stays on the raw
+            # (charge) scale, which is what docs/46 calibrated.
+            pct = min(100, round(charge * 255 / 208 * 100))
             if charge < BATTERY_LOW_THRESHOLD:
                 any_low = True
                 bad(f"{hand.upper()} CONTROLLER BATTERY LOW ({pct}%, cliff zone -- see docs/46).")
