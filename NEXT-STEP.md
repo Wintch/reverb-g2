@@ -33,6 +33,23 @@
 >    blocker on *measuring* anything about the yaw layer).
 > 2. Then re-test the yaw prior worn, and only then judge 0076/0077.
 >
+> ## NEW, from the tape-measure addendum (same session)
+> - **Visibility cliff between 50 and 75 cm**: aimed headset, awake controllers, 50 cm gives
+>   118 poses/20 s and 75 cm gives ZERO CAMERA SAMPLES (not failed searches). An arm's reach
+>   is ~70 cm. Map this properly (60/65/70 cm) — it bounds the usable play volume.
+>   **Trap**: "no blobs at all" is indistinguishable from a dead pipeline in every counter;
+>   discriminate by bringing the controllers close and watching it recover.
+> - **0083 has its first hardware datapoint**: `WMR_CONTROLLER_CAM_GAIN=255` turns that 75 cm
+>   zero into 87 poses — gain buys range — but the solves disagree with the tape (left 0.556 m
+>   for a measured 0.75 m; right 0.057 m), matching docs/46's over-bright→ghosts correlation.
+>   Next: a 150/200/255 sweep **against a fixture**, scored on solve quality, not just count.
+> - **Absolute scale of the constellation solve has never been validated.** 1-2 mm
+>   repeatability at 50 cm is repeatability, not accuracy; two hand placements both called
+>   "50 cm" differed by 26 mm. Needs a fixture holding a controller at exact, repeatable
+>   distances. Until then treat every absolute distance this stack reports as unverified.
+> - **Height profile is now measured** (1.70 m standing / 1.35 m seated, was 1.76/1.40) —
+>   world was anchored ~6 cm high in every session since 2026-08-12.
+>
 > ## Still queued from T222, untouched today
 > **0083's exposure A/B** (`WMR_CONTROLLER_CAM_EXPOSURE_US` 2000-3000 vs the fixed 6000)
 > never ran — the session went to the range bug instead. It is still the standing candidate
