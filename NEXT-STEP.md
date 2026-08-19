@@ -33,6 +33,27 @@
 >    blocker on *measuring* anything about the yaw layer).
 > 2. Then re-test the yaw prior worn, and only then judge 0076/0077.
 >
+> ## RESUME CHECKLIST (session ended 2026-08-19 ~16:10 with a 220V power-cut of the headset)
+> The build tree is CURRENT (`lab-full` = `3854f3ac7`, binary rebuilt after it) and the
+> launcher now carries the measured stack by default — a bare `up 1 6dof` is the good config.
+> 1. **Cold start, and give the USB2 branch its rest.** The branch degraded within the day
+>    (a PC-end replug bought >1 h at 14:30, ~1 min at 15:52). Check the storm rate BEFORE
+>    trusting any measurement: `journalctl -k --since "-5 min" | grep -cE "usb 3-.*(new
+>    (full|high)-speed|disconnect)"`. A rate above ~10/min means measure nothing yet.
+> 2. **Controllers awake BEFORE the service** (`python3 ~/vr/controller-pair-check.py`), and
+>    re-check per measurement window, not per session — they auto-slept mid-session and cost
+>    a 272 s window whose counters read as a clean zero.
+> 3. **First measurement, 5 min, no fixture needed**: the yaw-lock heartbeat (0086, built but
+>    never hardware-run). Launch, wear it, and read `grep -E "yaw lock" ~/vr/jack-in-wayland.log`.
+>    The question is NOT "does the prior reject" — it is whether the lock is honest, since it
+>    is monotonic and never clears once acquired.
+> 4. **Finish the presence calibration, 2 min**: `WMR_USER_PRESENCE=1 WMR_LOG=debug`, a client
+>    MUST be running (update_inputs is client-driven), don and doff several times. Missing:
+>    the DOFF transition, and how long the byte takes to fall. Known: worn=1, resting=0,
+>    and it alternates 0,1,0,1 during donning, so a debounce is needed.
+> 5. **With the fixture built**: run docs/59's three protocols, batteries in-band per its
+>    battery-control section.
+>
 > ## NEW, from the tape-measure addendum (same session)
 > - **Visibility cliff between 50 and 75 cm**: aimed headset, awake controllers, 50 cm gives
 >   118 poses/20 s and 75 cm gives ZERO CAMERA SAMPLES (not failed searches). An arm's reach
