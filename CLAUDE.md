@@ -1,5 +1,52 @@
 # Context for the 90Hz lab agent
 
+> ## START HERE (2026-08-19, ~18:20 — the T223/T224/T225 day, five hours, three sessions).
+> Read `docs/58` + T223-T225 + NEXT-STEP. The header below it is superseded on every point
+> where they disagree.
+>
+> **The fix that mattered**: `constellation_sample_store`'s 5 m sanity guard compared the
+> **world-frame** position — distance from the SLAM *origin*, which also counts however far the
+> origin drifted. Worn, wearer seated still, the head sat 8.4 m from origin with zero divergence
+> resets, so every CORRECT controller solve was discarded too — silently, at `WMR_DEBUG`.
+> **Patch 0085** splits it into a camera-relative plausibility bound (per-device: wmr 3 m,
+> rift/pssense unbounded) and a world-frame absurdity guard (1000 m, `WMR_INFO`). Worn
+> positional presence **1.3%/2.0% → ~50-60%**, best single window **74.5%**.
+> `WMR_CONSTELLATION_MAX_RANGE_M=0.5` reproduces the old failure on demand.
+>
+> **Settled today, don't re-litigate**: tracker gravity gate **30°**, not 0084's suggested 14°
+> (a net negative worn — its default came from a static desk capture). The **yaw prior is the
+> wrong instrument**, not mistuned: the lock forms fine (0086) and 98.8% of samples sit below
+> 30° with the ghost's error inside that same band. **`WMR_CONSTELLATION_SEED_FIRST` is a
+> measured negative** — a failing seeded attempt strips blob associations the ordinary path
+> needs. **`XR_EXT_user_presence` is fully validated** (0075+0087): sensor is binary 1/0,
+> debounce measured, both directions captured. The launcher now applies the measured stack by
+> default and echoes it.
+>
+> **The open problem, narrowly**: the residual ghost is **10-20 cm horizontal = a 1-2 LED slip
+> around a 32-LED ring (~11° spacing)**, while the trusted heading's own noise floor under worn
+> motion is **10-30°**. Seeding narrows the pool; it cannot choose inside it. **The next lever
+> is the heading's noise under dynamics (gyro-bias-under-motion), not the search architecture
+> and not another threshold.**
+>
+> **Two measured, unexplained facts — do not paper over them**: (1) the hands INVERT between
+> consecutive windows on identical config with the wearer changing nothing (L 3.6/R 62.1, then
+> L 74.5/R 0.0); a blob-ownership competition was proposed and **refuted by its own instrument**
+> (0089 — ~30 blobs sit unclaimed while neither hand reaches the 4-blob floor), so *"the left
+> hand is worse"*, carried since T215, may not be a property of the hand at all. (2) A **~1 cm
+> high-frequency jitter on both hands**, distinct from the shifts — T203's item 6, never worked.
+>
+> **Hardware**: the USB2 companion branch degrades WITHIN a session (a PC-end replug bought >1 h
+> at 14:30 and ~1 min at 15:52; a 220V cut calmed it best). Presence rides that channel and
+> freezes when it dies. **rev2A cable is a live purchase candidate again.**
+>
+> **Method notes that paid for themselves today**: take the fragile measurement FIRST (the
+> presence doff was lost twice by leaving it for later, captured in the first minute on the
+> third try); a window with sleeping controllers or a headset on the desk is NOT a control, and
+> its zeros are not a result; and `scripts/constellation-session-report.py` now turns a
+> session's logs into every number above in one command. Four claims made during this day were
+> retracted on evidence (a "poisoned prior", a "pipeline blackout", a "blob flood", and the
+> competition hypothesis) — the retractions are in the record next to the claims.
+
 > ## START HERE (2026-08-19, ~15:40, T223 — WORN, supersedes the T222 addendum below):
 > **the constellation range check was measured in the wrong frame, and fixing it took worn
 > positional presence from 1.3%/2.0% to 47.7%/45.5%** — the best this project has recorded
