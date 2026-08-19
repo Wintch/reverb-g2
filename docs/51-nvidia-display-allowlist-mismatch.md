@@ -106,10 +106,37 @@ correctly declaring failure and tearing down. A relaunch with
 **wayland-direct at 4320x2160@90 on attempt 1/3** (`Lease granted` →
 `Target backend wayland-direct initialized!` → `Started vblank event thread!`).
 
-**Attribution is NOT settled**: the rival explanation is panel-activation/hotplug timing
-recovering on the second service cycle (a known pattern). What changed as a result:
-`jack-in-wayland.sh` now sets `XRT_COMPOSITOR_FORCE_NVIDIA_DISPLAY="HP Inc."`
-launch-scoped by default (env-overridable), same rationale as `jack-in.sh`'s — harmless
-when the allowlist would have matched, decisive when it wouldn't. The repeated
-probe-then-launch loop this doc already recommends remains the way to get a real failure
-rate; tonight adds one data point on the Wayland side of the ledger.
+## Addendum 2026-08-19 (~03:30, T222): the Wayland fallback ROOT-CAUSED to the compositor log level — the override was a red herring on this path
+
+Same night, an E1–E6 controlled matrix settled the T221 addendum's open attribution, and
+the answer is neither the allowlist override nor panel timing:
+
+| condition | result |
+|---|---|
+| `XRT_COMPOSITOR_LOG` at **warn** (docs/43 quiet-contract default for `up`) — with OR without the override, 3dof or 6dof, extra `WMR_DISPLAY_INIT_SLEEP_SECONDS=5`, long idle before launch | **FAIL 6/6** — and E6's DRM ground truth (`/sys/class/drm/card0-DP-3/enabled` polled through the whole launch) confirms the display is never modeset: these are REAL windowed fallbacks, not log-blindness |
+| `XRT_COMPOSITOR_LOG` at **debug** — with or without the override | **SUCCESS 4/4**, attempt 1, lease granted, 4320x2160@90 (wearer-verified panel earlier the same night) |
+
+**The debug logging is load-bearing timing, not verbosity.** Suspected mechanism: a
+Wayland event race in `comp_window_direct_wayland` — connectors arrive asynchronously
+after binding `wp_drm_lease_device_v1`, and at warn the target's init path apparently
+checks before they've landed, sees none, and falls back to windowed silently; debug
+logging's extra milliseconds let the events arrive first. **Named source task
+(NEXT-STEP): read comp_window_direct_wayland's bind/roundtrip sequence and make it wait
+for the initial connector burst properly** — that's the upstream-quality fix.
+
+Consequences applied:
+- `jack-in-wayland.sh` pins the compositor module at **debug in every action, quiet
+  included** (the docs/43 quiet contract's warn default had broken every plain `up`
+  launch; compositor-init chatter is bounded, unlike the per-frame firehoses quiet still
+  scrubs).
+- The baked `XRT_COMPOSITOR_FORCE_NVIDIA_DISPLAY` override **stays** (cheap insurance for
+  this doc's proven X11 allowlist class) with its comment corrected to say it was ruled
+  out as this path's discriminator.
+- **Checker-blindness warning for any future quiet-level experiment**: the launcher's
+  success markers (`found display mode` — DEBUG; `Started vblank event thread` — INFO)
+  are compositor-module log lines. At warn a *successful* direct-mode launch would print
+  neither and be indistinguishable from a fallback by grep — E6's DRM-sysfs poll
+  (`card0-DP-<n>/enabled`) is the log-independent ground truth to use instead. This lens
+  also applies to this doc's still-open probe-vs-launch disagreement item on the X11
+  path: before trusting any "windowed fallback despite good probe" verdict, check what
+  log level the checker was reading at.

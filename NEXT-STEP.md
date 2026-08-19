@@ -1,6 +1,30 @@
 # Next step
 
-> ## UPDATE (2026-08-19, ~02:30, lab/dev, WORN): the dev re-run below was EXECUTED and
+> ## UPDATE (2026-08-19, ~03:45, lab/dev, autonomous post-close stretch — T222): three
+> deliverables built and one root cause nailed, all awaiting their A/B:
+> 1. **T221's trigger-blindness fix IMPLEMENTED**: new optional `get_trusted_gravity`
+>    tracking-source callback (gated ONLY on IMU flowing — NOT yaw lock; that asymmetry is
+>    the whole point) + pre-delivery gravity-coherence check at all three tracker commit
+>    sites (`deviceGravityRejected`), so a wrong-lobe candidate becomes an ordinary
+>    "not found" and the existing recovery ladder (incl. seeded recovery) actually runs.
+>    Opt-in: `WMR_CONSTELLATION_TRACKER_GRAVITY_GATE_DEG=14` (default 0/off; device-side
+>    gate stays as last line). Wearer A/B pending — expected effect: yaw locks form under
+>    motion because only true-lobe samples feed the correction loop.
+> 2. **In-motion collapse experiment ready**: `WMR_CONTROLLER_CAM_EXPOSURE_US` /
+>    `WMR_CONTROLLER_CAM_GAIN` knobs (controller frames were FIXED at 6000/100; 6 ms of
+>    exposure on a moving hand = smeared LED centroids, the prime suspect for T221's
+>    17k-at-rest vs 0-in-motion). A/B: 2000–3000 µs vs default, in-motion acceptance as
+>    the metric. Loud override log line proves what actually ran.
+> 3. **The silent windowed-fallback ROOT-CAUSED (docs/51 T222 addendum): compositor
+>    debug logging is load-bearing timing** — warn = 6/6 real fallbacks (DRM-sysfs ground
+>    truth), debug = 4/4 success. docs/43's quiet contract had broken plain `up` launches.
+>    Launcher now pins compositor log at debug everywhere. **Named source task: make
+>    `comp_window_direct_wayland` wait for the lease-device's initial connector burst
+>    properly (wl roundtrip/event wait) instead of racing it** — that's the real fix, and
+>    it's upstream-worthy. Also: play360.sh's `timeout 300` was the real player-death
+>    cause (use `-t`); `HELLO_XR_DURATION_S` added (patch 0020) for graceful timed runs.
+>
+> ## PREVIOUS UPDATE (2026-08-19, ~02:30, lab/dev, WORN): the dev re-run below was EXECUTED and
 > the answer is architectural — **the seed layer (0077/0082) never fired: 0 attempts all
 > night** (full story: T221 + docs/55 dev-rig addendum). Its trigger only sees
 > tracker-side "no pose found", but the worn regime is a GHOST FLOOD: the tracker always
@@ -17,8 +41,9 @@
 > "hot alkalines" suspicion from earlier in the night is retracted. Ops: the silent
 > windowed-compositor fallback hit the Wayland launcher once (docs/51 addendum;
 > `XRT_COMPOSITOR_FORCE_NVIDIA_DISPLAY="HP Inc."` now baked into jack-in-wayland.sh);
-> hello_xr self-exits at ~300 s even with stdin open (fresh player per instrumented
-> window); link-health check now runs at every vr-launcher start (network-link-check.py,
+> the player's ~300 s deaths were play360.sh's own `timeout` default (use `-t <s>`;
+> hello_xr itself never self-limited — patch 0020 adds HELLO_XR_DURATION_S anyway);
+> link-health check now runs at every vr-launcher start (network-link-check.py,
 > after the LAN's cutover to the Claro CPE — 192.168.100.x, 791 Mbps).
 >
 > ## PREVIOUS UPDATE (2026-08-19, everyday/comms box): yaw-ghost stack cross-rig A/B DONE — 0074+0076

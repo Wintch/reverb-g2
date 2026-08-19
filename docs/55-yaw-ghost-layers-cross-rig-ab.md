@@ -133,6 +133,8 @@ motion, so brightness alone does not explain this regime.
 **Ops facts from the same night** (details in T221): a silent windowed-compositor fallback
 hit the *Wayland* launcher (docs/51's class; recovered with
 `XRT_COMPOSITOR_FORCE_NVIDIA_DISPLAY="HP Inc."` + retry, attribution unsettled, override
-now baked into `jack-in-wayland.sh`); `hello_xr` self-exits at ~300 s even with stdin held
-open (instrumented windows need a fresh player per run); a companion USB2 re-enumeration
-mid-session preceded a total constellation-candidate blackout once (stale-fd class).
+now baked into `jack-in-wayland.sh`); the player died at ~300 s twice mid-measurement —
+root-caused same night to `play360.sh`'s own `timeout $SECONDS_TO_RUN` default (NOT a
+hello_xr timed run as first written; use `-t <seconds>`, or the new `HELLO_XR_DURATION_S`
+from patch 0020); a companion USB2 re-enumeration mid-session preceded a total
+constellation-candidate blackout once (stale-fd class).

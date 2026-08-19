@@ -77,3 +77,11 @@ the controller-orientation fixes these tools enabled (`patches/monado/0062` onwa
 live lab binary; whether the test-pattern modes (0017-hello_xr) themselves have been put on
 the headset is tracked separately in `docs/45`, currently still "protocol designed, not run
 yet" as of T206.
+
+## 0020 — internal timed-run duration (2026-08-19, T221)
+
+Back to the strict single sequence after the 0017-0019 renumbering above — no collision here.
+
+| patch | what |
+|---|---|
+| `0020-hello_xr-HELLO_XR_DURATION_S-internal-timed-run-quit.patch` | `HELLO_XR_DURATION_S=<seconds>` — an internal, gracefully-exiting duration option. Found chasing an instrumented measurement window that kept dying at ~300s even with stdin held open via `sleep 14400 \| ...`, which should have blocked forever short of EOF. Grepped the entire render loop and every player patch: there is no duration/frame-count limit anywhere in hello_xr's own code, and never has been — the ~300s was `scripts/play360.sh`'s `SECONDS_TO_RUN=300` default, which wraps hello_xr in `timeout 300`; `timeout` SIGTERMs on the wall clock regardless of stdin, so the documented EOF trap (this README's own track, patch 0005) looked like the cause but wasn't. Adds `PlayerControl::RequestQuit()` and routes the expired timer through it — the exact same graceful path a real `q` keypress takes (`PollActions` sees `QuitRequested()` and calls `xrRequestExitSession()` for a real `END_SESSION`), instead of an external `timeout`'s abrupt SIGTERM. `0` means run forever; unset preserves current behavior exactly (hello_xr has never self-limited its own runtime). Build-verified only (`ninja hello_xr`, links clean) — not yet run against real hardware. Commit `58fc7aa80`. |

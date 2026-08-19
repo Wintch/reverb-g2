@@ -420,15 +420,14 @@ TRACKING_ENV+=("WMR_CONSTELLATION_CONTROLLERS=$CONSTELLATION")
 # will let this shrink to ~0.05.
 TRACKING_ENV+=("WMR_STICK_DEADZONE=${WMR_STICK_DEADZONE:-0.15}")
 
-# docs/51's per-launch NVIDIA direct-mode override, now on the Wayland launcher too
-# (2026-08-19, T221): a launch on this path fell back to a SILENT windowed compositor
-# -- no "found display mode", fake pacer at the HMD's nominal 11.11ms, all three
-# attempts -- while tracking looked perfectly healthy. The relaunch that added this
-# override took direct mode (wayland-direct, 4320x2160@90) on attempt 1. Attribution
-# is NOT settled (panel-activation timing after a failed attempt is the rival
-# explanation), but the override is the sanctioned, launch-scoped mitigation and is
-# harmless when the allowlist would have matched anyway. Never widen the compiled-in
-# allowlist instead -- upstream removed "HP Inc." deliberately (real desktop monitors).
+# docs/51's per-launch NVIDIA direct-mode override, kept on the Wayland launcher as cheap
+# insurance for the allowlist-mismatch class docs/51 proved on the X11 path. NOTE (2026-08-19
+# T222): this override was tonight's FIRST suspect for the silent windowed fallback on THIS
+# path and was RULED OUT by the E1-E6 matrix -- launches failed with it and succeeded without
+# it; the real discriminator was the compositor log level (see the loud comment at
+# COMPOSITOR_LOG_DEFAULT above). Harmless when the allowlist would have matched anyway; never
+# widen the compiled-in allowlist instead (upstream removed "HP Inc." deliberately -- real
+# desktop monitors).
 TRACKING_ENV+=("XRT_COMPOSITOR_FORCE_NVIDIA_DISPLAY=${XRT_COMPOSITOR_FORCE_NVIDIA_DISPLAY:-HP Inc.}")
 if [ "$CONSTELLATION" = 1 ]; then
     echo "  Controller constellation tracking: ON (WMR_CONSTELLATION_CONTROLLERS=0 disables)"
@@ -458,16 +457,26 @@ fi
 # script's VR_VERBOSE/VR_PACING were unconditionally 1). That is the documented contract's
 # own default action ('up'), not an oversight -- see docs/43's "Mirroring this on dev's
 # jack-in-wayland.sh". The old verbose-by-default behavior is one token away: 'dev'.
+# XRT_COMPOSITOR_LOG=debug is LOAD-BEARING for direct mode, not a verbosity preference
+# (2026-08-19 T222, E1-E6 matrix): at warn the compositor deterministically fell back to a
+# silent windowed session (6/6 fails, DRM sysfs confirming DP never enabled) while debug
+# succeeded 4/4 on attempt 1 (lease granted, 4320x2160@90, wearer-verified panel). Suspected
+# Wayland lease-connector event race in comp_window_direct_wayland: connectors arrive async
+# after binding wp_drm_lease_device_v1, and debug logging's extra milliseconds are what lets
+# them land before the target gives up -- the docs/43 quiet contract's warn default was
+# breaking every plain 'up' launch. Until the comp-side event-wait fix exists (named task,
+# NEXT-STEP), the compositor module stays at debug in EVERY action, quiet included -- its log
+# volume is bounded (init chatter, not a per-frame firehose like the scrubbed ones below).
 case "$ACTION" in
     dev)  VERBOSE_DEFAULT=1; PACING_DEFAULT=1; COMPOSITOR_LOG_DEFAULT=debug ;;
-    *)    VERBOSE_DEFAULT=0; PACING_DEFAULT=0; COMPOSITOR_LOG_DEFAULT=warn ;;  # up, quiet
+    *)    VERBOSE_DEFAULT=0; PACING_DEFAULT=0; COMPOSITOR_LOG_DEFAULT=debug ;;  # up, quiet
 esac
 
 SCRUB_ENV=()
 if [ "$ACTION" = quiet ]; then
     VERBOSE=0
     PACING=0
-    XRT_COMPOSITOR_LOG_VALUE=warn
+    XRT_COMPOSITOR_LOG_VALUE=debug
     POSE_CSVS=0
     SCRUB_ENV=(-u VIT_COLLAPSE_LOG -u CONSTELLATION_TRACKER_LOG -u HELLO_XR_POSE_STATS
                -u SLAM_UI -u XRT_TRACING -u XRT_DEBUG_GUI)

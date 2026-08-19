@@ -63,3 +63,12 @@ unverified" (stale, matches the everyday system's pre-fix state) — not edited 
 live checkout to avoid hand-editing outside the normal patch/handoff process; worth a small
 follow-up patch next time dev's tree gets touched for something else.
 </content>
+
+## Closure 2026-08-19 (~04:05, T222): verified live through the real path
+
+The one verification this doc left owed is done: a full `vr-launcher.py` run on the
+lab/dev machine (piped menu selection, real monado bring-up) printed the battery check
+for the first time ever through its intended path — `✓ left: 74% / ✓ right: 69%`
+(raw ~153/143 against the 208 display ceiling, exact). The T167 safety net is now
+actually live end-to-end, six days after it was built. (Same run also exercised the
+new network-link-check.py at the menu: VERDE.)

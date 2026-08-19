@@ -1,0 +1,348 @@
+From 8cb184145bdf8d5ec5354230ca4e4cffce0cba41 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Wed, 19 Aug 2026 03:04:51 -0300
+Subject: [PATCH 2/2] t/constellation: pre-delivery trusted-gravity gate --
+ close T221's trigger-blindness loop
+
+T221 (2026-08-19, first worn run of the 0082 stack) measured trySeededRecovery
+firing ZERO times across a whole ghost-flood session: the tracker always found
+a wrong-lobe pose that passed reprojection scoring, delivered it, and the WMR
+driver's device-side gravity gate then discarded 93-99.7% of them -- from where
+the recovery trigger sits, every ghost looked like a success, so the rescue
+ladder never ran. Compounding it, every yaw-gated layer (0076's trusted
+orientation, 0077's seeding) stayed inert because the ghost flood kept
+solve_yaw_locked from ever establishing -- while the gravity information that
+could have rejected those ghosts needs no yaw lock at all.
+
+Fix, option (a) of the T222 design pass: a new OPTIONAL tracking-source
+callback, get_trusted_gravity, gated only on IMU data flowing (deliberately
+NOT on solve_yaw_locked -- that asymmetry is the point), returning the fusion's
+world-down in the delivered-pose convention (the exact post-Rx180 down_imu the
+device-side gate computes). The tracker checks candidates against it BEFORE
+committing (deviceGravityRejected, called at all three pushPose sites:
+tryDevicePose, tryDeviceBlobRecovery, processSampleSlow) -- a wrong-lobe
+candidate becomes an ordinary "not found", so the existing recovery ladder
+including seeded recovery triggers naturally, no changes to the fast-path loop.
+Expected cascade: only true-lobe samples reach the solve-yaw correction loop,
+so the lock can finally form under motion, waking the yaw-gated layers.
+
+Opt-in via WMR_CONSTELLATION_TRACKER_GRAVITY_GATE_DEG (default 0/off; suggested
+14, same as the device-side gate, which stays on as the last line of defense
+against post-refinement drift). rift/pssense: byte-identical behavior -- the
+callback is optional and neither sets it, same proven pattern as 0076's
+get_trusted_orientation.
+
+Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
+---
+ src/xrt/drivers/wmr/wmr_controller_base.c     | 64 +++++++++++++++
+ src/xrt/include/tracking/t_constellation.h    | 53 ++++++++++++
+ .../constellation/t_constellation_tracker.cpp | 80 +++++++++++++++++++
+ .../t_constellation_tracker_internal.hpp      | 13 +++
+ 4 files changed, 210 insertions(+)
+
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
+index 01aab2ff3..a4e0dd0a7 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.c
++++ b/src/xrt/drivers/wmr/wmr_controller_base.c
+@@ -66,6 +66,15 @@ DEBUG_GET_ONCE_BOOL_OPTION(wmr_controller_orient_fix, "WMR_CONTROLLER_ORIENT_FIX
+ //! pose. See the use site: 200 ms was shorter than the interval samples actually arrive at.
+ DEBUG_GET_ONCE_NUM_OPTION(wmr_constellation_max_age_ms, "WMR_CONSTELLATION_MAX_AGE_MS", 500)
+ DEBUG_GET_ONCE_FLOAT_OPTION(wmr_constellation_gravity_gate_deg, "WMR_CONSTELLATION_GRAVITY_GATE_DEG", 14.0f)
++//! TRACKER-side twin of the gravity gate above (T221's trigger-blindness fix): when > 0, the
++//! constellation tracker asks for our fusion's down vector and rejects wrong-lobe candidates
++//! BEFORE committing/delivering them, so its recovery ladder actually runs during a ghost flood
++//! instead of "succeeding" with ghosts this file then silently discards. Default off (new,
++//! unvalidated layer -- ships opt-in like 0074/0076/0077 did). Suggested live value: 14, same
++//! as the device-side gate, which stays on as the last line of defense (post-refinement drift).
++DEBUG_GET_ONCE_FLOAT_OPTION(wmr_constellation_tracker_gravity_gate_deg,
++                            "WMR_CONSTELLATION_TRACKER_GRAVITY_GATE_DEG",
++                            0.0f)
+ //! Gain applied to the yaw-only heading discrepancy between a GATE-ACCEPTED constellation
+ //! solve (see WMR_CONSTELLATION_GRAVITY_GATE_DEG just above) and the IMU fusion's own,
+ //! unreferenced heading (2026-08-17, docs/pruebas.jsonl T206/T207: gyro-Y dynamics are now
+@@ -1926,6 +1935,60 @@ constellation_tracking_source_get_trusted_orientation(struct t_constellation_tra
+ 	return true;
+ }
+ 
++/*!
++ * @ref t_constellation_tracker_tracking_source::get_trusted_gravity implementation (reverb-g2
++ * T221): hands the tracker our fusion's world-down direction so it can reject wrong-lobe
++ * candidates BEFORE delivery. Gated ONLY on IMU data actually flowing -- the same permissive
++ * condition the device-side gravity gate in constellation_sample_store uses, and deliberately
++ * NOT on solve_yaw_locked: gravity (pitch/roll) is accelerometer truth whether or not the
++ * heading has converged. That asymmetry is the entire point -- T221 measured a whole worn
++ * session where the ghost flood kept yaw from ever locking, every yaw-locked layer stayed
++ * inert, and the gravity information that could have rejected the ghosts pre-delivery sat
++ * unused on this side of the boundary while the tracker committed to ghost after ghost.
++ *
++ * Frame: out vector = the exact down_imu (post-Rx180-bridge) the device-side gate computes,
++ * i.e. world-down expressed in the device body frame in the delivered-pose convention -- one
++ * quantity, two check sites, tracker first, device-side gate kept as the last line of defense.
++ */
++static bool
++constellation_tracking_source_get_trusted_gravity(struct t_constellation_tracker_tracking_source *tracking_source,
++                                                  int64_t when_ns,
++                                                  struct xrt_vec3 *out_world_down_device,
++                                                  float *out_max_angle_rad)
++{
++	struct wmr_controller_base *wcb =
++	    container_of(tracking_source, struct wmr_controller_base, constellation.tracking_source);
++
++	(void)when_ns; // Fusion is read live, same as get_trusted_orientation above.
++
++	float gate_deg = debug_get_float_option_wmr_constellation_tracker_gravity_gate_deg();
++	if (gate_deg <= 0.0f) {
++		return false;
++	}
++
++	os_mutex_lock(&wcb->data_lock);
++	struct xrt_quat fusion_rot = wcb->fusion.rot;
++	int64_t imu_ts = wcb->last_imu_timestamp_ns;
++	os_mutex_unlock(&wcb->data_lock);
++
++	if (imu_ts == 0) {
++		return false;
++	}
++
++	struct xrt_quat imu_inv;
++	math_quat_invert(&fusion_rot, &imu_inv);
++	struct xrt_vec3 down = {0.f, -1.f, 0.f};
++	struct xrt_vec3 down_imu;
++	math_quat_rotate_vec3(&imu_inv, &down, &down_imu);
++	// Rx180, the identified LED-model <-> IMU-fusion frame bridge (same as the device-side gate).
++	down_imu.y = -down_imu.y;
++	down_imu.z = -down_imu.z;
++
++	*out_world_down_device = down_imu;
++	*out_max_angle_rad = gate_deg * ((float)M_PI / 180.0f);
++	return true;
++}
++
+ void
+ wmr_controller_base_add_to_constellation_tracker(struct wmr_controller_base *wcb,
+                                                  struct t_constellation_tracker *tracker,
+@@ -1962,6 +2025,7 @@ wmr_controller_base_add_to_constellation_tracker(struct wmr_controller_base *wcb
+ 	}
+ 	wcb->constellation.tracking_source.get_tracked_pose = constellation_tracking_source_get_tracked_pose;
+ 	wcb->constellation.tracking_source.get_trusted_orientation = constellation_tracking_source_get_trusted_orientation;
++	wcb->constellation.tracking_source.get_trusted_gravity = constellation_tracking_source_get_trusted_gravity;
+ 
+ 	struct t_constellation_tracker_device_params params = {
+ 	    .led_model = wcb->constellation.led_model,
+diff --git a/src/xrt/include/tracking/t_constellation.h b/src/xrt/include/tracking/t_constellation.h
+index a0b753655..e19694028 100644
+--- a/src/xrt/include/tracking/t_constellation.h
++++ b/src/xrt/include/tracking/t_constellation.h
+@@ -254,6 +254,38 @@ struct t_constellation_tracker_tracking_source
+ 	                                int64_t when_ns,
+ 	                                struct xrt_quat *out_orientation,
+ 	                                float *out_yaw_threshold_rad);
++
++	/*!
++	 * OPTIONAL, may be NULL. If set, called by the constellation tracker to ask for a TRUSTED
++	 * world-down (gravity) direction expressed in the device's body frame, in the same
++	 * convention as the poses this tracker delivers -- so the tracker can reject a candidate
++	 * whose implied gravity disagrees BEFORE committing to it (marking blobs, updating its
++	 * last-known pose, delivering the sample). The motivating case (reverb-g2 T221) is a
++	 * ghost-flood regime: wrong-lobe candidates that pass reprojection scoring cleanly, get
++	 * delivered, and are then discarded by the tracking source's own device-side gravity gate
++	 * -- from where the tracker sits every one of those looked like a SUCCESS, so its recovery
++	 * ladder (including seeded recovery) never triggered all session. This callback moves the
++	 * same gravity information in front of the commit point.
++	 *
++	 * Deliberately weaker-gated than @ref get_trusted_orientation: gravity (pitch/roll) from
++	 * an IMU fusion is accelerometer truth whenever IMU data flows at all -- no yaw
++	 * lock/convergence requirement, which matters precisely because a ghost flood prevents yaw
++	 * from ever locking (the T221 chicken-and-egg).
++	 *
++	 * @param[in]  when_ns              Timestamp the reference is wanted for.
++	 * @param[out] out_world_down_device World-down expressed in the device body frame, in the
++	 *                                   delivered-pose convention (converting from any internal
++	 *                                   reference is this callback's job, not the tracker's).
++	 * @param[out] out_max_angle_rad     Maximum angle between a candidate's implied down vector
++	 *                                   and this reference before the candidate is rejected.
++	 *
++	 * @return true if both out params were filled in and should be trusted right now, false to
++	 * behave exactly as if this callback were NULL for this call.
++	 */
++	bool (*get_trusted_gravity)(struct t_constellation_tracker_tracking_source *,
++	                            int64_t when_ns,
++	                            struct xrt_vec3 *out_world_down_device,
++	                            float *out_max_angle_rad);
+ };
+ 
+ /*!
+@@ -294,6 +326,27 @@ t_constellation_tracker_tracking_source_get_trusted_orientation(
+ 	                                                out_yaw_threshold_rad);
+ }
+ 
++/*!
++ * Helper function for @ref t_constellation_tracker_tracking_source::get_trusted_gravity.
++ * Handles NULL (the common case: most tracking sources don't implement this), returning false.
++ *
++ * @copydoc t_constellation_tracker_tracking_source::get_trusted_gravity
++ *
++ * @public @memberof t_constellation_tracker_tracking_source
++ */
++XRT_NONNULL_ALL static inline bool
++t_constellation_tracker_tracking_source_get_trusted_gravity(
++    struct t_constellation_tracker_tracking_source *tracking_source,
++    int64_t when_ns,
++    struct xrt_vec3 *out_world_down_device,
++    float *out_max_angle_rad)
++{
++	if (tracking_source->get_trusted_gravity == NULL) {
++		return false;
++	}
++	return tracking_source->get_trusted_gravity(tracking_source, when_ns, out_world_down_device, out_max_angle_rad);
++}
++
+ 
+ struct t_constellation_tracker_led
+ {
+diff --git a/src/xrt/tracking/constellation/t_constellation_tracker.cpp b/src/xrt/tracking/constellation/t_constellation_tracker.cpp
+index 64df483ab..e28059f4b 100644
+--- a/src/xrt/tracking/constellation/t_constellation_tracker.cpp
++++ b/src/xrt/tracking/constellation/t_constellation_tracker.cpp
+@@ -102,6 +102,7 @@ num_blobs_for_device(CameraSample &sample, t_constellation_device_id_t device_id
+ static uint64_t seed_recovery_attempt_count[XRT_CONSTELLATION_MAX_DEVICES] = {};
+ static uint64_t seed_recovery_skip_count[XRT_CONSTELLATION_MAX_DEVICES] = {};
+ static uint64_t seed_recovery_success_count[XRT_CONSTELLATION_MAX_DEVICES] = {};
++static uint64_t tracker_gravity_reject_count[XRT_CONSTELLATION_MAX_DEVICES] = {};
+ 
+ static uint64_t *
+ seed_recovery_counter_slot(uint64_t *counters, t_constellation_device_id_t device_id)
+@@ -355,6 +356,9 @@ Camera::tryDevicePose(std::unique_ptr<Device> &device,
+ 
+ 
+ 	if (POSE_HAS_FLAGS(&score, POSE_MATCH_GOOD | POSE_MATCH_LED_IDS)) {
++		if (this->deviceGravityRejected(device, Tcv_world_device_candidate, sample.timestamp_ns)) {
++			return false;
++		}
+ 		this->pushPose(sample,                   //
+ 		               device_state,             //
+ 		               device,                   //
+@@ -474,6 +478,17 @@ Camera::tryDeviceBlobRecovery(std::unique_ptr<Device> &device,
+ 	}
+ 
+ 	if (POSE_HAS_FLAGS(&score, POSE_MATCH_GOOD)) {
++		{
++			// World-frame copy of the refined candidate for the pre-delivery gravity check
++			// (Tcv_cam_world maps world -> cam here, same as tryDevicePose's usage above).
++			xrt_pose Tcv_world_cam_inv;
++			math_pose_invert(&Tcv_cam_world, &Tcv_world_cam_inv);
++			xrt_pose Tcv_world_device;
++			math_pose_transform(&Tcv_world_cam_inv, &Tcv_cam_device, &Tcv_world_device);
++			if (this->deviceGravityRejected(device, Tcv_world_device, sample.timestamp_ns)) {
++				return false;
++			}
++		}
+ 		CT_DEBUG(tracker, "Camera %p RANSAC-PnP recovered pose for device %d from %u blobs", (void *)this,
+ 		         device->id, sample.blob_count);
+ 		this->pushPose(sample,               //
+@@ -887,6 +902,16 @@ Camera::processSampleSlow(CameraSample &sample)
+ 			    device->gravity_error_rad,                         //
+ 			    &score,                                            //
+ 			    trusted_orientation_ptr);                          //
++			if (found_pose && Tcv_world_cam.has_value()) {
++				// Pre-delivery gravity check, same as the fast path's -- a full-search
++				// result can land on the wrong lobe just as easily (T221: gravity-blind
++				// ghost assignments were the dominant failure mode, not absent poses).
++				xrt_pose Tcv_world_device;
++				math_pose_transform(&Tcv_world_cam.value(), &Tcv_cam_device, &Tcv_world_device);
++				if (this->deviceGravityRejected(device, Tcv_world_device, sample.timestamp_ns)) {
++					found_pose = false;
++				}
++			}
+ 			if (found_pose) {
+ 				this->pushPose(sample,               //
+ 				               *device_state,        //
+@@ -1326,6 +1351,61 @@ Camera::getTrustedOrientation(std::unique_ptr<Device> &device, xrt_pose &Tcv_wor
+ 	return trusted;
+ }
+ 
++bool
++Camera::deviceGravityRejected(std::unique_ptr<Device> &device,
++                              const xrt_pose &Tcv_world_device_candidate,
++                              int64_t when_ns)
++{
++	if (device->params.tracking_source == nullptr) {
++		return false;
++	}
++
++	xrt_vec3 down_device_trusted;
++	float max_angle_rad = 0.0f;
++	if (!t_constellation_tracker_tracking_source_get_trusted_gravity(device->params.tracking_source, when_ns,
++	                                                                 &down_device_trusted, &max_angle_rad)) {
++		return false;
++	}
++	if (!(max_angle_rad > 0.0f)) {
++		// Same reasoning as getTrustedWorldPose's yaw_threshold_rad check: a non-positive
++		// threshold would reject every candidate, which can't be what anyone meant.
++		return false;
++	}
++
++	// Mirror of the WMR driver's own device-side gravity gate, run on the candidate BEFORE
++	// delivery: express world-down in the candidate's body frame, in the delivered-pose (xr)
++	// convention. math_pose_convert_opencv is the same self-inverse basis change pushPose's
++	// delivery path applies, and composition commutes with it, so this orientation equals the
++	// one the driver would have gated after delivery.
++	xrt_pose Tcv_world_device = Tcv_world_device_candidate;
++	xrt_pose Txr_world_device;
++	math_pose_convert_opencv(&Tcv_world_device, &Txr_world_device);
++
++	xrt_quat solve_inv;
++	math_quat_invert(&Txr_world_device.orientation, &solve_inv);
++	xrt_vec3 down = {0.f, -1.f, 0.f};
++	xrt_vec3 down_candidate;
++	math_quat_rotate_vec3(&solve_inv, &down, &down_candidate);
++
++	float dot = down_candidate.x * down_device_trusted.x + down_candidate.y * down_device_trusted.y +
++	            down_candidate.z * down_device_trusted.z;
++	float mismatch_rad = acosf(fmaxf(-1.f, fminf(1.f, dot)));
++	if (mismatch_rad <= max_angle_rad) {
++		return false;
++	}
++
++	uint64_t *count = seed_recovery_counter_slot(tracker_gravity_reject_count, device->id);
++	(*count)++;
++	if (*count == 1 || (*count % 100) == 0) {
++		CT_INFO(this->tracker,
++		        "tracker gravity gate: rejected wrong-lobe candidate for device %d pre-delivery, "
++		        "%.1f deg > %.1f (%llu rejects so far)",
++		        device->id, mismatch_rad * 180.0f / (float)M_PI, max_angle_rad * 180.0f / (float)M_PI,
++		        (unsigned long long)*count);
++	}
++	return true;
++}
++
+ /*
+  *
+  * CameraMosaic implementations
+diff --git a/src/xrt/tracking/constellation/t_constellation_tracker_internal.hpp b/src/xrt/tracking/constellation/t_constellation_tracker_internal.hpp
+index 2623de226..dcb2c6d2b 100644
+--- a/src/xrt/tracking/constellation/t_constellation_tracker_internal.hpp
++++ b/src/xrt/tracking/constellation/t_constellation_tracker_internal.hpp
+@@ -400,6 +400,19 @@ public: // Methods (t_constellation_tracker.cpp)
+ 	std::optional<xrt_pose>
+ 	getTrustedWorldPose(std::unique_ptr<Device> &device, int64_t when_ns, float *out_yaw_threshold_rad);
+ 
++	//! Pre-delivery gravity-coherence check (reverb-g2 T221's trigger-blindness fix): asks the
++	//! device's tracking_source for a trusted world-down direction (@ref
++	//! t_constellation_tracker_tracking_source::get_trusted_gravity -- deliberately NOT gated on
++	//! yaw lock, unlike @ref getTrustedOrientation) and compares it against the WORLD-frame
++	//! candidate's implied down vector -- the exact quantity the WMR driver's own device-side
++	//! gravity gate computes AFTER delivery. Returning true means "wrong-lobe ghost, reject":
++	//! callers must treat the candidate as not found, so the fast path's existing recovery
++	//! ladder keeps going instead of committing to a ghost the driver would only discard later.
++	//! False when the source has no such hook, nothing trustworthy right now, or the candidate
++	//! agrees -- i.e. exactly the pre-existing behavior for every non-implementing device.
++	bool
++	deviceGravityRejected(std::unique_ptr<Device> &device, const xrt_pose &Tcv_world_device_candidate, int64_t when_ns);
++
+ public: // Methods (constellation_debug_scribble.cpp)
+ 	void
+ 	debugScribbleSample(CameraSample &sample, bool fast);
+-- 
+2.47.3
+

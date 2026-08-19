@@ -1,6 +1,22 @@
 # Context for the 90Hz lab agent
 
-> ## START HERE NEXT SESSION (2026-08-19, ~02:30, lab/dev) — the 0082 wearer run
+> ## FINAL ADDENDUM (2026-08-19, ~03:55, T222 — autonomous stretch after the header
+> below): read T222 + NEXT-STEP's ~03:45 update first. **The silent windowed-fallback
+> is ROOT-CAUSED: `XRT_COMPOSITOR_LOG=debug` is load-bearing timing** — warn = 6/6 real
+> fallbacks (DRM-sysfs ground truth), debug = 4/4 attempt-1 success; docs/43's quiet
+> contract had broken every plain `up` launch since 2026-08-17; launcher now pins
+> compositor debug in ALL actions; named source task = event-wait in
+> comp_window_direct_wayland (upstream-worthy). **T221's trigger-blindness fix is
+> BUILT** (0084: optional `get_trusted_gravity` callback gated on IMU-flowing only +
+> pre-delivery `deviceGravityRejected` at all three commit sites; opt-in
+> `WMR_CONSTELLATION_TRACKER_GRAVITY_GATE_DEG=14`) plus 0083 (controller-frame
+> exposure/gain knobs for the motion-blur A/B) — compiled, smoke-tested on the default
+> path, **wearer A/B pending: gate first, then exposure 2000-3000 µs**. Player 300s
+> deaths were play360.sh's own `timeout` (use `-t`; hello_xr patch 0020 adds
+> `HELLO_XR_DURATION_S`); T221's "hello_xr timed run" claim retracted. mar+bob in the
+> right: raw ~143-148, healthy margin over the 85 alarm, watch mar's sag under load.
+
+> ## START HERE PREVIOUS (2026-08-19, ~02:30, lab/dev) — the 0082 wearer run
 > answered the seed-layer question with an architectural NO, and named the fix. Read
 > T221 + docs/55's dev-rig addendum + NEXT-STEP first.
 >
@@ -1606,11 +1622,14 @@ blocker.
   with no `BEGIN_SESSION` from the app at all — it looks like a compositor failure and it
   isn't. Use `sleep N | hello_xr ...`. Note that **monado-service** needs the opposite
   (`XRT_NO_STDIN=1`, otherwise it dies with `epoll_ctl(stdin) failed`): the service gets
-  stdin taken away, the player gets it kept alive. **And keeping stdin open is NOT
-  enough** (found 2026-08-19, T221): the timed run itself ends at **~300 s** — the player
-  exits cleanly at ~5 min even with `sleep 14400 |` feeding it, twice observed, killing
-  the client mid-measurement with zero error lines. Any instrumented window longer than a
-  couple of minutes needs a freshly launched player, started right before the window.
+  stdin taken away, the player gets it kept alive. **And keeping stdin open is NOT enough
+  when launching via `play360.sh`** (found 2026-08-19 T221, root-caused same night —
+  CORRECTION: an earlier version of this note blamed a "~300 s timed run inside hello_xr";
+  hello_xr never self-limits): `play360.sh` wraps the player in coreutils
+  `timeout $SECONDS_TO_RUN` (default **300**, its line ~57), which SIGTERMs on wall clock
+  regardless of stdin. Pass `-t <seconds>` for longer instrumented windows. The player also
+  now has `HELLO_XR_DURATION_S` (patch 0020: internal graceful quit via the real
+  quit-request path — a clean `END_SESSION`, unlike timeout's SIGTERM; 0 = run forever).
 - **For Wayland you need to pick the right session in SDDM:** there are **two** entries
   both just labeled "GNOME", one Wayland and one X11. Pick "GNOME on Wayland". And KWin
   doesn't work for the lease. `scripts/check-lease.sh` verifies it in two seconds before you

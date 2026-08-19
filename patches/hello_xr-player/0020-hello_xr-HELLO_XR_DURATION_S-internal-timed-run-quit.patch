@@ -1,0 +1,124 @@
+From 58fc7aa805e2372ba6bda1f7a38c3aa8ca21906b Mon Sep 17 00:00:00 2001
+From: iam <iam@iashur.internal>
+Date: Wed, 19 Aug 2026 02:50:30 -0300
+Subject: [PATCH] hello_xr: HELLO_XR_DURATION_S - internal timed-run quit, no
+ external timeout needed
+
+Found chasing T221's instrumented measurement window, which kept dying at ~300s
+even with stdin held open via `sleep 14400 | ...` (which should have blocked
+forever short of EOF). Grepped the whole render loop and every player patch for a
+duration/frame-count limit: there is none, never has been -- the ~300s was
+play360.sh's SECONDS_TO_RUN=300 default, which wraps hello_xr in `timeout 300`.
+`timeout` SIGTERMs on the wall clock regardless of what's on stdin, so the
+documented EOF trap looked like the cause but wasn't.
+
+HELLO_XR_DURATION_S=<seconds> gives hello_xr its own internal duration, ending the
+run through PlayerControl::RequestQuit() (new) -- the exact same graceful path a
+real q keypress takes, so PollActions sees QuitRequested() and calls
+xrRequestExitSession() for a real END_SESSION instead of an abrupt SIGTERM. 0 means
+run forever; unset preserves current behavior exactly (hello_xr has never
+self-limited its own runtime). Read once at startup, latched so it only fires once
+per run.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/tests/hello_xr/main.cpp          | 43 ++++++++++++++++++++++++++++
+ src/tests/hello_xr/playercontrol.cpp |  2 ++
+ src/tests/hello_xr/playercontrol.h   |  7 +++++
+ 3 files changed, 52 insertions(+)
+
+diff --git a/src/tests/hello_xr/main.cpp b/src/tests/hello_xr/main.cpp
+index f7bac7e..31cfba9 100644
+--- a/src/tests/hello_xr/main.cpp
++++ b/src/tests/hello_xr/main.cpp
+@@ -338,6 +338,35 @@ int main(int argc, char* argv[]) {
+             const char* anyKeyQuits = getenv("HELLO_XR_ANY_KEY_QUITS");
+             PlayerControl::SetAnyKeyQuits(anyKeyQuits != nullptr && strcmp(anyKeyQuits, "1") == 0);
+         }
++
++        // HELLO_XR_DURATION_S=<seconds>: end the run automatically after this many seconds of
++        // process time, through PlayerControl::RequestQuit() - the exact same graceful path as
++        // pressing q (openxr_program.cpp's PollActions sees QuitRequested() and calls
++        // xrRequestExitSession() once), not a SIGTERM. 0 means run forever. Unset preserves the
++        // current behavior exactly: hello_xr has never self-limited its own runtime, only ever
++        // reacted to stdin EOF (see ReadKeyByte/HandleKey above) or an external `timeout`.
++        //
++        // Found 2026-08-19 (T221): a real measurement window kept dying at ~300s even with
++        // stdin held open via `sleep 14400 | ...`, which should have blocked forever short of
++        // EOF. There is no such limit anywhere in this codebase (checked the whole render loop
++        // and every player patch) - the ~300s was play360.sh's SECONDS_TO_RUN=300 default,
++        // which wraps hello_xr in `timeout 300`. `timeout` kills on a SIGTERM regardless of
++        // stdin, so the documented EOF trap looked like the cause but wasn't. This gives
++        // hello_xr its own internal, gracefully-exiting duration option so a direct invocation
++        // doesn't need an external `timeout` (and its abrupt SIGTERM) to bound a run at all.
++        double durationSeconds = 0.0;
++        if (const char* v = getenv("HELLO_XR_DURATION_S")) {
++            const int parsed = atoi(v);
++            if (parsed >= 0) {
++                durationSeconds = (double)parsed;
++            } else {
++                Log::Write(Log::Level::Warning,
++                           Fmt("HELLO_XR_DURATION_S='%s' not a non-negative integer - ignoring (running forever)", v));
++            }
++        }
++        const auto processStart = std::chrono::steady_clock::now();
++        bool durationQuitRequested = false;
++
+         static bool quitKeyPressed = false;
+         PlayerControl::BeginRawInput();
+         std::atexit(PlayerControl::EndRawInput);
+@@ -421,6 +450,20 @@ int main(int argc, char* argv[]) {
+                     break;
+                 }
+ 
++                // HELLO_XR_DURATION_S: latched so this only fires once - RequestQuit() just
++                // flips a flag (harmless to call again), but the log line would otherwise
++                // repeat every frame for however long PollActions/session teardown takes.
++                if (durationSeconds > 0.0 && !durationQuitRequested) {
++                    const double elapsed =
++                        std::chrono::duration<double>(std::chrono::steady_clock::now() - processStart).count();
++                    if (elapsed >= durationSeconds) {
++                        Log::Write(Log::Level::Info,
++                                   Fmt("player: HELLO_XR_DURATION_S=%.0f elapsed - quitting", durationSeconds));
++                        PlayerControl::RequestQuit();
++                        durationQuitRequested = true;
++                    }
++                }
++
+                 if (program->IsSessionRunning()) {
+                     program->PollActions();
+                     program->RenderFrame();
+diff --git a/src/tests/hello_xr/playercontrol.cpp b/src/tests/hello_xr/playercontrol.cpp
+index c789fe5..237ed88 100644
+--- a/src/tests/hello_xr/playercontrol.cpp
++++ b/src/tests/hello_xr/playercontrol.cpp
+@@ -229,6 +229,8 @@ double SecondsSinceLastInteraction() {
+ 
+ bool QuitRequested() { return g_quit; }
+ 
++void RequestQuit() { g_quit = true; }
++
+ void SetAnyKeyQuits(bool on) { g_anyKeyQuits = on; }
+ 
+ void SetQuitHoldFraction(double frac) {
+diff --git a/src/tests/hello_xr/playercontrol.h b/src/tests/hello_xr/playercontrol.h
+index 0a79ad9..c75dbb0 100644
+--- a/src/tests/hello_xr/playercontrol.h
++++ b/src/tests/hello_xr/playercontrol.h
+@@ -72,6 +72,13 @@ double SecondsSinceLastInteraction();
+ // True once a quit key has been pressed.
+ bool QuitRequested();
+ 
++// Same flag QuitRequested() reports, set directly rather than through a keypress - used by
++// main.cpp's HELLO_XR_DURATION_S timer so an expired duration ends the run through the exact
++// same graceful path as pressing q (openxr_program.cpp's PollActions calls
++// xrRequestExitSession() once it sees QuitRequested() true), instead of needing its own
++// parallel shutdown route.
++void RequestQuit();
++
+ // How far into the hold-to-confirm quit gesture the WMR Menu button is (0..1), written by
+ // openxr_program.cpp's PollActions each frame and read by the renderer for the on-screen
+ // hold indicator. 0 when Menu isn't held or the hold was released early.
+-- 
+2.47.3
+
