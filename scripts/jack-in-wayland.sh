@@ -412,6 +412,49 @@ else
 fi
 TRACKING_ENV+=("WMR_CONSTELLATION_CONTROLLERS=$CONSTELLATION")
 
+# T223 worn-tracking stack (docs/58, docs/pruebas.jsonl T223) -- until this patch, the
+# configuration that actually gets both hands present at once existed only as env vars a
+# human had to remember to export by hand. Only meaningful with controller constellation
+# tracking actually on: no controller solve, nothing for these to act on.
+if [ "$CONSTELLATION" = 1 ]; then
+    # Tracker-side gravity gate (patch 0084). 0084's OWN suggested default of 14 deg is a
+    # NET NEGATIVE worn -- T223 measured right-hand positional presence collapse 47.2% ->
+    # 1.8% (~7000 rejects, delivery cut 4x) at 14 deg, because that number was calibrated
+    # against a STATIC DESK capture (true-lobe p90 4.3-6.5 deg there). Worn and in motion the
+    # fusion gravity estimate is noisier: 16 of 70 logged rejects at 14 deg sat at 15-30 deg
+    # -- TRUE-lobe samples being thrown away -- while real ghosts cluster at 75-105 deg and
+    # 135-180 deg, well clear of that band. 30 deg is the measured value: presence 47.7%/
+    # 45.5%, neutral against gate-fully-off, only ~400 rejects, ghosts still killed. Do not
+    # "correct" this back to 14 on the strength of 0084's own comment -- that number was
+    # never validated worn, and T223 is the first worn data it ever saw.
+    GRAVITY_GATE_DEG="${WMR_CONSTELLATION_TRACKER_GRAVITY_GATE_DEG:-30}"
+    TRACKING_ENV+=("WMR_CONSTELLATION_TRACKER_GRAVITY_GATE_DEG=$GRAVITY_GATE_DEG")
+
+    # The T215 yaw stack. docs/55 warns SOLVE_YAW_CORRECT is INERT without patch 0085's
+    # range-check fix (docs/58) underneath it -- before 0085, the world-frame range check
+    # was silently discarding almost every real solve (baseline positional presence 1.3%/
+    # 2.0% worn), so there was no honest signal for this stack to act on and no launcher
+    # default was ever set. With 0085 landed, T223 re-ran the full worn A/B on the same
+    # session that measured the gate above, on top of the range fix.
+    #   SOLVE_YAW_CORRECT  nudges the solver's yaw estimate toward the fusion-heading prior
+    #                      on every accepted solve -- the correction that actually anchors
+    #                      orientation over time instead of drifting between solves.
+    #   YAW_PRIOR_DEG      how far a candidate correspondence assignment may disagree with
+    #                      that prior before the search penalizes it -- the gate the whole
+    #                      yaw-ghost defense is built around (docs/55, T220-T221).
+    #   SEED_PRIOR         seeds the correspondence search FROM the prior instead of only
+    #                      judging candidates after the fact -- the "generate, don't just
+    #                      filter" lever named in the 2026-08-17 saga-closing header, and
+    #                      hardened by patch 0082 the same night it first ran on real
+    #                      hardware (a seed-poisoning runaway, same-night fix).
+    YAW_CORRECT="${WMR_CONTROLLER_SOLVE_YAW_CORRECT:-0.05}"
+    YAW_PRIOR_DEG="${WMR_CONSTELLATION_YAW_PRIOR_DEG:-60}"
+    SEED_PRIOR="${WMR_CONSTELLATION_SEED_PRIOR:-1}"
+    TRACKING_ENV+=("WMR_CONTROLLER_SOLVE_YAW_CORRECT=$YAW_CORRECT")
+    TRACKING_ENV+=("WMR_CONSTELLATION_YAW_PRIOR_DEG=$YAW_PRIOR_DEG")
+    TRACKING_ENV+=("WMR_CONSTELLATION_SEED_PRIOR=$SEED_PRIOR")
+fi
+
 # WMR thumbstick center drift (2026-08-18, WS2 of the closing plan): the sticks ship with
 # NO factory center calibration (docs/23's Aircar row documented it in 2026-08-12; patch
 # 0008 added the knob) and the wearer feels it directly -- left stick self-presses up+left,
@@ -432,6 +475,7 @@ TRACKING_ENV+=("XRT_COMPOSITOR_FORCE_NVIDIA_DISPLAY=${XRT_COMPOSITOR_FORCE_NVIDI
 if [ "$CONSTELLATION" = 1 ]; then
     echo "  Controller constellation tracking: ON (WMR_CONSTELLATION_CONTROLLERS=0 disables)"
     echo "    verify with: grep -E 'get_tracked_pose:|position_tracked' $LOG"
+    echo "  T223 worn stack (docs/58): tracker gravity gate ${GRAVITY_GATE_DEG} deg, yaw prior ${YAW_PRIOR_DEG} deg, solve-yaw-correct ${YAW_CORRECT}, seed prior ${SEED_PRIOR}"
 fi
 
 # --- Lifecycle action -> logging policy (docs/43 mode contract) ---------------------
