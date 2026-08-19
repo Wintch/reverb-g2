@@ -1,0 +1,56 @@
+# Phase 3 (magnetometer) live capture — the "12 unknown bytes" carry no continuous 3-axis signal, contradicts the RE hypothesis (2026-08-18)
+
+## What was tried
+
+`docs/re-windows/03-controller-packets.md`'s Phase 3 (see `docs/re-windows/WORKPLAN.md`) said
+Windows reads a Mag X/Y/Z triplet (HID usages `0x485-0x487`) plus device-state fields from the
+same 12 trailing bytes Monado's `wmr_controller_hp.c` has always discarded (the old
+`/* Todo: More decoding here */` comment guessed a single 16-bit "probably mag" field —
+structurally too small for 3 axes on its own), but flagged the exact sub-offsets as unpinned:
+"likely by comparing a live hexdump against a Windows USB capture."
+
+Added `WMR_CONTROLLER_TAIL_LOG=1` (opt-in, `wmr_controller_hp.c`) to raw-dump those 12 bytes
+per packet, then captured live on real hardware: left controller actively rotated through
+multiple axes (full circle, tilt up/down, roll) for ~20s, right controller mostly stationary,
+both against the same running `monado-service`.
+
+## Result: no continuous signal anywhere in the 12 bytes
+
+- **Right controller (stationary), 4768 packets: exactly ONE pattern the entire time**
+  (`0000 00000000 0002 0000 0000`) — completely flat.
+- **Left controller (actively rotated through multiple axes), 15646 packets: only 3 unique
+  patterns total**, and the only byte that ever changed took just three small values
+  (`0x00`/`0x01`/`0x03`) at one fixed position; **the other 10 of 12 bytes stayed zero for the
+  entire capture, including during active rotation.**
+
+A real 3-axis magnetometer reading Earth's ambient field (~0.25-0.65 Gauss depending on
+location) cannot legitimately read a flat zero at rest, let alone stay flat through a full
+rotation that should sweep each axis through its own field component. The one byte that did
+vary looks like a small state/event counter (button or motion-event related, given it only
+moved on the actively-manipulated controller), not sensor data — consistent with the OLD
+comment's alternate guess ("Unknown. Device state, etc.") for one of the *other* fields in that
+region, just landing on a different byte than originally guessed.
+
+## Read
+
+**This contradicts the RE research's core assumption for Phase 3, at least for what this
+44-byte input report actually carries on real hardware.** Leading hypotheses, none confirmed
+this session:
+1. The magnetometer needs an explicit enable/start command over HID that Windows' driver sends
+   and this Linux driver never issues — the sensor may simply not be streaming.
+2. Mag data arrives via a different HID report ID entirely, not folded into this same 44-byte
+   motion-controller report `wmr_controller_hp_packet_parse` reads.
+3. The decompiled Windows offsets/usages were correct for the driver's *internal* representation
+   but map to a report structure this G2 unit's firmware doesn't actually send (revision
+   difference, or the RE pass read calibrator/config data rather than the live streaming report).
+
+## Not done
+
+Did not attempt to send an HID feature/output report to try enabling the sensor (real risk of
+sending an unknown command to live hardware without a Windows-side capture to compare against —
+exactly the kind of action this project treats as needing a captured reference first, not a
+guess). Next real step, if this is picked up again: get an actual Windows USB capture (per the
+original RE doc's own suggested method) to compare byte-for-byte against this live dump, rather
+than guessing further from the Linux side alone. Until then, Phase 3's magnetometer decode is
+blocked, not just unpinned.
+</content>
