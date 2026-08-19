@@ -1,5 +1,21 @@
 # Next step
 
+> ## UPDATE (2026-08-19, everyday/comms box): yaw-ghost stack cross-rig A/B DONE — 0074+0076
+> validated (left 5x accepted / 3.4x pos_tracked over baseline), and **0077's first hardware
+> run found a seed-poisoning runaway, fixed same night as monado patch 0082** (seed positions
+> ran 4m→12m off the `last_known_pose` poison loop; hardened config = best measured on that
+> rig, L 37.2% / R 22.2% pos_tracked, right hand rescued 28x). Full story: `docs/55`, T220;
+> setup/battery criteria that gated it: `docs/56`; Windows floor/height storage closed (no
+> old-Windows install needed): `docs/57`. **Dev next**: fetch
+> `~/Documents/handoff-20260819-yawghost.bundle` (see `HANDOFF-20260819.md` there, docs/30
+> protocol), rebuild, re-run the T215 wearer mini-protocol with
+> `SOLVE_YAW_CORRECT=0.05 YAW_PRIOR_DEG=60 SEED_PRIOR=1`. Beware two instrumentation traps
+> now fixed in 0080/0081: telemetry lines didn't name the hand, and the get_tracked_pose
+> throttle log muted one hand entirely by call parity — any historical parsing of that line
+> is suspect. New battery rules: fresh-alkaline raw ceiling is 208 (docs/46 model invalid
+> above ~150; battery-check script now shows percent against 208), and over-bright 3.1V
+> alkaline LEDs correlate with 97% ghost solves — NiMH's 1.2V flat band is the sweet spot.
+>
 > # START HERE (2026-08-18) — THE BAR IS NOW COMMERCIAL: this rig is a showcase for a
 > VR-solutions business. "Vendemos soluciones VR, es muy importante que el showcase sea
 > lo mejor, que impresione." Every workstream below is now judged against that: a demo
