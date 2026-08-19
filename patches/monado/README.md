@@ -472,3 +472,32 @@ rate, not the ghost's elimination.** The real lever is the heading's noise floor
 the same gyro-bias-under-motion class as T203's round-map item 2 for the head channel — not the
 correspondence search's architecture. This is the third time a threshold calibrated at rest has
 failed under worn motion in this subsystem (0084 at 14°, the yaw prior at 60°, and now this).
+
+## 0089 — blob ownership telemetry, and the hypothesis it killed (2026-08-19, T225)
+
+| # | What & why |
+|---|---|
+| 0089 | Built to CONFIRM a hypothesis and it **refuted it the same night**, which is the best thing an instrument can do. T225 measured two consecutive worn windows — same build, same config, wearer changing nothing — inverting completely: **left 3.6% / right 62.1%, then left 74.5% / right 0.0%** (that 74.5% is the best single-hand figure this project has recorded). All-or-nothing with no middle ground looks exactly like a single-winner competition, and the code supports the story: every `t_blob` carries ONE `matched_device_id`, `tryDeviceBlobRecovery` needs ≥4 blobs already marked for that device, devices are iterated in fixed order. So: log, per device per frame, how many blobs it owns and whether that clears the 4-blob floor. Commit `c36953d2c`. |
+
+**What it measured, and it does not say what it was built to say:** worn, both hands visible and
+moving — mean **33 blobs present per frame**, and **both** devices own <1 on average, clearing the
+floor in **10% of frames each** (8/81 and 8/81, symmetric). Room baseline with controllers hidden,
+by docs/56's method: **p50 2 blobs = GREEN** (p90 13, max 23 — a tail worth tracing to a light
+source eventually, not the cause here).
+
+**Two corrections recorded rather than quietly dropped:**
+1. The "blob flood" reading was hasty — 33 blobs with two controllers visible is *inside* docs/56's
+   expected range (5-16 per visible controller plus a couple spurious). Nothing is swamped.
+2. **The competition hypothesis is not supported by its own instrument.** With ~30 blobs unclaimed
+   and neither hand reaching 4, nobody is hoarding: the failing hand has blobs available and still
+   does not solve.
+
+**A logical limit of the instrument itself, stated so it is not over-read:** blob marking happens
+only *after* a successful solve (`markMatchingBlobs` runs from `pushPose`), so "owns few blobs" is
+as much a *consequence* of failure as a possible cause. What separates them here is the unclaimed
+surplus, not the ownership count.
+
+**Net:** the failure is inside the correspondence search itself — not blob supply, not an unfair
+split between hands. Which is where T224's ceiling argument already pointed: the candidate pool can
+be narrowed, but with 10-30° of heading noise the right candidate cannot be picked within it.
+**The hand inversion remains a measured, unexplained fact; only the proposed explanation is dead.**
