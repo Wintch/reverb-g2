@@ -39,11 +39,19 @@
 > 2. **A ~1 cm high-frequency jitter on both hands**, wearer-reported, distinct from the 10-20 cm
 >    shifts. That is the re-triangulation breathe, T203's item 6, and it has never been worked.
 >
-> **Hardware reality check, and it is getting worse**: the USB2 companion branch degrades
-> WITHIN a session — a PC-end replug bought >1 h at 14:30 and ~1 min at 15:52. A full 220V cut
-> calmed it best (62/min → 1-3/min). Presence rides that channel and freezes when it dies.
-> **The rev2A cable is a live purchase candidate again**, and worth pricing before the next
-> session rather than mid-session.
+> **The USB2 storm is OURS, not the cable — corrected by the user at session close, and the
+> control is strong**: the same cable and headset run long sessions on Windows normally. If the
+> cable were degraded, Windows would suffer too. **The rev2A purchase recommendation written
+> earlier in this file is RETRACTED.** Weigh it together with a project measurement that already
+> pointed the same way and was under-weighted: T189/T190 found the storm **universal** — same
+> rate at complete idle, zero tracking, zero app, headset untouched — so it is not our service
+> under load either. That leaves the Linux USB stack: kernel HID handling of the companion,
+> autosuspend, or host-controller behaviour. **Better news than a cable, because a bug can be
+> fixed.** The observations still stand and are worth keeping: it degrades within a session (a
+> PC-end replug bought >1 h at 14:30 and ~1 min at 15:52; a 220V cut calmed it best, 62/min →
+> 1-3/min), and presence rides that channel and freezes when it dies. Named next step: capture
+> `usbmon` during a live storm and diff it against a Windows USBPcap capture of the same idle
+> state — `windows-kit/` already has the tooling, and the OS is the only variable.
 >
 > **Still unrun, and now cheap to judge because a working baseline exists**: 0083's exposure
 > sweep, and docs/59's three fixture protocols (absolute scale — never validated, and one

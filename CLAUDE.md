@@ -35,9 +35,14 @@
 > hand is worse"*, carried since T215, may not be a property of the hand at all. (2) A **~1 cm
 > high-frequency jitter on both hands**, distinct from the shifts — T203's item 6, never worked.
 >
-> **Hardware**: the USB2 companion branch degrades WITHIN a session (a PC-end replug bought >1 h
-> at 14:30 and ~1 min at 15:52; a 220V cut calmed it best). Presence rides that channel and
-> freezes when it dies. **rev2A cable is a live purchase candidate again.**
+> **The USB2 storm is a LINUX-SIDE problem, not the cable** (user correction at session close,
+> and the control is strong: the same cable and headset run long Windows sessions normally).
+> **The rev2A recommendation is retracted** — and T189/T190's already-recorded finding that the
+> storm is *universal* (same rate at complete idle, no tracking, no app) says it is not our
+> service under load either. Suspect the Linux USB stack: companion HID handling, autosuspend,
+> host controller. Next step: `usbmon` during a live storm vs a Windows USBPcap capture of the
+> same idle state — `windows-kit/` has the tooling and the OS is the only variable. The
+> behaviour still holds: it degrades within a session, and presence freezes when it dies.
 >
 > **Method notes that paid for themselves today**: take the fragile measurement FIRST (the
 > presence doff was lost twice by leaving it for later, captured in the first minute on the
