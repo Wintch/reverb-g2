@@ -4,11 +4,13 @@
 > reinterpretation (not a firmware config write); a first raw-byte voltage model fit from
 > tonight's per-cell tracking data; charge-advisor math and the anti-e-waste policy written
 > down. **The NiMH cliff itself has not been observed yet** — everything about its byte
-> value below is extrapolation, flagged as such. `patches/monado/0040`'s "UNVERIFIED SCALE"
-> comment in `wmr_controller_hp.c` is still accurate; this document narrows it, it doesn't
-> close it. A separate agent is actively editing `wmr_controller_hp.c` tonight — nothing
-> here depended on touching that file, everything below is read from the driver as it
-> stands and from this repo's docs.
+> value below is extrapolation, flagged as such.
+>
+> **Later updates**: the raw/255 SCALE was CONFIRMED 2026-08-18 (matches Windows' own HidP
+> scaling; the driver comment now says so — patch 0079); the alert threshold moved to raw 85
+> the same day (`docs/53`); and **2026-08-19's first genuinely-fresh alkaline reading (raw
+> 208) bounds this doc's linear fit to the NiMH band only — see the dated addendum at the
+> bottom before using the model outside ~byte 65-150.**
 
 ## 1. The Windows "1.2V battery" setting — where it actually lives
 
