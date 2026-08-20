@@ -49,14 +49,21 @@ STRINGS = {
         "es": "OJO: el logo HP ILUMINADO EN EL FRENTE DEL CASCO (por fuera, no adentro del visor) NO quiere decir que este todo bien. Solo dice que el casco tiene corriente y que la PC le pudo hablar. No dice que el puerto sea el correcto, ni que vaya a haber imagen adentro, ni que el tracking funcione.",
         "en": "CAREFUL: the HP logo LIT ON THE FRONT SHELL of the headset (outside, not inside the visor) does NOT mean things are working. It only means the headset has power and the PC could talk to it. It says nothing about the socket being right, about getting an image inside, or about tracking.",
     },
-    # The documented fix for a partial enumeration, from docs/22's ten-seat matrix: rotate the
-    # C plug inside the C-to-A adapter, SAME port. Not a new port, not a new cable. SS pins sit
-    # at the tip of the connector tongue and the USB2 pair mid-connector, so seating depth and
-    # angle select which group mates -- which is why the same socket gives different results on
-    # different insertions, and why port-hopping wastes time.
+    # TWO measured levers, each tied to its census signature -- do not swap them (the agent did,
+    # 2026-08-20, and it took the user quoting the docs to undo it):
+    #   0/5           -> the plug is on the WRONG SIDE. T184, tape-marked A/B: matched
+    #                    orientation = 0/5 always, unmatched = at least 2/5. The flip is the
+    #                    0/5 lever, nothing else.
+    #   2/5, SS only  -> right side, USB2 branch not joined. T186: PC-end USB-C unplug, a cold
+    #                    ~8-10 s gap, replug SAME port SAME side = 6/6 clean 5/5, genuine
+    #                    re-enumeration. A flip here would land on 0/5.
     "usb_action_flip_plug": {
-        "es": "Sacá el conector USB-C del adaptador, GIRALO 180 GRADOS y volvé a enchufarlo en el MISMO puerto. No cambies de puerto ni de cable todavía: esto es lo que arregló el mismo síntoma la última vez.",
-        "en": "Unplug the USB-C connector from the adapter, ROTATE IT 180 DEGREES and plug it back into the SAME port. Do not change port or cable yet: this is what fixed this exact symptom last time.",
+        "es": "Si el casco tiene corriente y aun asi no aparece NADA, el conector USB-C esta del lado equivocado: sacalo, GIRALO 180 grados y volvé a enchufarlo en el mismo puerto. El lado malo da exactamente cero dispositivos (medido).",
+        "en": "If the headset has power and still NOTHING shows up, the USB-C plug is on the wrong side: unplug it, ROTATE IT 180 DEGREES and plug it back into the same port. The wrong side gives exactly zero devices (measured).",
+    },
+    "usb_action_cold_replug": {
+        "es": "El lado del conector es el CORRECTO -- no lo gires. Desenchufá el USB-C del lado de la PC, contá 10 segundos, y volvé a enchufarlo en el MISMO puerto y con el MISMO lado. Ese corte en frío recuperó la rama que falta 6 de 6 veces.",
+        "en": "The plug side is CORRECT -- do not flip it. Unplug the USB-C at the PC end, count 10 seconds, and plug it back into the SAME port on the SAME side. That cold gap recovered the missing branch 6 out of 6 times.",
     },
     "usb_action_ok": {
         "es": "Este puerto anda. Dejá el cable acá y no lo muevas.",

@@ -161,19 +161,23 @@ resolves it:
 > **The rule that survives all three attempts**, and it is the one `docs/06` had from the start —
 > *try the port first, the orientation second*:
 
-| census | reading |
-|---|---|
-| 5/5 | this seat is good — **do not touch it again** |
-| **2/5, SuperSpeed only** | the classic partial seat. **Rotate the C plug 180° inside the adapter, same port**, before blaming anything |
-| 2/5 that recovers within a few seconds | not the seat: that is the ordinary USB2 storm (T226) |
-| USB2 up, SuperSpeed missing | the other half of the same lottery — flip it too |
-| 4/5, SuperSpeed missing entirely | a black USB2 socket: panel can work, tracking cannot |
-| 0/5 | nothing enumerates: power, cable seating, or a dead port |
+| census | reading | the measured lever |
+|---|---|---|
+| 5/5 | this seat is good — **do not touch it again** | — |
+| **2/5, SuperSpeed only** | **correct plug side**, USB2 branch didn't join | **PC-end USB-C unplug, ~10 s cold, replug SAME port SAME side** — T186, **6/6** |
+| 2/5 that recovers in a few seconds | not the seat: the ordinary USB2 storm (T226) | wait; nothing to fix |
+| 4/5, SuperSpeed missing | a black USB2 socket: panel can work, tracking cannot | move to a blue USB3 socket |
+| **0/5**, headset powered | **wrong plug side** — T184: matched orientation = 0/5, always | flip the C plug 180°, same port |
+| 0/5, headset unpowered | power first | mains brick, then the census |
 
-> **Third correction of this same table in one night.** The pattern is worth more than the table:
-> every wrong version came from generalising a *fresh* measurement while a *better* one already
-> sat in `docs/22`, unread. The project's own standing rule — read the docs before concluding —
-> was the thing being violated, by the agent, three times.
+> **Fourth and final version of this table tonight, and this one is not mine — it is the two
+> levers the record already held, each tied to its census signature.** T184 (tape-marked A/B):
+> the wrong orientation gives 0/5 *always*, so the flip is the 0/5 lever and nothing else. T186:
+> from 2/5, a PC-end cold replug on the same port and same side went **6/6 to a clean 5/5**. The
+> agent's intermediate versions keyed on the controller, then the socket, then told the user to
+> flip out of a 2/5 — which would have landed on 0/5. Every wrong version generalised a fresh
+> measurement over a better one sitting unread in `docs/22`; the user corrected all three from
+> memory of his own record.
 
 ### The USB2-only socket, and the result that closes the activation question (T231)
 

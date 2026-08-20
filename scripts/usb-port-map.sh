@@ -164,8 +164,8 @@ cmd_qualify() {
         fi
     done
     if [ "$n" = 0 ]; then
-        verdict="DEAD: nothing enumerates. Wrong socket, unpowered headset, or a dead cable."
-        echo "   -> $verdict"; action usb_action_nothing; ledger "$label" "" "" "$n" "$verdict"; return
+        verdict="DEAD: nothing enumerates. Check headset power first; if powered, this is the WRONG PLUG SIDE (T184: matched orientation = 0/5 always) -- flip the C plug 180 degrees, same port."
+        echo "   -> $verdict"; action usb_action_nothing; action usb_action_flip_plug; ledger "$label" "" "" "$n" "$verdict"; return
     fi
 
     if [ -n "$port" ]; then
@@ -223,8 +223,13 @@ cmd_qualify() {
             # And "it stayed 2/5 for a whole minute" does NOT make it the socket: docs/22
             # measured a half-dead seat as rock-stable, "ZERO spontaneous events, no
             # self-recovery, no flapping". Stability rules out the storm and nothing else.
-            hint=usb_action_flip_plug
-            verdict="PARTIAL SEAT ($n/5): SuperSpeed up, USB2 branch absent -- so no companion, no panel, no activation, no audio, no IPD, no presence. docs/22's seat matrix says this is the PLUG SEAT, not the socket: rotate the C plug 180 degrees INSIDE the C-to-A adapter, same port, and re-run. Port-hopping is documented as a waste of time for this symptom; suspect the socket, the controller or the cable only after the flip fails."
+            # 2/5 with SS up is the signature of the CORRECT plug side (T184: the wrong side
+            # gives 0/5, always). The measured lever for this exact state is T186: PC-end
+            # USB-C unplug, cold ~8-10 s, replug same port same side -- 6/6 clean 5/5. A flip
+            # here would land on 0/5; this verdict said "rotate 180" for about an hour until
+            # the user pointed back at the documentation.
+            hint=usb_action_cold_replug
+            verdict="PARTIAL SEAT ($n/5): SuperSpeed up, USB2 branch absent -- no companion, so no panel, no activation, no audio, no IPD, no presence. The plug side is CORRECT (the wrong side gives 0/5, T184). Documented lever: PC-end USB-C unplug, ~10 s cold, replug SAME port SAME side (T186, 6/6). Do NOT flip; suspect socket/cable only after several cold replugs fail."
         elif [ "$usb2" = yes ] && [ "$ss" = no ]; then
             hint=usb_action_usb2_only
             # MEASURED 2026-08-19, and it corrected this line: on a USB2-only socket the
