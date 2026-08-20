@@ -246,6 +246,26 @@ dedicated per-hand channels (`0x06` left, `0x0E` right); and the part numbers di
 Linux and the LAST Windows dependency dies. Until it is implemented AND tested, the one-way rule
 below stands unchanged.
 
+### DECISION on the currently-unpaired right controller (T236): it is the capture subject, do not waste it
+
+State after the failed attempt: **left `paired`, right `UNPAIRED`.** The instinct is to re-pair
+the right immediately on Windows. **Don't do it casually — capture it.** The next step toward
+Linux pairing is USBPcap of a *real* Oasis pairing, and a pairing capture needs an unpaired
+controller to pair. We have exactly one, already in the right state. So on the next Windows boot:
+
+1. Install USBPcap (once).
+2. Start capture on the **HoloLens Sensors** USB device (`045e:0659`) — the controller pairing
+   tunnels through it, the same HID we already read from.
+3. Re-pair the right controller through the Oasis unlock flow (left is already bonded).
+4. Stop the capture. **That one action both recovers the controller AND yields the real pairing
+   wire format** — the payload behind `{0x16, 0x05, …}` that the inert enum guess was missing.
+
+Then decode the capture (`docs/09` method / `scripts/analyze-hid.py`), implement the true framing
+in `controller-pair.py`, and the world-first is back on the table with real ammunition instead of
+guesses. **Do NOT keep firing speculative byte layouts on Linux in the meantime** — that is
+flailing; the capture is the disciplined path. A single controller (the left) is enough for every
+hardware check queued (thread names, benchmark, 0090 storm) until then.
+
 ### RESULT (T236): the simple framing does NOT pair — a real negative, and the honest record
 
 We tried it. The world-first attempt **failed**, and that is worth as much on file as a success

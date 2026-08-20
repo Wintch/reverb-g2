@@ -233,6 +233,14 @@
 >    (`patches/basalt/0012`). Unblocks per-title pinning and any "which stage is starving"
 >    question. **Test: `ps -L -p $(pgrep -x monado-service)` on a live session.**
 >
+> **IMMEDIATE, and it folds recovery into progress (T236)**: the right controller is currently
+> UNPAIRED (our failed attempt). Do NOT just re-pair it — **capture the pairing**. On the next
+> Windows boot: USBPcap on the HoloLens Sensors device (`045e:0659`) → re-pair the right through
+> Oasis unlock → stop. That single action recovers the controller and yields the real pairing
+> wire format that `{0x16, 0x05}` was missing. Decode with `docs/09`/`analyze-hid.py`, implement
+> in `controller-pair.py`. Until then a single (left) controller covers every queued hardware
+> check; no more speculative byte layouts on Linux.
+>
 > **NAMED LEVER (T235, agent research): implement pairing in Monado — the command already
 > exists.** `wmr_protocol.h` defines `WMR_BT_CONTROL_MSG_PAIR = 0x05` / `UNPAIR = 0x06` on the
 > `0x16` report, reverse-engineered and **never sent by any code path** (the only sender is the
