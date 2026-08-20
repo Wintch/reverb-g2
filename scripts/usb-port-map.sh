@@ -178,7 +178,10 @@ cmd_qualify() {
     # The SuperSpeed pair can come up on a socket where the USB2 pair never will. That asymmetry
     # is the documented signature of a socket the headset cannot use (docs/22), and it is why a
     # census of 2/5 is a VERDICT and not a transient.
-    if [ "$n" -lt 5 ]; then
+    # The early return below is skipped when the companion is present: activation depends on the
+    # companion and nothing else, so a socket can be bad for tracking and still able to light the
+    # panel. Reporting "incomplete" and stopping would hide that distinction.
+    if [ "$n" -lt 5 ] && ! have 03f0:0580; then
         # WHICH branch is missing is the diagnosis, not how many devices are missing. The two
         # partial states mean opposite things and send the user to opposite places.
         local ss=no usb2=no hint=usb_action_cable
@@ -198,14 +201,29 @@ cmd_qualify() {
             hint=usb_action_wrong_socket
         elif [ "$usb2" = yes ] && [ "$ss" = no ]; then
             hint=usb_action_usb2_only
-            verdict="USB2-ONLY SOCKET ($n/5): the companion side came up and the SuperSpeed pair did not, so there are no cameras, no IMU and no controller tunnel -- the panel may light while nothing can ever be tracked. This is a black USB2 port; the headset needs a blue USB3 one."
+            # MEASURED 2026-08-19, and it corrected this line: on a USB2-only socket the
+            # HoloLens Sensors device does NOT disappear -- it enumerates at high speed on the
+            # 480 Mbps hub instead of SuperSpeed. So "no cameras" was wrong. What is true is
+            # that the whole headset then shares one 480 Mbps bus: four 640x480 mono streams at
+            # 30 fps alone are ~295 Mbps before audio and companion traffic, against a real-world
+            # USB2 bulk ceiling near 300-400. Tracking is not structurally impossible here, it is
+            # bandwidth-marginal -- which is a thing to MEASURE, not to assert either way.
+            verdict="USB2-ONLY SOCKET ($n/5): the SuperSpeed hub is absent, so the whole headset is running on one 480 Mbps bus. HoloLens Sensors still enumerates (at high speed), so this is not automatically dead -- but the camera streams alone need ~295 Mbps of a bus that also carries audio and the companion. Expect marginal or failing tracking. Use a blue USB3 socket."
         else
             hint=usb_action_cable
             verdict="PARTIAL ($n/5), neither branch complete: treat as a bad socket and re-seat before concluding anything."
         fi
         echo "   -> $verdict"; action "$hint"; ledger "$label" "$port" "$pci" "$n" "$verdict"; return
     fi
-    echo "2. all five devices present"
+    if [ "$n" -lt 5 ]; then
+        local ss=no
+        have 04b4:6504 && have 045e:0659 && ss=yes
+        echo "2. INCOMPLETE ($n/5) but the companion IS present -- continuing, because activation"
+        echo "   needs the companion and nothing else. SuperSpeed branch=$ss."
+        [ "$ss" = no ] && echo "   Whatever happens below, tracking on this socket is bandwidth-marginal at best."
+    else
+        echo "2. all five devices present"
+    fi
 
     # --- rung 3: activation. Enumerating is not the same as usable. ---
     echo "3. activating the panel ($PANEL_PY activate)"
@@ -220,7 +238,7 @@ cmd_qualify() {
     # Baselined before activation on purpose: desktop monitors also read "connected", so the
     # headset is not "a connected DP" -- it is the connector that was NOT there a second ago.
     # Counting all connected outputs would have declared success on any machine with a monitor.
-    local i conn="" before
+    local i conn="" before hint=usb_action_ok
     before=$(for c in /sys/class/drm/card*-DP-*; do
                  [ "$(cat "$c/status" 2>/dev/null)" = connected ] && basename "$c"
              done | sort | tr '\n' ' ')
@@ -240,15 +258,24 @@ cmd_qualify() {
     # "no new connector" is not a failure -- but it is also not a proof, and reporting it as
     # GOOD would be a check that cannot fail. Power-cycle the headset and re-run to get a real
     # rung 4.
-    if [ -n "$conn" ]; then
+    if [ -n "$conn" ] && [ "$n" -lt 5 ]; then
+        # MEASURED 2026-08-19 and it is the finding of the night: the panel came up on a USB2-only
+        # socket. DP hotplug is driven by the companion ALONE -- it never touches the SuperSpeed
+        # branch -- so "the panel lit" is not evidence that the socket is good. Saying GOOD here,
+        # as this did on the first run, would tell someone to leave the cable on a socket where
+        # tracking cannot work.
+        verdict="PANEL YES, TRACKING NO ($n/5): activation succeeded and the panel connector appeared ($conn), which proves the companion path works -- but the SuperSpeed branch is missing, so this socket cannot carry the cameras properly. Do not settle here."
+        hint=usb_action_usb2_only
+    elif [ -n "$conn" ]; then
         verdict="GOOD SOCKET: 5/5, activation accepted, panel connector appeared ($conn). Proven end to end."
+        hint=usb_action_ok
     elif [ -n "$before" ]; then
-        verdict="GOOD SO FAR, RUNG 4 NOT PROVEN: 5/5 and activation accepted, but a DP connector was already present before activating ($before), so this run could not observe the hotplug. Power-cycle the headset and re-run to prove it."
+        verdict="RUNG 4 NOT PROVEN ($n/5): activation accepted, but a DP connector was already present before activating ($before), so this run could not observe the hotplug. Power-cycle the headset and re-run to prove it."
     else
-        verdict="ENUMERATES AND ACTIVATES BUT NO PANEL: 5/5, activation accepted, and no DP connector ever appeared. This is the docs/22 dark-panel class, not a socket problem -- check the cable's video side."
+        verdict="ENUMERATES AND ACTIVATES BUT NO PANEL ($n/5): activation accepted, and no DP connector ever appeared. This is the docs/22 dark-panel class, not a socket problem -- check the cable's video side."
     fi
     echo "   -> $verdict"
-    [ -n "$conn" ] && action usb_action_ok
+    [ -n "$conn" ] && action "${hint:-usb_action_ok}"
     ledger "$label" "$port" "$pci" "$n" "$verdict"
 }
 

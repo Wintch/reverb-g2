@@ -135,7 +135,49 @@ resolves it:
 | 2/5 | CPU xHCI | socket is fine; now suspect the cable/connector (`docs/22`'s ladder) |
 | 0/5 | either | nothing enumerates: power, cable seating, or a dead port |
 
-**Measured so far (2026-08-19): the good socket to rung 3, the bad socket to rung 2.** `4-2` on
+### The USB2-only socket, and the result that closes the activation question (T231)
+
+Plugged into a **black rear USB2 port**, the census is **4/5 — not 3/5**, and the missing one is
+not what you would guess:
+
+```
+[MISSING] 04b4:6504  SuperSpeed hub     the USB3 side of the cable's active hub
+[ok]      045e:0659  HoloLens Sensors   enumerated at HIGH SPEED, on the 480 Mbps hub
+[ok]      04b4:6506  USB2 hub
+[ok]      03f0:0580  companion
+[ok]      0bda:4c15  audio
+```
+
+**The HoloLens Sensors device does not disappear on USB2 — it falls back to high speed.** So
+"a USB2 port means no cameras" is wrong. What is true is bandwidth: four 640×480 mono streams at
+30 fps are **~295 Mbps on their own**, on a 480 Mbps bus that also carries the audio device and
+the companion, against a real-world USB2 bulk ceiling of 300-400 Mbps. **Tracking there is
+bandwidth-marginal — a thing to measure, not to assert in either direction.** Still unmeasured.
+
+> ### ✅ The Linux activation procedure is proven, and Oasis is not needed for it
+>
+> On that same USB2-only socket, `panel.py activate` **succeeded and `card0-DP-3` appeared** —
+> baselined, so this is a real hotplug and not a connector that was already awake: `DP-1` and
+> `DP-2` (the desktop monitors) were connected before, `DP-3` was not.
+>
+> That closes a gap this project carried for a long time — *"first you have to activate the
+> headset, and that procedure is pending on Linux; it was only ever tested on Windows"*. It is
+> tested now, from a cold DP connector, with no Windows involved.
+>
+> **And the mechanism it exposes is worth more than the result**: DP hotplug is driven by the
+> **companion alone**, over USB2, and never touches the SuperSpeed branch. **Panel and tracking
+> are independent paths.** That is why the panel can light while tracking is dead, and why
+> tracking can run on a headset whose panel never came up — a pattern this project has hit
+> repeatedly without naming the cause.
+>
+> **The trap that follows from it**: a lit panel is *not* evidence that the socket is good. The
+> tool said "GOOD SOCKET — leave the cable here" on the first run and had to be corrected; that
+> advice would park someone on a socket where tracking cannot work. The verdict is now
+> **PANEL YES, TRACKING NO**.
+
+**Measured so far (2026-08-19, T231): all three socket types.** CPU-controller USB3 → 5/5,
+activation accepted. Chipset-controller USB3 → 2/5, USB2 branch never enumerates. Black USB2 →
+4/5, panel proven, tracking bandwidth-marginal. `4-2` on
 `09:00.3` gives 5/5 and accepts activation; rung 4 could not be proven in that run because a DP
 connector was already present from an earlier activation, and the tool says so rather than
 claiming a pass. **Still unrun: the two chipset-controller sockets**, which is the whole point —
