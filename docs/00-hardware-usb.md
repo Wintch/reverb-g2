@@ -38,6 +38,50 @@ Probing with `scripts/find-port.sh` confirmed the definitive physical map:
 | `07:00.3` (Matisse, CPU) | usb3 (480M) / usb4 (10G) | 4 + 4 | **the 4 blue USB3 ports on the rear panel** |
 | `02:00.0` (A520 chipset) | usb1 (480M) | 9 | the 2 rear USB2 ports (Logitech receiver is on `1-8`) + headers |
 
+### Board reference: ASUS TUF GAMING B450M-PLUS II (official + measured, T237)
+
+The current lab board, from ASUS's own spec page and rear-panel diagram (`1.2.2 Rear panel
+connectors`) plus this project's live `lspci`/sysfs measurement:
+
+**Identity** (ASUS techspec): socket **AM4**, chipset **B450**, supports Ryzen 5000 / 5000G /
+4000G / 3rd/2nd/1st gen. Rear USB: **6 ports**. Front (internal headers): **6 ports**. PCIe:
+1× 3.0 x16 (CPU) + 1× 2.0 x16 max x4 (chipset).
+
+**Rear panel, by ASUS's numbering** (their diagram, transcribed — the repo keeps the numbers, not
+the image):
+
+| # | Port | Note |
+|---|---|---|
+| 1 | PS/2 combo | |
+| 2 | **USB 3.2 Gen 2, Type-A, teal blue, up to 10 Gbps** | the single fastest Type-A |
+| 3 | Ethernet (Gigabit) | |
+| 4 / 5 | Line In (blue) / Line Out (lime) | |
+| 6 | **USB 2.0 ×2** | the black pair — where the headset gave 4/5 (panel yes, tracking no), T231 |
+| 7 | BIOS FlashBack button | |
+| 8 | DVI-D | |
+| 9 | HDMI | |
+| 10 | **USB Type-C** (USB 3.2 Gen 2) | |
+| 11 / 12 | **USB 3.2 Gen 1 (5 Gbps), Type-A** | the blue stack — the headset's home |
+| 13 | Mic (pink) | |
+
+**The sourcing ASUS does NOT publish — and it is the whole game.** Their spec never says which
+port hangs off the CPU and which off the B450 chipset. This project's live measurement does, and
+it is the authoritative per-port map for THIS board:
+
+```
+usb3 / usb4   0000:09:00.3   AMD Matisse USB 3.0 Host Controller     <- CPU (Ryzen 3000). Headset works here (4-2).
+usb1 / usb2   0000:02:00.0   AMD 400 Series Chipset USB 3.1 xHCI     <- B450 chipset. Headset fails here (2-1).
+```
+
+On an AM4 board the CPU (Matisse) provides USB directly and the B450 chipset provides the rest;
+the WMR headset needs the **CPU-fed** ports, which is *precisely* the split ASUS omits from the
+public spec. That omission is why `usb-port-map.sh` exists: the manual's rear-panel diagram tells
+you the port TYPES (the table above), and only a live census tells you the CONTROLLER — and the
+controller is what decides whether the headset works. Plug a mouse into each blue Type-A socket,
+run `usb-port-map.sh map`, and match ASUS's numbers to the `usbN-portM` names.
+
+### ⚠️ This chapter's port table was measured on a DIFFERENT board than the current lab machine
+
 ### ⚠️ This chapter's port table was measured on a DIFFERENT board than the current lab machine
 
 Written for a box whose xHCI controllers are `07:00.3` (Matisse/CPU) and `02:00.0` (A520

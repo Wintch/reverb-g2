@@ -124,6 +124,22 @@ numbers for the cable and the PSU are exactly the ones still missing below.
 | MCU | — | | **unknown** |
 | **Left vs right are DIFFERENT PARTS** | right `TPC-Q077-C1` / `M09967-001`, left `TPC-Q077-C2` / `M09967-002` | Read off both controllers, T232 | **confirmed** |
 
+## Host board (the lab machine, not the headset — but the port map lives here)
+
+| item | value | source |
+|---|---|---|
+| Board | **ASUS TUF GAMING B450M-PLUS II** | DMI + label |
+| Socket / chipset | AM4 / **B450** | ASUS techspec |
+| CPU | AMD Ryzen 5 3600 (Matisse) | `/proc/cpuinfo` |
+| USB controllers | **`09:00.3` Matisse (CPU)** — headset works; **`02:00.0` B450 chipset** — headset fails | live `lspci` |
+| Rear USB | 6 (2× USB2, USB-C, teal Gen2 Type-A, 2× Gen1 Type-A blue) | ASUS rear-panel diagram §1.2.2 |
+| The gap ASUS leaves | **which rear port is CPU vs chipset is NOT in the public spec** | — |
+
+This is a property of the BOARD, not the headset, and it is why `docs/00` + `usb-port-map.sh`
+carry a per-board ledger. The identity here is the reference; the live census is the map.
+
+## Regulatory / teardown references
+
 ## Regulatory / teardown references
 
 | Reference | What it is | Where |
