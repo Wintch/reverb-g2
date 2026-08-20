@@ -49,6 +49,15 @@ STRINGS = {
         "es": "OJO: el logo HP ILUMINADO EN EL FRENTE DEL CASCO (por fuera, no adentro del visor) NO quiere decir que este todo bien. Solo dice que el casco tiene corriente y que la PC le pudo hablar. No dice que el puerto sea el correcto, ni que vaya a haber imagen adentro, ni que el tracking funcione.",
         "en": "CAREFUL: the HP logo LIT ON THE FRONT SHELL of the headset (outside, not inside the visor) does NOT mean things are working. It only means the headset has power and the PC could talk to it. It says nothing about the socket being right, about getting an image inside, or about tracking.",
     },
+    # The documented fix for a partial enumeration, from docs/22's ten-seat matrix: rotate the
+    # C plug inside the C-to-A adapter, SAME port. Not a new port, not a new cable. SS pins sit
+    # at the tip of the connector tongue and the USB2 pair mid-connector, so seating depth and
+    # angle select which group mates -- which is why the same socket gives different results on
+    # different insertions, and why port-hopping wastes time.
+    "usb_action_flip_plug": {
+        "es": "Sacá el conector USB-C del adaptador, GIRALO 180 GRADOS y volvé a enchufarlo en el MISMO puerto. No cambies de puerto ni de cable todavía: esto es lo que arregló el mismo síntoma la última vez.",
+        "en": "Unplug the USB-C connector from the adapter, ROTATE IT 180 DEGREES and plug it back into the SAME port. Do not change port or cable yet: this is what fixed this exact symptom last time.",
+    },
     "usb_action_ok": {
         "es": "Este puerto anda. Dejá el cable acá y no lo muevas.",
         "en": "This socket works. Leave the cable here and do not move it.",

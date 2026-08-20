@@ -210,17 +210,21 @@ cmd_qualify() {
         # headset's USB serial is exactly the kind of identifier that should not travel.
         journalctl -k --since "$since" 2>/dev/null | grep -iE "usb ?[0-9]|xhci" | sed 's/SerialNumber: .*/SerialNumber: <redacted>/' | tail -20 | sed 's/^/     /'
         if [ "$ss" = yes ] && [ "$usb2" = no ]; then
-            if [ "$pci" = "$(controller_of "usb${port%%-*}" | cut -d'|' -f1)" ]; then hint=usb_action_wrong_socket; fi
-            # MEASURED 2026-08-20 and it corrected the previous wording: a socket on the GOOD
-            # controller failed exactly like a chipset one (4-1 dead, 4-2 fine, same controller,
-            # same cable, minutes apart, 2/5 sustained for a full minute). So the controller is
-            # not the discriminator -- the PHYSICAL SOCKET is. A USB3 socket carries its USB2
-            # pair on separate conductors from the SuperSpeed lanes, which is exactly how one
-            # socket can pass SuperSpeed and never bring up USB2. Telling the user "the socket is
-            # fine, blame the cable" because the controller looked right would have sent them to
-            # buy hardware.
-            verdict="BAD SOCKET ($n/5): SuperSpeed came up, the USB2 branch never did -- no companion, so no panel, no activation, no audio, no IPD, no presence. TRY ANOTHER SOCKET, including others on this same controller: sockets are not interchangeable even within one controller (measured). Only after several sockets fail the same way does the cable become the suspect (docs/22)."
-            hint=usb_action_wrong_socket
+            # THIS IS THE PLUG SEAT, NOT THE SOCKET -- and it took three wrong versions of this
+            # verdict to arrive at what docs/22 had already measured in a ten-seat matrix on this
+            # same controller. The same physical port yields different branch subsets on
+            # different INSERTIONS: rear A #1 gave SS-only, rear A #2 gave USB2-only, and a 180
+            # degree flip of the C plug inside the C-to-A adapter gave 5/5 on that same port. A
+            # phone enumerated fine on a port where the G2's USB2 pair had failed seven times in
+            # a row -- port absolved, seat condemned. Mechanism on file: SS pins sit at the tip of
+            # the connector tongue and the USB2 pair mid-connector, so seating depth and angle
+            # select which group mates.
+            #
+            # And "it stayed 2/5 for a whole minute" does NOT make it the socket: docs/22
+            # measured a half-dead seat as rock-stable, "ZERO spontaneous events, no
+            # self-recovery, no flapping". Stability rules out the storm and nothing else.
+            hint=usb_action_flip_plug
+            verdict="PARTIAL SEAT ($n/5): SuperSpeed up, USB2 branch absent -- so no companion, no panel, no activation, no audio, no IPD, no presence. docs/22's seat matrix says this is the PLUG SEAT, not the socket: rotate the C plug 180 degrees INSIDE the C-to-A adapter, same port, and re-run. Port-hopping is documented as a waste of time for this symptom; suspect the socket, the controller or the cable only after the flip fails."
         elif [ "$usb2" = yes ] && [ "$ss" = no ]; then
             hint=usb_action_usb2_only
             # MEASURED 2026-08-19, and it corrected this line: on a USB2-only socket the

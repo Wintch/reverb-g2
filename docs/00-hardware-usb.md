@@ -136,24 +136,44 @@ resolves it:
 | 4/5, SuperSpeed missing | a black USB2 socket: panel can work, tracking cannot |
 | 0/5 | nothing enumerates: power, cable seating, or a dead port |
 
-> **CORRECTED 2026-08-20 (T233).** This table used to key on the *controller*: 2/5 on the chipset
-> meant "wrong socket", 2/5 on the CPU controller meant "the socket is fine, suspect the cable".
-> **That is wrong, and the user found it by plugging into a different good-controller socket.**
-> `4-1` on the CPU controller `09:00.3` gives a sustained 2/5 — a full minute with no recovery —
-> while `4-2` on the *same controller*, same cable, minutes either side, gives 5/5.
+> **CORRECTED TWICE, and the second correction RETRACTS the first (T233 → T234).**
 >
-> **The discriminator is the physical socket, not the controller.** The mechanism fits: a USB3
-> socket carries its USB2 pair on conductors entirely separate from the SuperSpeed lanes, so one
-> socket can pass SuperSpeed perfectly and never bring up USB2. That is the observed signature in
-> *both* bad sockets found so far, on both controllers.
+> **First version** keyed on the controller: 2/5 on the chipset meant "wrong socket", 2/5 on the
+> CPU controller meant "suspect the cable". **Second version** (T233) keyed on the physical
+> socket, after `4-1` on the CPU controller gave a sustained 2/5 while `4-2` on the same
+> controller gave 5/5. **Both were wrong, and `docs/22` already contained the answer** — the user
+> replied "no es que hay un USB de CPU malo y otro bueno, revisá bien la documentación."
 >
-> The old rule would have told someone on a good controller that their socket was fine and the
-> cable was to blame — i.e. **sent them to buy hardware to fix a socket problem**.
+> **What `docs/22` measured, in a ten-seat matrix on this exact controller**: the same physical
+> port gives different branch subsets on different *insertions*. Rear A #1 gave SS-only; rear A
+> #2 gave USB2-only on one seat and, **with a 180° flip of the C plug inside the C-to-A adapter,
+> 5/5**. A phone enumerated fine on a port where the G2's USB2 pair had failed seven consecutive
+> times — **port absolved, plug seat condemned**. The mechanism on file: SS pins sit at the tip of
+> the connector tongue and the USB2 pair mid-connector, so worn contacts make **seating depth and
+> angle select which group mates**.
 >
-> **Also added, and it is a methodological hole this table had from the start**: the census is now
-> *sampled over 20 s* rather than read once. This link drops its USB2 branch by itself several
-> times a minute for ~3 s at a time, so a single reading would condemn a good socket roughly one
-> time in twenty. A transient recovers; a bad socket never does.
+> **Why "sustained for a minute" did not prove what I thought.** It rules out the *storm*, whose
+> outages last ~3 s — that part was right. It does **not** distinguish a bad socket from a bad
+> seat, because `docs/22` explicitly measured that a half-dead seat is **rock-stable**: "a
+> 5-minute journal watch on a half-dead seat logged ZERO spontaneous events. No self-recovery, no
+> flapping." Stability was already known to be a property of both, so it discriminates neither.
+>
+> **The rule that survives all three attempts**, and it is the one `docs/06` had from the start —
+> *try the port first, the orientation second*:
+
+| census | reading |
+|---|---|
+| 5/5 | this seat is good — **do not touch it again** |
+| **2/5, SuperSpeed only** | the classic partial seat. **Rotate the C plug 180° inside the adapter, same port**, before blaming anything |
+| 2/5 that recovers within a few seconds | not the seat: that is the ordinary USB2 storm (T226) |
+| USB2 up, SuperSpeed missing | the other half of the same lottery — flip it too |
+| 4/5, SuperSpeed missing entirely | a black USB2 socket: panel can work, tracking cannot |
+| 0/5 | nothing enumerates: power, cable seating, or a dead port |
+
+> **Third correction of this same table in one night.** The pattern is worth more than the table:
+> every wrong version came from generalising a *fresh* measurement while a *better* one already
+> sat in `docs/22`, unread. The project's own standing rule — read the docs before concluding —
+> was the thing being violated, by the agent, three times.
 
 ### The USB2-only socket, and the result that closes the activation question (T231)
 
