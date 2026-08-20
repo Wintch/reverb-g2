@@ -56,11 +56,27 @@ def _HIDIOCSFEATURE(length):
 
 
 def send_feature(fd, payload):
-    """Send a HID feature report (control SET_REPORT), the channel Oasis uses. payload[0] is the
-    report id. Returns True if the device accepted it."""
+    """Send a HID feature report (control SET_REPORT, wValue high byte 0x03), the channel Oasis
+    uses for report 0x16 (BT_CONTROL: PAIR/UNPAIR/CMD_STATUS/...). payload[0] is the report id.
+    Returns True if the device accepted it."""
     buf = bytes(payload) + bytes(64 - len(payload))
     try:
         fcntl.ioctl(fd, _HIDIOCSFEATURE(len(buf)), buf, True)
+        return True
+    except OSError:
+        return False
+
+
+def write_output(fd, payload):
+    """Send a HID OUTPUT report (control SET_REPORT, wValue high byte 0x02). T240's capture shows
+    Windows polls report 0x02 (PAIRING_STATUS) as Output, not Feature -- and interface 2 has no
+    interrupt-OUT endpoint, so a plain write() to hidraw already routes as a control SET_REPORT
+    with the Output wValue, no ioctl needed (unlike report 0x16, which IS sent as Feature).
+    Sending 0x02 via HIDIOCSFEATURE (the earlier bug) put the wrong report type on the wire and
+    made every send fail, forcing a re-enumeration loop that never let an inquiry survive."""
+    buf = bytes(payload) + bytes(64 - len(payload))
+    try:
+        os.write(fd, buf)
         return True
     except OSError:
         return False
@@ -103,9 +119,14 @@ def reopen():
     return None
 
 
-def read_status(fd, secs=2.0):
+def read_status(fd, secs=2.0, log_debug=False):
     """Send the status query, collect one packet per controller id. Returns ({id: pkt_type}, fd).
-    Survives the fd breaking under a re-enumeration by reopening and retrying."""
+    Survives the fd breaking under a re-enumeration by reopening and retrying.
+    If log_debug: also decode and print any report 0x05 (WMR_BT_IFACE_MSG_DEBUG) packets seen
+    while reading -- the radio's own BT state-machine log, decoded in T240 (COMMAND_INQUIRY,
+    "inquiry started", "Found by address", etc). This is the ground truth for whether a PAIR
+    command actually reached the BT command handler, independent of whether the USB write itself
+    was accepted."""
     seen = {}
     # status is streamed passively, but send the query too (via the control channel) for parity
     if not send_feature(fd, [MSG_BT_CONTROL, SUB_CONTROLLER_STATUS]):
@@ -132,6 +153,10 @@ def read_status(fd, secs=2.0):
             break
         if b and len(b) >= 3 and b[0] == SUB_CONTROLLER_STATUS:
             seen[b[1]] = b[2]
+        elif log_debug and b and len(b) > 6 and b[0] == 0x05:
+            txt = bytes(x for x in b[6:] if 32 <= x < 127).decode("ascii", "replace").strip()
+            if txt:
+                print(f"      BT-LOG: {txt}")
     return seen, fd
 
 
@@ -147,6 +172,10 @@ def main():
     ap.add_argument("--arm-only", action="store_true", help="send the command and report immediately, do not wait")
     ap.add_argument("--now", action="store_true", help="fire instantly without waiting for you to confirm the pulse")
     ap.add_argument("--handshake", action="store_true", help="mirror the full Oasis sequence (CMD_STATUS + sustained PAIR/poll)")
+    ap.add_argument("--probe", type=lambda s: int(s, 0), metavar="SUBTYPE",
+                     help="SAFE, read-only: send {0x16, SUBTYPE} once and watch the report-0x05 "
+                          "debug log for a reaction, without touching PAIR/UNPAIR or any target. "
+                          "For the T240 unknown 0x07: --probe 0x07")
     args = ap.parse_args()
 
     dev = find_dev()
@@ -156,6 +185,41 @@ def main():
         fd = os.open(dev, os.O_RDWR | os.O_NONBLOCK)
     except PermissionError:
         sys.exit(f"no permission for {dev} -- need group plugdev (see scripts/70-wmr-reverb.rules)")
+
+    if args.probe is not None:
+        # T236 already showed 0x08/0x04/0x05 alone (no controller id) just echo the passive 0x17
+        # status stream with no visible reaction. This does the same non-destructive send but
+        # ALSO watches report 0x05 (WMR_BT_IFACE_MSG_DEBUG, T240's decoded BT state-machine log)
+        # for anything the radio says back -- T240's "16 07 00" had no attributable log line in
+        # the reference capture either, so a silent result here is a real (if inconclusive) data
+        # point, not a tooling failure.
+        sub = args.probe
+        ok = send_feature(fd, [MSG_BT_CONTROL, sub])
+        print(f"probe: sent 16 {sub:02x} (no controller id) via control SET_REPORT (accepted={ok})")
+        print("  listening 8s on report 0x05 (BT debug log) and 0x17 (status) for any reaction...")
+        t0 = time.time()
+        saw_anything = False
+        while time.time() - t0 < 8.0:
+            r, _, _ = select.select([fd], [], [], 0.5)
+            if not r:
+                continue
+            try:
+                b = os.read(fd, 64)
+            except OSError:
+                break
+            if not b:
+                continue
+            if b[0] == 0x05 and len(b) > 6:
+                txt = bytes(x for x in b[6:] if 32 <= x < 127).decode("ascii", "replace").strip()
+                if txt:
+                    saw_anything = True
+                    print(f"    t+{time.time()-t0:4.1f}s  BT-LOG: {txt}")
+            elif b[0] == SUB_CONTROLLER_STATUS and len(b) >= 3:
+                pass  # the routine passive status stream, not a reaction -- don't clutter output
+        if not saw_anything:
+            print("  no report-0x05 activity attributable to the probe.")
+        os.close(fd)
+        return
 
     before, fd = read_status(fd)
     print(f"before: {fmt(before)}")
@@ -210,10 +274,11 @@ def main():
                     fd = nf
                     send_feature(fd, [MSG, sub, cid])
         print("  HANDSHAKE mode: CMD_STATUS precursor + sustained PAIR/poll, mirroring Oasis")
-        def send_rid(rid, sub):
-            # Windows polled PAIRING_STATUS on report id 0x02; PAIR/CMD_STATUS on 0x16. Send both.
+        def poll_02():
+            # T240: report 0x02 (PAIRING_STATUS poll) is Output on the wire, not Feature -- Oasis
+            # sent it 1263x over one session. write_output() (plain write(), no HIDIOCSFEATURE).
             nonlocal fd
-            if not send_feature(fd, [rid, sub, cid]):
+            if not write_output(fd, [0x02, 0x08, cid]):
                 nf = reopen()
                 if nf:
                     try: os.close(fd)
@@ -228,11 +293,14 @@ def main():
         while time.time() - t0 < args.wait:
             now = time.time() - t0
             if now - last_pair >= 3.0:      # (re)send PAIR every 3 s across the discovery window
+                # T240: the reference capture shows Windows sends a CMD_STATUS (0x09) for this
+                # hand IMMEDIATELY before every PAIR, not just once at the start -- both the
+                # first attempt and the retry got their own 0x09 precursor. Match that exactly.
+                send(0x09)
                 send(0x05)
                 last_pair = now
-            send_rid(0x02, 0x08)             # PAIRING_STATUS on report 0x02, exactly as Oasis
-            send(0x08)                       # and on 0x16, belt and suspenders
-            st, fd = read_status(fd, 0.7)    # CONTROLLER_STATUS read
+            poll_02()                        # PAIRING_STATUS on report 0x02, as Output, as Oasis does
+            st, fd = read_status(fd, 0.7, log_debug=True)    # CONTROLLER_STATUS read + BT debug log
             if st.get(cid) in (0x1, 0x2):
                 print(f"\n  *** {NAME[cid]} is now {PKT[st[cid]]} at t+{now:.1f}s -- PAIRED FROM LINUX ***")
                 took = True

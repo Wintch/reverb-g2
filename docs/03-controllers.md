@@ -373,6 +373,53 @@ blind attempts. `scripts/controller-pair-btlog.py` reads the BT log to confirm t
 **Recovery**: the right controller is unpaired; one Oasis pass on Windows restores it (the user
 is dual-boot). The left stayed paired as the anchor throughout.
 
+**Tooling-wall lead (everyday-system/comms session, 2026-08-20, no capture file in hand --
+`20of8.pcapng` is not committed per the repo's own media-out policy and was not confirmed to
+exist as a saved file at all; this is pure protocol/tooling research for next session to test
+against the real capture, NOT a verified fix):**
+
+1. **Check whether the queried frames are Setup-stage Control-Submit URBs at all before
+   blaming tshark.** USBPcap's own capture header only carries the 8-byte USB Setup Packet
+   (bmRequestType/bRequest/wValue/wIndex/wLength) on the **Submit** stage of a **Control**-type
+   transfer; a Complete/status frame, or an Interrupt-endpoint frame (the streamed 0x17 status
+   reports ride the interrupt endpoint, not control), structurally has no setup fields to show
+   -- tshark returning empty for those is correct behavior, not a limitation. Before assuming a
+   tshark/USBPcap defect, isolate to Control-type frames only and see if *any* frame in the
+   whole capture ever populates `usb.setup.*`, e.g.:
+   `tshark -r 20of8.pcapng -Y "usb.transfer_type == 0x02" -T fields -e frame.number -e usb.irp_info.direction -e usb.setup.bRequest -e usb.setup.wValue -e usb.setup.wLength`
+   If the fields populate on other Control frames but not on the specific PAIR SET_REPORT
+   frame, that's a real, narrower anomaly worth its own note. If they're empty across the
+   *entire* capture, that points at a USBPcap-build/dissector-version gap (some older USBPcap
+   builds are known to not surface the parsed setup fields in Wireshark's tree, per scattered
+   Wireshark-bugzilla/USBPcap-issue reports -- not independently confirmed against this
+   specific build, flagging as a lead only) rather than anything about this transfer.
+2. **Manual raw-header parse, if (1) doesn't resolve it.** USBPcap's custom per-packet header
+   (`USBPCAP_BUFFER_INFO`, documented in the USBPcap project's own headers) places the raw
+   8-byte Setup Packet at a fixed offset ahead of the regular libpcap frame data specifically
+   for Control-Submit URBs -- a short Python `struct.unpack` against those offset bytes would
+   read bmRequestType/bRequest/wValue/wIndex/wLength directly, bypassing Wireshark's dissector
+   entirely (the exact offset/layout was not re-verified here against USBPcap's current header
+   source -- confirm against the installed USBPcap version's own docs/headers before coding
+   this, don't assume the offset from memory).
+3. **`usbmon` (already named as the fix in the table above) only solves HALF of this.** It
+   exposes setup bytes for anything captured *on this Linux box* (`/sys/kernel/debug/usb/usbmon`
+   prints the 8 setup bytes inline for every Control-Submit, e.g. `S Ci:1:001:00 -115 8 = 21 09
+   03 16 ...`) -- genuinely useful for confirming exactly what OUR `HIDIOCSFEATURE`/raw-control
+   send puts on the wire, immediately, no Windows needed. But it does **nothing** for reading
+   Windows/Oasis's reference bytes, since that side was only ever captured once, on Windows, via
+   USBPcap -- usbmon can't retroactively decode an existing Windows capture. Don't let "usbmon
+   fixes it" quietly become the plan without noticing it only unblocks verifying the Linux side,
+   not diffing against Windows' actual wLength (the open question in hypothesis 1 of the table
+   two sections up).
+4. **The report-type question (was this doc's original angle 2 candidate for the tooling gap)
+   is NOT open** -- worth stating explicitly so it isn't re-investigated: the table above already
+   confirms both the Feature-report (`HIDIOCSFEATURE`, wValue 0x0316) and Output-report (control
+   SET_REPORT, wValue 0x0216) variants were sent and reached the interface (`accepted=True`);
+   neither triggers the inquiry. So `HidD_SetFeature`/`HIDIOCSFEATURE` demonstrably DO produce a
+   bus-visible, device-accepted control transfer here -- the remaining gap is `wLength` and/or
+   the sustained-polling requirement (hypotheses 1 and 2 in the table above), not whether the
+   command reaches the bus at all.
+
 ### RESULT (T236): the simple framing does NOT pair — a real negative, and the honest record
 
 We tried it. The world-first attempt **failed**, and that is worth as much on file as a success
@@ -391,6 +438,174 @@ would have been. What actually happened, corrected against the excitement:
   **unvalidated RE guesses**, not a working command — the header comment "Messages we can send"
   is aspirational, and the fact that only `0x17` is ever actually sent by Monado is consistent
   with nobody having confirmed the rest.
+
+### T240 (2026-08-20, ~22:15-22:23): the real capture landed — tooling wall resolved, full handshake decoded, and Linux's remaining gap is narrower than thought
+
+The capture the tooling-wall lead above was written blind for is now in hand:
+`pairing_joys.pcapng` (1.5 GB, 266k packets, USBPcap on Windows 11 25H2, Wireshark 4.6.8), a
+fresh Oasis unlock run that re-paired BOTH controllers in one session (screenshots `pairing.png`
+/`pairing2.png` alongside it — the same "would you like to unpair it and pair a new Left motion
+controller now?" dialog from `docs/31`). `20of8.pcapng` from T236/T238 is also confirmed to
+exist on disk after all — the earlier "not confirmed to exist as a saved file" note was wrong,
+it was just never checked from Linux. Both live on the Windows partition (`debug_vr/`), not
+committed, per the repo's media-out policy.
+
+**The tooling wall is resolved, and it was a namespace, not a USBPcap defect.** Hypothesis 1 from
+the lead above was the right instinct (isolate to Control frames, check if setup fields populate
+*anywhere*) but the wrong target field: Wireshark's USB HID dissector exposes the Setup-stage
+fields under **`usbhid.setup.*`**, not `usb.setup.*` — `usbhid.setup.bRequest`,
+`usbhid.setup.wValue` (with sub-fields `usbhid.setup.ReportID`/`usbhid.setup.ReportType`),
+`usbhid.setup.wIndex`, `usbhid.setup.wLength`; the payload itself is `usbhid.data`
+(`usbhid.data.report_id` for the ID byte). `usb.setup.*` stays empty for every HID-class control
+transfer in this capture — not a build/dissector gap, just the wrong protocol prefix. Confirmed
+against `-T json` on a known frame before trusting it. This unblocks re-reading `20of8.pcapng`
+too, which was shelved under the same wrong assumption.
+
+**The full BT pairing state machine, decoded end to end, both hands, this session:**
+
+| t (s) | host → radio (report 0x16, Feature, confirmed exclusively — never Output) | radio-side log (report 0x05) |
+|---|---|---|
+| 182.1 | `16 09 00` (CMD_STATUS, hand=0) | routine status poll |
+| 254.4 | `16 06 00` (UNPAIR, hand=0 = LEFT) | `HIDH_COMMAND_VIRTUAL_UNPLUG`, `COMMAND_DELETE_NVRAM_DATA` "special case unbonding device" |
+| 255-276 | — | `BTM_PAIRED_DEVICE_LINK_KEYS_REQUEST_EVT` / `nvram_id is 0` repeating ~every 0.7-1.3s — the old-bond side still trying and failing to reconnect post-unbond |
+| 276.9 | `16 05 00` (PAIR, hand=0) | `COMMAND_SET_VISIBILITY`→`COMMAND_SET_PAIRING_MODE`("pairing allowed 1")→`COMMAND_INQUIRY`→`inquiry started`, all within 10ms of the PAIR write |
+| 283.3 | — | `inquiry complete`, **nothing found** — first attempt timed out, the controller wasn't in discovery yet |
+| 370.4 | `16 07 00` — **new subtype, not in `wmr_protocol.h`, meaning unknown** | (no distinct log line attributable) |
+| 373.9 | `16 09 00` | status check before retry |
+| 380.9 | `16 05 00` (PAIR retry, hand=0) | same 3-step radio sequence, `inquiry started` |
+| 382.1 | — | `Found by address: Motion Controller - Left`, RSSI -43 — **same physical BT address as before the unbond**, the controller keeps its factory address across erase/re-pair |
+| 387.3-389.2 | — | `inquiry complete`→SDP→PnP/HID service found, Product ID `0x066a`→pairing IO caps exchange→**new** BR/EDR link key generated→NVRAM write→encrypted→`CONNECTED`. **~8.3s from PAIR to CONNECTED**, matching T238's "~7s" estimate |
+| 395.5 | `16 09 01` (CMD_STATUS, hand=1) | status check for RIGHT |
+| 423.4 | `16 05 01` (PAIR, hand=1 = RIGHT) | same 3-step sequence, `inquiry started` |
+| 424.8 | — | `Found by address: Motion Controller - Right`, RSSI -53, own factory address, first try |
+| 429.8-431.6 | — | same SDP/HID/pairing-caps/new-link-key/NVRAM/encrypt/`CONNECTED` sequence, **no explicit UNPAIR was sent for the right hand** — it re-paired directly on top of whatever bond state it had, the headset just allocated a fresh `nvram_id` |
+
+**Confirms, corrects, and adds to the prior record:**
+
+- **Hand-encoding is CONFIRMED, not ambiguous**: id byte `00` = left (both attempts), `01` = right
+  — exactly the "0x06 left / 0x0E right"-style per-hand signal already inferred, now seen driving
+  PAIR itself. T236's single right-hand `16 05 01` and this session's two left-hand `16 05 00`
+  are consistent, not contradictory.
+- **Report type is settled**: every `0x16` send in this whole session used Feature (`wValue`
+  high byte `0x03`), zero as Output. T238's tooling-wall hypothesis (a) — that Windows might use
+  Output while Linux's `HIDIOCSFEATURE` sends Feature — is now directly falsified by the
+  reference capture: Windows uses Feature too, same as what Linux already sends.
+- **`wLength` is 64, matching Linux's send exactly** — hypothesis 1 from the tooling-wall lead
+  (shorter Windows `wLength`) is also falsified. Nothing left in the byte-level framing to blame.
+- **The `0x02` report is a separate polling/query channel, not the command channel**: 1263
+  sends of `02 08` (PAIRING_STATUS poll) over the session, plus rare `02 07`/`02 0b`/`02 06`/
+  `02 04` — same subtype vocabulary as `0x16`, but as an Output report queried continuously,
+  distinct from the Feature-report command path. Matches the "sustained polling" already
+  suspected in hypothesis 2 of the tooling-wall lead, now with real numbers instead of a guess.
+- **New, undocumented subtype `0x07`** sent once (`16 07 00`, t=370.4s) between the failed
+  first attempt and the successful retry, with no radio-log line clearly attributable to it —
+  candidate for "reset/cancel pairing mode before retrying", unconfirmed. Not in
+  `wmr_protocol.h`'s enum; add it there as unknown before the next attempt.
+- **The internal 3-step radio dance (`SET_VISIBILITY`→`SET_PAIRING_MODE`→`INQUIRY`) is driven
+  entirely by the single host `16 05` write** — all three appear within one 10ms window right
+  after it, with no other host command in between. This matches T238's own conclusion; nothing
+  new needed on the host side to get from PAIR to an inquiry *starting*.
+- **The re-enumeration hypothesis (device address 2→5, matching Oasis's "replug USB when asked"
+  step) is weakened, not strengthened**: that address change happened once, early (~t=164s),
+  a full two minutes before the first PAIR at t=276.9s — not freshly before each PAIR send. If a
+  fresh re-enum were load-bearing for the radio to accept the command, it would need to be
+  *immediately* before, which this capture doesn't show. Lower priority as the explanation for
+  Linux's silent `16 05`.
+- **BT addresses**: both controllers keep their factory Bluetooth address across an erase/
+  re-pair (unbond then re-discover finds the *same* address, not a new one) — direct confirmation
+  that "erase" only removes the *bond* (the link key), not the controller's own identity.
+  Consistent with `docs/63`'s existing model that pairing is real BT bonding. Addresses
+  themselves are treated like the serials in `docs/63` — deliberately not reproduced here.
+
+**What's still genuinely open**: T238's own attempt sent `16 05 01` with confirmed-correct
+bytes, Feature type, and wLength=64 — all three now triple-confirmed identical to what Windows
+sent in this capture — and still got no inquiry. So the gap is NOT in the SET_REPORT itself.
+Candidates worth checking next, in order: (1) the `02 08` sustained polling channel might be
+what actually arms/keeps-alive the pairing window on the radio side, not a passive status read —
+T238 tried "active polling" but its own reopen-path bug (fd churn on re-enum) may have prevented
+a clean sustained `02 08` from ever landing; (2) command ordering — Windows always issues a
+`16 09` (CMD_STATUS) status check shortly before each `16 05`, in both hands, both attempts;
+Linux's harness doesn't currently replicate that precursor; (3) the newly-found `16 07` deserves
+one deliberate probe on its own, non-destructively, the same way `0x08`/`0x04` were probed in
+T236. None of these need a fresh capture — they're testable offline against the existing
+`controller-pair.py`/`controller-pair-btlog.py` harness, then live with a controller in
+discovery.
+
+**Done offline, same session, zero hardware risk** (both controllers currently read
+`paired, offline` — verified with `controller-pair-check.py` before touching anything, so there
+was no free unpaired controller to test a real pairing against):
+
+- (2) is now wired into `--handshake`: it re-sends `16 09` (CMD_STATUS) immediately before every
+  periodic `16 05` (PAIR) resend, not just once at the start, matching the capture's own pattern
+  exactly (both the first attempt and the retry got their own precursor).
+- (3) got its probe: `controller-pair.py --probe 0x07` — sends `16 07` alone (no controller id,
+  same non-destructive shape as T236's original `0x08`/`0x04` probes) and watches report 0x05 for
+  8s. **Result: `accepted=True`, silence** — no BT-log reaction, same as the reference capture's
+  own `16 07 00` (T240's table above has no log line attributable to it either). Inconclusive but
+  consistent: whatever `0x07` does, it likely needs a controller actually in discovery to show
+  any effect, same constraint as `0x05` itself. Controllers confirmed still `paired, offline`
+  immediately after — the probe is genuinely inert on an idle radio, not just quiet-but-working.
+- (1) still needs a live attempt to test — sustained `02 08` polling can't be validated without
+  watching whether it actually keeps a discovery window open, which only shows up against a real
+  in-progress inquiry.
+
+**What's left needs the user's hands**: both controllers are currently bonded again (last
+night's Windows session paired both), so testing (1) for real means deliberately unbonding one
+via the physical button first — the same one-way-on-Linux, Windows-recoverable operation as
+every prior attempt. Not done without asking first.
+
+### T240, live test (same session): the cleanest negative yet, and the framing hypothesis space is now exhausted
+
+With the user holding the right controller's button, ran (1) for real, live, twice, right after
+fixing a real bug the first run exposed:
+
+- **First live run** (`--handshake right --now`) immediately spammed
+  `[radio re-enumerated]` on every loop iteration for the full 35 s and never paired. Root cause
+  found by re-reading the capture: the loop's `send_rid(0x02, 0x08)` was sending report `0x02` via
+  `HIDIOCSFEATURE` (Feature, `wValue` high byte `0x03`), but T240's own table above already showed
+  Windows sends report `0x02` as **Output** (`wValue` high byte `0x02`) — the wrong report type was
+  being rejected by the device on every single send, forcing a reopen every iteration and almost
+  certainly trampling any inquiry the radio might otherwise have started. Fixed: added
+  `write_output()` (plain `os.write()` — interface 2 has no OUT endpoint, so a raw write already
+  routes as a control SET_REPORT with the Output `wValue`, same mechanism T238 already documented
+  for report 0x16) and switched the `0x02` poll to it. Also wired the `16 09` CMD_STATUS precursor
+  into every periodic PAIR resend (previously sent once at the very start only), matching the
+  capture's own pattern exactly.
+- **Second live run**, corrected script: no more re-enumeration spam (confirms the fix), report
+  `0x02` now accepted as Output on every send — but still 35 s, no pairing.
+- **Third live run**, same corrected script, now also watching report `0x05` (the BT debug log
+  decoded in the table above) live via a new `read_status(..., log_debug=True)` path: **total
+  silence for the full 35 s**, controller confirmed pulsing (in discovery) the entire window. On
+  Windows the identical `16 05` write produces `COMMAND_SET_VISIBILITY`→`COMMAND_SET_PAIRING_MODE`
+  →`COMMAND_INQUIRY`→`inquiry started` within 10 ms. On Linux, nothing — not even a hint that the
+  radio's own firmware logging noticed the write at all.
+- **The interface-3/4 hypothesis is now closed too**, checked directly against the capture rather
+  than inferred: every HID control transfer in the *entire* 444 s session — the PAIR/UNPAIR/
+  CMD_STATUS Feature writes, the 1263 Output polls, even the routine `SET_IDLE` (0x0a) at
+  interface claim — targets `wIndex 2` and only `wIndex 2`. Interfaces 3 and 4 see zero
+  host-initiated traffic from Oasis, ever. So Windows isn't reaching the radio through some other
+  interface Linux can't touch; it uses the exact same one we do.
+
+**Net effect**: every variable at the USB-framing level — report ID, report type (Feature vs
+Output), interface/`wIndex`, `wLength`, byte payload, command ordering (CMD_STATUS-before-PAIR),
+sustained polling, and even the target interface itself — is now confirmed byte-for-byte identical
+between what Linux sends and what the reference Windows capture shows working. And the radio's own
+internal logging shows Linux's write produces literally no observable reaction, while Windows'
+identical-looking write produces one within 10 ms. That gap can no longer be explained by anything
+visible at the USB protocol layer captured here — it either isn't visible at this layer at all
+(session/driver-state on the host side, something in exactly how Windows' HID stack sequences the
+low-level transfer that a capture doesn't distinguish from ours), or something in the actual bytes
+that hit the wire from Linux silently differs from what was intended despite `HIDIOCSFEATURE`/
+`write()` reporting success. The right controller is unpaired; recover it with one Oasis pass on
+Windows (dual-boot) when convenient — not urgent, but don't leave it that way indefinitely.
+
+**Next step, scoped, no controller/discovery needed**: `usbmon` was reached for but blocked on
+interactive sudo this session (`/sys/kernel/debug/usb/usbmon` needs root). Capturing our own
+`send_feature`/`write_output` calls with `usbmon` and diffing them byte-for-byte against the
+equivalent Windows frames in `pairing_joys.pcapng` would settle whether the Linux kernel's HID
+subsystem is silently altering anything between the ioctl/write call and the actual wire bytes —
+the one link in the chain not yet independently verified. Needs `sudo usermod -aG your-user
+<usbmon-group>` or a one-off `sudo cat`, decided with the user next session, not attempted blind.
 
 **What this means**: Linux pairing is still unclaimed, and the real handshake is NOT the
 one-byte subtype. Concrete next step, and it is scoped: **capture Oasis's actual pairing packets
