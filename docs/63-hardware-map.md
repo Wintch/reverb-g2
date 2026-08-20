@@ -13,6 +13,30 @@ Confidence is stated per row and means exactly this:
 - **inferred** — a strong chain of reasoning from something confirmed, but never seen directly.
 - **unknown** — nobody here has identified it. Not "probably X". Unknown.
 
+## Identifiers on the physical labels
+
+Read off this unit by the user, 2026-08-19 (T232). **Model and regulatory numbers only —
+serial numbers never go in this repo**, and none are needed here: what makes these useful is
+that they identify a *model*, which is exactly what a spare-parts search or a second owner needs.
+
+| Identifier | What it is |
+|---|---|
+| **`TPC-Q077-VH`** | HP **regulatory model** for the headset. `TPC-Q077` covers the whole G2 family and the suffix names the component — `-VH` the headset, **`-C1` a controller** (seen on spares listings alongside HP part number **`M09967-001`**, the right controller) |
+| **`VR3000-0XX`** | HP **product/model number of the base Reverb G2**. `0XX` is a wildcard for regional variants |
+| `HFS-A85Q` | FCC ID of the G2 (grantee Quanta, 2020-06-05) |
+| `HFS-A85R` | FCC ID of the **Omnicept**, a separate SKU (e.g. `3A7X9AA#ABA`) |
+
+> **Correction this produced (T232).** Three files in this repo — `docs/10`, `docs/12`,
+> `docs/04` — stated that `VR3000-0XX` was the **Omnicept's** SKU and matched filing `HFS-A85R`.
+> It is the **base G2's own number**, now read directly off a plain G2's label. The repo already
+> contained the disproof and nobody had reconciled it: `docs/31` records the live readout
+> `Found headset: HP Inc. VR3000-0XX (HP Reverb Virtual Reality Headset G2)`. Fixed in all three.
+> The FCC split itself — `A85Q` = G2, `A85R` = Omnicept — stands.
+
+**Why model numbers earn their place in a repo about recycling hardware**: `TPC-Q077-C1` +
+`M09967-001` is how you find a replacement controller for a discontinued headset. The equivalent
+numbers for the cable and the PSU are exactly the ones still missing below.
+
 ## Headset — video chain
 
 | Subsystem | Part | How we know | Confidence |
@@ -94,6 +118,25 @@ Ordered by what it would actually unlock, not by how easy it is:
    part is the difference between "there is a JTAG header" and actually talking to it.
 6. **ANX7688's role.** A USB-C/DP-alt-mode bridge inside a headset fed by plain DP does not
    obviously make sense; something about the link topology is not understood.
+
+## Labels still to read, and where they are
+
+The identifiers above came off one label. These are the rest, in the order they would be useful —
+all of them are **model/part numbers, not serials**:
+
+1. **The cable's own label.** This is the big one: it would settle **which revision this unit
+   has**, v1 or rev2A, which the whole `docs/22` saga has been arguing about without ever
+   checking a part number. (For scale of the confusion: `L56522-002` appears in this repo as the
+   *USB-C adapter*, not the cable.)
+2. **Any marking on the inline box** on that cable — the box holding the DP repeater nobody has
+   identified. Even a bare number would close gap #1 of the list above.
+3. **Both controllers**: `TPC-Q077-C?` and their `M#####-001` part numbers. One of them is the
+   pair whose LED brightness is under investigation (T229/T230), and knowing left vs right part
+   numbers would say whether the two hands are even the same assembly.
+4. **The headset label's remaining fields**: the HP **SPS / spare part number** (`M#####-001`
+   form) if present, the **IC** number next to the FCC ID, and the **date code** — a manufacture
+   date bounds which cable revision shipped with it.
+5. **The 12 V PSU**: model and output rating printed on the brick.
 
 **How to help:** clear photographs of board silkscreen at legible resolution — the FCC scans are
 too coarse by roughly a factor of three. The G2 opens; the cable box opens. Anything readable

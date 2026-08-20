@@ -271,7 +271,14 @@ today.
 
 ### The Omnicept: the same headset inside, with an extra sensor
 
-The **HP Omnicept** (SKU `VR3000-0XX`, FCC filing `HFS-A85R`) is a G2 with eye-tracking
+> **CORRECTED 2026-08-19 (T232): `VR3000-0XX` is NOT the Omnicept's SKU — it is the base
+> Reverb G2's own model number**, read off the physical label of this project's plain G2 by
+> the user, with `0XX` a wildcard for regional variants. The repo contradicted itself here:
+> `docs/31` records the live readout `Found headset: HP Inc. VR3000-0XX (HP Reverb Virtual
+> Reality Headset G2)` and nobody reconciled it with this line. The Omnicept is a separate
+> SKU (e.g. `3A7X9AA#ABA`). The FCC split — `HFS-A85Q` = G2, `HFS-A85R` = Omnicept — stands.
+
+The **HP Omnicept** (FCC filing `HFS-A85R`) is a G2 with eye-tracking
 by Tobii added. Same bridge, same panels, same WMR protocol — Monado already recognizes its
 USB PID (`0x0680`) and maps it to the same `WMR_HEADSET_REVERB_G2` we use (verified in
 `origin/main`, `wmr_prober.c`). **Whatever we learn here about 90 Hz should apply to it

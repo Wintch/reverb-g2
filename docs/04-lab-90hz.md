@@ -836,7 +836,7 @@ about anything. And the panel still doesn't turn on.
 |---|---|---|
 | HFS-A85P | 2019-03-21 | Reverb G1 |
 | **HFS-A85Q** | 2020-06-05 | **hypothesis: base G2** |
-| HFS-A85R | 2020-09-30 | G2 Omnicept (SKU HP **VR3000-0XX**) |
+| HFS-A85R | 2020-09-30 | G2 Omnicept (its own SKU, e.g. `3A7X9AA`; **not** `VR3000-0XX`, which is the base G2 — corrected T232, see docs/63) |
 | HFS-A85KL / -A85KR | 2020-08 | left/right controllers |
 
 The **internal PCB photos** for A85Q and A85R have been located

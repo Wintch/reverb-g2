@@ -253,7 +253,7 @@ carries a header with manufacturer, device, serial, UID and revision, plus a JSO
 
 ```
 Manufacturer: HP Inc.
-Device:       VR3000-0XX          <- matches the SKU from FCC filing HFS-A85R
+Device:       VR3000-0XX          <- the base G2's own model number (NOT the Omnicept; see docs/63)
 Serial:       REDACTED
 UID:          {EE4482CE-AFE7-5844-820A-73F26905A52F}
 Revision:     RevB.N.J   (2020-10-30)
