@@ -121,6 +121,29 @@
 > produces the first honest Linux-vs-Windows number this project has ever had, on one headset and
 > one machine.
 >
+> **LED INTENSITY — FIRST MEASUREMENT IN, AND IT DOES NOT CONFIRM THE OBSERVATION (T229).**
+> The under-exposed two-ring photograph says the controllers agree within its own ±20%
+> uncertainty: flux right/left = 1.06× (all LEDs), 0.88× (uncompressed only), 1.23× (range
+> corrected), area 1.01×. **The three estimators disagreeing IS the result.** Cause, measured:
+> ring radii 111.4 vs 103.2 px, so the right ring is 8% further = **16% of brightness by inverse
+> square, a systematic larger than the 6% signal**, and its radius scatter (sd 19.1 vs 11.0) says
+> it is more tilted too. Clipping check: 279 px at 255, **essentially all in BLUE** (IR leaks
+> through the Bayer filter and saturates blue first), green clean at max 254 — but 8/14 LEDs per
+> ring still exceed 240, so **one more stop down** is needed. Verdict stated narrowly: **no large
+> difference (nothing like 1.5×) exists under these conditions; below ~20-25% is neither
+> confirmed nor excluded.** The Windows impression is *not reproduced*, which is weaker than
+> refuted — different session, different charge state, and the eye adapts. Clean by-products:
+> **14 LEDs per ring, symmetric, no dead LEDs**, and the spread *within* a ring (peaks 102-254)
+> dwarfs the difference *between* rings, so per-LED comparisons are meaningless.
+>
+> **THE TWO SWAPS THAT DECIDE, a minute each**: (1) reshoot with the controllers' **positions
+> swapped** — cancels range, angle, vignetting and lens falloff at once; brighter ring follows
+> the *controller* = real, follows the *position* = geometry. (2) then swap the **battery packs**
+> — follows the batteries = supply, and no effective regulator; stays with the controller = the
+> unit. `scripts/led-ring-photometry.py <photo>` does the analysis in one command: picks the
+> least-clipped channel, linearises sRGB before integrating, prints the ring radii, and **refuses
+> to give a verdict when the geometry systematic exceeds the signal**.
+>
 > **LED INTENSITY — instrument built 2026-08-19 late (patch monado 0091), ready to run.** The
 > wearer reports one controller visibly brighter than the other **on the same batteries**, and
 > docs/46 already ties over-bright LEDs to ghost solves. First fact, from the code rather than a
