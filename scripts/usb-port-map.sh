@@ -134,9 +134,23 @@ cmd_qualify() {
     # interchangeable and "3/5" hides WHICH three, which is the entire diagnosis. Each line says
     # what that device is for, so a missing one reads as a lost capability and not as a number.
     local n port ctl pci desc
-    n=$(g2_census)
+    # SAMPLED, not sampled once. This link drops its USB2 branch by itself several times a
+    # minute (T226: 3.47/min on Windows, 0.92-4.63 on Linux, ~3 s each), so a single census
+    # cannot tell a bad socket from an ordinary dropout -- it would condemn a good socket
+    # roughly one reading in twenty. Watching for CENSUS_SAMPLE_S seconds and reporting the
+    # BEST census seen separates them: a transient recovers inside ~3 s, a bad socket never does.
+    local best=0 seen="" t_end
+    t_end=$(( $(date +%s) + ${CENSUS_SAMPLE_S:-20} ))
+    while [ "$(date +%s)" -lt "$t_end" ]; do
+        n=$(g2_census)
+        seen="$seen$n"
+        [ "$n" -gt "$best" ] && best="$n"
+        [ "$best" = 5 ] && break
+        sleep 2
+    done
+    n="$best"
     port=$(g2_port)
-    echo "1. USB census: $n/5"
+    echo "1. USB census: $n/5   (best of ${#seen} samples over ${CENSUS_SAMPLE_S:-20}s: $seen)"
     for spec in "04b4:6504|SuperSpeed hub|the USB3 side of the cable's active hub" \
                 "045e:0659|HoloLens Sensors|cameras, IMU and the controller tunnel -- ALL tracking" \
                 "04b4:6506|USB2 hub|the USB2 side of the same hub" \
@@ -197,7 +211,15 @@ cmd_qualify() {
         journalctl -k --since "$since" 2>/dev/null | grep -iE "usb ?[0-9]|xhci" | sed 's/SerialNumber: .*/SerialNumber: <redacted>/' | tail -20 | sed 's/^/     /'
         if [ "$ss" = yes ] && [ "$usb2" = no ]; then
             if [ "$pci" = "$(controller_of "usb${port%%-*}" | cut -d'|' -f1)" ]; then hint=usb_action_wrong_socket; fi
-            verdict="BAD SOCKET ($n/5): SuperSpeed came up, the USB2 branch never did -- no companion, so no panel, no activation, no audio, no IPD, no presence. If the controller above is the CHIPSET xHCI, move to a CPU-controller socket ('$0 map'). If it is already the CPU one, the socket is fine and the cable/connector is next (docs/22)."
+            # MEASURED 2026-08-20 and it corrected the previous wording: a socket on the GOOD
+            # controller failed exactly like a chipset one (4-1 dead, 4-2 fine, same controller,
+            # same cable, minutes apart, 2/5 sustained for a full minute). So the controller is
+            # not the discriminator -- the PHYSICAL SOCKET is. A USB3 socket carries its USB2
+            # pair on separate conductors from the SuperSpeed lanes, which is exactly how one
+            # socket can pass SuperSpeed and never bring up USB2. Telling the user "the socket is
+            # fine, blame the cable" because the controller looked right would have sent them to
+            # buy hardware.
+            verdict="BAD SOCKET ($n/5): SuperSpeed came up, the USB2 branch never did -- no companion, so no panel, no activation, no audio, no IPD, no presence. TRY ANOTHER SOCKET, including others on this same controller: sockets are not interchangeable even within one controller (measured). Only after several sockets fail the same way does the cable become the suspect (docs/22)."
             hint=usb_action_wrong_socket
         elif [ "$usb2" = yes ] && [ "$ss" = no ]; then
             hint=usb_action_usb2_only

@@ -128,12 +128,32 @@ no display, no audio, no IPD and no proximity: the headset is *present* and comp
 ambiguous: T184 produced 2/5 on a *good* socket from a cable-orientation fault. The controller
 resolves it:
 
-| census | controller | reading |
-|---|---|---|
-| 5/5 | either | socket is fine |
-| **2/5** | **chipset xHCI** | **wrong socket — move to a CPU-controller one** |
-| 2/5 | CPU xHCI | socket is fine; now suspect the cable/connector (`docs/22`'s ladder) |
-| 0/5 | either | nothing enumerates: power, cable seating, or a dead port |
+| census | reading |
+|---|---|
+| 5/5 | socket is fine |
+| **2/5 sustained** | **bad socket — try another, including others on the same controller** |
+| 2/5 that recovers within a few seconds | not the socket: that is the ordinary USB2 storm (T226), keep watching |
+| 4/5, SuperSpeed missing | a black USB2 socket: panel can work, tracking cannot |
+| 0/5 | nothing enumerates: power, cable seating, or a dead port |
+
+> **CORRECTED 2026-08-20 (T233).** This table used to key on the *controller*: 2/5 on the chipset
+> meant "wrong socket", 2/5 on the CPU controller meant "the socket is fine, suspect the cable".
+> **That is wrong, and the user found it by plugging into a different good-controller socket.**
+> `4-1` on the CPU controller `09:00.3` gives a sustained 2/5 — a full minute with no recovery —
+> while `4-2` on the *same controller*, same cable, minutes either side, gives 5/5.
+>
+> **The discriminator is the physical socket, not the controller.** The mechanism fits: a USB3
+> socket carries its USB2 pair on conductors entirely separate from the SuperSpeed lanes, so one
+> socket can pass SuperSpeed perfectly and never bring up USB2. That is the observed signature in
+> *both* bad sockets found so far, on both controllers.
+>
+> The old rule would have told someone on a good controller that their socket was fine and the
+> cable was to blame — i.e. **sent them to buy hardware to fix a socket problem**.
+>
+> **Also added, and it is a methodological hole this table had from the start**: the census is now
+> *sampled over 20 s* rather than read once. This link drops its USB2 branch by itself several
+> times a minute for ~3 s at a time, so a single reading would condemn a good socket roughly one
+> time in twenty. A transient recovers; a bad socket never does.
 
 ### The USB2-only socket, and the result that closes the activation question (T231)
 
