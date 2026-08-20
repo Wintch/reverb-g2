@@ -535,9 +535,15 @@ discovery.
 `paired, offline` — verified with `controller-pair-check.py` before touching anything, so there
 was no free unpaired controller to test a real pairing against):
 
-- (2) is now wired into `--handshake`: it re-sends `16 09` (CMD_STATUS) immediately before every
-  periodic `16 05` (PAIR) resend, not just once at the start, matching the capture's own pattern
-  exactly (both the first attempt and the retry got their own precursor).
+- (2) is now wired into `--handshake`: it re-sends `16 09` (CMD_STATUS) before every periodic
+  `16 05` (PAIR) resend, not just once at the start. **Correction, caught 2026-08-20 late**: the
+  original writeup said this "matches the capture's own pattern exactly" -- it doesn't. Re-checked
+  the actual gaps: `16 09` at t=373.9s → `16 05` at t=380.9s is a **7s** gap, and `16 09` at
+  t=395.5s → `16 05` at t=423.4s is **28s**. Not a tight precursor at all -- CMD_STATUS and PAIR
+  are loosely interspersed, almost certainly each tied to separate Oasis UI events (a dialog
+  opening, a button click), not a fixed short-interval command sequence. Harmless to keep sending
+  it (an extra status query costs nothing), but it is NOT a validated match to Windows' timing,
+  and should not be read as one when judging why the live retest still failed.
 - (3) got its probe: `controller-pair.py --probe 0x07` — sends `16 07` alone (no controller id,
   same non-destructive shape as T236's original `0x08`/`0x04` probes) and watches report 0x05 for
   8s. **Result: `accepted=True`, silence** — no BT-log reaction, same as the reference capture's
@@ -665,14 +671,32 @@ fire again before each attempt, the way `16 09` (CMD_STATUS) does on the sensors
 doesn't fire at all after the first two minutes of the session. This closes the "other devices"
 angle for tonight -- nothing found there correlates with pairing.
 
+**Two more checks, closing out the night for real:**
+
+- **Polling density is NOT what makes it work.** The `02 08` sends look dense in aggregate (2124
+  of 2147 have <5ms gaps) but that density is a one-time startup burst at t≈143-182s, unrelated to
+  pairing -- the actual windows around all three PAIR attempts are sparse (5 sends across the
+  entire 380-390s successful-pairing window, tens/hundreds of ms apart). A tight real-time polling
+  loop is not the missing ingredient.
+- **No vendor channel exists anywhere.** Re-swept every control transfer to this device across the
+  whole session with NO class filter (not just HID) -- standard requests (`GET_DESCRIPTOR` etc,
+  262x) and the same HID class requests already catalogued, nothing else, on no other interface.
+  The earlier "only interface 2" conclusion was checked again from a wider angle and holds.
+- **The "Windows Settings → Bluetooth → Add device" path is not a missed lead** -- `docs/31`
+  already researched and dismissed it (T235): it pairs to the *PC's own* radio, not the headset's,
+  unvalidated for the G2, and the Oasis wiki (the actual reference for radio-equipped WMR
+  headsets) never uses it. No third mechanism was overlooked.
+
 **Honest state at close of T240**: every USB-visible avenue is now checked -- byte framing, wire
-bytes (usbmon), report type, interface, ordering, sustained polling, and the other USB devices in
-the composite headset. None of it explains the gap. What's left is either something below the USB
-layer entirely (BT radio-internal state on the WICED chip, invisible to any capture taken at the
-USB level) or something in exactly how Windows' HID class driver sequences a transfer that neither
-USBPcap nor usbmon distinguishes from what Linux already sends identically. This is a good, honest
-stopping point for the capture-mining thread -- it has been thoroughly exhausted, not abandoned
-early.
+bytes (usbmon), report type, interface, ordering, sustained polling (including its real density),
+every other USB device and every other request type in the composite headset, and the one
+alternative pairing path the project's own docs mention. None of it explains the gap. What's left
+is either something below the USB layer entirely (BT radio-internal state on the WICED chip,
+invisible to any capture taken at the USB level) or something in exactly how Windows' HID class
+driver sequences a transfer that neither USBPcap nor usbmon distinguishes from what Linux already
+sends identically. This is a good, honest stopping point for the capture-mining thread -- it has
+been thoroughly exhausted, not abandoned early. There is currently no untried, concrete technical
+lever left to pull with the data on hand.
 
 **What this means**: Linux pairing is still unclaimed, and the real handshake is NOT the
 one-byte subtype. Concrete next step, and it is scoped: **capture Oasis's actual pairing packets
