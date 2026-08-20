@@ -233,6 +233,24 @@
 >    (`patches/basalt/0012`). Unblocks per-title pinning and any "which stage is starving"
 >    question. **Test: `ps -L -p $(pgrep -x monado-service)` on a live session.**
 >
+> **NAMED LEVER (T235, agent research): implement pairing in Monado — the command already
+> exists.** `wmr_protocol.h` defines `WMR_BT_CONTROL_MSG_PAIR = 0x05` / `UNPAIR = 0x06` on the
+> `0x16` report, reverse-engineered and **never sent by any code path** (the only sender is the
+> status query, `wmr_hmd.c:2445`). Nobody anywhere has ever paired WMR controllers from Linux —
+> Monado gitlab, OpenHMD, forums all swept clean. A small patch (send PAIR, poll
+> `PAIRING_STATUS 0x08`/`CMD_STATUS 0x09`, reuse `controller-pair-check.py`'s decode) would kill
+> the **last Windows dependency** and make the battery-compartment button no longer one-way.
+> Test protocol when attempted: ONE controller, pair-check before/after, **a Windows machine
+> available as recovery** — the wire format is documented but untested by anyone. Detail in
+> `docs/03`.
+>
+> **LED lead from the community record** (vrone.co.uk, via the user): an "invisible" controller
+> **with visibly dim LEDs** is associated with a corrupted **host-side calibration cache**
+> (`MotionController\Calibration`, deletable, rebuilds on reconnect). Windows caches controller
+> calibration host-side; Monado does too (`cache_filename`, `wmr_controller_base.c`). Background
+> for the T230 asymmetry — a lead, not an explanation; cheap Windows-side check during the
+> capture session.
+>
 > **QUEUED, user-requested (2026-08-19, T227): the battery readout may have been lying for
 > months.** On Windows, with `using_1v2_batteries` **validated at 1.2 V**, the same cells showed
 > **90%+** — against the standing impression that the readout "always reads low, even with
