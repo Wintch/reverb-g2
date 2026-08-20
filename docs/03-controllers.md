@@ -159,6 +159,40 @@ ability to *verify* the state before/after, which is what the checker below does
 hidden button is ever tested, running the checker before and after should show the
 `UNPAIRED → OFFLINE/ONLINE` transition without needing any other software.
 
+### Addendum 2026-08-20 (T234): the operational record disagrees — treat the button as ONE-WAY until tested with a safety net
+
+The conclusion above — *"purely physical and OS-independent, no host tool needed"* — came from
+string/import analysis of `unlock_wmr.exe` and **was never hardware-tested** (the section itself
+says so: *"if the hidden button is ever tested…"*). The user's operational record, stated
+2026-08-20, points the other way: **controller pairing is one of the two things Oasis actually
+provides** (the other being a relaunch to reassign the USB port), **Linux has no pairing path at
+all**, and the physical button **erases** the assignment.
+
+What each side of the record actually establishes:
+
+- **Agreed by both**: the battery-compartment button ERASES the pairing. That part is not in
+  dispute, and it is the dangerous half.
+- **The 2026-08-06 analysis** proved only that `unlock_wmr.exe` sends no pair command — it did
+  *not* analyze Oasis's own pairing flow (`docs/31` shot 3 captures Oasis driving an
+  unpair/re-pair dialog: *"would you like to unpair it and pair a new Left motion controller
+  now?"*), and a wait-UI in one binary does not prove no host trigger exists in another.
+- **This repo's own Windows checklist** (`docs/31`, fresh-machine step 4) pairs controllers via
+  *Windows Settings → Bluetooth → Add device* with the button held — a third host-side path. So
+  the record already contains **two Windows-side pairing flows and zero Linux ones**.
+
+**Operational rule until this is settled: on a Linux-only bench, the pairing button is ONE-WAY.
+Do not press it unless a Windows machine with Oasis is available to re-pair.** If the
+OS-independent hypothesis is ever tested, do it deliberately: `controller-pair-check.py` before
+and after, ONE controller only, Windows ready as recovery. If the hypothesis holds
+(`UNPAIRED → ONLINE` with no host involved), Linux loses its last controller dependency; if it
+fails, you have lost nothing you could not restore.
+
+**Why this matters beyond caution**: spare controllers exist and are cheap
+(`TPC-Q077-C1`/`M09967-001` right, `-C2`/`-002` left — `docs/63`), and a second-hand spare
+arrives paired to *someone else's headset* or to nothing. Today, adopting one **requires a
+Windows session**. That is the last named Windows dependency in this project. If it ever needs
+killing, the RE target is Oasis's pairing flow, same method as `docs/09`.
+
 ### Pairing checker
 
 ```bash

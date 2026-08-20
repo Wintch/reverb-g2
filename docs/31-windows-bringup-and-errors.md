@@ -475,6 +475,19 @@ has nothing to do with the marginal contact.
 Note that this is specifically about the *unlock tool*, not about running the headset: this
 cable has driven the G2 at 90 Hz for hours on Windows and on Linux. **[lab]**
 
+## What Oasis actually needs, per the user's operational record (2026-08-20)
+
+Two things, and only two — worth stating exactly because the Linux side had inflated the first
+into "per-port provisioning":
+
+1. **Moving the headset to a different USB port**: relaunch Oasis so it reassigns itself to the
+   new port. That is the whole "per-port activation" — an app restart, not a provisioning
+   ceremony. (The PnP ghost-device behaviour of T185 is Windows bookkeeping underneath it.)
+2. **Controller pairing** ("vinculación"): the flow lives in Oasis (and/or the Windows Bluetooth
+   settings path in the checklist below). **Linux has no equivalent** — see `docs/03`'s pairing
+   addendum, including why the battery-compartment button must be treated as one-way on a
+   Linux-only bench.
+
 ## Bring-up checklist for a fresh Windows machine
 
 1. Windows 11 24H2 or newer, current GPU drivers, SteamVR installed.
