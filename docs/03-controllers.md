@@ -678,10 +678,28 @@ angle for tonight -- nothing found there correlates with pairing.
   pairing -- the actual windows around all three PAIR attempts are sparse (5 sends across the
   entire 380-390s successful-pairing window, tens/hundreds of ms apart). A tight real-time polling
   loop is not the missing ingredient.
-- **No vendor channel exists anywhere.** Re-swept every control transfer to this device across the
-  whole session with NO class filter (not just HID) -- standard requests (`GET_DESCRIPTOR` etc,
-  262x) and the same HID class requests already catalogued, nothing else, on no other interface.
-  The earlier "only interface 2" conclusion was checked again from a wider angle and holds.
+- **Correction, caught 2026-08-20 later the same night: a vendor channel DOES exist -- the "no
+  vendor channel anywhere" line above was wrong as stated.** It was only checked for CONTROL-type
+  (`usb.transfer_type==0x02`) HID-class transfers; a full sweep across every transfer type found
+  substantial traffic on a genuine vendor-specific interface (`bInterfaceClass 0xff`, endpoints
+  `0x81`/`0x82`/`0x84`/`0x85`) -- 189k isochronous IN packets on `0x84` alone, tens of thousands
+  more on `0x82`/`0x85`, all on this same device. Traced to a real driver: the OS has a SEPARATE,
+  distinct driver package installed for `USB\VID_045E&PID_0659&MI_03` -- `HololensSensorsWinUsb`
+  (`hololenssensorswinusb.inf`, `[Microsoft.Section.NTamd64] %HsWinUsb% = HsWinUsb,
+  USB\VID_045E&PID_0659&MI_03`), a WinUSB binding on interface **3**, entirely separate from
+  interface 2's HID class driver that carries every command this whole investigation has been
+  based on. This is a real, previously-missed structural fact, not a dead end to wave away without
+  checking.
+  **But checked, and it doesn't explain the pairing gap**: every one of those packets is
+  CONTROL-type-absent -- only 2 standard (non-vendor, non-command) `GET_DESCRIPTOR` frames on this
+  interface class in the whole session, zero vendor-class SET_REPORT-equivalent commands anywhere.
+  The traffic rate is flat and unaffected by any pairing event -- sampled in 5s windows straddling
+  the successful `t=380.9s` PAIR (`375-380s`: 902 packets, `380-385s`: 902, `385-390s`: 860,
+  `390-395s`: 902) -- textbook fixed-rate sensor telemetry (almost certainly the IMU/camera
+  stream, structurally distinct from the "sensors" HID collections `col01/02/03` discussed above),
+  not a hidden command path. The corrected, fuller picture: interface 3 is real, used, and
+  irrelevant to pairing specifically. Interface 2's HID `SET_REPORT` remains the only place any
+  BT_CONTROL-shaped command was ever seen, on either OS.
 - **The "Windows Settings → Bluetooth → Add device" path is not a missed lead** -- `docs/31`
   already researched and dismissed it (T235): it pairs to the *PC's own* radio, not the headset's,
   unvalidated for the G2, and the Oasis wiki (the actual reference for radio-equipped WMR
@@ -695,8 +713,61 @@ is either something below the USB layer entirely (BT radio-internal state on the
 invisible to any capture taken at the USB level) or something in exactly how Windows' HID class
 driver sequences a transfer that neither USBPcap nor usbmon distinguishes from what Linux already
 sends identically. This is a good, honest stopping point for the capture-mining thread -- it has
-been thoroughly exhausted, not abandoned early. There is currently no untried, concrete technical
-lever left to pull with the data on hand.
+been thoroughly exhausted, not abandoned early. **This conclusion is superseded by T241 below --
+there is now a real, untried lever.**
+
+### T241 (2026-08-20, later the same night): a real driver stack was hiding in plain sight -- MotionControllerHid.dll / MotionControllerSystem.dll, never before examined
+
+Prompted by the user recalling a separate MS Store app and a `docs/37` reference to a controller
+driver "not yet obtained or examined by this project." That reference (`MotionController0669...`)
+turned out to not even be necessary -- **the real thing was already sitting in this machine's own
+`hololenssensors.inf` DriverStore package**, the exact same one `docs/09` already used for
+`HoloLensSensors.dll`, right next to it, never opened:
+
+- `MotionControllerHid.dll` (745 KB) and `MotionControllerSystem.dll` (1.3 MB) --
+  `C:\Windows\System32\DriverStore\FileRepository\hololenssensors.inf_amd64_.../`.
+- Both are the **real Microsoft WMR motion-controller driver stack**, internal codename
+  **"CrystalKey"** (source paths embedded in the strings: `analog\oasis\crystalkey\hid\*.cpp`,
+  `analog\input\controller\crystalkey\lib\*.cpp`). This is NOT Oasis's own code -- Oasis
+  (`driver_oasis.dll`, `unlock_wmr.exe`) is the community/Valve layer on top; CrystalKey is
+  Microsoft's own driver underneath it, present on every WMR-capable Windows box, and nobody in
+  this project's whole pairing investigation (T235-T240) had opened it until now.
+- **`MotionControllerHid.dll` contains an entire pairing state machine in its debug strings**:
+  `bth_onPairingButtonPressed`, `bth_pairingProcessSendEnterPairingMode`,
+  `bth_pairingProcessSendExitPairingMode`, `BTH_SendPairingButtonPressed`, `Enabling Pairing`,
+  `Exiting Pairing`, `pairingProcess.state: %d`, `PAIRING_COMPLETE`, `Could not finalize
+  handshake`, `Bth task tried to start HID traffic before paired!`, `HCI_CONTROL_HIDD_EVENT_OPENED
+  unexpected, pContext->bPaired is FALSE`. This is the first direct evidence, anywhere in this
+  project's research, of an explicit ENTER/EXIT pairing-mode step and a real gated "paired" flag
+  that blocks HID traffic until set -- exactly the shape of thing that would explain tonight's
+  clean negative (accepted write, silent firmware): **if entering pairing mode is a distinct
+  command/step from PAIR (`16 05`) itself, sending only `16 05` -- everything this project has
+  tried since T236 -- would be sending the second half of a two-step sequence without the first.**
+- `MotionControllerSystem.dll` exports the higher-level API: `CrystalKeySendCommand`,
+  `CrystalKeyWriteCommand`, `CrystalKeyReadCommand`, `CrystalKeySetLedPulseTrain` (very likely the
+  actual LED slow-pulse-in-discovery command), `CrystalKeyGetBluetoothAddress`,
+  `CrystalKeyInitializeDevice`, `CrystalKeyKeepAlive`, `CrystalKeySetToIdle`,
+  `CrystalKeyOpenDevice`/`CrystalKeyCloseDevice`. A real, previously-unknown command API surface,
+  distinct from and richer than the bare `wmr_protocol.h` enum this whole project has been working
+  from.
+- **Static disassembly hit a real wall tonight, not a dead end**: `objdump -d` on
+  `MotionControllerHid.dll`, cross-referenced with `scripts/xref.py` against the pairing strings,
+  found **zero direct code references** to any of them -- consistent with WPP-style software
+  tracing (format strings compiled out of the normal code path, only resolvable with a matching
+  PDB/TMF this project doesn't have). The exported `CrystalKeySendCommand` function WAS located
+  (export ordinal 25, `objdump -x` -> RVA `0xdfe0`) and disassembled directly: it's a thin
+  telemetry-wrapped shim that calls into unnamed internal functions (`0x180008924`,
+  `0x180020818`) -- real logic, but raw `objdump` gives no symbol names past the export table, so
+  tracing further needs a real decompiler (Ghidra), not more manual `objdump`/`strings` grinding.
+
+**NEXT STEP, offline, no headset needed, and this is now the actual concrete lever**: load
+`MotionControllerHid.dll` and `MotionControllerSystem.dll` into Ghidra (or equivalent), trace
+`CrystalKeySendCommand`/`CrystalKeyWriteCommand` down to wherever they actually touch the USB
+device (`HidD_SetFeature`/`DeviceIoControl`/whatever it turns out to be), and specifically locate
+the `bth_pairingProcessSendEnterPairingMode` code path to recover the actual command it sends --
+almost certainly a SEPARATE report/subtype from `WMR_BT_CONTROL_MSG_PAIR = 0x05`, sent BEFORE it.
+If found, replicate that exact "enter pairing mode" command from Linux before firing `16 05`, and
+this whole investigation's dead end may not be one.
 
 **What this means**: Linux pairing is still unclaimed, and the real handshake is NOT the
 one-byte subtype. Concrete next step, and it is scoped: **capture Oasis's actual pairing packets
