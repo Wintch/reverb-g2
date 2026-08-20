@@ -1025,3 +1025,17 @@ get *worse* on rev2 — but it moves the swap from "the community says try it" t
 replaced this specific revision, for free, citing the subsystem we measured failing"**.
 
 *(Sources are forum and reseller accounts, not HP technical documentation; treated as such.)*
+
+### T186's cold replug, first test from a NEVER-good state: does not rescue (2026-08-20, T234)
+
+The open question this document flagged — *"whether the PC-end reconnect trick also rescues a bad
+orientation or a bad port (only tested from an already-good starting condition)"* — has its first
+datum. Socket `4-1` (CPU controller, never yet 5/5): PC-end USB-C unplug, ~10 s cold, replug same
+port same side → **2/5 again**, identical signature, captured with timestamps (1/5 at 00:46:27,
+2/5 at 00:46:29, stable for 2+ minutes). The USB2 pair is not silent there — the kernel detects a
+high-speed device on the 480M sibling port, fails `Cannot enable` three times, power-cycles the
+port, and dies on `error -71` — while SuperSpeed enumerates cleanly beside it. Two insertions on
+this socket, same exact signature both times.
+
+**Reading**: T186's lever restores a branch to a seat that *has already proven it can carry it*;
+it does not convert a seat that never has. One attempt, one socket — a first datum, not a law.
