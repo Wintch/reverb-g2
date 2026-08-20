@@ -251,7 +251,7 @@ claiming a pass. **Still unrun: the two chipset-controller sockets**, which is t
 what a bad socket's failure *looks like* is what lets us write the step-by-step for someone who
 does not have Windows to fall back on.
 
-### Open item, not yet measured: reliability may differ port-to-port within the 4 (2026-08-09)
+### Open item (2026-08-09) — SUPERSEDED: see T233/T234 above. The discriminator turned out to be the PLUG SEAT, not the socket; "not interchangeable sockets" was retracted. Kept as dated narrative:
 
 The table above says all 4 rear USB3 ports share the same controller — true, but it
 doesn't mean they're identical. The user's own recollection (not yet backed by logged

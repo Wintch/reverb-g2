@@ -1035,7 +1035,7 @@
 > with the constellation tracker, real camera images, zero regression) and several
 > service restarts to chase the exposure bug with heavier logging, the display lease
 > started failing consistently (`vkAcquireXlibDisplayEXT: VK_ERROR_UNKNOWN`, 5 times in a
-> row) with everything else clean: USB 5/5, brick 12V LED confirmed lit, WMR activation
+> row) with everything else clean: USB 5/5, brick 18.5 V LED confirmed lit, WMR activation
 > report sent every time, a free CRTC confirmed via `xrandr --listproviders` (3 of 4 in
 > use). One attempt also logged a new, never-seen-before firmware-side error verbatim from
 > the headset itself (`hololens_handle_debug`, not Monado-generated):
@@ -1190,7 +1190,7 @@
 > the solver.
 
 > **UPDATE (2026-08-09, closing this session) — Patch 0013 PHYSICALLY VERIFIED. The T046
-> connector fault below was transient this time: reconnecting the 12V power brick alone
+> connector fault below was transient this time: reconnecting the 18.5 V power brick alone
 > (no visor-end reseat needed) eventually brought connector 137 back up.** With
 > `XRT_DEBUG_GUI=1 ./jack-in-wayland.sh 1 6dof` and both controllers confirmed online first
 > (via the new `preflight.sh`, see below), the "Controller Blob Cam N" panels showed blob
@@ -1257,7 +1257,7 @@
 > pattern: USB/HID healthy and activation succeeds, but the DP/panel-power path stays dead
 > regardless -- a decoupled fault, not a software/timing one. **Next step is physical**,
 > per `docs/22`'s ladder: reseat the cable at the visor end (behind the magnetic face
-> gasket) first; if that doesn't budge it, check the 12V brick. Don't re-diagnose this in
+> gasket) first; if that doesn't budge it, check the 18.5 V brick. Don't re-diagnose this in
 > software again before that -- the check-lease.sh / drmprops signal is now trustworthy and
 > already confirms it's not a compositor or Monado-side problem.
 >
@@ -1459,7 +1459,7 @@
 > both times a plain `jack-in-wayland.sh` restart recovered it instantly with zero
 > regression (confirmed via SUPERHOT re-checks each time). USB2 storms recurred three more
 > times; passive waiting never once cleared one on its own (tested up to 5 minutes
-> straight), but a plain 12V power-brick reconnect (not a full visor-end cable reseat)
+> straight), but a plain 18.5 V power-brick reconnect (not a full visor-end cable reseat)
 > cleared every single one, 3/3. Doesn't retire the rev2A cable question — still treat it as
 > open — but it's a cheaper first thing to try than a full reseat.
 

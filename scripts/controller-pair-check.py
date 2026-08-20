@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Asks the HEADSET whether it has the controllers paired, via direct HID (without Monado).
 
-The G2 controllers do not speak Bluetooth to the PC (see docs/03-controllers.md): they are
-paired at the factory with the headset's internal radio, and their pairing state is queried
+The G2 controllers do not speak Bluetooth to the PC (see docs/03-controllers.md): they hold
+an ordinary, MUTABLE Bluetooth bond with the headset's internal radio (they ship paired, the
+battery-compartment button erases it, any G2 can re-adopt them), and their pairing state is queried
 by sending a command to the same Hololens Sensors device (045e:0659) that Monado already
 uses - protocol read from wmr_hmd.c / wmr_protocol.h:
 

@@ -131,9 +131,11 @@ Linux to re-pair them, and what protocol it speaks.
 **Conclusion, with evidence (not a hypothesis):**
 
 - Pairing status is queried with a normal HID command to the same Hololens Sensors
-  device (045e:0659) that Monado already uses — there's no Bluetooth involved anywhere
-  (not even from the host: this machine has no BT hardware, `systemctl is-active bluetooth`
-  → inactive, and it doesn't matter). Protocol read directly from Monado's
+  device (045e:0659) that Monado already uses — no **PC-side** Bluetooth is involved
+  (this machine has no BT hardware, `systemctl is-active bluetooth` → inactive, and it
+  doesn't matter). *(Corrected T235: this line used to say "no Bluetooth involved anywhere",
+  which conflated the host with the link — the controller↔headset link IS real Bluetooth,
+  2402-2480 MHz per the FCC filing; it is only invisible to the PC.)* Protocol read directly from Monado's
   `wmr_hmd.c`/`wmr_protocol.h`: report `0x16` with subtype `0x17`
   (`WMR_MS_HOLOLENS_MSG_CONTROLLER_STATUS`) requests status; the response arrives as
   report `0x17`, one packet per controller, with `UNPAIRED` / `OFFLINE` / `ONLINE`
@@ -200,6 +202,49 @@ pairing *state* is fully readable from Linux at any moment, and **the pairing it
 the headset's radio** — through months of power cycles, USB storms, port changes and two
 operating systems. What Linux cannot do is *create* one; the table of Oasis functions and their
 Linux equivalents is in `docs/31`.
+
+### RESEARCHED IN DEPTH 2026-08-20 (T235, agent sweep): the pairing command EXISTS, unused, in Monado's own header
+
+The "purely physical, OS-independent" hypothesis and the operational record are now reconciled,
+and the answer is better than either: **the host arms the headset's radio with a documented
+command, and Monado already knows it.** `wmr_protocol.h`, in our own tree:
+
+```c
+/* Messages we can send the G2 via WMR_MS_HOLOLENS_MSG_BT_CONTROL (0x16) */
+WMR_BT_CONTROL_MSG_ONLINE_STATUS  = 0x04,
+WMR_BT_CONTROL_MSG_PAIR           = 0x05,   // <- never sent by any code path
+WMR_BT_CONTROL_MSG_UNPAIR         = 0x06,   // <- never sent by any code path
+WMR_BT_CONTROL_MSG_PAIRING_STATUS = 0x08,
+WMR_BT_CONTROL_MSG_CMD_STATUS     = 0x09,
+```
+
+The only sender in the whole driver is the status query (`wmr_hmd.c:2445`). So the wire format
+for **pair and unpair is already reverse-engineered and sitting unused** — Linux pairing is not
+impossible, it is *unimplemented*, with the target enum named in the header. The research swept
+Monado's gitlab, OpenHMD (issue #232 is an unanswered stub) and the forums: **nobody, anywhere,
+has ever paired WMR controllers from Linux.** A scoped, unclaimed feature.
+
+**The corrected model** (supersedes the 2026-08-06 "no host involvement" hypothesis — that
+analysis looked at `unlock_wmr.exe`, which indeed sends nothing, but Oasis's *pairing flow* is a
+different code path): host sends `{0x16, 0x05}` to arm the radio → controller enters discovery
+via the button (slow pulse) → conventional BT bond forms. Microsoft's own guide confirms the
+bond semantics: *"Motion controllers only support being paired to one PC at a time"* — a
+single-peer bond living in the controller and the radio, like any BT peripheral.
+
+**Oasis's flow, from its wiki (primary source, fetched)**: exit SteamVR → run "unlock" → replug
+USB when asked → it prompts **per controller, LEFT first** → button held until slow pulse → OK →
+repeat for the right → power-cycle both. Re-run triggers per the wiki: once per computer, per
+headset, after pairing a new controller, after a Windows reinstall, after a GPU change.
+
+**Hand slots are fixed by design, three independent signals**: the controllers broadcast their
+own handedness in their BT names ("Motion controller - Left"/"- Right"); the protocol has
+dedicated per-hand channels (`0x06` left, `0x0E` right); and the part numbers differ
+(`M09967-001`/`-002`). Nobody on record has tried forcing a right unit into the left slot.
+
+**What this queues** (NEXT-STEP): a small Monado patch sending PAIR/UNPAIR plus
+`PAIRING_STATUS` polling. If it works, the battery-compartment button stops being one-way on
+Linux and the LAST Windows dependency dies. Until it is implemented AND tested, the one-way rule
+below stands unchanged.
 
 ### The bonding model, mapped (user's tested record, 2026-08-20)
 

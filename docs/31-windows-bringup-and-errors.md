@@ -540,6 +540,47 @@ should EXPECT a fight and budget for it, on either driver, on either OS; (b) the
 *what* is failing, *which* branch, *which* port — was never filled on Windows by anyone, which is
 exactly the hole this repo's Linux tooling (`usb-port-map.sh`, the census, the ledger) now fills.
 
+### The port binding, researched (T235): the observation is solid, the mechanism is NOT established
+
+Deep sweep of Oasis's wiki, its issue tracker and Microsoft's archived docs. What it settles and
+what it honestly does not:
+
+- **Oasis's own wiki never documents port binding.** Its re-run triggers are per computer, per
+  headset, after a new controller, after a Windows reinstall, after a GPU change — a port move
+  is *not* listed. The binding is **community-observed** (issue #48: *"The HP Reverb G2 is very
+  picky about USB ports. Even if the port you used previously with WMR worked well, it might not
+  with Oasis"* — closed "not planned", no explanation from the author) **and user-tested here**.
+- **Microsoft's error codes name real per-port mechanisms** that explain most of the folklore:
+  **4-1** = SuperSpeed link mandatory, verbatim (*"unable to create a USB 3.0 SuperSpeed
+  connection"*) — the documented form of `docs/22`'s "WMR requires the SuperSpeed link";
+  **7-12** = xHCI drivers that cannot handle the **ContainerID descriptor** *"which aggregates
+  the different parts of the Mixed Reality headset into a cohesive unit"* — Microsoft describing
+  our five-device census in its own words; **7-13** = controllers lacking **ITP** (isochronous
+  timestamps) break camera-frame timing; **4-4** = port stuck in Compliance Mode.
+- **Honesty cross-check from our own record**: T185 measured ContainerID/InstanceId
+  **byte-identical** across ports with only `Status: Unknown` — which argues the per-port
+  failure is a *live enumeration/link failure on that port*, not identity ghosting. Yet the
+  user's tested "relaunch Oasis and it re-binds" says host-side association state exists too.
+  **Both observations stand; the mechanism connecting them is not established.** Do not present
+  either alone as the explanation.
+- **The unlock is host-side only, three converging pieces**: its official *revert* procedure is
+  CRU's `reset-all.exe` — a registry **EDID-override** cleaner (the same mechanism class as our
+  own `patches/nvidia/0004` work); its "deep cleanup" touches only
+  `C:\ProgramData\WindowsHolographicDevices` and the LocalAppData twin; and the wiki states
+  Oasis **cannot write headset firmware at all**. Nothing the Windows side does marks the
+  headset — consistent with Linux finding zero state to migrate.
+- **MRP was port-sensitive too** (Microsoft's own setup FAQ: "plug the headset into different
+  ports… uninstall and reinstall WMR") — the fight predating Oasis, as the user's record said.
+
+**Windows-side fix worth knowing from the community record** (vrone.co.uk troubleshooting): an
+"invisible" controller **with visibly DIM LEDs** is associated with a corrupted host-side
+calibration cache, fixed by deleting
+`C:\Windows\ServiceProfiles\LocalService\AppData\Local\Microsoft\Windows\MotionController\Calibration`
+and letting it rebuild. Two connections for us: Windows caches controller calibration host-side
+(Monado does too — `cache_filename` in `wmr_controller_base.c`), and the community ties
+**per-controller LED brightness differences to controller state** — relevant background for the
+T230 asymmetry, recorded as a lead, not an explanation.
+
 ### Capture list for the Oasis procedure (queued — the user takes these on the Windows side)
 
 The goal: the complete procedure on file, exact wording included, so (a) anyone can follow it,
@@ -568,8 +609,12 @@ method) if it ever needs to be.
 1. Windows 11 24H2 or newer, current GPU drivers, SteamVR installed.
 2. Headset on a **rear, CPU-fed USB 3.x port**; DP straight into the GPU; 18.5 V brick in.
 3. Run `windows-kit\power-on.ps1` → expect 5/5 devices before doing anything else.
-4. Pair the controllers: Settings → Bluetooth & devices → Add device → Bluetooth, with the
-   pairing button inside each battery compartment held until the LED pulses.
+4. Pair the controllers **via Oasis's unlock flow** (it prompts per controller, left first;
+   button held until the slow pulse). *Caveat researched T235*: the old "Settings → Bluetooth →
+   Add device" path that used to be this step IS in Microsoft's generic WMR guide, but it pairs
+   to the **PC's** radio, is unvalidated for the G2 (whose controllers belong on the *headset's*
+   radio), and the current G2 reference — the Oasis wiki — never uses it for radio-equipped
+   headsets. Prefer the Oasis flow.
 5. Launch the Oasis app **once**, run "unlock your headset & controllers", unplug/replug the
    headset's USB when it asks (leave DP connected), power-cycle the controllers when asked.
 6. Room Setup.

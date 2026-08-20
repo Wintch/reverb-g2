@@ -11,7 +11,7 @@
 
       1. USB census, split by branch (this is what SteamVR error 108 is about)
       2. Which USB controller/port the headset landed on
-      3. Bluetooth: are the motion controllers paired to Windows?
+      3. Bluetooth: are the motion controllers bonded (to the headset's radio)?
       4. Software state: SteamVR, the Oasis add-on, OpenXR runtime, WMR leftovers
          (this is where the intermittent 422 lives)
       5. Verdict, plus a triage table for errors 108 / 422 / 498
@@ -168,7 +168,7 @@ function Show-ReseatLadder($usb2Ok, $ssOk) {
     }
     Say-Dim "  > Sigue igual? Proba OTRO puerto USB3 trasero (cada puerto asienta distinto)."
     Say-Dim "  > Nada? Reseat de la ficha del visor (detras del gasket magnetico) y despues"
-    Say-Dim "    TODO junto: USB + DP + brick de 12V afuera ~1 min, y reconectar."
+    Say-Dim "    TODO junto: USB + DP + brick de 18.5V afuera ~1 min, y reconectar."
 }
 
 Write-Host "=== Encendiendo el HP Reverb G2 (Windows) ===" -ForegroundColor Green
@@ -229,7 +229,7 @@ if ($hub) {
 }
 
 # ---- 3/5: controllers over Bluetooth --------------------------------------
-Say-Step 3 "Los controles estan apareados con Windows?"
+Say-Step 3 "Los controles estan vinculados (a la radio del casco)?"
 Say-Dim "En el G2 los controles NO van por el cable: son Bluetooth contra la radio del casco"
 Say-Dim "o la de la placa. Por eso el unico momento en que se abre la app de Oasis es para"
 Say-Dim "aparearlos/desbloquearlos -- despues no hace falta lanzarla nunca mas."
@@ -241,11 +241,13 @@ try {
 if ($bt.Count -ge 2) {
     Say-Ok ("{0} controles apareados y presentes." -f $bt.Count)
 } elseif ($bt.Count -eq 1) {
-    Say-Warn "Solo 1 control apareado. Empareja el otro: Configuracion > Bluetooth > Agregar"
-    Say-Dim "dispositivo > Bluetooth, con el boton del compartimiento de pilas apretado."
+    Say-Warn "Solo 1 control vinculado. Empareja el otro con el flujo de UNLOCK de Oasis"
+    Say-Dim "(pregunta por control, izquierdo primero): boton del compartimiento de pilas"
+    Say-Dim "apretado hasta el pulso lento del LED. El bond es contra la radio del CASCO."
 } else {
-    Say-Warn "No veo controles apareados (no bloquea el casco, pero no vas a tener manos)."
-    Say-Dim "Configuracion > Bluetooth > Agregar dispositivo, y despues el unlock de Oasis."
+    Say-Warn "No veo controles vinculados (no bloquea el casco, pero no vas a tener manos)."
+    Say-Dim "Vincula con el flujo de unlock de Oasis (izquierdo primero, boton de pilas hasta"
+    Say-Dim "el pulso lento). El bond es contra la radio del casco, no contra Windows."
 }
 
 # ---- 4/5: software state --------------------------------------------------
