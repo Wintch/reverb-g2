@@ -193,6 +193,13 @@ arrives paired to *someone else's headset* or to nothing. Today, adopting one **
 Windows session**. That is the last named Windows dependency in this project. If it ever needs
 killing, the RE target is Oasis's pairing flow, same method as `docs/09`.
 
+**Verified live 2026-08-20 (T234)**: with the service down, `controller-pair-check.py` read both
+controllers as `paired, offline` (VID 045e PID 066a) straight over HID. Two facts fall out: the
+pairing *state* is fully readable from Linux at any moment, and **the pairing itself persists in
+the headset's radio** — through months of power cycles, USB storms, port changes and two
+operating systems. What Linux cannot do is *create* one; the table of Oasis functions and their
+Linux equivalents is in `docs/31`.
+
 ### Pairing checker
 
 ```bash
