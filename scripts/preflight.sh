@@ -124,7 +124,7 @@ case "$DP_STATE" in
         echo "  functionally the same physical-layer failure as a full disconnect, NOT partial"
         echo "  progress. Don't read it as 'closer to working.'"
         echo "  -> Same as always (docs/22): reseat the cable at the VISOR end next. If that doesn't"
-        echo "     help, check the 12V brick."
+        echo "     help, check the 18.5 V brick."
         echo "$LAST_DUMP" | sed 's/^/     /'
         OVERALL_READY=0
         ;;
@@ -132,7 +132,7 @@ case "$DP_STATE" in
         echo "  NOT READY: the HMD's own connector never came up after activation (waited 10s)."
         echo "  -> This is the docs/22 T046 pattern (HID/USB healthy, DP/panel-power path dead)."
         echo "     Next: reseat the cable at the VISOR end (behind the magnetic face gasket)."
-        echo "     If that doesn't help, check the 12V brick. Don't re-diagnose this in software"
+        echo "     If that doesn't help, check the 18.5 V brick. Don't re-diagnose this in software"
         echo "     again -- this check already rules out compositor/Monado-side causes."
         OVERALL_READY=0
         ;;

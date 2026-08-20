@@ -229,7 +229,7 @@ def reseat_instructions(usb2_ok, ss_ok):
     steps += [
         "¿Sigue igual? Probá OTRO puerto A trasero (cada puerto asienta distinto).",
         "¿Nada? Reseat de la ficha del visor (detrás del gasket magnético) y después",
-        "  TODO junto: USB + DP + brick 12V afuera ~1 min, reconectar (docs/22).",
+        "  TODO junto: USB + DP + brick 18.5 V afuera ~1 min, reconectar (docs/22).",
     ]
     return steps
 
@@ -561,8 +561,8 @@ def main():
         dim("El logo HP puede estar prendido igual -- es power+HID, independiente del DP; no alcanza solo.")
         warn("Hay que revisar la parte de video. En orden (docs/22):")
         print(f"    {C_WARN}»{C_RESET} El DP del casco A FONDO en la GPU (puerto trasero de la placa de video).")
-        print(f"    {C_WARN}»{C_RESET} El brick de 12V enchufado y el barrel firme en la cajita del cable")
-        print(f"    {C_WARN}»{C_RESET}   (el LED de la cajita NO dice nada del 12V: solo marca 5V del USB).")
+        print(f"    {C_WARN}»{C_RESET} El brick de 18.5 V enchufado y el barrel firme en la cajita del cable")
+        print(f"    {C_WARN}»{C_RESET}   (el LED de la cajita NO dice nada del 18.5 V: solo marca 5V del USB).")
         print(f"    {C_WARN}»{C_RESET} ¿Nada? Reseat de la ficha del visor (detrás del gasket magnético).")
 
         def _recheck_panel():

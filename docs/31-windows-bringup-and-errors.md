@@ -189,7 +189,7 @@ companion appears) and SteamVR completely doesn't. Two different Windows machine
    This is the move that actually won in T171, after ten seatings.
 3. Another rear port.
 4. Visor-end connector (behind the magnetic gasket), then everything at once — USB + DP +
-   12 V brick out for a minute.
+   18.5 V brick out for a minute.
 
 Success looks like **all five devices present in Device Manager**, not "the headset shows
 up". `power-on.ps1` reports the two branches separately for exactly this reason.
@@ -478,7 +478,7 @@ cable has driven the G2 at 90 Hz for hours on Windows and on Linux. **[lab]**
 ## Bring-up checklist for a fresh Windows machine
 
 1. Windows 11 24H2 or newer, current GPU drivers, SteamVR installed.
-2. Headset on a **rear, CPU-fed USB 3.x port**; DP straight into the GPU; 12 V brick in.
+2. Headset on a **rear, CPU-fed USB 3.x port**; DP straight into the GPU; 18.5 V brick in.
 3. Run `windows-kit\power-on.ps1` → expect 5/5 devices before doing anything else.
 4. Pair the controllers: Settings → Bluetooth & devices → Add device → Bluetooth, with the
    pairing button inside each battery compartment held until the LED pulses.

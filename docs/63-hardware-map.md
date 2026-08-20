@@ -81,7 +81,7 @@ numbers for the cable and the PSU are exactly the ones still missing below.
 | **THIS unit's cable** | **6 m active, SPS `M18238-001`, regulatory model `TPC-B001C`** — the ORIGINAL revision, no switch | Read off the cable label, 2026-08-19 (T232). Note the cable has its own TPC family (`B001C`), separate from the headset/controllers (`Q077`) | **confirmed** |
 | Replacement part, if the swap is ever run | **`M52188-001`** — *"SPS-CA ACTIVE 6M BLACK **/W SWITCH**"*, also sold as `22J68AA` / `L72080-002` | HP's own listing; the one HP support recommends under warranty | **confirmed** |
 | Revisions in existence | Rev A (original) and **rev2A** (adds a button Rev A lacks) | User knowledge, community record (`docs/22`) | **confirmed** |
-| PSU | 12 V barrel | Measured | **confirmed rating, part unknown** |
+| **PSU** | **HP 65 W, 18.5 V, 3.5 A, 4.8 × 1.7 mm barrel.** Spare `381090-001`, P/N `380467-001`, series `PPP009H`, model `PA-1650-02H` (LiteOn) | All four read off the brick's own label, T232, and all four resolve to the same 65 W / 18.5 V family — an ordinary HP laptop adapter that HP reused here | **confirmed** |
 
 ## Controllers
 
@@ -160,7 +160,7 @@ all of them are **model/part numbers, not serials**:
 4. **The headset label's remaining fields**: the HP **SPS / spare part number** (`M#####-001`
    form) if present, the **IC** number next to the FCC ID, and the **date code** — a manufacture
    date bounds which cable revision shipped with it.
-5. **The 12 V PSU**: model and output rating printed on the brick.
+5. **The 18.5 V PSU**: model and output rating printed on the brick.
 
 **How to help:** clear photographs of board silkscreen at legible resolution — the FCC scans are
 too coarse by roughly a factor of three. The G2 opens; the cable box opens. Anything readable

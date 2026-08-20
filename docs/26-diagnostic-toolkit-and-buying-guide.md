@@ -11,7 +11,7 @@ this is the "what do I run, in what order, and what do I conclude."
 ## The chain, in one picture
 
 ```
-12V brick --> cable --> visor connector (behind the magnetic face gasket, detachable)
+18.5 V brick --> cable --> visor connector (behind the magnetic face gasket, detachable)
                             |
                             +-- DP lanes + AUX --> display bridge --> panel (HP logo, image)
                             +-- USB2: hub (04b4:6506) -> companion HID (03f0:0580)
@@ -66,8 +66,8 @@ the EDID fingerprint match from `drmprops.c`).
 
 | Result | Read |
 |---|---|
-| HP logo lights, EDID fingerprint matches | 12V rail + companion + display board + DP lanes all healthy. |
-| No logo at all | 12V path or display board fault. USB being fine is irrelevant here — these are separate conductor groups. Check the brick before blaming the cable. |
+| HP logo lights, EDID fingerprint matches | 18.5 V rail + companion + display board + DP lanes all healthy. |
+| No logo at all | 18.5 V path or display board fault. USB being fine is irrelevant here — these are separate conductor groups. Check the brick before blaming the cable. |
 | Logo lights, connector never reaches `non-desktop=1` with the real fingerprint | DP lanes/AUX/bridge specifically, or a stale detection race — retry the check (activation→hotplug latency isn't fixed, has measured as slow as ~6s). |
 
 **3. If both branches show damage together** (USB2 down *and* DP/panel misbehaving,
@@ -88,7 +88,7 @@ fixes it:
    absent there's no live device node for a narrower unbind to act on.
 4. **Cable disconnect/reconnect at the PC end only** — isolates PC-side seating from
    visor-side seating as a variable, without touching the visor connector at all.
-5. **Headset power cycle** (unplug the 12V brick, wait, replug) — has independently
+5. **Headset power cycle** (unplug the brick, wait, replug) — has independently
    recovered the USB2 branch before, separate from any connector reseat.
 6. **Reseat the cable at the visor end**, behind the magnetic face gasket — the connector
    is detachable, not fully integrated. This has been the single highest-hit-rate fix
@@ -101,7 +101,7 @@ fixes it:
 | Pattern | Likely fault | Buy |
 |---|---|---|
 | USB2 branch intermittently drops (storms of re-enumeration), reseat fixes it temporarily but it recurs | Visor connector contact, degrading | Replacement cable, official HP part number **22J68AA** ("HP Reverb G2 Cable", ~6m/19.69ft, OCuLink to USB Type-C + DisplayPort) — the rev2A fix HP shipped for early-production G2 cable failures. Search that exact part number; confirmed available new via [B&H Photo Video](https://www.bhphotovideo.com/c/product/1649953-REG/hp_22j68aa_amo_hp_reverb_g2.html) and used/new via eBay listings as of 2026-08. Community-documented symptom match: USB fine, display dead or flaky, "not detected" errors. |
-| No HP logo at all, ever, USB unaffected | 12V brick or power path, not the data cable | Test/replace the 12V power brick *before* assuming the cable — these are electrically independent of the USB/DP conductor groups. |
+| No HP logo at all, ever, USB unaffected | power brick or power path, not the data cable (**the brick is HP 65 W / 18.5 V / 3.5 A, 4.8 × 1.7 mm — spare `381090-001`, P/N `380467-001`, series `PPP009H`, model `PA-1650-02H`. It is NOT 12 V; this guide said so until T232**) | Test/replace the 18.5 V power brick *before* assuming the cable — these are electrically independent of the USB/DP conductor groups. |
 | DP never comes up (no EDID fingerprint match), USB and logo both fine | Software timing race (retry the check) or, if persistent, DP lanes/bridge specifically | Re-run `preflight.sh` a few times first — this exact symptom has been a detection race, not hardware, before. Only escalate to the cable if it's persistent across many clean attempts. |
 | Everything simultaneously dead, zero enumeration anywhere, no retry storm in `journalctl -k` | Connector fully unseated, or genuinely dead cable | Reseat first (step 6 above) — this exact pattern has been "connector not actually engaged," not a dead cable, before. Only conclude "replace it" after a clean reseat attempt with the connector visibly, physically confirmed seated. |
 

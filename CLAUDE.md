@@ -1144,7 +1144,7 @@
 > already-documented "repeated service/panel cycling aggravates this" risk factor, not new
 > hardware decay. Separately, the right controller stopped responding entirely afterward
 > (43 consecutive fw-read timeouts, no race — genuinely no response) and needed a **full
-> headset power cycle** (12V brick, ~1 min) plus a genuinely idle 2-minute wait (no more
+> headset power cycle** (18.5 V brick, ~1 min) plus a genuinely idle 2-minute wait (no more
 > service restarts) to clear. Lesson reinforced hard tonight: **repeatedly restarting
 > `monado-service` to "just check again" is itself a likely trigger** — when something looks
 > broken, let it sit before hammering it with more restarts.
@@ -1391,12 +1391,12 @@
 > theory including T037's "residual software state" suspicion. What's shared across all
 > failing configs: the visor, its cable (an **active** cable — the inline box contains a DP
 > repeater; a dying repeater explains USB-still-fine + DP-never-hotplugs + gradual decay),
-> and the 12V power brick. The community record matches exactly: early-production G2 cables
+> and the 18.5 V power brick. The community record matches exactly: early-production G2 cables
 > failed en masse (HP shipped a rev2A replacement cable; symptoms = "not detected", USB OK
 > but display dead, blinking cable-box LED). **The old "power supply ruled out" note in
 > docs/06 no longer holds** — it predates tonight's degradation. Next steps, in cost order,
 > agreed direction: (a) reseat the cable at the **visor end** — it detaches behind the
-> magnetic face gasket, it is NOT fully integrated; (b) check the 12V brick/barrel
+> magnetic face gasket, it is NOT fully integrated; (b) check the 18.5 V brick/barrel
 > connection; (c) replacement cable (the classic fix); (d) if a new cable changes nothing,
 > it's the visor's display board — service territory. The 90Hz/playlist verification queue
 > stays frozen until the headset lights again.
