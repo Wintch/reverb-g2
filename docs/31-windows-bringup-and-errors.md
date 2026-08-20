@@ -513,6 +513,18 @@ side can recreate it. **Linux reads the state** (`controller-pair-check.py`, `do
 cannot create it** — the last named Windows dependency in this project, and the reason the
 button is one-way on a Linux-only bench.
 
+**Historical context that reframes both functions (user's record, 2026-08-20)**: the fight is
+NOT an Oasis quirk — it is inherited from the platform. With the **original Microsoft WMR
+driver**, on a **new motherboard**, the same combo (headset activation + controller pairing)
+fought the same way, and *it is possible it never activates cleanly on first contact with new
+hardware at all* ("es posible que en un mother nuevo jamás se active bien directamente"). Worse,
+the original driver **surfaced nothing useful while failing** ("no marcaba bien nada") — no
+indication of which port, which branch, or which step was stuck. Oasis reimplemented the combo,
+not the pain. Two consequences worth stating: (a) any first-time bring-up on fresh hardware
+should EXPECT a fight and budget for it, on either driver, on either OS; (b) the diagnostic gap —
+*what* is failing, *which* branch, *which* port — was never filled on Windows by anyone, which is
+exactly the hole this repo's Linux tooling (`usb-port-map.sh`, the census, the ledger) now fills.
+
 ### Capture list for the Oasis procedure (queued — the user takes these on the Windows side)
 
 The goal: the complete procedure on file, exact wording included, so (a) anyone can follow it,
