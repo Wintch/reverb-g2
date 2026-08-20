@@ -2,8 +2,9 @@
 
 ## How the controllers communicate
 
-The G2 controllers do NOT talk Bluetooth to the PC: they are factory-paired with the
-headset's internal radio, and their packets travel **tunneled through the same HID stream**
+The G2 controllers do NOT talk Bluetooth to the PC: they talk **real Bluetooth to the
+headset's internal radio** (FCC filing: band 2402-2480 MHz, 0.015 W, "controllers' Bluetooth" —
+`docs/10`), and their packets travel **tunneled through the same HID stream**
 that carries the headset's IMU, camera timestamps, and status (`wmr_hmd_controller.c`).
 Key consequence: during firmware/calibration reads for a controller, everything else shares
 the channel — and that's where the fragility lived.
@@ -199,6 +200,29 @@ pairing *state* is fully readable from Linux at any moment, and **the pairing it
 the headset's radio** — through months of power cycles, USB storms, port changes and two
 operating systems. What Linux cannot do is *create* one; the table of Oasis functions and their
 Linux equivalents is in `docs/31`.
+
+### The bonding model, mapped (user's tested record, 2026-08-20)
+
+It is not an analogy — it is Bluetooth bonding, and it behaves like any BT device:
+
+- **The bond lives in the controller + headset radio pair**, one headset at a time. It persists
+  through months of power cycles, USB storms, port changes and OS changes (verified live, above).
+- **Hold the battery-compartment button a few seconds** → the bond is ERASED *and* the controller
+  enters discovery (slow LED pulse). From there **any G2 can adopt it** — "reasignar de equipo",
+  exactly like re-pairing a BT peripheral to a new phone.
+- **Adoption is one controller at a time, per hand slot**: Oasis asks for each hand separately
+  (its own dialog: *"A Left motion controller is currently paired, would you like to unpair it
+  and pair a new Left motion controller now?"* — the headset holds a LEFT slot and a RIGHT slot).
+- **Calibration travels with the controller, so an adopted spare arrives fully calibrated**:
+  `docs/47` Layer 2 — the factory calib blocks (gyro/accel matrices, LED model) live in the
+  controller and the stack reads them **at every connect** (`wmr_controller_base.c`, "Parsed N
+  LED entries from controller calibration"). Re-bonding loses nothing.
+
+**What this unlocks for the recycling mission**: controllers are migratable between G2 units —
+a spare (`M09967-001`/`-002`, `docs/63`) or the survivors of a dead headset can be adopted by any
+living one, arriving with their own calibration. The single gate, unchanged: **adoption itself
+needs the Windows/Oasis side today**, which is why the button stays one-way on a Linux-only
+bench (addendum above).
 
 ### Pairing checker
 

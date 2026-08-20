@@ -483,9 +483,15 @@ cable has driven the G2 at 90 Hz for hours on Windows and on Linux. **[lab]**
 > until they land, this section is operational record plus the mechanism the Linux side measured.
 
 **Function 1 — USB activation, bound to exactly ONE port, and only a CPU-fed USB3 port.**
-Oasis does not "support the headset wherever it is": it activates the USB on a *single* port, the
-binding survives across sessions, and moving the headset to a different port requires relaunching
-Oasis so it re-binds. And it only ever succeeds on a **CPU-fed USB3** port.
+Oasis does not "support the headset wherever it is": it activates the USB on a *single* port —
+**the one that was active when the setup/apareo was done** — the binding survives across
+sessions, and it only ever succeeds on a **CPU-fed USB3** port. **Two conditions, both tested by
+the user**: being a technically-valid port is *necessary but not sufficient* — an equally-valid
+CPU port that is not THE bound one **fails** until Oasis is relaunched to re-bind. The measured
+signature of that failure is already in this repo without having been named as such: **T185's
+port-swap A/B** — identity byte-identical on the new port, but the companion flips to
+`Status: Unknown` (a ghost/non-present device). That ghost *is* the binding refusing the
+unbound port.
 
 The Linux census explains *why* that rule exists, branch by branch (T231-T234, `docs/00`):
 
