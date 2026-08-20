@@ -324,6 +324,38 @@ HIDIOCSFEATURE; (3) confirm via the report-0x05 BT log that `inquiry started` ap
 inquiry fires from Linux, the bond should follow. This is a bounded HID-report-type problem, not
 a mystery.
 
+**RESUME-HERE for the pairing RE (T238 close), variables eliminated and the exact next steps.**
+Everything below is confirmed against the capture and the device, so the next session does not
+repeat any of it:
+
+| variable | status |
+|---|---|
+| command bytes | `16 05 01`, identical to Oasis -- CONFIRMED |
+| target interface | 2 (HID) -- CONFIRMED (bmRequestType 0x21 is a class-to-interface request; interface 2 is the only HID; interfaces 3/4 are vendor, not reachable by SET_REPORT) |
+| report type | report 0x16 is declared OUTPUT, FEATURE and INPUT; interface 2 has NO OUT endpoint so os.write() output reports already route via control SET_REPORT (0x0216), and HIDIOCSFEATURE sends feature (0x0316) -- BOTH control variants tried, neither triggers the inquiry |
+| report size | 63 data + 1 id = 64 bytes, exactly what we send -- CONFIRMED |
+| state machine | PAIR -> BT inquiry, narrated on report 0x05 (`inquiry started`/`discovering`/`PENDING`) -- DECODED |
+| the miss | our accepted `16 05 01` produces NO inquiry (report 0x05 silent, status UNPAIRED) |
+
+**Tooling wall hit tonight**: tshark does NOT expose `usb.setup.wValue`/`wLength`/`wIndex` for
+USBPcap control transfers (both `-T fields` and `-T json` returned empty), so Windows' exact
+SET_REPORT parameters could not be read. **Next time: parse the pcapng raw (USBPcap packet header
+carries the setup), or capture with `usbmon` on Linux where the setup IS exposed.**
+
+**The two remaining hypotheses, in order, both offline-startable:**
+1. **wLength**: Windows may send the SET_REPORT with a wLength SHORTER than 64 (e.g. 3). Read it
+   from a raw pcapng parse; if shorter, send via raw `USBDEVFS_CONTROL` (bmRequestType 0x21,
+   bRequest 0x09, wValue 0x0216 or 0x0316, wIndex 2, wLength = Windows') -- which needs the hid
+   driver detached first (USBDEVFS_DISCONNECT + CLAIMINTERFACE; plain USBDEVFS_CONTROL to
+   interface 2 returns EBUSY while the driver holds it).
+2. **Sustained PAIRING_STATUS polling**: Windows sent `02 08` continuously (1263x) around PAIR;
+   the inquiry may auto-abort without it. Our polling attempts churned on fd re-enumeration
+   (a fixable tool bug, not fundamental). Fix the reopen path so polling is clean, then: PAIR
+   once + steady `02 08` poll, watch report 0x05 for `inquiry started`.
+
+Only step (1)'s send-test and step (2) need the controller in discovery -- ONE hold each, no more
+blind attempts. `scripts/controller-pair-btlog.py` reads the BT log to confirm the inquiry fires.
+
 **Recovery**: the right controller is unpaired; one Oasis pass on Windows restores it (the user
 is dual-boot). The left stayed paired as the anchor throughout.
 
