@@ -953,7 +953,7 @@ carry one, and it is the identifier a second owner would search for.
 
 | | |
 |---|---|
-| **This unit's cable** | 6 m active, SPS **`M18238(8)-001`**, regulatory model **`TPC-B001C`**, **no switch** |
+| **This unit's cable** | 6 m active, SPS **`M18238-001`**, regulatory model **`TPC-B001C`**, **no switch** |
 | **The replacement** | SPS **`M52188-001`** — HP's own description: *"SPS-CA ACTIVE 6M BLACK **/W SWITCH**"*. Also sold as `22J68AA` / `L72080-002` |
 
 **Three independent facts converge on the same answer**, which is why this is worth trusting: the
@@ -968,6 +968,9 @@ between "firm buy" and "premature". **It is now an orderable part: `M52188-001`.
 make it a fix — everything in the lottery-ticket section above still stands, including that some
 units get *worse* on the newer cable — but the experiment can now be specified precisely instead
 of described.
+
+`M18238-001` is exactly the number resellers list as an older G2 cable revision, so the
+identification is closed from both directions: HP's own numbering and the aftermarket's.
 
 Note also that the cable carries its **own regulatory model family** (`TPC-B001C`) distinct from
 the headset and controllers (`TPC-Q077-*`). It is a separately certified product, which fits what
