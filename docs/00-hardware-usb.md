@@ -38,6 +38,58 @@ Probing with `scripts/find-port.sh` confirmed the definitive physical map:
 | `07:00.3` (Matisse, CPU) | usb3 (480M) / usb4 (10G) | 4 + 4 | **the 4 blue USB3 ports on the rear panel** |
 | `02:00.0` (A520 chipset) | usb1 (480M) | 9 | the 2 rear USB2 ports (Logitech receiver is on `1-8`) + headers |
 
+### ⚠️ This chapter's port table was measured on a DIFFERENT board than the current lab machine
+
+Written for a box whose xHCI controllers are `07:00.3` (Matisse/CPU) and `02:00.0` (A520
+chipset). The lab machine as of 2026-08-19 is an **ASUS TUF GAMING B450M-PLUS II**, whose
+controllers are **`09:00.3` (Matisse/CPU)** and **`02:00.0` (400 Series chipset)**. The port
+map is a property of the BOARD, so do not carry numbers between them — run
+`./scripts/usb-port-map.sh map`, which reads the live topology instead of trusting this table.
+
+### Port-to-port reliability: the mechanism is the CONTROLLER, and it is now addressable (2026-08-19, T231)
+
+**The user's standing observation, now with a mechanism**: of the rear USB3 sockets, some work
+with the G2 and some do not, and *the manual does not say which* — a cheap board's manual never
+mentions that its rear ports are wired to two different xHCI controllers. Measured live on the
+B450M box:
+
+```
+usb1 / usb2   0000:02:00.0   400 Series Chipset USB 3.1 xHCI     <- the other path
+usb3 / usb4   0000:09:00.3   Matisse USB 3.0 Host Controller     <- where the headset works
+```
+
+The headset sits on `usb3-port2` + `usb4-port2`, i.e. **the CPU controller**. The chipset
+controller's four SuperSpeed ports sit empty. So "the two that go by another route and do not
+work" has a concrete, checkable meaning: **they hang off the chipset xHCI, not the CPU one.**
+
+**This also closes the addressing gap this chapter complained about below.** `ID_PATH` could not
+tell two sockets apart; the **root-hub port topology** can. `/sys/bus/usb/devices/usbN/N-0:1.0/
+usbN-portM` exists for every physical port, occupied or not, so every socket has a stable name
+(`usb4-port2`) whether or not anything is plugged in — which means a socket can be *named*, a
+verdict can be *recorded against that name*, and the next person can be told which socket to use
+instead of being told to try all four.
+
+**Tooling, and it needs no Windows and no headset for the first half:**
+
+```bash
+./scripts/usb-port-map.sh map                      # name every socket + its controller
+./scripts/usb-port-map.sh qualify "<socket label>" # with the headset plugged in: the ladder
+```
+
+`qualify` walks four rungs and says exactly where it stopped: (1) does anything enumerate,
+(2) **does the USB2 branch come up** — the rung that actually separates good sockets from bad,
+since the SuperSpeed pair can appear on a socket where the USB2 pair never will (docs/22), and
+it prints the kernel's own `error -71` / `Cannot enable` lines when it fails, (3) does
+`panel.py activate` succeed, (4) does a DP connector *appear*. Verdicts land in
+`~/vr/usb-port-ledger.jsonl`, keyed by board + socket.
+
+**Measured so far (2026-08-19): only the good socket, and only to rung 3.** `4-2` on
+`09:00.3` gives 5/5 and accepts activation; rung 4 could not be proven in that run because a DP
+connector was already present from an earlier activation, and the tool says so rather than
+claiming a pass. **Still unrun: the two chipset-controller sockets**, which is the whole point —
+what a bad socket's failure *looks like* is what lets us write the step-by-step for someone who
+does not have Windows to fall back on.
+
 ### Open item, not yet measured: reliability may differ port-to-port within the 4 (2026-08-09)
 
 The table above says all 4 rear USB3 ports share the same controller — true, but it
