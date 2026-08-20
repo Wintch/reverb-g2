@@ -997,3 +997,31 @@ identification is closed from both directions: HP's own numbering and the afterm
 Note also that the cable carries its **own regulatory model family** (`TPC-B001C`) distinct from
 the headset and controllers (`TPC-Q077-*`). It is a separately certified product, which fits what
 this document measured the hard way: it is an active device with its own silicon, not a wire.
+
+### The cable carries a firmware version — and HP replaced every Rev 1 cable for free (T232)
+
+Two findings from reading this unit's cable, one from the object and one from the record.
+
+**From the object.** The inline box has **no label on its visor-facing side** — checked. What
+exists is a sticker on the cable itself carrying a serial (deliberately not recorded here) and a
+**firmware marking**, transcribed as approximately `fw 0x5_3 … 0x5_10`; several characters are
+not confidently legible and the value is *not* being treated as known. **The finding is not the
+value, it is that the marking exists at all**: the cable ships with a firmware version printed on
+it, which confirms the inline box holds programmable silicon rather than passive components. This
+document has suspected exactly that object for months ("a firmware/state-machine glitch in that
+chip fits the evidence far better than mechanical wear"), and no public source documents cable
+firmware versions at all.
+
+**From the record, and it reframes the swap.** HP did not merely offer a newer cable — **HP ran a
+free replacement programme for every Revision 1 cable**, and the community description of what
+changed is specific: the rev2 box contains a **qualified hub that cleans up the signal**, plus
+the on/off button, and it was aimed at *power issues*.
+
+Read that next to what T226 measured: the **USB2 branch** storms at 3.47 drops/min on Windows and
+0.92-4.63 on Linux, while the **USB3 branch never drops on either OS**. A hub-silicon change
+inside the link box is exactly the shape of fix that would address a USB2-branch-only fault. That
+does not promise anything — the lottery-ticket section above still stands, including units that
+get *worse* on rev2 — but it moves the swap from "the community says try it" to **"the vendor
+replaced this specific revision, for free, citing the subsystem we measured failing"**.
+
+*(Sources are forum and reseller accounts, not HP technical documentation; treated as such.)*

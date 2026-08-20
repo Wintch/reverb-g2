@@ -77,7 +77,8 @@ numbers for the cable and the PSU are exactly the ones still missing below.
 |---|---|---|---|
 | Cable type | **Active**, with an inline box | Measured: the box contains USB hub silicon and a DP repeater (`docs/22`) | **confirmed** |
 | Inline USB hub | Cypress (`04b4:650x`) | Enumerates as such | **confirmed** |
-| **DP repeater in the box** | — | Its *existence* is established by the cable anatomy; **the chip has never been identified**, and it is the prime suspect in years of link faults | **unknown — highest-value gap** |
+| **DP repeater in the box** | — | Its *existence* is established by the cable anatomy; **the chip has never been identified**. **The box carries NO external label on the visor-facing side (checked T232)**, so the only remaining route is opening it | **unknown — highest-value gap** |
+| Cable sticker | serial (deliberately not recorded) **+ a firmware marking**, transcribed with uncertain characters as `fw 0x5_3 … 0x5_10` | Read T232. **That the cable carries a firmware version at all is the finding**: it confirms the inline box holds programmable silicon, which is the object docs/22 has suspected for months | **present, value not yet legible** |
 | **THIS unit's cable** | **6 m active, SPS `M18238-001`, regulatory model `TPC-B001C`** — the ORIGINAL revision, no switch | Read off the cable label, 2026-08-19 (T232). Note the cable has its own TPC family (`B001C`), separate from the headset/controllers (`Q077`) | **confirmed** |
 | Replacement part, if the swap is ever run | **`M52188-001`** — *"SPS-CA ACTIVE 6M BLACK **/W SWITCH**"*, also sold as `22J68AA` / `L72080-002` | HP's own listing; the one HP support recommends under warranty | **confirmed** |
 | Revisions in existence | Rev A (original) and **rev2A** (adds a button Rev A lacks) | User knowledge, community record (`docs/22`) | **confirmed** |
