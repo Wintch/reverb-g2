@@ -91,7 +91,51 @@ it prints the kernel's own `error -71` / `Cannot enable` lines when it fails, (3
 `panel.py activate` succeed, (4) does a DP connector *appear*. Verdicts land in
 `~/vr/usb-port-ledger.jsonl`, keyed by board + socket.
 
-**Measured so far (2026-08-19): only the good socket, and only to rung 3.** `4-2` on
+### What a BAD socket looks like from Linux — measured 2026-08-19 (T231)
+
+Headset moved to a socket on the **chipset** controller. This is the capture that makes the
+step-by-step possible, because it is what someone without Windows will actually see:
+
+```
+1. USB census: 2/5
+   socket: 2-1   controller: 0000:02:00.0   400 Series Chipset USB 3.1 xHCI
+2. USB2 branch INCOMPLETE:
+     usb usb1-port1: Cannot enable. Maybe the USB cable is bad?     <- x4
+     usb usb1-port1: attempt power cycle
+     usb usb1-port1: unable to enumerate USB device
+```
+
+**The SuperSpeed pair comes up perfectly** — `04b4:6504` and `045e:0659`, i.e. the cameras, IMU
+and controller tunnel — **and the entire USB2 branch never enumerates**: no `04b4:6506`, no
+companion `03f0:0580`, no audio `0bda:4c15`. The kernel tries four times on the 480 M root-hub
+port, power-cycles it, and gives up. With no companion there is no panel control, no activation,
+no display, no audio, no IPD and no proximity: the headset is *present* and completely unusable.
+
+> ### ⚠️ `Cannot enable. Maybe the USB cable is bad?` — the cable was FINE
+>
+> That message is the kernel guessing, and this capture proves the guess wrong: the same cable,
+> minutes earlier and minutes later, gives a clean 5/5 on a CPU-controller socket. **The message
+> means "this port could not enable this device", and the port is a cause it names nowhere.**
+> This project spent weeks reading that line as evidence of a dying cable (`docs/06`, and the
+> T039/T040 "the cable is dying wholesale" verdict rests partly on it).
+>
+> It does not retract those episodes — there the same signature appeared across several ports on
+> two machines, which a controller cannot explain — but it does change the reading order:
+> **when you see this line, check which controller the socket is on before you suspect the
+> cable.** That check is free, takes one command, and this is exactly the case it catches.
+
+**The discriminator, and it is what makes the diagnosis decisive.** A 2/5 census on its own is
+ambiguous: T184 produced 2/5 on a *good* socket from a cable-orientation fault. The controller
+resolves it:
+
+| census | controller | reading |
+|---|---|---|
+| 5/5 | either | socket is fine |
+| **2/5** | **chipset xHCI** | **wrong socket — move to a CPU-controller one** |
+| 2/5 | CPU xHCI | socket is fine; now suspect the cable/connector (`docs/22`'s ladder) |
+| 0/5 | either | nothing enumerates: power, cable seating, or a dead port |
+
+**Measured so far (2026-08-19): the good socket to rung 3, the bad socket to rung 2.** `4-2` on
 `09:00.3` gives 5/5 and accepts activation; rung 4 could not be proven in that run because a DP
 connector was already present from an earlier activation, and the tool says so rather than
 claiming a pass. **Still unrun: the two chipset-controller sockets**, which is the whole point —

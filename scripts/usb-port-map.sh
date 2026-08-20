@@ -97,8 +97,13 @@ cmd_qualify() {
     local label="${1:-}"
     [ -z "$label" ] && { echo "usage: $0 qualify \"<name you can say out loud, e.g. 'trasero abajo junto al HDMI'>\"" >&2; exit 2; }
 
-    local since; since=$(date '+%Y-%m-%d %H:%M:%S')
-    echo "board: $(board)   label: $label"
+    # The window deliberately reaches BACKWARDS. Enumeration happens when the cable goes in,
+    # which is seconds-to-minutes before anyone gets to a terminal to run this -- a window that
+    # starts "now" reports a silent port for every real failure and calls it the quiet variant.
+    # Found by running it: the first bad-socket capture printed "nothing above" while the kernel
+    # had logged four "Cannot enable" lines a minute earlier.
+    local since; since="${QUALIFY_LOG_WINDOW:-10 min ago}"
+    echo "board: $(board)   label: $label   kernel window: $since"
     echo
 
     # --- rung 1: does anything of the headset enumerate at all ---
@@ -122,7 +127,7 @@ cmd_qualify() {
     # is the documented signature of a socket the headset cannot use (docs/22), and it is why a
     # census of 2/5 is a VERDICT and not a transient.
     if [ "$n" -lt 5 ]; then
-        echo "2. USB2 branch INCOMPLETE -- kernel says, since $since:"
+        echo "2. USB2 branch INCOMPLETE -- kernel says, over the last $since:"
         journalctl -k --since "$since" 2>/dev/null | grep -iE "usb|xhci" | grep -iE "error -[0-9]+|cannot enable|not accepting address|unable to enumerate|device descriptor read" | tail -8 | sed 's/^/     /'
         echo "     (nothing above = the 'quiet' variant: the port never even tries. Also a fail.)"
         verdict="BAD SOCKET: $n/5, USB2 branch never came up. Move the headset to a socket on a DIFFERENT controller -- run '$0 map'."
