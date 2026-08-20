@@ -5,6 +5,22 @@ haber hecho bien HP desde el principio, pero es un pie para dispositivos similar
 right on both halves, and the second half is worth being precise about — "it might help others"
 is a nice feeling, while *this list* is a thing someone can act on.
 
+## It started as an NVIDIA bug, and that was the tip of it
+
+This repo exists because a headset would not light at 90 Hz. The root cause turned out to be
+**NVIDIA clamping the link to 6 bpc because the sink's EDID leaves colour depth undeclared**
+(`docs/13`, `docs/14`, PR
+[NVIDIA/open-gpu-kernel-modules#1275](https://github.com/NVIDIA/open-gpu-kernel-modules/pull/1275)) —
+and the important part for this document is that **the fix is not G2-specific**.
+`nvt_edid.c` branches on the DisplayID version and the 1.x path never writes `digital.bpc`, so
+the clamp is unavoidable for **any DisplayPort sink carrying a DisplayID 1.x extension that
+leaves depth undefined**. Nobody knows how many devices that is, because nobody has looked —
+but every one of them is a display that works at one refresh rate and mysteriously does not at
+another, on one vendor's driver.
+
+Everything below follows the same shape: what looked like one broken headset kept turning out to
+be a class of devices with nobody left to maintain them.
+
 ## What is actually general here
 
 The G2-specific parts of this project — the 6 bpc EDID clamp, the constellation solver, the WMR
@@ -76,6 +92,49 @@ a partial enumeration is possible and looks like something else:
 
 For these the census and the socket-addressing transfer as-is; the activation rung and the
 protocol do not.
+
+## The wider orphan list, and why it is urgent now
+
+**Windows 11 24H2 removed Windows Mixed Reality outright**, retiring headsets from HP, Samsung,
+Acer, Lenovo, Dell, Asus and Medion in a single update — hardware that worked the day before.
+Two independent efforts answered that: **Oasis**, an unofficial SteamVR driver that bypasses the
+deprecated Mixed Reality Portal (this is the "Oasis" referenced throughout this repo — it is the
+*community* driver, not a Microsoft one, which is worth stating because a reader could easily
+assume otherwise), and the Linux side: **Monado** plus **Envision** as its front end.
+
+Beyond WMR, the same "the vendor is gone, the hardware is fine" pattern:
+
+| Hardware | State | What transfers from here |
+|---|---|---|
+| **All WMR headsets** (table above) | platform removed 24H2 | everything: census, sockets, activation ladder |
+| **Oculus Rift CV1 / DK2** | runtime discontinued | census + socket addressing. Their **cameras were famously sensitive to which USB controller they sat on, in 2016** — finding #2 of this document, a decade early. Monado's constellation code we depend on is Rift-derived (`t_rift_blobwatch`) |
+| **OSVR HDK 1 / HDK 2** (Razer + Sensics) | abandoned, open API | census + socket addressing |
+| **Sony PSVR 1** on PC | never officially supported | the inline "processor unit" is the same shape as this cable's active repeater box |
+| **HTC Vive / Vive Pro** | link box = a hub | partial enumeration is a known support case |
+| **Pimax 4K / 5K / 8K, Varjo VR-1/VR-2/XR-1, StarVR** | discontinued or enterprise-orphaned | census + socket addressing |
+| **Valve Index, Bigscreen Beyond, Somnium VR1** | current | the socket and cable diagnostics apply to any tether |
+
+The reason to name them explicitly rather than say "similar devices": these are units sitting in
+drawers and going to landfill because *nothing tells their owner whether the thing is broken or
+just plugged into the wrong hole*. That question is answerable, it takes one command, and the
+answer is the difference between e-waste and a working headset.
+
+Where this work would be useful to others: the **[Linux VR Adventures wiki](https://wiki.vronlinux.org/docs/hardware/)**
+and the **[Gentoo VR wiki](https://wiki.gentoo.org/wiki/Virtual_Reality)** already collect
+per-headset Linux status, and neither has per-board USB socket data for anything.
+
+## If you have one of these
+
+**Hardware is welcome, on honest terms.** If you have any of the devices above and want its
+bring-up validated, or the tooling here adapted to it, it can be sent — it will be looked at in
+**free time, with no promise of a result and no timeline**. That is the whole offer, stated
+plainly so nobody is waiting on something that was never committed to. What is *not* conditional
+is the answer: whatever gets measured ends up in this repo, working or not, including the
+failures — that is how the rest of this document got written.
+
+The way to make contact is an issue on this repository. Please include the exact model, the
+motherboard, and the output of `./scripts/usb-port-map.sh map`; that is three minutes of your
+time and it is most of the diagnosis.
 
 ## Not headsets, same class of bug
 
