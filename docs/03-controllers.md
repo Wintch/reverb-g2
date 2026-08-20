@@ -599,13 +599,80 @@ that hit the wire from Linux silently differs from what was intended despite `HI
 `write()` reporting success. The right controller is unpaired; recover it with one Oasis pass on
 Windows (dual-boot) when convenient — not urgent, but don't leave it that way indefinitely.
 
-**Next step, scoped, no controller/discovery needed**: `usbmon` was reached for but blocked on
-interactive sudo this session (`/sys/kernel/debug/usb/usbmon` needs root). Capturing our own
-`send_feature`/`write_output` calls with `usbmon` and diffing them byte-for-byte against the
-equivalent Windows frames in `pairing_joys.pcapng` would settle whether the Linux kernel's HID
-subsystem is silently altering anything between the ioctl/write call and the actual wire bytes —
-the one link in the chain not yet independently verified. Needs `sudo usermod -aG your-user
-<usbmon-group>` or a one-off `sudo cat`, decided with the user next session, not attempted blind.
+### T240, usbmon byte-diff (same session): the last unverified link checks out clean too
+
+The user had root and ran it: `scripts/usbmon-trigger.py` (new, sends only the same two routine
+reports `controller-pair-check.py`/the sustained poll already send in normal operation --
+`16 09` CMD_STATUS and `02 08` PAIRING_STATUS, nothing destructive) while `cat
+/sys/kernel/debug/usb/usbmon/4u` captured the bus. Result, straight from the capture:
+
+```
+S Co:4:003:0 s 21 09 0316 0002 0040 64 = 16090000 00000000 ...
+C Co:4:003:0 0 64 >
+S Co:4:003:0 s 21 09 0202 0002 0040 64 = 02080000 00000000 ...
+C Co:4:003:0 0 64 >
+```
+
+`bmRequestType 0x21, bRequest 0x09 (SET_REPORT), wValue 0x0316/0x0202, wIndex 0x0002, wLength 64`
+-- byte-for-byte identical to the Windows reference frames, **and the completion status is 0
+(success) with all 64 bytes transferred**, both times. This was the one link in the chain not yet
+independently checked: whether `HIDIOCSFEATURE`/`write()` might be silently mangling something
+between the syscall and the actual wire bytes. It isn't. The USB transfer itself is provably
+perfect and the device ACKs it at the protocol level -- and the radio's firmware still never
+dispatches it into a BT command (per the report-0x05 silence above). **A clean ACK does not mean
+the firmware chose to act on it**; those are two different layers, and this capture now proves
+Linux gets the first one right and still doesn't get the second one.
+
+**This closes off the entire USB-framing explanation space, definitively.** Every variable
+checkable from a USB capture -- bytes, report type, interface, `wLength`, ordering, sustained
+polling, and now the raw wire transfer itself -- is confirmed identical, confirmed ACKed, and the
+firmware still stays silent. Whatever gates this is not visible to USBPcap or usbmon at all, which
+narrows the remaining search to two places, neither explored yet: (1) something Oasis's *own
+driver init* does once, early, on ONE of the OTHER USB endpoints of this same composite device --
+the sensor collections `col01`/`col02`/`col03` under interface `mi_02` (visible in the original
+PowerShell headset-detection log, `\\?\hid#vid_045e&pid_0659&mi_02&col0{1,2,3}#...`) or the
+separate "presence device" (`03f0:0580`) -- that arms the radio for the rest of the session,
+before anything this doc's tables have looked at; (2) BT radio-side state genuinely invisible to
+USB (RF/timing arbitration internal to the WICED chip). (1) is fully checkable offline against
+`pairing_joys.pcapng`, no hardware needed -- nobody has looked at those other collections yet.
+
+### T240, mining the "other devices" angle (same session): a real decode, but a dead end for pairing
+
+Checked (1) directly. `col01`/`col02`/`col03` turned out to be a non-issue: those are Windows PnP
+device nodes for separate top-level HID *collections* inside the same physical interface
+(`mi_02` = USB interface number 2, the one already fully swept above) -- not separate USB
+interfaces, so they were already covered by the "every transfer targets `wIndex 2`" sweep. Nothing
+new to check there.
+
+The presence device (`03f0:0580`, bus 2 device address 4) was genuinely unexplored, and did have a
+one-time exchange worth decoding: at t=175.56s, a `SET_REPORT` (report `0x50`, Feature, 64 bytes,
+`50 01 00...`) immediately followed by a `GET_REPORT` for the same report ID. Pulled the raw
+completion bytes (`tshark -x`, since this device's payload isn't dissected as `usbhid.data`):
+`50 01 01 03 01 02 51 41 38 35 51 41 50 56 31 00 07 00 51 41 38 35 51 42 4c 56 31 00 32 31 51 41
+38 35 51 44 50 56 31 00...` -- decodes as ASCII `QA85QAPV1`, `QA85QBLV1`, `QA85QDPV1`, **byte-for-
+byte the same three OEM firmware strings from the original PowerShell detection log** (`OEMFW:
+QA85QAPV1/1.2 | QA85QBLV1/7.0 | QA85QDPV1/50.49`). So report `0x50` is a firmware-version query,
+not an unlock gate -- a nice incidental confirmation of the decode method, not a lead.
+
+A second exchange nearby (t=178.63s and t=181.65s, ~3s apart: `SET_REPORT` report `0x04`, Feature,
+2 bytes, `04 01` then `04 00`) remains unexplained -- same report-ID shape as the documented
+Display Enable command (`docs/12`), but sent to a *different physical device* than the one Monado
+already uses it on, so not necessarily the same function. **Ruled out as pairing-relevant by
+timing, not by content**: checked the presence device's activity across the *entire* session --
+it goes completely silent after t≈290s and has zero traffic anywhere near any of the three PAIR
+attempts (t=276.9, 380.9, 423.4s). If this device armed something for pairing, it would need to
+fire again before each attempt, the way `16 09` (CMD_STATUS) does on the sensors device; it
+doesn't fire at all after the first two minutes of the session. This closes the "other devices"
+angle for tonight -- nothing found there correlates with pairing.
+
+**Honest state at close of T240**: every USB-visible avenue is now checked -- byte framing, wire
+bytes (usbmon), report type, interface, ordering, sustained polling, and the other USB devices in
+the composite headset. None of it explains the gap. What's left is either something below the USB
+layer entirely (BT radio-internal state on the WICED chip, invisible to any capture taken at the
+USB level) or something in exactly how Windows' HID class driver sequences a transfer that neither
+USBPcap nor usbmon distinguishes from what Linux already sends identically. This is a good, honest
+stopping point for the capture-mining thread -- it has been thoroughly exhausted, not abandoned
+early.
 
 **What this means**: Linux pairing is still unclaimed, and the real handshake is NOT the
 one-byte subtype. Concrete next step, and it is scoped: **capture Oasis's actual pairing packets
