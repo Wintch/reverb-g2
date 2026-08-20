@@ -892,3 +892,36 @@ five titles played normally, and the only thing the user noticed was audio cutti
 Linux the same outages produce ~83 companion HID read failures/s and a frozen presence sensor.
 Full analysis and the archived capture: `docs/60-windows-usb-storm-control.md`,
 `windows-kit/captures/`.
+
+---
+
+## The rev2A cable is not a fix, it is a different lottery ticket (2026-08-19, user knowledge)
+
+T226's Windows control put the rev2A cable back on the suspect list, and the temptation now is
+to treat "buy the rev2A" as the answer. **It is not, and the user's own knowledge of the
+community record is the reason:**
+
+- **HP never shipped a cable that is 100% good.** There is no revision that fixes this class of
+  fault outright — v1 and rev2A both have populations of users reporting the same symptoms.
+- **There are no third-party alternatives.** This is not a commodity cable: it carries DP,
+  USB3, USB2 and 12 V through a proprietary connector into an active repeater box. Nobody else
+  makes one, so "buy a better cable" is not an option that exists.
+- **The luck is not one-directional.** Some units are stable on rev2A, *some are stable on v1
+  and get worse on rev2A*, and some are unstable on both. Swapping is a coin flip with a real
+  chance of ending up worse, not an upgrade.
+- **The revisions are not identical hardware.** rev2A adds a button that v1 does not have, so
+  the two are not drop-in equivalents and behaviour differences between them are not automatically
+  "the new one is better".
+
+**How to hold this**: the swap remains a legitimate *experiment* — it is the cheapest way to
+discriminate cable from connector from visor-side PHY, which is exactly what T226 left open. But
+frame it to anyone reading as **an experiment with a real failure mode**, not as a repair. Keep
+the old cable. If the new one is worse, that is a documented outcome and not a surprise.
+
+## Port preference, and one thing this project will not test
+
+**Rear sockets only, and on the right controller** — see `docs/00`'s port-controller section and
+`scripts/usb-port-map.sh`. The **front-panel USB3 header has never been tested here and
+deliberately will not be**: it reaches the board through an internal header plus a length of case
+wiring, adding another marginal joint to a chain whose first joint already cost this project
+weeks. **Potentially unsafe, not recommended.** The cable is enough of a mess on its own.

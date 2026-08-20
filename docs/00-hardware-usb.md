@@ -69,6 +69,14 @@ usbN-portM` exists for every physical port, occupied or not, so every socket has
 verdict can be *recorded against that name*, and the next person can be told which socket to use
 instead of being told to try all four.
 
+**Standing rule: REAR SOCKETS ONLY.** The front-panel USB3 header has **never been tested** with
+this headset, and it is not going to be, for a reason that is about risk and not curiosity: front
+panels reach the board through an internal header and a length of case wiring, which is one more
+marginal joint in a chain whose *first* joint has already cost this project weeks (`docs/22`).
+The cable is enough of a mess on its own — do not add another variable to it. **Potentially
+unsafe, not recommended**, and if someone tries it anyway the ledger below is where the result
+belongs.
+
 **Tooling, and it needs no Windows and no headset for the first half:**
 
 ```bash
