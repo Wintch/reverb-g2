@@ -246,6 +246,38 @@ dedicated per-hand channels (`0x06` left, `0x0E` right); and the part numbers di
 Linux and the LAST Windows dependency dies. Until it is implemented AND tested, the one-way rule
 below stands unchanged.
 
+### RESULT (T236): the simple framing does NOT pair — a real negative, and the honest record
+
+We tried it. The world-first attempt **failed**, and that is worth as much on file as a success
+would have been. What actually happened, corrected against the excitement:
+
+- **The unpair was the PHYSICAL BUTTON, not a host command.** Holding the right controller's
+  battery button (powered on) took it `paired/online → UNPAIRED`, observed live from Linux at
+  01:32:24. Linux *read* the transition; it did not cause it.
+- **`{0x16, 0x05}` (PAIR) does nothing observable**, with or without a controller-id byte, over
+  40 s with the controller in discovery (slow pulse). Right stayed `UNPAIRED` throughout.
+- **The enum values past 0x17 appear INERT.** A non-destructive probe sent `0x16` with subtypes
+  `0x08` (PAIRING_STATUS), `0x04` (ONLINE_STATUS) and `0x05` (PAIR); **every one returned the
+  identical `CONTROLLER_STATUS` (0x17) stream** and nothing else — e.g. `1700015e046a06` (left,
+  offline, 045e:066a) and `17010000000000` (right, UNPAIRED). The firmware treats them like a
+  status poll, or does not implement them. So `WMR_BT_CONTROL_MSG_PAIR = 0x05` etc. are
+  **unvalidated RE guesses**, not a working command — the header comment "Messages we can send"
+  is aspirational, and the fact that only `0x17` is ever actually sent by Monado is consistent
+  with nobody having confirmed the rest.
+
+**What this means**: Linux pairing is still unclaimed, and the real handshake is NOT the
+one-byte subtype. Concrete next step, and it is scoped: **capture Oasis's actual pairing packets
+with USBPcap on Windows during a real pair**, decode the true framing (likely a payload carrying
+the controller's BT address, possibly via the `BT_IFACE` path), then implement THAT. `docs/09`'s
+method applies. Until then, `controller-pair.py` stays as the harness (it sends cleanly and reads
+correctly) but its PAIR does not work, and that is stated in the script.
+
+**Recovery**: the right controller is unpaired and re-pairs in one Oasis pass on Windows — the
+pre-agreed safety net, which is exactly why the experiment used one controller with recovery
+available. The left was untouched as a live control throughout.
+
+### `controller-pair.py` — the first-ever Linux WMR pairing attempt (T236, poshalim)
+
 ### `controller-pair.py` — the first-ever Linux WMR pairing attempt (T236, poshalim)
 
 Built on the research above. `scripts/controller-pair.py` sends `WMR_BT_CONTROL_MSG_PAIR`

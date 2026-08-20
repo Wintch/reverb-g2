@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Pair a G2 motion controller to the headset FROM LINUX. First attempt in the world (T236).
+"""Attempt to pair a G2 motion controller FROM LINUX. Harness for a still-OPEN problem (T236).
+
+STATUS 2026-08-20: the PAIR command in this script DOES NOT WORK. Sending {0x16, 0x05} (the
+WMR_BT_CONTROL_MSG_PAIR value from wmr_protocol.h) produces no pairing -- a probe showed the
+headset returns the identical CONTROLLER_STATUS stream for subtypes 0x04/0x05/0x08 alike, i.e.
+those enum values are unvalidated RE guesses, not working commands. The real handshake needs the
+actual framing, to be recovered by capturing Oasis pairing traffic (USBPcap). This file is kept
+as the send/read harness and the record of what was tried; do not expect it to pair yet. See
+docs/03-controllers.md "RESULT (T236)".
 
 Nobody has ever done this. The wire format is reverse-engineered and sitting UNUSED in Monado's
 own header (wmr_protocol.h): WMR_BT_CONTROL_MSG_PAIR = 0x05 on report 0x16. The only code path
