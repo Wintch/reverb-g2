@@ -28,6 +28,25 @@ that they identify a *model*, which is exactly what a spare-parts search or a se
 | `HFS-A85Q` | FCC ID of the G2 (grantee Quanta, 2020-06-05) |
 | `HFS-A85R` | FCC ID of the **Omnicept**, a separate SKU (e.g. `3A7X9AA#ABA`) |
 
+### Every regulatory marking on this unit's label (T232)
+
+Read off one label, in one pass. Together they say this is a **global-SKU label** — HP printed
+every market's approval on the same sticker, which is also what makes the `0XX` in `VR3000-0XX`
+a wildcard rather than a mystery.
+
+| Marking | Authority | Confidence |
+|---|---|---|
+| **`HFS-A85Q`** | **FCC** (USA). Confirms on the object itself the filing this repo attributes to the base G2 | **confirmed** |
+| **`R-R-HPI-TPC-Q077-VH`** | **KC / RRA** (South Korea). The `R-R-<applicant>-<model>` form is unambiguous: `HPI` = HP Inc., model as printed | **confirmed** |
+| **`CCAM20LP1040T9`** | **NCC** (Taiwan). `CCA` + year/month `M20` + type `LP` + sequence — the standard NCC form | **confirmed** |
+| **`09742-20-02585`** | **ANATEL** (Brazil) homologation, 2020. Their numbers are exactly `NNNNN-YY-NNNNN` | **confirmed by format** |
+| **`TA-2020/6310`** | **ICASA** (South Africa) type approval. ICASA's documented form is `TA` + year + sequence | **confirmed by format** |
+| **`E142692`** (with `CQ10`) | **UL file number** — a safety listing, not radio. `E` + six digits is UL's file format; the `CQ10` suffix is presumably a category code and is **not identified** | **file number confirmed, suffix unknown** |
+
+Markets covered: **US, South Korea, Taiwan, Brazil, South Africa**, plus a UL safety listing. For
+a rescued second-hand unit this is provenance nobody normally records, because the original owner
+never needed it.
+
 > **Correction this produced (T232).** Three files in this repo — `docs/10`, `docs/12`,
 > `docs/04` — stated that `VR3000-0XX` was the **Omnicept's** SKU and matched filing `HFS-A85R`.
 > It is the **base G2's own number**, now read directly off a plain G2's label. The repo already
@@ -161,7 +180,11 @@ all of them are **model/part numbers, not serials**:
 4. **The headset label's remaining fields**: the HP **SPS / spare part number** (`M#####-001`
    form) if present, the **IC** number next to the FCC ID, and the **date code** — a manufacture
    date bounds which cable revision shipped with it.
-5. **The 18.5 V PSU**: model and output rating printed on the brick.
+5. ~~**The PSU**~~ **done (T232)** — and it corrected a voltage this repo had wrong in 33 places.
+
+**All five are done, and the label sweep is closed.** The one thing the labels could NOT give is
+the highest-value gap in this document: the inline box carries **no external marking on its
+visor-facing side**, so the DP repeater's identity still requires opening it.
 
 **How to help:** clear photographs of board silkscreen at legible resolution — the FCC scans are
 too coarse by roughly a factor of three. The G2 opens; the cable box opens. Anything readable
