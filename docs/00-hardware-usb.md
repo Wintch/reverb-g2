@@ -65,6 +65,17 @@ both user-confirmed as historically-good ports — one next to the GPU's Display
 output, one next to the motherboard's integrated HDMI (the two-pair split found in the
 board's own manual, `2-6 Back Panel Connectors` diagram: the 4 rear USB 3.2 Gen1 ports
 sit as one pair beside HDMI and one pair beside the RJ-45 LAN port, not in a single row).
+
+![Rear panel of the A520M board: the 4 USB 3.2 Gen1 ports sit as two separated pairs, one
+beside the HDMI output and one beside the RJ-45 LAN port](a520m-rear-usb3-port-pairs.png)
+
+*The diagram is kept because the physical layout is the whole point: **the rear USB3 ports are
+not interchangeable and they are not in a row.** Anyone reproducing this — or telling the user
+over the phone which socket to use — needs to know that "the USB3 port" is four sockets in two
+separated pairs, and that the user's own history says two of them have been reliable for the
+headset and two have not. `find-port.sh` and `ID_PATH` cannot currently tell them apart (see
+the paragraph above), so until that gap is closed the physical picture IS the addressing
+scheme.*
 **Both read the identical `ID_PATH`, `pci-0000:07:00.3-usb-0:1` ("root port 1").** So
 `ID_PATH` via this method does NOT currently distinguish these two physical sockets from
 each other — a real methodology gap, not a "they're the same port" conclusion. Don't trust

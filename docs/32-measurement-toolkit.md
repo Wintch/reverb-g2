@@ -16,8 +16,11 @@ to" column before quoting a number.
 **A file name has to be something you can reference later.** `Screenshot From 2026-08-09
 19-18-19.png` fails at that twice: it says nothing about what is in it, and the second it was
 taken references nothing anyone will ever look for. Two files in this repo were named that way
-and both were renamed on 2026-08-19 (T230) — `gigabyte-a520m-back-panel.png` and
-`nvidia-system-info-2026-08-05.txt`.
+and both were renamed on 2026-08-19 (T230) — `a520m-rear-usb3-port-pairs.png` and
+`nvidia-system-info-2026-08-05.txt`. The first is the better lesson: the name it ended up with
+says what the picture is *for* (the rear USB3 ports are two separated pairs, not a row, and not
+interchangeable), which is the thing someone will search for. "Back panel" was still describing
+the pixels; the clock was describing nothing.
 
 The convention, for captures, logs, exports, anything that lands in the tree:
 
