@@ -21,7 +21,9 @@ that they identify a *model*, which is exactly what a spare-parts search or a se
 
 | Identifier | What it is |
 |---|---|
-| **`TPC-Q077-VH`** | HP **regulatory model** for the headset. `TPC-Q077` covers the whole G2 family and the suffix names the component — `-VH` the headset, **`-C1` a controller** (seen on spares listings alongside HP part number **`M09967-001`**, the right controller) |
+| **`TPC-Q077-VH`** | HP **regulatory model** for the headset. `TPC-Q077` covers the whole G2 family; the suffix names the component |
+| **`TPC-Q077-C1`** / **`M09967-001`** | **RIGHT** controller — regulatory model / HP part number |
+| **`TPC-Q077-C2`** / **`M09967-002`** | **LEFT** controller |
 | **`VR3000-0XX`** | HP **product/model number of the base Reverb G2**. `0XX` is a wildcard for regional variants |
 | `HFS-A85Q` | FCC ID of the G2 (grantee Quanta, 2020-06-05) |
 | `HFS-A85R` | FCC ID of the **Omnicept**, a separate SKU (e.g. `3A7X9AA#ABA`) |
@@ -90,6 +92,7 @@ numbers for the cable and the PSU are exactly the ones still missing below.
 | Radio | Bluetooth, tunnelled through the headset's HoloLens device | `docs/03` | **confirmed path, part unknown** |
 | Battery | 2 × AA | Measured extensively (`docs/46`) | **confirmed** |
 | MCU | — | | **unknown** |
+| **Left vs right are DIFFERENT PARTS** | right `TPC-Q077-C1` / `M09967-001`, left `TPC-Q077-C2` / `M09967-002` | Read off both controllers, T232 | **confirmed** |
 
 ## Regulatory / teardown references
 
@@ -120,6 +123,26 @@ Ordered by what it would actually unlock, not by how easy it is:
 6. **ANX7688's role.** A USB-C/DP-alt-mode bridge inside a headset fed by plain DP does not
    obviously make sense; something about the link topology is not understood.
 
+### The hands are not the same part, and that matters right now
+
+`TPC-Q077-**C1**` / `M09967-**001**` (right) versus `TPC-Q077-**C2**` / `M09967-**002**` (left):
+**different regulatory suffix and different HP part number.** Two open investigations were
+resting on an assumption this quietly removes.
+
+- **The LED brightness asymmetry** (T229/T230): Windows shows the left ring at 1.61× the blob
+  count and 2.45× the area of the right, while Linux shows the two as identical. The reasoning so
+  far treated the controllers as interchangeable units, which made a physical difference between
+  them look implausible and pushed the explanation toward batteries or environment. They are not
+  interchangeable units.
+- **"The left hand is worse"** (carried since T215, then destabilised by T225's measurement of
+  the hands *inverting* between windows): same assumption, same removal.
+
+**Do not over-read it.** Any mirrored pair gets two part numbers — the shells alone are
+handed — so distinct numbers are **necessary but nowhere near sufficient** for an electrical or
+optical difference. What is dead is only the argument *"they are the same unit, so the difference
+must be external"*. The measurements still have to do the work: the **battery swap** and the
+**position-swap photograph** already queued (T230) are unaffected and are still what decides it.
+
 ## Labels still to read, and where they are
 
 The identifiers above came off one label. These are the rest, in the order they would be useful —
@@ -131,9 +154,8 @@ all of them are **model/part numbers, not serials**:
    *USB-C adapter*, not the cable.)
 2. **Any marking on the inline box** on that cable — the box holding the DP repeater nobody has
    identified. Even a bare number would close gap #1 of the list above.
-3. **Both controllers**: `TPC-Q077-C?` and their `M#####-001` part numbers. One of them is the
-   pair whose LED brightness is under investigation (T229/T230), and knowing left vs right part
-   numbers would say whether the two hands are even the same assembly.
+3. ~~**Both controllers**~~ **done (T232)**: right `TPC-Q077-C1` / `M09967-001`, left
+   `TPC-Q077-C2` / `M09967-002` — see the note below, it bears directly on the LED question.
 4. **The headset label's remaining fields**: the HP **SPS / spare part number** (`M#####-001`
    form) if present, the **IC** number next to the FCC ID, and the **date code** — a manufacture
    date bounds which cable revision shipped with it.
