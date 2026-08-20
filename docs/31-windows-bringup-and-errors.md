@@ -475,18 +475,60 @@ has nothing to do with the marginal contact.
 Note that this is specifically about the *unlock tool*, not about running the headset: this
 cable has driven the G2 at 90 Hz for hours on Windows and on Linux. **[lab]**
 
-## What Oasis actually needs, per the user's operational record (2026-08-20)
+## What Oasis actually does — the two functions, stated precisely (user's operational record, 2026-08-20)
 
-Two things, and only two — worth stating exactly because the Linux side had inflated the first
-into "per-port provisioning":
+> Kept deliberately exact, in the user's own framing, because earlier versions of this section
+> understated it: *"Oasis ata los joys al casco + activa el USB en UN puerto USB3, y solo si es
+> CPU."* Screen-by-screen captures of the full procedure are queued (see the capture list below);
+> until they land, this section is operational record plus the mechanism the Linux side measured.
 
-1. **Moving the headset to a different USB port**: relaunch Oasis so it reassigns itself to the
-   new port. That is the whole "per-port activation" — an app restart, not a provisioning
-   ceremony. (The PnP ghost-device behaviour of T185 is Windows bookkeeping underneath it.)
-2. **Controller pairing** ("vinculación"): the flow lives in Oasis (and/or the Windows Bluetooth
-   settings path in the checklist below). **Linux has no equivalent** — see `docs/03`'s pairing
-   addendum, including why the battery-compartment button must be treated as one-way on a
-   Linux-only bench.
+**Function 1 — USB activation, bound to exactly ONE port, and only a CPU-fed USB3 port.**
+Oasis does not "support the headset wherever it is": it activates the USB on a *single* port, the
+binding survives across sessions, and moving the headset to a different port requires relaunching
+Oasis so it re-binds. And it only ever succeeds on a **CPU-fed USB3** port.
+
+The Linux census explains *why* that rule exists, branch by branch (T231-T234, `docs/00`):
+
+| socket type | SS branch | USB2 branch (companion) | what Oasis sees |
+|---|---|---|---|
+| CPU-fed USB3, good seat | ✅ | ✅ | **both branches → works** |
+| chipset USB3 (this board) | ✅ | ❌ (`error -71`) | sensors but no companion → fails |
+| black USB2 | ❌ | ✅ | companion but no SuperSpeed → **WMR refuses** (`docs/22`: "WMR requires the SuperSpeed link") |
+
+So "solo si es CPU" is not superstition — it is the only socket class where the *full* 5-device
+census comes up, and Oasis needs the full census exactly like our launcher does. The two stacks
+agree on the requirement; they differ in that Oasis *binds* the result to the port (host-side
+state, the T185 PnP ghosts underneath), while Linux re-discovers by identity on every launch and
+holds no binding at all.
+
+**Function 2 — controller pairing ("vinculación").** Oasis ties the joys to the headset's
+internal radio. The battery-compartment button ERASES the assignment; today only the Windows
+side can recreate it. **Linux reads the state** (`controller-pair-check.py`, `docs/03`) **but
+cannot create it** — the last named Windows dependency in this project, and the reason the
+button is one-way on a Linux-only bench.
+
+### Capture list for the Oasis procedure (queued — the user takes these on the Windows side)
+
+The goal: the complete procedure on file, exact wording included, so (a) anyone can follow it,
+(b) each step can be mapped to its Linux equivalent or marked as missing, and (c) the pairing
+flow — the one function we lack — is captured well enough to become an RE target (`docs/09`
+method) if it ever needs to be.
+
+1. **Oasis version/main screen** — which build this record describes.
+2. **The unlock/activation flow, every dialog in order** — especially the unplug/replug prompt:
+   *exact wording*, and whether it names or shows the port anywhere.
+3. **Port binding made visible**: any screen where Oasis (or Device Manager alongside it) shows
+   *which* port it bound to.
+4. **The failure modes, deliberately**: (a) headset on a **chipset** USB3 port — what exactly
+   does Oasis say/do? (b) headset moved to another CPU port **without** relaunching — what is
+   the symptom that tells you a relaunch is needed? These two captures are worth more than the
+   happy path: they are what a stuck user actually sees.
+5. **The pairing flow, end to end**: how it is entered, each screen, what the controller must do
+   (button hold → slow LED pulse), how long the discovery window lasts, the success screen, and
+   the unpair dialog (*"would you like to unpair it and pair a new..."*) if it appears.
+6. **Bonus, same trip** (`docs/46`'s queued test): the battery percentage per controller and the
+   exact location/state of the `using_1v2_batteries` (1.2 V) switch — with the cells that come
+   straight from the Linux session, no recharge, so the raw-byte cross-check has its pair.
 
 ## Bring-up checklist for a fresh Windows machine
 
