@@ -17,6 +17,30 @@ if LANG not in ("es", "en"):
     LANG = "es"
 
 STRINGS = {
+    # USB socket verdicts. The technical verdict names controllers and PCI addresses because
+    # that is what a later reader needs; THIS is the line for the person standing behind the
+    # machine with the cable in their hand, and it must survive being read out loud over the
+    # phone. No xHCI, no PCI addresses, no branch names.
+    "usb_action_wrong_socket": {
+        "es": "Busca un USB AZUL en la parte de atras del gabinete y probá otro. No todos sirven: los de arriba y los de abajo van por caminos distintos adentro de la PC.",
+        "en": "Look for a BLUE USB socket on the BACK of the case and try a different one. They are not all equal: the upper and lower ones take different routes inside the PC.",
+    },
+    "usb_action_usb2_only": {
+        "es": "Estas en un USB NEGRO (el lento). Buscá uno AZUL en la parte de atras del gabinete.",
+        "en": "You are in a BLACK (slow) USB socket. Look for a BLUE one on the BACK of the case.",
+    },
+    "usb_action_nothing": {
+        "es": "No aparece nada. Fijate que el casco este enchufado a la corriente y que el cable este bien metido de los dos lados.",
+        "en": "Nothing shows up. Check that the headset is plugged into mains power and that the cable is firmly seated at both ends.",
+    },
+    "usb_action_cable": {
+        "es": "El puerto esta bien, asi que ahora el sospechoso es el cable. Desenchufá y volvé a enchufar el conector del lado del visor, firme.",
+        "en": "The socket is fine, so the cable is the suspect now. Unplug and firmly re-seat the connector at the visor end.",
+    },
+    "usb_action_ok": {
+        "es": "Este puerto anda. Dejá el cable acá y no lo muevas.",
+        "en": "This socket works. Leave the cable here and do not move it.",
+    },
     "boot_selector_title": {
         "es": "HP Reverb G2 -- selector de arranque",
         "en": "HP Reverb G2 -- boot selector",

@@ -80,18 +80,41 @@ g2_census() {  # prints "n/5" and sets G2_PRESENT/G2_MISSING
     echo "$n"
 }
 
-g2_port() {  # the root-hub port the headset's SuperSpeed hub sits on -- its stable address
-    local d dev
-    for d in /sys/bus/usb/devices/*; do
-        [ -e "$d/idVendor" ] || continue
-        if [ "$(cat "$d/idVendor")" = "04b4" ] && [ "$(cat "$d/idProduct")" = "6504" ]; then
-            dev=$(basename "$d")
-            echo "${dev%%.*}"   # 4-2.1 -> 4-2, the socket itself and not the internal hub
-            return
-        fi
+g2_port() {  # the root-hub port one of the headset's own hubs sits on -- its stable address
+    # Tries the SuperSpeed hub first and the USB2 hub second, because WHICH of them appears is
+    # exactly what varies between socket types: a USB2-only socket has no SuperSpeed hub to find,
+    # and looking only for that one reported "no socket" for the very case being diagnosed.
+    local want d dev
+    for want in 6504 6506; do
+        for d in /sys/bus/usb/devices/*; do
+            [ -e "$d/idVendor" ] || continue
+            if [ "$(cat "$d/idVendor")" = "04b4" ] && [ "$(cat "$d/idProduct")" = "$want" ]; then
+                dev=$(basename "$d")
+                echo "${dev%%.*}"   # 4-2.1 -> 4-2, the socket itself and not the internal hub
+                return
+            fi
+        done
     done
     echo ""
 }
+
+have() { lsusb | grep -q "$1"; }
+
+# The plain-language line, from the project's shared translation layer (scripts/vr_i18n.py), so
+# the person holding the cable gets an instruction and not a diagnosis. The technical verdict
+# still goes to the ledger -- both audiences are real, they are just not the same audience.
+say() {
+    python3 - "$(dirname "${BASH_SOURCE[0]}")" "$1" <<'PY' 2>/dev/null
+import sys
+sys.path.insert(0, sys.argv[1])
+try:
+    from vr_i18n import t
+    print(t(sys.argv[2]))
+except Exception:
+    pass
+PY
+}
+action() { local m; m=$(say "$1"); [ -n "$m" ] && { echo; echo "   >> $m"; }; }
 
 cmd_qualify() {
     local label="${1:-}"
@@ -107,19 +130,48 @@ cmd_qualify() {
     echo
 
     # --- rung 1: does anything of the headset enumerate at all ---
+    # Verbose on purpose while this is still being learned: the five devices are not
+    # interchangeable and "3/5" hides WHICH three, which is the entire diagnosis. Each line says
+    # what that device is for, so a missing one reads as a lost capability and not as a number.
     local n port ctl pci desc
     n=$(g2_census)
     port=$(g2_port)
-    echo "1. USB census: $n/5${G2_MISSING:+   missing:$G2_MISSING}"
+    echo "1. USB census: $n/5"
+    for spec in "04b4:6504|SuperSpeed hub|the USB3 side of the cable's active hub" \
+                "045e:0659|HoloLens Sensors|cameras, IMU and the controller tunnel -- ALL tracking" \
+                "04b4:6506|USB2 hub|the USB2 side of the same hub" \
+                "03f0:0580|companion|panel on/off, activation, IPD, proximity/presence" \
+                "0bda:4c15|audio|headphones and mic"; do
+        IFS='|' read -r id nm what <<<"$spec"
+        if lsusb | grep -q "$id"; then
+            printf "     [ok]      %-11s %-18s %s\n" "$id" "$nm" "$what"
+        else
+            printf "     [MISSING] %-11s %-18s %s\n" "$id" "$nm" "$what"
+        fi
+    done
     if [ "$n" = 0 ]; then
         verdict="DEAD: nothing enumerates. Wrong socket, unpowered headset, or a dead cable."
-        echo "   -> $verdict"; ledger "$label" "" "" "$n" "$verdict"; return
+        echo "   -> $verdict"; action usb_action_nothing; ledger "$label" "" "" "$n" "$verdict"; return
     fi
 
     if [ -n "$port" ]; then
-        local hub="usb${port%%-*}"
+        local hub="usb${port%%-*}" spd
         IFS='|' read -r pci desc <<<"$(controller_of "$hub")"
-        echo "   socket: $port   controller: $pci   $desc"
+        spd=$(cat "/sys/bus/usb/devices/$hub/speed" 2>/dev/null)
+        echo
+        echo "   socket      : $port  (root hub $hub, ${spd} Mbps)"
+        echo "   controller  : $pci"
+        echo "                 $desc"
+        # The sibling root hub is what says whether this physical socket has a SuperSpeed side
+        # at all -- a black USB2 socket simply has no 10 Gbps partner behind it.
+        echo "   this controller's root hubs:"
+        for h in /sys/bus/usb/devices/usb*; do
+            local hn hp
+            hn=$(basename "$h")
+            hp=$(controller_of "$hn" | cut -d'|' -f1)
+            [ "$hp" = "$pci" ] || continue
+            printf "                 %-6s %6s Mbps\n" "$hn" "$(cat "$h/speed" 2>/dev/null)"
+        done
     fi
 
     # --- rung 2: the USB2 branch, the one that actually distinguishes sockets ---
@@ -127,11 +179,31 @@ cmd_qualify() {
     # is the documented signature of a socket the headset cannot use (docs/22), and it is why a
     # census of 2/5 is a VERDICT and not a transient.
     if [ "$n" -lt 5 ]; then
-        echo "2. USB2 branch INCOMPLETE -- kernel says, over the last $since:"
-        journalctl -k --since "$since" 2>/dev/null | grep -iE "usb|xhci" | grep -iE "error -[0-9]+|cannot enable|not accepting address|unable to enumerate|device descriptor read" | tail -8 | sed 's/^/     /'
+        # WHICH branch is missing is the diagnosis, not how many devices are missing. The two
+        # partial states mean opposite things and send the user to opposite places.
+        local ss=no usb2=no hint=usb_action_cable
+        have 04b4:6504 && have 045e:0659 && ss=yes
+        have 04b4:6506 && have 03f0:0580 && usb2=yes
+        echo "2. INCOMPLETE ($n/5): SuperSpeed branch=$ss, USB2 branch=$usb2 -- kernel, last $since:"
+        echo "   -- kernel lines that name a failure --"
+        journalctl -k --since "$since" 2>/dev/null | grep -iE "usb|xhci" | grep -iE "error -[0-9]+|cannot enable|not accepting address|unable to enumerate|device descriptor read" | tail -10 | sed 's/^/     /'
         echo "     (nothing above = the 'quiet' variant: the port never even tries. Also a fail.)"
-        verdict="BAD SOCKET: $n/5, USB2 branch never came up. Move the headset to a socket on a DIFFERENT controller -- run '$0 map'."
-        echo "   -> $verdict"; ledger "$label" "$port" "$pci" "$n" "$verdict"; return
+        echo "   -- everything the kernel said about USB in this window, for context --"
+        # Serial numbers are stripped: this output gets pasted into chats and issues, and the
+        # headset's USB serial is exactly the kind of identifier that should not travel.
+        journalctl -k --since "$since" 2>/dev/null | grep -iE "usb ?[0-9]|xhci" | sed 's/SerialNumber: .*/SerialNumber: <redacted>/' | tail -20 | sed 's/^/     /'
+        if [ "$ss" = yes ] && [ "$usb2" = no ]; then
+            if [ "$pci" = "$(controller_of "usb${port%%-*}" | cut -d'|' -f1)" ]; then hint=usb_action_wrong_socket; fi
+            verdict="BAD SOCKET ($n/5): SuperSpeed came up, the USB2 branch never did -- no companion, so no panel, no activation, no audio, no IPD, no presence. If the controller above is the CHIPSET xHCI, move to a CPU-controller socket ('$0 map'). If it is already the CPU one, the socket is fine and the cable/connector is next (docs/22)."
+            hint=usb_action_wrong_socket
+        elif [ "$usb2" = yes ] && [ "$ss" = no ]; then
+            hint=usb_action_usb2_only
+            verdict="USB2-ONLY SOCKET ($n/5): the companion side came up and the SuperSpeed pair did not, so there are no cameras, no IMU and no controller tunnel -- the panel may light while nothing can ever be tracked. This is a black USB2 port; the headset needs a blue USB3 one."
+        else
+            hint=usb_action_cable
+            verdict="PARTIAL ($n/5), neither branch complete: treat as a bad socket and re-seat before concluding anything."
+        fi
+        echo "   -> $verdict"; action "$hint"; ledger "$label" "$port" "$pci" "$n" "$verdict"; return
     fi
     echo "2. all five devices present"
 
@@ -176,6 +248,7 @@ cmd_qualify() {
         verdict="ENUMERATES AND ACTIVATES BUT NO PANEL: 5/5, activation accepted, and no DP connector ever appeared. This is the docs/22 dark-panel class, not a socket problem -- check the cable's video side."
     fi
     echo "   -> $verdict"
+    [ -n "$conn" ] && action usb_action_ok
     ledger "$label" "$port" "$pci" "$n" "$verdict"
 }
 
