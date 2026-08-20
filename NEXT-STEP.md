@@ -121,6 +121,28 @@
 > produces the first honest Linux-vs-Windows number this project has ever had, on one headset and
 > one machine.
 >
+> **LED INTENSITY — instrument built 2026-08-19 late (patch monado 0091), ready to run.** The
+> wearer reports one controller visibly brighter than the other **on the same batteries**, and
+> docs/46 already ties over-bright LEDs to ghost solves. First fact, from the code rather than a
+> guess: **nothing in this stack commands LED intensity** — the WMR controller protocol has no
+> brightness/power/PWM command and docs/12 records none — so a difference is the controller's own
+> hardware, firmware or supply, never something we set.
+>
+> **The trap that made this more than a one-liner**: `t_blob::brightness` is the brightest *pixel*
+> of the blob, clamped to 1.0, so a LED bright enough to saturate the sensor pegs it at 1.0 —
+> in exactly the over-bright case being chased it reports both hands at 1.0 and hides what the
+> wearer can see. **Area is what keeps growing past saturation** (a saturated LED blooms), so the
+> instrument is the pair (saturated fraction, mean area). Both hands are measured in the *same
+> frames* through the same sensor at the same exposure, so no absolute calibration is needed.
+> Caveat in the line itself: only matched blobs can be attributed to a hand, so absence of
+> photometry is *not* darkness — it is a hand that did not solve (the T225 inversion case).
+>
+> **The decisive experiment is a battery SWAP**, and it costs one minute: measure both hands,
+> swap the packs between controllers, measure again. If the difference **follows the batteries**
+> it is supply/voltage (and there is no effective regulator); if it **stays with the controller**
+> it is the unit, and a regulator — or its failure — is implicated. Either answer is worth having
+> before any more voltage-vs-ghost work.
+>
 > **BUILT 2026-08-19 EVENING (T228), ALL AWAITING THE WEARER SESSION** — three code items, no
 > hardware touched:
 > 1. **xrizer honest frame timing is back** (`patches/xrizer/0005`+`0006`). The revert's stated
