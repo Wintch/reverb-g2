@@ -226,6 +226,11 @@ cmd_qualify() {
     fi
 
     # --- rung 3: activation. Enumerating is not the same as usable. ---
+    # Said BEFORE activating, not after: the logo comes up during this step and the person is
+    # looking at the visor while it does. By the time a verdict prints they have already decided
+    # it worked. Measured 2026-08-19 (T231): the logo lit on a USB2-only socket that cannot
+    # carry the cameras -- "veo el logo HP" is not a pass, and it is the first thing anyone sees.
+    action usb_logo_means
     echo "3. activating the panel ($PANEL_PY activate)"
     if ! python3 "$PANEL_PY" activate >/tmp/usb-port-qualify.$$ 2>&1; then
         sed 's/^/     /' /tmp/usb-port-qualify.$$; rm -f /tmp/usb-port-qualify.$$

@@ -175,6 +175,18 @@ bandwidth-marginal — a thing to measure, not to assert in either direction.** 
 > advice would park someone on a socket where tracking cannot work. The verdict is now
 > **PANEL YES, TRACKING NO**.
 
+> ### 🚨 "Veo el logo HP" — the most misleading signal in the whole procedure
+>
+> It is the first thing anyone looks at, it appears during activation while they are watching,
+> and it looks exactly like success. **It means the headset has power and the PC could talk to
+> it over HID. That is all.** It does not mean the socket is right, that there will be an image,
+> or that tracking will work — measured here, the logo lit on a **USB2-only socket where the
+> cameras cannot be carried**, and `docs/22` already established it as a pure power+HID
+> diagnostic independent of DisplayPort.
+>
+> The tool therefore prints the warning **before** running the activation, not after: by the time
+> a verdict appears on the terminal, the person has already seen the logo and decided it worked.
+
 **Measured so far (2026-08-19, T231): all three socket types.** CPU-controller USB3 → 5/5,
 activation accepted. Chipset-controller USB3 → 2/5, USB2 branch never enumerates. Black USB2 →
 4/5, panel proven, tracking bandwidth-marginal. `4-2` on
