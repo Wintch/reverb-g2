@@ -246,7 +246,39 @@ dedicated per-hand channels (`0x06` left, `0x0E` right); and the part numbers di
 Linux and the LAST Windows dependency dies. Until it is implemented AND tested, the one-way rule
 below stands unchanged.
 
-### The bonding model, mapped (user's tested record, 2026-08-20)
+### `controller-pair.py` — the first-ever Linux WMR pairing attempt (T236, poshalim)
+
+Built on the research above. `scripts/controller-pair.py` sends `WMR_BT_CONTROL_MSG_PAIR`
+(`{0x16, 0x05, controller_id}`) — the command documented in `wmr_protocol.h` and never sent by
+any code, on any OS's Monado, ever. **Dry run passed (2026-08-20)**: with both controllers
+paired, `--arm-only` sent `0x05` for the right hand and the radio accepted it without error and
+without disturbing either bond. So the command is safe to send; whether it *pairs* is the open
+experiment.
+
+**Safety model, which is the design and not a caveat:**
+- It sends **only PAIR (0x05), never UNPAIR (0x06).** A host-side unpair has unknown semantics
+  (one bond or both? which slot?), and the physical button already erases deterministically and
+  aimed. There is no reason to give an unknown destructive command a trigger. UNPAIR is not
+  wired.
+- The **erase is always the physical button** — known, one controller at a time, recoverable.
+  Linux only ever attempts the *rescue*. The worst case is "PAIR did nothing", not "we lost a
+  bond we can't get back".
+- **One controller at a time**, the other left paired as a live control, and a Windows/Oasis
+  bench available as the recovery path before starting.
+
+**The experiment nobody has run**, needing a hand on the physical button:
+1. `controller-pair-check.py` → confirm both `paired`.
+2. Hold the RIGHT controller's battery-compartment button until the LEDs pulse slowly (this
+   both ERASES its bond and enters discovery).
+3. `controller-pair-check.py` → confirm right now reads `UNPAIRED` (the clean before-state; this
+   is what makes the result unambiguous — a fresh `paired` afterward can only have come from us).
+4. `controller-pair.py right` → it arms the radio and watches for `UNPAIRED → paired`.
+5. If it takes: **the last Windows dependency is dead and the G2 runs end-to-end on Linux from
+   bare hardware.** If not, `docs/03`'s recovery (pair once on Windows) restores it, and the
+   tool prints the wire-format variables worth varying (id-byte position, an `ONLINE_STATUS`
+   0x04 pre-arm) for the next attempt.
+
+### The bonding model, mapped (user's tested record, 2026-08-20)### The bonding model, mapped (user's tested record, 2026-08-20)
 
 It is not an analogy — it is Bluetooth bonding, and it behaves like any BT device:
 
