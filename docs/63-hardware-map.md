@@ -78,7 +78,8 @@ numbers for the cable and the PSU are exactly the ones still missing below.
 | Cable type | **Active**, with an inline box | Measured: the box contains USB hub silicon and a DP repeater (`docs/22`) | **confirmed** |
 | Inline USB hub | Cypress (`04b4:650x`) | Enumerates as such | **confirmed** |
 | **DP repeater in the box** | — | Its *existence* is established by the cable anatomy; **the chip has never been identified**, and it is the prime suspect in years of link faults | **unknown — highest-value gap** |
-| **Revision of THIS unit's cable** | **Rev A** — i.e. the ORIGINAL, not the rev2A replacement | Read off the cable by the user, 2026-08-19 (T232) | **confirmed** (exact label wording pending) |
+| **THIS unit's cable** | **6 m active, SPS `M18238(8)-001`, regulatory model `TPC-B001C`** — the ORIGINAL revision, no switch | Read off the cable label, 2026-08-19 (T232). Note the cable has its own TPC family (`B001C`), separate from the headset/controllers (`Q077`) | **confirmed** |
+| Replacement part, if the swap is ever run | **`M52188-001`** — *"SPS-CA ACTIVE 6M BLACK **/W SWITCH**"*, also sold as `22J68AA` / `L72080-002` | HP's own listing; the one HP support recommends under warranty | **confirmed** |
 | Revisions in existence | Rev A (original) and **rev2A** (adds a button Rev A lacks) | User knowledge, community record (`docs/22`) | **confirmed** |
 | PSU | 12 V barrel | Measured | **confirmed rating, part unknown** |
 
@@ -148,10 +149,11 @@ must be external"*. The measurements still have to do the work: the **battery sw
 The identifiers above came off one label. These are the rest, in the order they would be useful —
 all of them are **model/part numbers, not serials**:
 
-1. **The cable's own label.** This is the big one: it would settle **which revision this unit
-   has**, v1 or rev2A, which the whole `docs/22` saga has been arguing about without ever
-   checking a part number. (For scale of the confusion: `L56522-002` appears in this repo as the
-   *USB-C adapter*, not the cable.)
+1. ~~**The cable's own label**~~ **done (T232)** — and it settled the revision question. One
+   loose end: the user read `M182388-001`, seven digits, where HP SPS numbers run six
+   (`M52188-001`, `M09967-001`). The six-digit `M18238-001` is listed by resellers as an older
+   cable revision, so the label is worth re-reading to confirm which it is. It does not change
+   the conclusion — no switch means original revision either way.
 2. **Any marking on the inline box** on that cable — the box holding the DP repeater nobody has
    identified. Even a bare number would close gap #1 of the list above.
 3. ~~**Both controllers**~~ **done (T232)**: right `TPC-Q077-C1` / `M09967-001`, left

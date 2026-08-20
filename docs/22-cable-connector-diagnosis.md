@@ -948,3 +948,27 @@ on both).
 
 **Read next, if the label has more on it**: the full HP part number of the cable. Rev A units
 carry one, and it is the identifier a second owner would search for.
+
+### The cable, identified — and the replacement now has an orderable number (T232)
+
+| | |
+|---|---|
+| **This unit's cable** | 6 m active, SPS **`M18238(8)-001`**, regulatory model **`TPC-B001C`**, **no switch** |
+| **The replacement** | SPS **`M52188-001`** — HP's own description: *"SPS-CA ACTIVE 6M BLACK **/W SWITCH**"*. Also sold as `22J68AA` / `L72080-002` |
+
+**Three independent facts converge on the same answer**, which is why this is worth trusting: the
+user read "Rev A" off the label; the cable has **no button**; and its part number sits in the
+older family, while the replacement's official description literally ends in *"/W SWITCH"*. This
+document had already recorded, from community knowledge alone, that *"rev2A adds a button v1
+lacks"* — HP's own SPS description says the same thing in its product name.
+
+**What actually changes for this project.** For weeks "buy the rev2A" was folklore: a thing
+people said, with no part number attached, which is part of why the recommendation kept flipping
+between "firm buy" and "premature". **It is now an orderable part: `M52188-001`.** That does not
+make it a fix — everything in the lottery-ticket section above still stands, including that some
+units get *worse* on the newer cable — but the experiment can now be specified precisely instead
+of described.
+
+Note also that the cable carries its **own regulatory model family** (`TPC-B001C`) distinct from
+the headset and controllers (`TPC-Q077-*`). It is a separately certified product, which fits what
+this document measured the hard way: it is an active device with its own silicon, not a wire.
