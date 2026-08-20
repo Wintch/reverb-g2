@@ -234,6 +234,14 @@ bandwidth-marginal — a thing to measure, not to assert in either direction.** 
 > The tool therefore prints the warning **before** running the activation, not after: by the time
 > a verdict appears on the terminal, the person has already seen the logo and decided it worked.
 
+**CLOSED (2026-08-20, T234): the full ladder is proven on the real socket.** `4-2`: plug →
+5/5 in three seconds → activation accepted → **`card0-DP-3` appeared**, baselined against a
+genuinely cold panel. T231's earlier proof was on the black USB2 socket (panel yes, tracking no);
+this one is the socket a session actually uses, end to end, no Windows at any step. The two
+recovery levers each have their census signature (table above), and one negative is on file:
+T186's cold replug does **not** convert a never-good socket (`4-1`, two insertions, USB2 pair
+failing actively with `error -71` while SuperSpeed enumerates beside it).
+
 **Measured so far (2026-08-19, T231): all three socket types.** CPU-controller USB3 → 5/5,
 activation accepted. Chipset-controller USB3 → 2/5, USB2 branch never enumerates. Black USB2 →
 4/5, panel proven, tracking bandwidth-marginal. `4-2` on
