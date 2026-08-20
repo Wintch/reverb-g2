@@ -26,3 +26,5 @@ docs/led-photometry/
 *.mp4
 *.mov
 *.heic
+# Naming convention for anything that DOES belong in the tree: docs/32, "Naming captures".
+# Short version: kebab-case, no spaces, the name says what it shows, never a clock time.

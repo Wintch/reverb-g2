@@ -11,6 +11,37 @@ and is blind to the others.** The 2026-08-13 pacing episode is the cautionary ta
 artefact appear, because it counts missed slots and cannot see latency. Read the "blind
 to" column before quoting a number.
 
+## Naming captures, and why the clock is the wrong name
+
+**A file name has to be something you can reference later.** `Screenshot From 2026-08-09
+19-18-19.png` fails at that twice: it says nothing about what is in it, and the second it was
+taken references nothing anyone will ever look for. Two files in this repo were named that way
+and both were renamed on 2026-08-19 (T230) — `gigabyte-a520m-back-panel.png` and
+`nvidia-system-info-2026-08-05.txt`.
+
+The convention, for captures, logs, exports, anything that lands in the tree:
+
+* **lowercase kebab-case, no spaces, no accents.** Spaces break every `for f in $(...)` anyone
+  will ever write against it, and quoting them correctly is a tax paid forever.
+* **The name says WHAT IT SHOWS**, not when it was taken. `gigabyte-a520m-back-panel` can be
+  found by someone who remembers the content; a timestamp can only be found by someone who
+  already knows the answer.
+* **A date only when the capture is a dated measurement** whose value depends on when it was
+  taken — `nvidia-system-info-2026-08-05`. Then `YYYY-MM-DD`, which sorts correctly, and never
+  `08-05-2026`, which is ambiguous between two continents.
+* **Never a clock time.** Two captures the same day are distinguished by what makes them
+  different — `-linux` / `-windows`, `-run1` / `-run2`, `-before` / `-after` — which is also
+  the thing you will want to grep for. `19-18-19` is not a fact about the capture, it is a fact
+  about the shutter.
+* **Strip embedded metadata** before committing an image (`convert x.png -strip x.png`).
+  `gnome-screenshot` writes `Software` and `Creation Time` into the PNG itself, and a phone
+  writes far more than that — GPS included.
+
+And the rule that outranks all of the above: **capture media does not go in the repo at all**
+unless it carries information the numbers cannot. The repo is public and a frame of the bench
+can carry something personal that nobody notices while committing it. `.gitignore` blocks the
+class; the measurements live in `docs/pruebas.jsonl`, which is the reproducible part anyway.
+
 ## What we have
 
 | Tool | The question it answers | Blind to |
