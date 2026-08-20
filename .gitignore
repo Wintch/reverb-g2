@@ -17,3 +17,12 @@ photo_*.jpeg
 docs/Screenshot_*.png
 Screenshot_*.png
 experiments/webcam/
+
+# Capturas de calibracion (fotos/videos de los LEDs, del casco, del banco).
+# NUNCA van al repo: es publico y una foto del lab puede llevar algo personal en el encuadre
+# sin que nadie lo note al subirla. Los NUMEROS viven en docs/ y en docs/pruebas.jsonl, que es
+# lo unico reproducible; el archivo original se queda fuera del arbol (T230).
+docs/led-photometry/
+*.mp4
+*.mov
+*.heic

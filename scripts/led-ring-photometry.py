@@ -23,6 +23,11 @@ linearised (^2.2) before integration; a ratio taken on raw 8-bit sums would be w
 
   ./scripts/led-ring-photometry.py photo.jpg
   ./scripts/led-ring-photometry.py photo.jpg --split 480   # x that separates the two rings
+
+THE CAPTURES THEMSELVES DO NOT LIVE IN THIS REPO, deliberately. It is public, and a photograph
+of the bench can carry something personal in the frame that nobody notices while committing it.
+The numbers this script prints are the reproducible part and they go in docs/pruebas.jsonl; the
+image stays outside the tree. .gitignore enforces it so it cannot happen by reflex.
 """
 
 import argparse
