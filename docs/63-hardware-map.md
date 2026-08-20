@@ -103,6 +103,9 @@ numbers for the cable and the PSU are exactly the ones still missing below.
 | Cable type | **Active**, with an inline box | Measured: the box contains USB hub silicon and a DP repeater (`docs/22`) | **confirmed** |
 | Inline USB hub | Cypress (`04b4:650x`) | Enumerates as such | **confirmed** |
 | **DP repeater in the box** | — | Its *existence* is established by the cable anatomy; **the chip has never been identified**. **The box carries NO external label on the visor-facing side (checked T232)**, so the only remaining route is opening it | **unknown — highest-value gap** |
+| **Cable/box manufacturer** | **BizLink (Kunshan) Co., Ltd.** | Printed on the box label, T232. BizLink is a large cable-assembly and connector OEM (also dongles and active modules) — HP did not build this, they specified it | **confirmed** |
+| Box label, other markings | `CAN ICES-3(B)/NMB-3(B)` (Canada Class B statement) and `HQ-TRE, 71025 Germany` — HP's EU authorised representative address (HP Deutschland GmbH, Böblingen) | Read T232 | **confirmed** |
+| Box position on the cable | breakout at **~5 m**, splitting into a ~1 m **DisplayPort** tail and a ~1 m **USB-C** tail; cable ends are natively DP 1.3 and USB-C 3.0 | Public product descriptions, consistent with this repo's measured anatomy (`docs/22`) | **confirmed** |
 | Cable sticker | serial (deliberately not recorded) **+ a firmware marking**, transcribed with uncertain characters as `fw 0x5_3 … 0x5_10` | Read T232. **That the cable carries a firmware version at all is the finding**: it confirms the inline box holds programmable silicon, which is the object docs/22 has suspected for months | **present, value not yet legible** |
 | **THIS unit's cable** | **6 m active, SPS `M18238-001`, regulatory model `TPC-B001C`** — the ORIGINAL revision, no switch | Read off the cable label, 2026-08-19 (T232). Note the cable has its own TPC family (`B001C`), separate from the headset/controllers (`Q077`) | **confirmed** |
 | Replacement part, if the swap is ever run | **`M52188-001`** — *"SPS-CA ACTIVE 6M BLACK **/W SWITCH**"*, also sold as `22J68AA` / `L72080-002` | HP's own listing; the one HP support recommends under warranty | **confirmed** |
@@ -147,8 +150,16 @@ Ordered by what it would actually unlock, not by how easy it is:
    which is the question this whole repo started from.
 5. **The exact STM32 model.** With `MCU Download` and `DES JTAG` headers on the board, a named
    part is the difference between "there is a JTAG header" and actually talking to it.
-6. **ANX7688's role.** A USB-C/DP-alt-mode bridge inside a headset fed by plain DP does not
-   obviously make sense; something about the link topology is not understood.
+6. **ANX7688's role — and a hypothesis that would resolve it (T232).** A USB-C/DP-alt-mode
+   bridge makes no obvious sense *inside a headset fed by plain DP*. But the **link box has a
+   USB-C tail**, and an ANX7688 is precisely the part for a USB-C end that must carry DP alt-mode
+   alongside USB. **Hypothesis: the ANX7688 is in the BOX, not in the visor** — the version string
+   that names it (`STM:..;DFU:..;ANX7688:..;ANX7530:..`) is a firmware manifest, and nothing in it
+   says the two chips live in the same enclosure. Two further facts point the same way: the cable
+   label carries **two** firmware values, which fits an enclosure with two programmable parts; and
+   `docs/22` has suspected programmable silicon in that box for months on independent evidence.
+   **This is a hypothesis, not a finding.** The test is one photograph of the board inside the box
+   — and it would simultaneously close gap #1.
 
 ### The hands are not the same part, and that matters right now
 
