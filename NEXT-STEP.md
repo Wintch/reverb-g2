@@ -121,6 +121,17 @@
 > produces the first honest Linux-vs-Windows number this project has ever had, on one headset and
 > one machine.
 >
+> **WHERE THIS ACTUALLY STANDS, in the user's words at the close of 2026-08-19**: *"nos van
+> quedando pocas cosas, está a un nivel muy bueno. Casi para recomendar ya para uso diario, un par
+> de fichines en una sala de espera, imaginate. Enciende y anda, listo."* Worth writing down
+> because it is the acceptance criterion finally being stated as a feeling rather than a metric,
+> and because the remaining work should be judged against it: **turn it on and it works**, for
+> someone who is not in this conversation. That is the ARkade goal (memory:
+> `idea_arcade_mode_headless_vr`, `project_vr_museum_goal`) and it is close. What still stands
+> between here and "a couple of arcade cabinets in a waiting room" is not tracking quality any
+> more — it is the link (T226/T227), battery certainty (docs/46) and the unattended path holding
+> without a human (FAIL_MARKER, T228).
+>
 > **LED INTENSITY — THE WEARER WAS RIGHT, AND THE ASYMMETRY IS OS-DEPENDENT (T230).** The
 > Windows re-shoot, same controllers, same positions, same cells, settles it:
 >
