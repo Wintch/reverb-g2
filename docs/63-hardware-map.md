@@ -107,10 +107,41 @@ numbers for the cable and the PSU are exactly the ones still missing below.
 | Box label, other markings | `CAN ICES-3(B)/NMB-3(B)` (Canada Class B statement) and `HQ-TRE, 71025 Germany` — HP's EU authorised representative address (HP Deutschland GmbH, Böblingen) | Read T232 | **confirmed** |
 | Box position on the cable | breakout at **~5 m**, splitting into a ~1 m **DisplayPort** tail and a ~1 m **USB-C** tail; cable ends are natively DP 1.3 and USB-C 3.0 | Public product descriptions, consistent with this repo's measured anatomy (`docs/22`) | **confirmed** |
 | Cable sticker | serial (deliberately not recorded) **+ a firmware marking**, transcribed with uncertain characters as `fw 0x5_3 … 0x5_10` | Read T232. **That the cable carries a firmware version at all is the finding**: it confirms the inline box holds programmable silicon, which is the object docs/22 has suspected for months | **present, value not yet legible** |
-| **THIS unit's cable** | **6 m active, SPS `M18238-001`, regulatory model `TPC-B001C`** — the ORIGINAL revision, no switch | Read off the cable label, 2026-08-19 (T232). Note the cable has its own TPC family (`B001C`), separate from the headset/controllers (`Q077`) | **confirmed** |
-| Replacement part, if the swap is ever run | **`M52188-001`** — *"SPS-CA ACTIVE 6M BLACK **/W SWITCH**"*, also sold as `22J68AA` / `L72080-002` | HP's own listing; the one HP support recommends under warranty | **confirmed** |
+| **THIS unit's cable** | **6 m active, SPS `M18238-001`, HP P/N `L72080-001`, regulatory model `TPC-B001C`** — the ORIGINAL revision, no switch | Read off the cable label, 2026-08-19 (T232); **P/N `L72080-001` confirmed T239** against a second, physically different unit's box (below) | **confirmed** |
+| Replacement part, if the swap is ever run | **`M52188-001`**, HP P/N **`L72080-002`** — *"SPS-CA ACTIVE 6M BLACK **/W SWITCH**"*, also sold as `22J68AA` | HP's own listing (SPS + `22J68AA`); the one HP support recommends under warranty. **P/N `L72080-002` confirmed T239** — see below | **confirmed** |
 | Revisions in existence | Rev A (original) and **rev2A** (adds a button Rev A lacks) | User knowledge, community record (`docs/22`) | **confirmed** |
 | **PSU** | **HP 65 W, 18.5 V, 3.5 A, 4.8 × 1.7 mm barrel.** Spare `381090-001`, P/N `380467-001`, series `PPP009H`, model `PA-1650-02H` (LiteOn) | All four read off the brick's own label, T232, and all four resolve to the same 65 W / 18.5 V family — an ordinary HP laptop adapter that HP reused here | **confirmed** |
+
+### Two units side by side (T239) — a rare direct rev1/rev2 comparison, and what it does and doesn't show
+
+Credit where due: the comparison images that drove this section came from a YouTube video,
+**"HP Reverb G2 (ВТОРАЯ РЕВИЗИЯ) ► Сравниваем с первой и аналогами"** ("HP Reverb G2 [SECOND
+REVISION] ► Comparing with the first and analogues"), channel **VR Studio**
+(`youtube.com/@VRStudio`), <https://youtu.be/POGlHlz4qLk>. Two physical G2 revisions filmed
+side by side, labels legible — that's uncommon; most teardowns only ever show one unit.
+
+**Headset labels: identical, no revision marking found.** Both units' regulatory labels read
+`TPC-Q077-VH`, `VR3000-0XX`, FCC ID `HFS-A85Q`, IC `1787B-A85Q`, ANATEL `09742-20-02585`,
+`CCAM20LP1040T9` — every field this repo already treats as the base G2's identity (see the
+table above) matches across both units, character for character. **This is negative evidence
+against a headset-label-visible hardware revision**: whatever changed between the two units in
+this video, it isn't declared on the regulatory sticker. (The user's opening question this
+session was whether vertical FOV differs between the two — the labels can't settle that; FOV
+isn't a regulatory field, and no optics/lens photo from this video has been reviewed yet.)
+
+**The cable's inline box: the two P/Ns this repo already had, now seen on camera together.**
+Same video, box labels legible on both: **`L72080-001` / SPS `M18238-001`** (original Rev A,
+matches this unit's own cable, row above) and **`L72080-002` / SPS `M52188-001`** ("w/ switch"
+replacement, also matches the row above). Model Name `TPC-B001C` identical on both boxes —
+consistent with the headset finding: HP kept the regulatory model constant across a hardware
+revision. No switch was visible in the frame reviewed (label side only, not the box's edge).
+
+**Open thread: a second PSU.** The user reports the rev2 cable in the video ships with a
+different power supply than this unit's `PPP009H`/`PA-1650-02H` (row above), and that the two
+*looked* interchangeable — **not yet confirmed by a label read or a physical swap test**.
+Needed to close this: the second PSU's own label (P/N, output V/A) from the video, and whether
+"interchangeable" means same electrical spec or an actual tested swap. Until then, treat the
+single-PSU row above as covering only this unit.
 
 ## Controllers
 

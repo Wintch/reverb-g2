@@ -171,6 +171,55 @@ the actual APPX packages, via `store.rg-adguard.net` rather than any first-party
 - The user offered to make captures on Windows if needed. Not needed today (ch. 07 archived), but
   if we ever need to see how the link negotiation happens, it should be set up properly for them.
 
+### The deprecation, with the primary source (T239)
+
+Read directly off Microsoft's own [Deprecated features in the Windows client](https://learn.microsoft.com/en-us/windows/whats-new/deprecated-features)
+page (the row is dated **December 2023**), quoted in full because a reader will want the exact
+wording, not a paraphrase:
+
+> "Windows Mixed Reality is deprecated and will be removed in Windows 11, version 24H2. This
+> deprecation includes the Mixed Reality Portal app, Windows Mixed Reality for SteamVR, and Steam
+> VR Beta. Existing Windows Mixed Reality devices will continue to work with Steam through
+> November 2026, if users remain on their current released version of Windows 11, version 23H2.
+> After November 2026, Windows Mixed Reality will no longer receive security updates, nonsecurity
+> updates, bug fixes, technical support, or online technical content updates."
+
+Two dates, not one: the platform was **pulled from 24H2** (removed outright, which is what this
+project ran into), but a 23H2 install with the old Mixed Reality Portal keeps working — informally,
+by staying off the update — **until November 2026**, when Microsoft stops servicing it entirely.
+Secondary reporting (Neowin, Techzine) adds a second tier: **November 2027 for commercial Windows
+editions**, one year longer than consumer — not itself confirmed against a Microsoft primary
+source, flagged here as unverified rather than silently adopted. **No official reason was given**
+on that page or anywhere else Microsoft has published — no adoption numbers, no cost rationale,
+nothing beyond the bare deprecation notice. Anything about *why* (low VR adoption, Microsoft's
+focus shifting to HoloLens/enterprise) is industry speculation, not a Microsoft statement, and
+should be labelled as such if it goes in a report.
+
+**It was not just the G2.** WMR launched October 2017 (Windows 10 Fall Creators Update) as a
+multi-vendor platform, and the 24H2 removal orphaned all of them in the same update: HP (WMR
+headset 2017, Reverb 2019, **Reverb G2** 2020), Lenovo Explorer (2017), Dell Visor (2017),
+Samsung Odyssey (2017) / Odyssey+ (2018), Acer AH101 (2017) / OJO 500 (2019), Asus HC102 (2018).
+(`docs/62` already carries the VID/PID table for reusing this repo's tooling against any of
+them.) **No manufacturer, including HP, has ever published total units sold** for any WMR
+headset — the closest public proxy is the Steam Hardware Survey, where the whole WMR family
+polls in the low single digits of percent among Steam VR users, dwarfed by Quest and Index. HP
+was rumoured to be exiting the VR market as early as October 2022 (UploadVR, sourced to a Reddit
+claim of a leaked internal remark); HP's on-record reply at the time was noncommittal corporate
+language, not a denial, and the company gave no public update either way before deprecation made
+the question moot. Treat the sales-figures gap as permanent, not as something more searching will
+fix — every source above independently confirms nobody outside Microsoft/HP has this number, and
+neither company has released it.
+
+**The community answer, both sides of the OS split**: **Oasis**, credited and detailed further
+in `docs/09` and `docs/62` — worth adding here because it is not an anonymous project: its author,
+Matthieu Bucchianeri (`mbucchia`), is **a Microsoft engineer** (per his own public statements,
+formerly on the Mixed Reality/HoloLens team, still at Microsoft though not on that team now) who
+built it in a personal capacity. That is also the documented reason `docs/09` already found the
+GitHub repo to be source-less — an issue tracker and wiki, no code: he has said he is bound by
+Microsoft NDAs and will not open-source it, even though he distributes it for free on Steam. On
+Linux, the equivalent role is filled by **Monado + Envision**, which is what this entire repo is
+built on.
+
 ## Project's stated goal
 
 Ship a **universal driver + basic toolkit** so the G2 stays useful on Linux and people can build

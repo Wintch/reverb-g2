@@ -112,6 +112,14 @@ ledger.
   about *recovery* rather than about *cause* — and that recovery path is the model for ours.
 * **The `PROBLEM:Error` states**, 12 of them: what error code Windows assigned would say
   whether these are the same enumeration failures Linux reports as `error -71`.
+* **Third-party anecdotal datapoint (T239), not a measurement**: the VR Studio rev1/rev2
+  comparison video (credited in `docs/63`) reports audio cutting out with the **old** cable and
+  not with the **new** one — i.e. an independent owner's informal experience lines up with this
+  project's own hypothesis (`M52188-001`/rev2A as the fix) rather than with the visor-side-PHY
+  alternative. This is exactly the kind of "impression, not a measurement" this document already
+  warns against trusting on its own (see "Why the earlier reasoning went wrong" above) — it does
+  **not** replace the rev2A swap-and-monitor test called for above, it just makes that test more
+  worth doing soon.
 
 ## Addendum — the benchmark numbers from the same hour, and why they are not yet a comparison
 

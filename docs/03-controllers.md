@@ -71,7 +71,21 @@ always gets the `oculus/touch_controller` profile, never WMR. That was also what
 masking the bug: pose/grab/quit worked via Touch. Patch 0011 is valid for apps that
 only suggest the WMR profile (the common case for WMR-era apps); for our player the
 real fix was to mirror the player's bindings (seek/pause/recenter) into the
-`oculus/touch_controller` block of hello_xr. Watch out for two details of the Touch profile:
+`oculus/touch_controller` block of hello_xr.
+
+**Why the WMR profile can't express the G2's buttons, precisely (T239)**: the generic
+`microsoft/motion_controller` OpenXR profile models the *original* WMR controller, which has a
+circular **touchpad** below the thumbstick — Acer, Samsung Odyssey, Lenovo Explorer, Dell Visor
+and the first HP Reverb all shipped that hardware. **The G2 is the one model in the family that
+removed the touchpad** for plain X/Y/A/B buttons, which is a real physical difference, not a
+Monado quirk — confirmed against Monado's own source, where `wmr_controller_og.c` (touchpad,
+serving `WMR_CONTROLLER_PID`/`ODYSSEY_CONTROLLER_PID`) and `wmr_controller_hp.c` (this headset's
+`REVERB_G2_CONTROLLER_PID`, no touchpad) are two separate driver files, dispatched by controller
+PID in `wmr_controller_create()`. Everything in this chapter is scoped to the G2's own controller
+on purpose — that's the hardware on the bench — but `docs/62` carries the broader picture for
+anyone adapting this project to a touchpad-equipped WMR controller instead.
+
+Watch out for two details of the Touch profile:
 `menu` only exists on the left hand (suggesting it for the right makes the ENTIRE
 `xrSuggestInteractionProfileBindings` fail), and `squeeze` only has a `value` (float)
 component — a boolean action bound there is legal, Monado applies a 0.7 threshold to it

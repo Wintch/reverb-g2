@@ -186,6 +186,13 @@ Original repo: `github.com/mbucchia/Oasis-Driver-for-Windows-Mixed-Reality` — 
 just an issue tracker with a wiki, no published source code. The wiki does have a page
 `Pairing-Motion-Controllers` with the procedure (physical, controller button).
 
+**Why there's no source (T239)**: `mbucchia` is Matthieu Bucchianeri, **a Microsoft engineer**
+(by his own public statements, previously on the Mixed Reality/HoloLens team, still at Microsoft
+though no longer on that team) who built Oasis in a personal capacity after 24H2 orphaned WMR
+(`docs/10` has the deprecation timeline and primary source). He has stated he's bound by
+Microsoft NDAs and won't open-source it, despite giving it away free on Steam — which is why
+everything in this document had to come from disassembly rather than a repo.
+
 Imports of `unlock_wmr.exe`: `SETUPAPI.dll` (`SetupDiGetClassDevsW`,
 `SetupDiEnumDeviceInterfaces`, ...), `CFGMGR32.dll` (`CM_Get_Device_Interface_ListW`,
 `CM_Get_Device_Interface_PropertyW`) and `HID.DLL` — no Bluetooth at all (`bthprops`,

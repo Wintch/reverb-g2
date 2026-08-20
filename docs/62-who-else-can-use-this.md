@@ -70,9 +70,36 @@ guesswork:
 
 **What it takes**: `usb-port-map.sh`'s `G2_IDS` becomes a per-model table. Everything else — the
 ladder, the branch census, the controller check, the ledger, the plain-language lines — is
-already device-agnostic. The activation step is the one genuinely per-model piece, and
-`panel.py` already documents which command each family wants (`wmr_hmd.c` has separate Reverb and
-Odyssey activation paths).
+already device-agnostic. The activation step is one genuinely per-model piece, and `panel.py`
+already documents which command each family wants (`wmr_hmd.c` has separate Reverb and Odyssey
+activation paths).
+
+**Controller hardware is not uniform across the family, found T239 — but it's already handled
+upstream, which is worth knowing before assuming otherwise.** Everything in `docs/03` about this
+project's controllers — the X/Y/A/B layout, the thumbstick behaviour, the input fixes in
+`patches/monado/0001-0008` — describes **this specific model's controller**, because that's the
+unit on the bench. **Every WMR controller up to and including the original HP Reverb (G1) had a
+circular touchpad below the thumbstick — Acer, Samsung Odyssey/Odyssey+, Lenovo Explorer, Dell
+Visor, the first HP Reverb.** The G2 is the one model in the VID/PID table above that **removed
+the touchpad** in favour of plain A/B/X/Y buttons — a real physical difference, not a driver
+quirk, and it has a live consequence even on Windows: many WMR-era games map primary interaction
+to the touchpad, and G2 owners are stuck emulating it by holding a face button while moving the
+thumbstick.
+
+Checked directly against Monado's source (`~/vr/monado/src/xrt/drivers/wmr/`, T239): the
+touchpad path is **not missing upstream** — `wmr_controller.c`'s `wmr_controller_create()`
+already switches on controller PID, and `wmr_controller_og_create()` (in `wmr_controller_og.c`,
+"og" = the touchpad-equipped reference design shared by `WMR_CONTROLLER_PID` and
+`ODYSSEY_CONTROLLER_PID`) fully implements `TRACKPAD`, `TRACKPAD_CLICK` and `TRACKPAD_TOUCH` as
+real inputs, separately from `wmr_controller_hp_create()`/`wmr_controller_hp.c` for
+`REVERB_G2_CONTROLLER_PID`. **This project's first draft of this note overstated the gap** — it
+guessed a touchpad path would need writing; it doesn't, Collabora/Jan Schmidt already wrote and
+maintain one, this repo just never had a reason to touch it since the G2 has no touchpad to
+drive. So a touchpad-equipped WMR controller is closer to the "VID/PID-list change" category
+above than to "real work" — the open question for a real port is whether that PID switch already
+covers Acer/Lenovo/Dell/first-gen-HP (all likely `WMR_CONTROLLER_PID`, the shared reference
+design) or whether any of them needs its own case, which nobody here has checked against real
+hardware.
 
 **Why this matters beyond us**: these are all discontinued, WMR support was removed from Windows
 11 24H2, and the machines that ran them are being thrown out. A working Linux bring-up procedure
@@ -100,7 +127,16 @@ Acer, Lenovo, Dell, Asus and Medion in a single update — hardware that worked 
 Two independent efforts answered that: **Oasis**, an unofficial SteamVR driver that bypasses the
 deprecated Mixed Reality Portal (this is the "Oasis" referenced throughout this repo — it is the
 *community* driver, not a Microsoft one, which is worth stating because a reader could easily
-assume otherwise), and the Linux side: **Monado** plus **Envision** as its front end.
+assume otherwise, though notably its author turns out to be an actual Microsoft engineer working
+in a personal capacity — `docs/09` has the detail), and the Linux side: **Monado** plus
+**Envision** as its front end.
+
+**The whole platform, in one line (T239, primary source and full detail in `docs/10`)**: WMR
+launched October 2017 across seven OEMs at once, Microsoft announced deprecation December 2023
+with **no reason given** beyond the bare notice, pulled it from Windows 11 24H2, and has committed
+to killing even the fallback (staying on 23H2) in **November 2026**. Nobody involved — not
+Microsoft, not HP, not any of the other six OEMs — has ever published unit-sales figures for any
+WMR headset; that gap looks permanent, not just under-researched.
 
 Beyond WMR, the same "the vendor is gone, the hardware is fine" pattern:
 
