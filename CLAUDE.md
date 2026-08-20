@@ -1,6 +1,83 @@
 # Context for the 90Hz lab agent
 
-> ## START HERE (2026-08-19, ~18:20 — the T223/T224/T225 day, five hours, three sessions).
+> ## START HERE (2026-08-20, ~01:45 — the "run it all without Windows" night, T226-T237).
+> Read `docs/00` + `docs/03` + `docs/60`-`63` + T226-T237 + NEXT-STEP. Supersedes the block below
+> on every point where they disagree. The tracking work (T223-T225) is unchanged and still true;
+> this night was about the LINK, the HARDWARE MAP, and cutting the last ties to Windows.
+>
+> **THE HEADLINE: the G2 now runs end-to-end on Linux from bare hardware — activation, panel,
+> tracking, port recovery — with only ONE Windows dependency left (initial controller pairing),
+> and that one is now a scoped RE target instead of a wall.** The full USB bring-up ladder is
+> PROVEN cold (T234): plug into the CPU-controller socket → 5/5 in 3 s → `panel.py activate` →
+> `DP-3` hotplugs from a genuinely absent connector, no Windows at any step. `scripts/usb-port-map.sh`
+> is the instrument (`map` needs no headset, `qualify` walks the 4-rung ladder and writes a
+> per-board ledger).
+>
+> **The USB story, fully mapped (T231-T234, T237, `docs/00`)**: this board (ASUS TUF B450M-PLUS
+> II) has TWO xHCI controllers — `09:00.3` Matisse (CPU, headset WORKS) and `02:00.0` B450 chipset
+> (headset FAILS). ASUS does not publish which rear port is which; the live census does, and that
+> gap is why the tool exists. Census signatures and their measured levers: **5/5** = good;
+> **2/5 SS-only** = correct plug side, USB2 branch didn't join → **PC-end cold replug, same port
+> same side** (T186, but does NOT rescue a never-good seat, T234); **0/5 powered** = wrong plug
+> side → **flip the C plug 180° in the adapter** (T184); **4/5 SS-missing** = a black USB2 socket
+> (panel works, tracking can't). **Three wrong versions of this table were written and retracted
+> in one night** — each generalised a fresh measurement over a better one already in `docs/22`.
+> The discriminator is the **plug seat**, not the controller; the kernel's `Cannot enable. Maybe
+> the USB cable is bad?` fires on a perfect cable in the wrong seat. **Read the record before
+> concluding — that rule was the one being broken.**
+>
+> **The USB2 storm is the LINK, not our stack (T226, `docs/60`), and the amplifier is FIXED
+> (0090, `docs/61`, T227)**: Windows storms at 3.47 drops/min on the same cable/box/headset (OS
+> the only variable), USB3 immune on both — so the rev2A cable is BACK on the suspect list and its
+> retraction is retracted. A re-enumeration permanently invalidated the companion's hidraw fd
+> (the node moves `hidraw6`→`7`→…); 0090 re-finds it by VID/PID and swaps under `hid_lock`, **13/13
+> recovered, 3.34 s each**. **Retire `companion_errors`** — past the first re-enum it counts our
+> own polling of a corpse (explains T183's errors during 5/5). The rev2A is not a fix but a
+> well-posed A/B now: HP recalled every Rev A cable for free, citing power/hub issues on the exact
+> USB2 branch that storms.
+>
+> **THE HARDWARE IS FULLY MAPPED — `docs/63`, every part with a confidence level.** Every
+> identifier read off the labels (serials deliberately excluded): headset `TPC-Q077-VH` /
+> `VR3000-0XX` (the BASE G2, not Omnicept — a 3-file correction) / FCC `HFS-A85Q` + IC/KC/NCC/
+> ANATEL/ICASA/IFT (global-SKU label); controllers **right `TPC-Q077-C1`/`M09967-001`, left
+> `-C2`/`-002` — DIFFERENT PARTS** (removes the "same unit" assumption under the T230 LED
+> asymmetry); cable **Rev A, SPS `M18238-001`, `TPC-B001C`, by BizLink**, replacement `M52188-001`
+> (with switch); **PSU is 18.5 V not 12 V** — HP 65 W `PPP009H`/`PA-1650-02H`, a 33-place
+> correction that mattered because `docs/26` told people to replace the brick. Still unknown and
+> worth chasing: the **DP repeater chip in the cable's inline box** (no external label; box opens),
+> both IMUs, the panel part.
+>
+> **The LED asymmetry is REAL and OS-DEPENDENT (T229/T230)**: Windows drives the left ring 2.45×
+> the blob area of the right; on Linux the two are identical (both at the dim end). We command no
+> LED intensity at all — so Windows sends something we don't, a candidate tracking lever upstream
+> of every threshold. `scripts/led-ring-photometry.py` measures it (area, not brightness —
+> brightness saturates). Decisive test queued: position-swap + battery-swap photos.
+>
+> **CONTROLLER PAIRING — researched deep, ATTEMPTED, honest negative (T235/T236, `docs/03`)**:
+> `WMR_BT_CONTROL_MSG_PAIR=0x05` sits unused in Monado's own header; we built `controller-pair.py`
+> and fired it on a genuinely-unpaired controller — **it did NOT pair**. A probe proved the enum
+> values past `0x17` are inert (identical `CONTROLLER_STATUS` replies), i.e. unvalidated RE
+> guesses. The unpair was the PHYSICAL button (Linux read it live), not a host command. Nobody has
+> ever paired a WMR controller from Linux; the scoped next step is **USBPcap of Oasis pairing on
+> Windows** to get the real framing. Recovery: one Oasis pass re-pairs (the right controller is
+> currently unpaired). Pairing is literal Bluetooth bonding (2402-2480 MHz to the HEADSET radio,
+> mutable, per-hand-slot, calibration travels with the controller) — which makes controllers
+> **migratable between G2 units**, key for the recycling mission.
+>
+> **What Oasis actually does, precisely (`docs/31`)**: (1) binds USB to ONE CPU-fed USB3 port —
+> relaunch to re-bind, a technically-valid-but-unbound port FAILS (T185 ghost is that refusal);
+> (2) controller pairing. Both are the platform's inheritance, not Oasis quirks — the original MS
+> driver fought the same on new hardware and "no marcaba bien nada". The diagnostic gap nobody
+> ever filled on Windows is exactly what our census/ladder/ledger fills.
+>
+> **Method meta-lesson of the night, earned four times**: the record outranks the impression, and
+> it was violated repeatedly — the socket table (×3), and the pairing "OS-independent" hypothesis.
+> The user caught each from memory of his own docs. `poshalim` — we tried the world-first pairing
+> and it's an honest negative, which is on file next to the win it wasn't.
+>
+> ---
+>
+> ## PREVIOUS (2026-08-19, ~18:20 — the T223/T224/T225 day, five hours, three sessions).
 > Read `docs/58` + T223-T225 + NEXT-STEP. The header below it is superseded on every point
 > where they disagree.
 >
