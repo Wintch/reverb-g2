@@ -266,6 +266,40 @@ guesses. **Do NOT keep firing speculative byte layouts on Linux in the meantime*
 flailing; the capture is the disciplined path. A single controller (the left) is enough for every
 hardware check queued (thread names, benchmark, 0090 storm) until then.
 
+### T238: the bytes AND the delivery mechanism are now solved -- one handshake detail remains
+
+A USBPcap capture of a real Oasis pairing (right controller, the recovery pass) cracked two of
+the three unknowns and corrected T236's conclusion:
+
+1. **The command bytes are CONFIRMED CORRECT.** Oasis pairs with exactly `16 05 01` -- report
+   0x16 (BT_CONTROL), 0x05 (PAIR), 0x01 (right). Byte for byte what T236 sent. So the enum was
+   NOT an "unvalidated guess"; T236's inert-probe conclusion was wrong, and the reason it looked
+   inert is (2).
+2. **The delivery mechanism was the real bug.** BT-control commands must be sent as a HID
+   SET_REPORT over the CONTROL endpoint (`bmRequestType 0x21`), which on Linux means
+   `HIDIOCSFEATURE`, NOT `os.write()` to the interrupt-OUT endpoint. Proof it matters: the
+   `0x17` controller-status we thought our `{0x16,0x17}` query fetched is **streamed passively**
+   -- 16 packets arrive in 4 s with ZERO writes. So every `os.write` command (T236 and the early
+   T238 tries) **never reached the command handler**. Via `HIDIOCSFEATURE` the device accepts it
+   (`accepted=True`), and firing it on a controller in discovery visibly re-enumerates the radio
+   -- the command is now landing.
+3. **STILL OPEN: the completion handshake.** With bytes right and delivery right, the bond still
+   does not form from Linux. Tried: single-shot, sustained resend, active polling, and passive
+   listen (fire once, leave the radio alone -- since each control SET_REPORT re-enumerates the
+   radio and hammering interrupts any pairing in progress). None completed. The capture shows
+   Oasis did more around the PAIR: a `16 09` CMD_STATUS precursor per hand, and continuous
+   PAIRING_STATUS polling on a **report-0x02 channel** whose *responses* (the state machine that
+   drives completion) have not yet been decoded.
+
+**NEXT STEP, offline, no headset needed**: mine the capture (`20of8.pcapng`) for the FULL
+request/response sequence in the successful-pairing window -- both directions, all report IDs,
+including the 0x02-channel responses -- to find what Oasis reads between PAIR and success (~7 s
+later). Then replicate that exact dance. `controller-pair.py` is the harness (correct bytes +
+correct delivery + resilient reopen + passive watch); it is one decoded handshake away.
+
+**Recovery**: the right controller is unpaired; one Oasis pass on Windows restores it (the user
+is dual-boot). The left stayed paired as the anchor throughout.
+
 ### RESULT (T236): the simple framing does NOT pair — a real negative, and the honest record
 
 We tried it. The world-first attempt **failed**, and that is worth as much on file as a success
