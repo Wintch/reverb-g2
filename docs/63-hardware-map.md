@@ -76,7 +76,8 @@ numbers for the cable and the PSU are exactly the ones still missing below.
 | Cable type | **Active**, with an inline box | Measured: the box contains USB hub silicon and a DP repeater (`docs/22`) | **confirmed** |
 | Inline USB hub | Cypress (`04b4:650x`) | Enumerates as such | **confirmed** |
 | **DP repeater in the box** | — | Its *existence* is established by the cable anatomy; **the chip has never been identified**, and it is the prime suspect in years of link faults | **unknown — highest-value gap** |
-| Revisions | v1 and **rev2A** (rev2A adds a button v1 lacks) | User knowledge, community record (`docs/22`) | **confirmed** |
+| **Revision of THIS unit's cable** | **Rev A** — i.e. the ORIGINAL, not the rev2A replacement | Read off the cable by the user, 2026-08-19 (T232) | **confirmed** (exact label wording pending) |
+| Revisions in existence | Rev A (original) and **rev2A** (adds a button Rev A lacks) | User knowledge, community record (`docs/22`) | **confirmed** |
 | PSU | 12 V barrel | Measured | **confirmed rating, part unknown** |
 
 ## Controllers

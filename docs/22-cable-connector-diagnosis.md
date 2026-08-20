@@ -925,3 +925,26 @@ the old cable. If the new one is worse, that is a documented outcome and not a s
 deliberately will not be**: it reaches the board through an internal header plus a length of case
 wiring, adding another marginal joint to a chain whose first joint already cost this project
 weeks. **Potentially unsafe, not recommended.** The cable is enough of a mess on its own.
+
+## This unit's cable is **Rev A** — the original (2026-08-19, T232)
+
+Read off the cable's own label by the user, after this document had argued about cable revisions
+for weeks **without anyone checking a part number**. That is worth stating as a process failure
+first: the single cheapest fact in the whole saga was printed on the object the entire time.
+
+**What it settles.** Every "buy the rev2A" and "the rev2A escalation was premature" exchange in
+this file was about replacing a cable whose revision was assumed, not known. It is now known: this
+headset has been running its whole life on the **original Rev A cable** — precisely the revision
+with the community's mass-failure record, the one HP replaced.
+
+**What it does NOT settle, and this is the part to hold onto.** It does not make the swap a fix.
+Everything in the section above still applies: HP never shipped a cable that is 100% good, there
+are no third-party alternatives, some units are stable on Rev A and get *worse* on rev2A, and the
+two are not the same hardware (rev2A adds a button). What changes is only this: **the experiment
+is now well-posed.** Before, "try the other cable" meant swapping an unknown for an unknown. Now
+it is a clean A/B — original versus replacement — on a link whose fault rate has been measured on
+both operating systems (T226: 3.47 drops/min on Windows, 0.92-4.63 on Linux, USB3 branch immune
+on both).
+
+**Read next, if the label has more on it**: the full HP part number of the cable. Rev A units
+carry one, and it is the identifier a second owner would search for.
