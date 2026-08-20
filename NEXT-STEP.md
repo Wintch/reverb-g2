@@ -121,7 +121,44 @@
 > produces the first honest Linux-vs-Windows number this project has ever had, on one headset and
 > one machine.
 >
-> **LED INTENSITY — FIRST MEASUREMENT IN, AND IT DOES NOT CONFIRM THE OBSERVATION (T229).**
+> **LED INTENSITY — THE WEARER WAS RIGHT, AND THE ASYMMETRY IS OS-DEPENDENT (T230).** The
+> Windows re-shoot, same controllers, same positions, same cells, settles it:
+>
+> | | left n / area / flux | right n / area / flux | left÷right |
+> |---|---|---|---|
+> | **Linux** | 14 / 63 px / 351 | 14 / 64 px / 365 | **1.00× / 0.99× / 0.96×** |
+> | **Windows** | 29 / 139 px / 782 | 18 / 57 px / 409 | **1.61× / 2.45× / 1.91×** |
+>
+> **On Linux the two controllers are indistinguishable — and both sit at the DIM end**, matching
+> the Windows *right* one. T229's "not reproduced" is **retracted**: it was measured in the wrong
+> frame (left-vs-right *within Linux*, where no difference exists). Every systematic biases the
+> result **downward**: the left ring was 26% further from the camera on Windows than on Linux and
+> still read 2.2× brighter (~3.5× range-corrected); the Windows background is *darker* (median 12
+> → 2), so its exposure was lower; and the left ring is the more tilted of the two (radius sd 19
+> vs 13). White-balance control passes — cold-blob R/B is 0.915 vs 0.908 across the two shots — so
+> the 15 extra **warm, faint** blobs on Windows (mean blue peak 81, i.e. not clipped) are real and
+> not a colour shift. Conservative reading of those: a phone's residual IR leak reads warm at low
+> intensity, so they are **more emitters crossing the detection floor**, not a second LED type.
+>
+> **WHY THIS MATTERS MORE THAN THE LED QUESTION**: T229 established from the code that **nothing
+> in our stack commands LED intensity** — no brightness, power or PWM command exists in the WMR
+> controller protocol, and docs/12 records none. Windows evidently commands something we do not.
+> More light and more visible LEDs means **more blobs**, which is the direct input to the
+> correspondence search — a candidate lever **upstream of every threshold and prior tuned in the
+> last weeks**, invisible until now because the two stacks had never been compared at the emitter
+> level. **NAMED NEXT INVESTIGATION: find what Oasis sends the controllers that we do not.**
+> docs/09 already did this for the panel command set, and `windows-kit/` carries the HID capture
+> path; the question is now specific — a controller-directed command that changes LED drive.
+>
+> **The sweep pattern is NOT confirmed** (user: "hace un pasaje de un lado a otro en intensidad …
+> más bien en el reflejo"). Measured from the 45 s pan: flux-per-pixel (immune to framing) varies
+> 31%, but its autocorrelation is **0.95 at one frame and still 0.67 at twelve** — a slow, smooth
+> drift, not a strobe. That is what a **specular highlight travelling as the viewpoint moves**
+> looks like, which also explains why he sees it in the reflection and not in the LEDs. A 30 fps
+> handheld pan cannot see kHz modulation anyway. **To settle it: phone on a fixed support, no
+> panning, slow-motion if the phone has it.**
+>
+> **LED INTENSITY — first measurement (T229), superseded above by T230.**
 > The under-exposed two-ring photograph says the controllers agree within its own ±20%
 > uncertainty: flux right/left = 1.06× (all LEDs), 0.88× (uncompressed only), 1.23× (range
 > corrected), area 1.01×. **The three estimators disagreeing IS the result.** Cause, measured:
