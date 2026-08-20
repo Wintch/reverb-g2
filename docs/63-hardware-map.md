@@ -41,9 +41,15 @@ a wildcard rather than a mystery.
 | **`CCAM20LP1040T9`** | **NCC** (Taiwan). `CCA` + year/month `M20` + type `LP` + sequence — the standard NCC form | **confirmed** |
 | **`09742-20-02585`** | **ANATEL** (Brazil) homologation, 2020. Their numbers are exactly `NNNNN-YY-NNNNN` | **confirmed by format** |
 | **`TA-2020/6310`** | **ICASA** (South Africa) type approval. ICASA's documented form is `TA` + year + sequence | **confirmed by format** |
+| **`IC: 1787B-A85Q`** | **ISED Canada** certification. `1787B` is HP's IC company identifier and `A85Q` the model — **the same model code as the FCC ID**, which independently corroborates that `A85Q` is the base G2 | **confirmed** |
+| **`CAN ICES-3(B)/NMB-3(B)`** | **Canada ICES-003 Class B** — a *compliance statement*, not an identifier: it declares the unit a Class B digital apparatus, printed bilingually (`ICES` English / `NMB` French) | **confirmed** |
+| **`RCPHPTP20-1711`** | **IFT** (Mexico) homologation, 2020. `RCP` + brand code + two-digit year + sequence is IFT's documented form | **confirmed by format** |
 | **`E142692`** (with `CQ10`) | **UL file number** — a safety listing, not radio. `E` + six digits is UL's file format; the `CQ10` suffix is presumably a category code and is **not identified** | **file number confirmed, suffix unknown** |
 
-Markets covered: **US, South Korea, Taiwan, Brazil, South Africa**, plus a UL safety listing. For
+Markets covered: **US, Canada, Mexico, Brazil, South Korea, Taiwan, South Africa**, plus a UL
+safety listing — the Americas end to end, plus east Asia and southern Africa. Note that the
+Canadian IC number embeds **`A85Q`**, the same model code as the FCC ID: two regulators
+independently corroborating the identification this repo had to correct tonight. For
 a rescued second-hand unit this is provenance nobody normally records, because the original owner
 never needed it.
 
