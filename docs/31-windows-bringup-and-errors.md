@@ -513,6 +513,21 @@ side can recreate it. **Linux reads the state** (`controller-pair-check.py`, `do
 cannot create it** — the last named Windows dependency in this project, and the reason the
 button is one-way on a Linux-only bench.
 
+**Pairing fallback of last resort (user, 2026-08-20)**: if pairing is ever needed and Oasis
+cannot do it, the **original Mixed Reality Portal still runs on any pre-24H2 Windows** — an old
+install kept around (or a spare disk) does the job. That reframes the dependency usefully:
+adopting a controller needs *a* Windows, once — not *the* current Windows, and not one kept
+online. For the recycling mission ("adopt the survivors of a dead headset") a one-time pairing
+bench is a much smaller ask than a maintained dual-boot.
+
+**On captures vs. the public record**: the repo's own policy (media out, text in) means what
+this documentation needs from the Windows side is *wording and behaviour*, not screenshots. The
+public record (Oasis wiki, archived Microsoft guides) likely covers the happy path — being
+researched now — so the user's capture session reduces to what nobody publishes: **the two
+deliberate failure modes** (chipset port; port moved without relaunch), the battery/1.2 V
+cross-check, and any detail the wiki glosses (discovery-window length, whether the port is ever
+named on screen).
+
 **Historical context that reframes both functions (user's record, 2026-08-20)**: the fight is
 NOT an Oasis quirk — it is inherited from the platform. With the **original Microsoft WMR
 driver**, on a **new motherboard**, the same combo (headset activation + controller pairing)
