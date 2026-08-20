@@ -297,6 +297,33 @@ including the 0x02-channel responses -- to find what Oasis reads between PAIR an
 later). Then replicate that exact dance. `controller-pair.py` is the harness (correct bytes +
 correct delivery + resilient reopen + passive watch); it is one decoded handshake away.
 
+**THE STATE MACHINE, decoded from the capture (T238, continued)**: the PAIR command makes the
+headset's BT radio run a Bluetooth INQUIRY (scan). The headset narrates it in a debug log on
+**report 0x05** (`WMR_BT_IFACE_MSG_DEBUG`, subtype 0x19), ASCII: right after Oasis's `16 05 01`
+the capture shows `COMMAND_INQUIRY`, `inquiry started`, `discovering`, `PENDING 8`. So completion
+= PAIR triggers inquiry -> the pulsing controller answers the inquiry -> bond -> 0x17 status
+flips. `scripts/controller-pair-btlog.py` reads that log live.
+
+**THE PRECISE REMAINING GAP**: fired from Linux via `HIDIOCSFEATURE` (accepted=True), our `16 05
+01` produces **NO inquiry** -- report 0x05 stays silent, status stays UNPAIRED for the whole
+window. Same bytes, same control-SET_REPORT channel, different effect. So the command reaches the
+HID interface but does not reach the BT command handler that starts the scan. Device structure
+that bounds the answer: the HoloLens Sensors (045e:0659) has **interface 2 = HID** (our hidraw2,
+where 0x17 status streams and where we send) and **interfaces 3 & 4 = Vendor Specific** (no
+hidraw). Candidates for the miss, in order: (a) report TYPE -- Windows may send PAIR as an
+*Output* report via control SET_REPORT (wValue 0x02xx), while `HIDIOCSFEATURE` sends a *Feature*
+report (0x03xx); the report descriptor of interface 2 would say whether 0x16 is Output-only; (b)
+the exact wLength; (c) the command may belong to a vendor-specific interface (3/4), not the HID
+one. tshark did not expose `usb.setup.wValue`/`wLength` for these transfers, so the report type
+must come from the interface-2 HID report descriptor (`/sys/.../report_descriptor`), read offline.
+
+**NEXT STEP, offline, no headset**: (1) parse interface 2's HID report descriptor to learn how
+report 0x16 is declared (Output vs Feature); (2) if Output, send PAIR as an output report over
+the control endpoint (raw USBDEVFS_CONTROL with bmRequestType 0x21, wValue 0x0216) rather than
+HIDIOCSFEATURE; (3) confirm via the report-0x05 BT log that `inquiry started` appears. When the
+inquiry fires from Linux, the bond should follow. This is a bounded HID-report-type problem, not
+a mystery.
+
 **Recovery**: the right controller is unpaired; one Oasis pass on Windows restores it (the user
 is dual-boot). The left stayed paired as the anchor throughout.
 
