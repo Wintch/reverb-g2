@@ -38,13 +38,16 @@ STRINGS = {
         "en": "The socket is fine, so the cable is the suspect now. Unplug and firmly re-seat the connector at the visor end.",
     },
     # The HP logo is the single most misleading signal in this whole procedure, because it is
-    # the first thing a person looks at and it looks like success. It means the companion has
+    # the first thing a person looks at and it looks like success. It is an ELECTRICALLY LIT
+    # marking on the FRONT SHELL of the headset -- outside, visible without wearing it -- not
+    # something rendered on the panel. Saying "inside the visor" sends someone to look in the
+    # wrong place and conclude the headset is dead when it is merely misplugged. It means the companion has
     # power and the PC could talk to it over HID. It says NOTHING about DisplayPort, about the
     # socket being the right one, or about tracking -- measured 2026-08-19: the logo lit on a
     # USB2-only socket where tracking cannot work.
     "usb_logo_means": {
-        "es": "OJO: ver el logo HP dentro del visor NO quiere decir que este todo bien. Solo dice que el casco tiene corriente y que la PC le pudo hablar. No dice que el puerto sea el correcto, ni que vaya a haber imagen, ni que el tracking funcione.",
-        "en": "CAREFUL: seeing the HP logo inside the visor does NOT mean things are working. It only means the headset has power and the PC could talk to it. It says nothing about the socket being right, about getting an image, or about tracking.",
+        "es": "OJO: el logo HP ILUMINADO EN EL FRENTE DEL CASCO (por fuera, no adentro del visor) NO quiere decir que este todo bien. Solo dice que el casco tiene corriente y que la PC le pudo hablar. No dice que el puerto sea el correcto, ni que vaya a haber imagen adentro, ni que el tracking funcione.",
+        "en": "CAREFUL: the HP logo LIT ON THE FRONT SHELL of the headset (outside, not inside the visor) does NOT mean things are working. It only means the headset has power and the PC could talk to it. It says nothing about the socket being right, about getting an image inside, or about tracking.",
     },
     "usb_action_ok": {
         "es": "Este puerto anda. Dejá el cable acá y no lo muevas.",

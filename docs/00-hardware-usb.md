@@ -178,7 +178,10 @@ bandwidth-marginal — a thing to measure, not to assert in either direction.** 
 > ### 🚨 "Veo el logo HP" — the most misleading signal in the whole procedure
 >
 > It is the first thing anyone looks at, it appears during activation while they are watching,
-> and it looks exactly like success. **It means the headset has power and the PC could talk to
+> and it looks exactly like success. **It is an electrically lit marking on the FRONT SHELL of
+> the headset — outside, visible without wearing it — not something drawn on the panel.**
+> (Corrected 2026-08-19: an earlier version of this warning said "inside the visor", which
+> would send someone to look in the wrong place and call a merely misplugged headset dead.) **It means the headset has power and the PC could talk to
 > it over HID. That is all.** It does not mean the socket is right, that there will be an image,
 > or that tracking will work — measured here, the logo lit on a **USB2-only socket where the
 > cameras cannot be carried**, and `docs/22` already established it as a pure power+HID
