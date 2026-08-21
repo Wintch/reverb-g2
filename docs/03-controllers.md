@@ -875,7 +875,7 @@ experiment.
    tool prints the wire-format variables worth varying (id-byte position, an `ONLINE_STATUS`
    0x04 pre-arm) for the next attempt.
 
-### The bonding model, mapped (user's tested record, 2026-08-20)### The bonding model, mapped (user's tested record, 2026-08-20)
+### The bonding model, mapped (user's tested record, 2026-08-20)
 
 It is not an analogy — it is Bluetooth bonding, and it behaves like any BT device:
 
@@ -897,6 +897,80 @@ a spare (`M09967-001`/`-002`, `docs/63`) or the survivors of a dead headset can 
 living one, arriving with their own calibration. The single gate, unchanged: **adoption itself
 needs the Windows/Oasis side today**, which is why the button stays one-way on a Linux-only
 bench (addendum above).
+
+### T242 (2026-08-20/21, same night): the real PAIR command decoded byte-for-byte from a live Windows capture — the framing was never the problem
+
+Two USBPcap captures landed (`windows-kit`, taken via Wireshark's own dumpcap, not
+`capture-bringup.ps1` this time): `pairing_joys.pcapng` (22:15:36-22:23:01, 1.5 GB,
+hardlinked into `debug_vr/`, screenshots `pairing.png`/`pairing2.png` alongside it) and
+`pairing2_joys.pcapng` (00:06:48-00:11:47 the following morning, 365 MB, the "long" one).
+Both are `unlock_wmr.exe` sessions (`Oasis Driver for Windows Mixed Reality`), not Oasis's
+normal runtime — the standalone pairing utility T236 already identified as the one that
+calls `HidD_SetFeature`.
+
+**Decoding method** (worth keeping as the standard recipe): `usb.bmRequestType==0x21` isn't
+enough — tshark only populates `usb.setup.bRequest`/`usb.setup.wValue` for requests it
+doesn't have a class-specific dissector for, and the USBHID dissector swallows those fields
+for `SET_REPORT`. The field that actually carries the payload for these frames is
+**`usb.data_fragment`**, not `usb.capdata` (that one is for interrupt/bulk transfers and
+only had unrelated `"Dlo+"`-prefixed camera/IMU bulk noise on this device address). Filter:
+`usb.bmRequestType==0x21 and usb.bus_id==2 and usb.data_fragment`, dump every distinct
+first-byte prefix, and the `0x16`-prefixed ones — the BT-control report — jump straight
+out from the routine `02 08` poll noise (>99% of the traffic).
+
+**The real command, confirmed for the first time from the wire, not inferred:**
+
+```
+SET_REPORT, wValue=0x0316  ->  ReportID=22 (0x16), ReportType=FEATURE (3)
+wIndex=2 (HoloLens Sensors interface), wLength=64
+payload: 16 05 <controller_id> 00 00 ... (61 more zero bytes)
+```
+
+This is **structurally identical** to what `controller-pair.py` already sends —
+`{0x16, 0x05, controller_id}` via `HIDIOCSFEATURE`, same report ID, same report type, same
+interface. **The byte framing was never the bug.** T236's "it did NOT pair" negative needs a
+different explanation now — sequence or timing, not an unknown byte.
+
+**Full decoded timeline, capture 1** (`controller_id`: 0=left, 1=right, per
+`controller-pair-check.py:14`, confirmed self-consistent with this capture's own
+`Found controller device (paired through Headset): Left` console line preceding the dialog):
+
+| t (s) | frame | meaning |
+|---|---|---|
+| 182.1 | `16 09 00` | CMD_STATUS query, left |
+| 254.4 | `16 06 00` | **UNPAIR, left** |
+| 276.9 | `16 05 00` | **PAIR, left** |
+| 370.4 | `16 07 00` | **undocumented subcommand — not in `wmr_protocol.h`, never seen before** |
+| 373.9 | `16 09 00` | CMD_STATUS query, left |
+| 380.9 | `16 05 00` | PAIR, left (retry) |
+| 395.5 | `16 09 01` | CMD_STATUS query, right |
+| 423.4 | `16 05 01` | PAIR, right |
+
+Capture 2 (the "long" one, next morning): `16 09 00` at 108.3s, `16 09 01` at 116.0s, then
+`16 05 01` (PAIR, right) at 138.5s — a clean second right-hand attempt, no unpair.
+
+**Open items, none resolved yet:**
+- **`0x16 0x07`** — a real subcommand this project has never captured before. Unknown
+  meaning; candidate guesses (a discovery-window ping, an RSSI/link-quality poll) are
+  unverified.
+- **The left-hand UNPAIR+PAIR is disputed.** The wire is unambiguous (table above) and the
+  `controller_id=0 -> left` mapping predates tonight (`controller-pair-check.py`, and
+  `docs/03` line ~487 citing T236's own right-hand `16 05 01`) — it isn't a fresh guess made
+  to fit this capture. But the user's own recollection is "no toqué el izquierdo, le puse
+  que no ahí" (didn't touch the left, clicked No on that dialog). Both can't be true.
+  **Not resolved by memory of either side** — needs `controller-pair-check.py` against the
+  physical controllers once the headset is back on a healthy USB2 branch (bonding lives in
+  the headset radio, survives the OS that wrote it, so a Linux check answers it cleanly).
+  Left the file open here on purpose instead of picking a side.
+- **The timing between "controller enters discovery" and "host sends PAIR" is still
+  unmeasured.** Capture 1's UNPAIR-to-PAIR gap was 22.5s, but that's however long it took a
+  person to read the `pairing2.png` dialog and press the physical button, not a controlled
+  measurement of the minimum window needed. **Next planned test, agreed with the user**: a
+  short, deliberately-timed capture — hold the button, count seconds, THEN click OK — done
+  with the **LEFT** controller (already disturbed tonight by the item above, so it's no
+  longer a clean "untouched control" anyway; the right stays as the less-disturbed side).
+  This is what actually lets `controller-pair.py` replicate the sequence instead of just the
+  bytes.
 
 ### Pairing checker
 
