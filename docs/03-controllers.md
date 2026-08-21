@@ -769,6 +769,67 @@ almost certainly a SEPARATE report/subtype from `WMR_BT_CONTROL_MSG_PAIR = 0x05`
 If found, replicate that exact "enter pairing mode" command from Linux before firing `16 05`, and
 this whole investigation's dead end may not be one.
 
+### T241, Ghidra (2026-08-20, same night, `~/tools/ghidra_12.1.3_PUBLIC` -- new lab tool, installed this session): a bigger finding than expected -- this is a SECOND, INDEPENDENT sender talking to the same device
+
+Ghidra 12.x dropped Jython; headless scripting here used a compiled Java `GhidraScript`
+(`scripts/xref.py`'s objdump approach doesn't scale to this -- Ghidra's own decompiler and
+reference engine do). Two concrete findings:
+
+1. **`MotionControllerHid.dll` imports NO `HidD_SetFeature`/`HidD_GetFeature` at all.** Its only
+   `HID.DLL` imports are read/parse-side: `HidP_GetCaps`, `HidP_GetButtonCaps`, `HidD_GetAttributes`,
+   `HidD_GetHidGuid`, `HidD_GetPreparsedData`, etc -- capability enumeration and report-descriptor
+   parsing, never a Feature-report send. This means **this DLL is architecturally incapable of
+   sending the `16 05`/`16 09` Feature-report commands this whole investigation has been chasing
+   since T236** -- those are, and can only be, Oasis's own doing (confirmed independently: Oasis's
+   own `unlock_wmr.exe`/`driver_oasis.dll` DOES call `HidD_SetFeature`, per the original T236
+   analysis).
+2. **It DOES write to the device -- via raw async `WriteFile`, the Output-report path (report
+   `0x02`'s channel), not Feature.** Traced the two actual `WriteFile` call sites: one
+   (`crystalkeycache.cpp`) turned out to be writing a **local disk cache file**, not the device --
+   a real dead end, correctly identified and discarded. The other
+   (`FUN_18001dcb8`, `crystalkeydevice.cpp`) is the genuine device-write path: overlapped
+   (asynchronous) `WriteFile` on a device handle, generic buffer/length passed in by its callers --
+   this is a low-level plumbing function, not itself the site of any literal command bytes; the
+   actual "enter pairing mode" payload lives further up its call chain, past what a WPP-obscured
+   string search can locate (see below).
+
+**Why this matters more than a missing byte would**: it means Windows pairing is not one program
+(Oasis) sending the right bytes to a passive device -- it's **two independent OS-level actors
+concurrently touching the same device over two different report channels**: Oasis over Feature
+(`16 xx`, what this whole project has replicated and confirmed byte-identical) and Microsoft's own
+CrystalKey/WMR-platform driver stack over Output (`02 xx`, what `MotionControllerHid.dll` actually
+does, running as part of the Windows Holographic/WMR platform itself, independent of Oasis).
+`bth_pairingProcessSendEnterPairingMode`'s literal command bytes could not be recovered tonight --
+its trace string has **zero direct code references** in Ghidra's own analysis too (same WPP-style
+compiled-out-of-the-normal-path pattern `scripts/xref.py` hit on `objdump` earlier), meaning static
+disassembly alone cannot locate this call site without a matching PDB/TMF this project doesn't
+have. Static RE of this specific function is very likely a dead end without one.
+
+**Reframes the whole investigation's honest state**: every earlier negative in this doc (T240's
+byte-for-byte USB parity, usbmon wire-level confirmation, silent report-0x05 debug log) was
+measuring only the Oasis half of a two-actor protocol. It was never going to be enough on its own
+-- Linux has replicated Oasis faithfully, but has nothing playing the role of the Microsoft WMR
+platform driver running alongside it. **This is a materially different, and arguably more honest,
+explanation for tonight's clean negatives than "some undiscovered byte."**
+
+**NEXT STEP, needs a live Windows capture, not more static RE**: the `windows-kit/capture-bringup.ps1`
+run the user already planned should specifically watch for **Output-report (`02 xx`, non-`08`)
+traffic concentrated in the pairing window**, not just the already-decoded Feature-report sequence
+-- if `MotionControllerHid.dll`'s pairing-mode Output writes are distinguishable from the routine
+`02 08` poll by subtype or timing, THAT is the missing command, and it comes from a source (the
+Windows platform driver) Linux has never even tried to imitate. Static RE of the exact bytes is
+parked, not because it failed, but because it hit a real WPP-tracing wall that needs either a PDB
+this project doesn't have or a live/dynamic trace (e.g. a debugger breakpoint on the real `WriteFile`
+call inside `FUN_18001dcb8` during an actual Windows pairing) rather than more static disassembly.
+
+**Related MS Store app, checked, not currently installed, low priority**: the user also flagged
+"Windows Mixed Reality OpenXR Developer Tools" (`apps.microsoft.com/detail/9n5cvvl23qbt`,
+Microsoft-published; own description: "Habilita Mixed Reality OpenXR Runtime, consulta el estado
+del sistema y ejecuta la escena de demostración con tecnología de OpenXR"). Confirmed NOT present
+in `Program Files\WindowsApps` on this machine. Reads as an OpenXR runtime-status/demo-scene tool,
+not a driver -- lower-priority than the CrystalKey lead above, worth a quick look only if the
+Ghidra/live-capture leads dry up.
+
 **What this means**: Linux pairing is still unclaimed, and the real handshake is NOT the
 one-byte subtype. Concrete next step, and it is scoped: **capture Oasis's actual pairing packets
 with USBPcap on Windows during a real pair**, decode the true framing (likely a payload carrying
