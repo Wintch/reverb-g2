@@ -1,6 +1,60 @@
 # Next step
 
-> ## START HERE (2026-08-19, ~18:20 — end of a five-hour, three-session day: T223, T224, T225)
+> ## START HERE (2026-08-21, ~03:45 — the paths-forward evaluation after the T243 marathon)
+>
+> Written after a full documentation review plus an adversarial verification pass (10 agents:
+> 5 doc-cluster readers, 4 path verifiers that read the actual code and core dumps, 1
+> completeness critic). Three working hypotheses from the same night were corrected by the
+> verification before they could become plans — recorded here so they stay corrected.
+>
+> **Corrections the verification made (each against the record or the artifacts):**
+>
+> 1. **The `pop_pose()` crash is a TEARDOWN bug, not a live-session race.** `thread apply all
+>    bt` on the saved cores (not just `bt`) shows the SIGSEGV coinciding with
+>    `wmr_hmd_destroy()` already in progress — `wmr_camera_stop()` returns without joining
+>    `wmr_cam_usb_thread`, which keeps delivering frames into a tracker being destroyed. It is
+>    **20 cores over 3 days** (coredumpctl), not the 5 docs/06 counted — most of the night's
+>    "clean restarts" were probably teardown crashes nobody saw. Consequence: this crash likely
+>    does NOT explain the in-session "flying away" (that points at the seeded-recovery runaway
+>    below). The vulnerable code is byte-identical to upstream Monado — not ours — and the
+>    candidate fix is one precedented line: `os_thread_helper_stop_and_wait(&cam->usb_thread)`
+>    in `wmr_camera_stop()`. Do NOT add locks at `pop_pose()` — Basalt's queue is already a
+>    `tbb::concurrent_bounded_queue`, and this tree's own history (cfebcd72b) says it plainly:
+>    "a mutex does not fix this... the problem is the ordering, not the race."
+> 2. **The pairing "provisioning preamble" hypothesis is refuted as stated.** T243 never
+>    decoded host wire bytes for `SET_LOCAL_BDA`/`SET_REMOTE_BDA` — only the radio's ASCII log
+>    narration — and docs/03 itself already noted the provisioning does not look load-bearing
+>    (PAIR still ran a real over-the-air inquiry). The redirect is better: **T241's favored
+>    lead was never tested by anyone** — MotionControllerHid.dll sends an "enter pairing mode"
+>    command over the **Output-report channel (`02 xx`, non-08)**, and no capture analysis has
+>    ever scanned that channel. Both leads are answerable offline from `pairing3.pcapng`.
+> 3. **The fps ceiling has a suspect with a prior conviction.** T178 already caught the app
+>    pacer halving a title to exactly 45fps once (serial budget cpu+draw+gpu > 11.11 ms), and
+>    proved that **frame-pacing.sh and Steam's fps counter are both structurally blind to this
+>    symptom class** (29fps measured as "0.00% late" + "45fps"). The whole T243 sweep used
+>    exactly those two blind instruments. The fake-pacer angle is dead (fixed 2026-08-13,
+>    f24b567016); wineopenxr is not the path (these are OpenVR titles through xrizer).
+>
+> **The ranked paths (value/cost, against the museum-showcase + e-waste goals):**
+>
+> | # | Path | First step | Cost |
+> |---|---|---|---|
+> | 1 | **fps-ceiling diagnosis** — gates 17-20 titles | Relaunch Dead Herring VR with `U_PACING_APP_LOG=debug`, read the "Delivered frame" lines: is the pacer still promising the app a halved rate? | 1 session, no new code |
+> | 2 | **`pop_pose` teardown fix** — upstreamable, feeds the docs/18 MRs | Confirm the destroy-ordering pattern on 2-3 more cores (`thread apply all bt`), then the one-line join in `wmr_camera_stop()` | hours |
+> | 3 | **Seeded-recovery runaway guard** — the real live-session CPU devourer (100k+ attempts at 500% CPU, seen live 2026-08-21) | Bounded retry budget / backoff; docs/40's budget mechanism exists but defaults off | 1 session |
+> | 4 | **Pairing capture re-mining** (desk work, zero hardware risk) | tshark over `pairing3.pcapng`: (a) t=55-125s window for the real provisioning bytes, (b) full-window scan for Output `02 xx` non-08 traffic — T241's untested lead | desk only |
+> | 5 | **USB2 drops: free ladder before any purchase** | grep the night's logs for whether 0090 ever fired on a natural drop (the night's failures were pre-session census fails, outside 0090's scope); next drop, run docs/22's escalation ladder in order; the rev2A cable (M52188-001, link in docs/26) is step 7 of 7, not step 1 | minutes |
+> | 6 | Debt: buy NiMH cells (fleet thin), patches README behind (0090/0091 undocumented), 4 upstream MRs untracked, turntable never run for its primary purpose (gyro calibration), LED-drive investigation (T230) still queued | — | — |
+>
+> **Recommended next session: #1 + #4 together** — the fps diagnosis needs a wearer, the
+> pairing re-mining is desk work that runs in parallel. #2 can be prepared as a patch the same
+> session and validated at teardown time.
+>
+> Everything below this block predates the T238-T243 nights (last full rewrite 2026-08-20
+> 01:46) — several of its "next" items are since done (the Windows PAIR capture chain, the
+> game-sweep) or superseded by the table above. It remains accurate as history.
+
+> ## PREVIOUS (2026-08-19, ~18:20 — end of a five-hour, three-session day: T223, T224, T225)
 >
 > **The day's one structural fix**: the constellation range check was measured against the
 > WORLD ORIGIN instead of the camera, so a drifted SLAM origin silently discarded every correct
