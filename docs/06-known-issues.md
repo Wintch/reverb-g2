@@ -405,6 +405,24 @@ USB root disk sharing an xHCI controller with the headset + autosuspend. Chapter
 analysis and the procedures. That morning's truncated .mp4 files (marsa*, missing moov
 atom) are not recoverable — re-download them.
 
+## Full system hang after a long Steam/Proton VR marathon (2026-08-21, T243-night)
+
+Different from the 2026-08-04 hang above (that one was USB/xHCI). ~20 consecutive Steam VR
+titles launched back-to-back over several hours (`docs/23`'s T243-night sweep), many torn
+down with `kill -TERM` rather than a clean in-game exit, on an **8GB-VRAM** card at
+`4320x2160@90`. `journalctl -b -1` shows NVIDIA driver GPU virtual-address-space errors
+starting ~20 min before the freeze (`gpu_vaspace.c:4547`, `_gvaspaceMappingInsert`
+`NV_ERR_INVALID_ARGUMENT`), then `Failed to allocate NVKMS memory for GEM object`, then a
+cascading system-wide stall severe enough that `systemd-journald` itself hit its 3-minute
+watchdog timeout — required a hard power-cycle, no clean shutdown possible. No single
+culprit title identified; reads as cumulative GPU VA-space exhaustion from rapid repeated
+Proton/DXVK launches, not a bug in any one title. **Practical rule for marathon sessions**:
+this machine's 8GB VRAM is a real ceiling — don't chain many high-res Proton VR launches for
+hours without an occasional clean `jack-in-wayland.sh down` + a beat to let the driver settle,
+especially when killing titles by signal instead of their own quit path. Feeds
+`idea_arcade_mode_headless_vr` (agent memory) — any unattended long-running mode needs a
+periodic clean-restart policy for exactly this reason, not just crash recovery.
+
 ## The headset being connected can break the entire KDE desktop (2026-08-06)
 
 This isn't the 90Hz bug (`docs/13`) — it's different and more severe: with the headset
