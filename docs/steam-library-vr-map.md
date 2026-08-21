@@ -45,7 +45,7 @@ Sorted: VR Only first, then alphabetically.
 | Emergence | [1337820](https://steamdb.info/app/1337820/) | VR Only, Tracked Controller | 2020 | - | - | ✓ — Confirmed working 2026-08-12 (T161) — plays well with the VR sticks. **0.41% late frames** once warm. Audio needed routi... | Universal Everything |
 | Fallout 4 VR | [611660](https://steamdb.info/app/611660/) | VR Only, VR Supported, Tracked Controller | 2017 | - | - | - | Bethesda Game Studios |
 | fpsVR | [908520](https://steamdb.info/app/908520/) | VR Only, VR Supported, Tracked Controller | 2018 | - | yes | ✓ — **xrizer does not support OpenVR overlay applications at all**: `Unsupported application type: Overlay` from `xrizer::cl... | SBSoftLab |
-| Google Earth VR | [348250](https://steamdb.info/app/348250/) | VR Only, VR Supported, Tracked Controller | 2016 | - | - | ✓ — **Works perfectly on a 3dof session** — user: "funciona perfecto… todos sus controles andan perfecto, eso se ve en el mo... | Google |
+| Google Earth VR | [348250](https://steamdb.info/app/348250/) | VR Only, VR Supported, Tracked Controller | 2016 | - | - | ✓ — **Works perfectly on a 3dof session** — user (translated): "works perfectly… all its controls work perfectly, you can se... | Google |
 | Graffiti Bombing | [561440](https://steamdb.info/app/561440/) | VR Only, Tracked Controller | 2020 | - | - | - | Urban Weaponry, Will Lingard |
 | Half-Life 2: VR Mod | [658920](https://steamdb.info/app/658920/) | VR Only | 2022 | - | - | - | Source VR Mod Team |
 | Half-Life 2: VR Mod - Episode One | [2177750](https://steamdb.info/app/2177750/) | VR Only, Tracked Controller | 2023 | - | - | - | Source VR Mod Team |
@@ -83,7 +83,7 @@ Sorted: VR Only first, then alphabetically.
 | Star Wars: Droid Repair Bay | [726910](https://steamdb.info/app/726910/) | VR Only, Tracked Controller | 2017 | - | - | - | ILMxLAB |
 | Steam 360 Video Player | [613220](https://steamdb.info/app/613220/) | VR Only | 2017 | - | yes | ✓ — Reaches VR with controllers visible, but renders black **for lack of content** — the project's own test media is down to... | Valve |
 | Surgeon Simulator VR: Meet The Medic | [457420](https://steamdb.info/app/457420/) | VR Only, Tracked Controller | 2016 | - | - | ✓ — **Reclassified 2026-08-13 (T167), physically verified** — the T073 "crash-loop" verdict no longer holds: the game runs f... | Bossa Studios |
-| Tank Mechanic Simulator VR | [1463010](https://steamdb.info/app/1463010/) | VR Only, Tracked Controller | 2022 | - | - | ✓ — Confirmed working, 2026-08-09 — user: "perfecto! 3dof en los joy. Imagen excelente." Shows a generic "does not appear to... | GameFormatic S.A. |
+| Tank Mechanic Simulator VR | [1463010](https://steamdb.info/app/1463010/) | VR Only, Tracked Controller | 2022 | - | - | ✓ — Confirmed working, 2026-08-09 — user (translated): "perfect! 3dof on the controllers. Excellent image." Shows a generic... | GameFormatic S.A. |
 | Tank Mechanic Simulator VR: Prologue | [1795020](https://steamdb.info/app/1795020/) | VR Only | 2022 | - | - | - | GameFormatic S.A. |
 | The Lab | [450390](https://steamdb.info/app/450390/) | VR Only, VR Supported, Tracked Controller | 2016 | - | - | - | Valve |
 | The Red Stare | [625470](https://steamdb.info/app/625470/) | VR Only, Tracked Controller | 2017 | - | - | - | Play:D |

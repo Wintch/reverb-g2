@@ -12685,7 +12685,7 @@
       "docs23": {
         "title": "Google Earth VR",
         "mark": "✓",
-        "notes": "**Works perfectly on a 3dof session** — user: \"funciona perfecto… todos sus controles andan perfecto, eso se ve en el mo...",
+        "notes": "**Works perfectly on a 3dof session** — user (translated): \"works perfectly… all its controls work perfectly, you can se...",
         "section": "Working",
         "occurrences": 1
       }
@@ -23588,7 +23588,7 @@
       "docs23": {
         "title": "Tank Mechanic Simulator VR",
         "mark": "✓",
-        "notes": "Confirmed working, 2026-08-09 — user: \"perfecto! 3dof en los joy. Imagen excelente.\" Shows a generic \"does not appear to...",
+        "notes": "Confirmed working, 2026-08-09 — user (translated): \"perfect! 3dof on the controllers. Excellent image.\" Shows a generic...",
         "section": "Working",
         "occurrences": 1
       }
