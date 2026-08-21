@@ -519,6 +519,16 @@ pixels; then it accumulates error and moves a few cm to one side, sits there ~20
 a bit of latency turning, could be the game; overall good." The few-cm drift/readjust is
 docs/58's residual, not this.
 
+## `pop_pose()` teardown crash — still present, one more core (2026-08-21, T244 close)
+
+`jack-in-wayland.sh down` at the end of T244 produced another SIGSEGV core (18:13:48, 64.7 MB):
+`basalt::vit_implementation::Tracker::pop_pose` ← `flush_poses` ← `receive_frame` ←
+`t_slam_receive_cam3` ← `xrt_sink_push_frame` ← libusb callback — the same teardown-ordering
+signature NEXT-STEP's correction #1 describes (camera USB thread still delivering into a
+tracker being destroyed). Nothing user-visible (it is the service exiting), but it is the
+21st core; the one-line `os_thread_helper_stop_and_wait(&cam->usb_thread)` in
+`wmr_camera_stop()` remains path #2, not started.
+
 ## The 45 / 30 fps ceiling across 17-20 titles (RESOLVED 2026-08-21, T244)
 
 Not GPU (half the pixels, same 45 fps, 90 W), not tracking (survived 3dof), not engine age: the
