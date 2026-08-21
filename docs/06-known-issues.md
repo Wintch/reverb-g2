@@ -201,6 +201,62 @@ makes the headset firmware recycle the hub. It correlates with load because Mona
 load changes its HID timing. Pending: instrument `wmr_hmd.c` (logging every report +
 timestamps) the next time it drops. **Do not buy a power supply.**
 
+## `monado-service` segfaults in Basalt's `pop_pose()` — real crash, not the CPU-load story (2026-08-21, T243-night)
+
+**This is a different, sharper bug than the anchor-age/CPU-contention narrative built up over
+most of `docs/23`'s T243-night sweep.** Caught live while debugging why DOOM VFR kept
+"crashing" in ~8-10s: the *game* was fine — `monado-service` itself was segfaulting, taking
+the whole session down with it. `coredumpctl list monado-service` shows **five identical
+crashes the same night**, starting well before DOOM VFR was ever touched:
+
+| Time | PID |
+|---|---|
+| 22:45:51 | 18998 |
+| 22:55:45 | 25380 |
+| 23:16:31 | 33635 |
+| 23:35:04 | 45741 |
+| 01:18:27 | 10549 |
+
+Same backtrace every time (`coredumpctl gdb monado-service -q` on the saved core, `bt`):
+
+```
+#0 basalt::vit_implementation::Tracker::pop_pose(vit_pose**) ()  <- SIGSEGV here
+   from /home/iam/vr/basalt/build/libbasalt.so
+#1 xrt::auxiliary::tracking::slam::flush_poses (t=...)
+   at /home/iam/vr/monado/src/xrt/auxiliary/tracking/t_tracker_slam.cpp:1337
+#2 receive_frame (t=..., frame=..., cam_index=3)
+   at .../t_tracker_slam.cpp:1952
+#3 t_slam_receive_cam3 (sink=..., frame=...)
+   at .../t_tracker_slam.cpp:2096
+#4 xrt_sink_push_frame (...)  at .../include/xrt/xrt_frame.h:75
+#5 img_xfer_cb (xfer=...)  at .../drivers/wmr/wmr_camera.c:457
+#6-9 libusb-1.0.so.0 internals
+#10-11 libusb_handle_events_{timeout_}completed
+#12 wmr_cam_usb_thread (...)  at .../drivers/wmr/wmr_camera.c:281
+```
+
+**Reads as a real race, not a config issue**: the crash fires inside `Tracker::pop_pose()`,
+called from `flush_poses` on the camera-frame-receive path, itself invoked from a libusb
+callback running on the dedicated `wmr_cam_usb_thread` — i.e. Basalt's pose queue is being
+popped from a background USB delivery thread, and something about that access pattern
+(use-after-free, unguarded concurrent access, queue underflow) crashes it. Reproduced 5/5
+times the same way across a night that ran SLAM continuously for hours under heavy,
+variable load — consistent with a race that needs sustained real-world triggering, not a
+one-line config mistake.
+
+**Reframes a lot of the same night's `docs/23` findings**: the "anchor age spikes to
+seconds, controller flies away" pattern documented across Dead Herring VR, Chornobayivka VR,
+ISS Tour VR, Emergence, and Aliens Attack VR may in several cases be **this crash happening
+silently in the background** (the compositor and game can keep running briefly on stale
+poses right up until the whole service dies) rather than purely "SLAM/constellation is too
+CPU-expensive for this box" as read at the time. The two explanations aren't mutually
+exclusive — heavy CPU load plausibly makes the race easier to hit — but this is a real,
+locatable bug in `t_tracker_slam.cpp`/`libbasalt.so`'s queue handling, not just a resource
+ceiling. **Not yet fixed or minimally repro'd** — next step is reading `pop_pose()`'s actual
+implementation and `flush_poses()`'s call site for the missing lock/lifetime, then trying to
+trigger it on demand (rapid session start/stop under camera load looks like the likeliest
+lever, going by the crash's own call stack).
+
 ## Basalt SLAM diverges (6DoF head tracking)
 
 > **Update 2026-08-07 (T060): NOT reproduced with a fresh build, don't treat this entry
