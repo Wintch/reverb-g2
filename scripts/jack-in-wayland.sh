@@ -761,6 +761,18 @@ fi
 if [ "${VR_PIPELINED:-1}" = 1 ]; then
     PACING_ENV+=(U_PACING_APP_PIPELINED=true)
 fi
+# 2026-08-21 (T244): the app pacer's "gpu" column is structurally ~1 display period (the
+# multi-compositor's wait thread only starts waiting on frame N's fence after frame N-1 was
+# consumed, so gpu_done is quantised to the compositor tick -- docs/32 had already caught it
+# pinning near one period, 0.02 ms of movement for half the pixels). calc_app_period() doubles
+# the app period whenever that column exceeds the period, which it does on a flapping edge:
+# 45 fps (pipelined, with the 0092 gate fix still 58) and 63 fps (serial) on Dead Herring VR,
+# measured by counting "Delivered frame" lines, GPU at 25-54%. Telling the pacer to always
+# use the display period as the app period sidesteps the bogus column entirely: 89-90 fps,
+# same title, same load, verified in the headset. VR_MIN_PERIOD=0 restores the old behaviour.
+if [ "${VR_MIN_PERIOD:-1}" = 1 ]; then
+    PACING_ENV+=(U_PACING_APP_USE_MIN_FRAME_PERIOD=true)
+fi
 
 echo "Starting Monado (action $ACTION, mode $MODE, tracking $TRACKING) via DRM lease... log: $LOG"
 

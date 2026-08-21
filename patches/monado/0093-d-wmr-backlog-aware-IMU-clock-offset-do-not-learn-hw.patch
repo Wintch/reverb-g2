@@ -1,0 +1,126 @@
+From 160ad3dc227f051d1fd720c2d2311d43927691df Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Fri, 21 Aug 2026 17:05:15 -0300
+Subject: [PATCH 93/94] d/wmr: backlog-aware IMU clock offset -- do not learn
+ hw2mono from samples that arrive in a drain
+
+After every companion USB2 re-enumeration the IMU reader stalled (measured 1.4-5.1 s,
+root-caused separately to a blocking feature read in the reconnect path), the kernel
+hidraw ring filled with ~64 reports, and those arrived in one burst afterwards. Each
+carried got_a2b = true_offset + stall, and 64 of them through the 5%-per-sample
+exponential filter dragged hw2mono ~96% of the way to +stall: the first LIVE sample
+was stamped ~3 s in the future, accepted as last_imu_ns, and every real sample for
+the next ~3.3 s was rejected as "from the past" (log signature: dropped 1001, 3.49 ->
+2.48 -> 1.48 -> 0.47 s). Cameras followed through cam_hw2mono. SLAM went blind for
+the stall AND the recovery; the wearer was relocated on every natural drop.
+
+Classify a late sample (got_a2b - hw2mono > 50 ms; p99 jitter is ~15 ms) by arrival
+rate: a drain arrives faster than real time (mono gap << hw gap) and keeps the held
+offset, so it is stamped late-but-correct and monotonic; late samples at the normal
+rate for 25 in a row (~100 ms) are a genuine offset change (device clock restart,
+8.23 s measured 2026-08-12) and re-seed the filter. Logged once per burst.
+
+Measured on 66 natural + 3 forced re-enumerations in one session: 0 "from the past"
+rejections, 0 dropped frame bundles (were ~1000 samples and several bundles each),
+wearer: "the view no longer flies away, stays within a few pixels" (translated).
+---
+ src/xrt/drivers/wmr/wmr_source.c | 75 +++++++++++++++++++++++++++++++-
+ 1 file changed, 74 insertions(+), 1 deletion(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_source.c b/src/xrt/drivers/wmr/wmr_source.c
+index c7dc88ba9..1101f6acc 100644
+--- a/src/xrt/drivers/wmr/wmr_source.c
++++ b/src/xrt/drivers/wmr/wmr_source.c
+@@ -118,6 +118,14 @@ struct wmr_source
+ 	// to land p50 +578 ms in the FUTURE of the query/IMU clock at the tracker layer. These
+ 	// fields instrument the ingest itself: raw cam-vs-IMU hardware-domain skew per frame.
+ 	timepoint_ns last_imu_hw_ns; //!< Raw (unconverted) hw timestamp of the last IMU sample
++	// Backlog-aware clock offset (2026-08-21, T244): arrival time of the last IMU sample, and
++	// how many consecutive samples arrived "late" against the current offset estimate.
++	timepoint_ns last_imu_mono_ns;   //!< os_monotonic_get_ns() when the last IMU sample arrived
++	uint32_t imu_late_run;           //!< consecutive samples with got_a2b far above hw2mono
++	uint32_t imu_backlog_run;        //!< of those, how many arrived faster than real time (a backlog draining)
++	uint64_t imu_backlog_bursts;     //!< backlog bursts seen this session
++	uint64_t imu_backlog_samples;    //!< samples stamped with the held offset instead of the filtered one
++	uint64_t imu_offset_reseeds;     //!< genuine clock-offset jumps accepted (filter re-seeded)
+ 	uint32_t cam0_frames_seen;   //!< cam0 frame counter for the clockskew log cadence
+ };
+ 
+@@ -203,8 +211,73 @@ receive_imu_sample(struct xrt_imu_sink *sink, struct xrt_imu_sample *s)
+ 	const float IMU_FREQ = 250.f; //!< @todo use 1000 if "average_imus" is false
+ 	timepoint_ns now_hw = s->timestamp_ns;
+ 	timepoint_ns now_mono = (timepoint_ns)os_monotonic_get_ns();
+-	timepoint_ns ts = m_clock_offset_a2b(IMU_FREQ, now_hw, now_mono, &ws->hw2mono);
++
++	/*
++	 * Backlog-aware offset update (2026-08-21, T244). m_clock_offset_a2b() learns hw2mono
++	 * from os_monotonic_get_ns() at ARRIVAL, which is only meaningful for a sample that was
++	 * delivered promptly. When the read path stalls -- measured four times in seven minutes
++	 * on a Reverb G2, once per companion USB2 re-enumeration, ~3.3 s each -- the samples
++	 * produced during the stall arrive afterwards in one burst (kernel hidraw ring, hub or
++	 * headset buffer, it does not matter which): each carries got_a2b = true_offset + stall.
++	 * Fed to a 5%%-per-sample exponential filter, 64 such samples drag hw2mono ~96%% of the
++	 * way to +stall, so the FIRST live sample after the burst is stamped ~3 s in the future,
++	 * accepted as last_imu_ns, and every real sample for the next ~3.3 s is then rejected
++	 * below as "from the past" (log signature: 1001 dropped, 3.49 -> 2.48 -> 1.48 -> 0.47 s).
++	 * SLAM went blind for the stall AND for the recovery, and the wearer got relocated.
++	 *
++	 * Discriminator: a backlog drains FASTER than real time (mono gap << hw gap); a genuine
++	 * offset change (device clock restart after a sensors re-enumeration, 8.23 s measured
++	 * 2026-08-12) arrives at the normal rate. Late samples in a drain keep the held offset,
++	 * so they are stamped where they really happened (late, but correct, and monotonic);
++	 * late samples at the normal rate re-seed the filter after a short run.
++	 */
++	const time_duration_ns LATE_THRESHOLD_NS = 50 * U_TIME_1MS_IN_NS; // p99 jitter is ~15 ms
++	const uint32_t RESEED_AFTER_LATE_RUN = 25;                          // ~100 ms at 250 Hz
++	timepoint_ns ts;
++	time_duration_ns got_a2b = now_mono - now_hw;
++	if (ws->hw2mono != 0 && (got_a2b - ws->hw2mono) > LATE_THRESHOLD_NS) {
++		time_duration_ns mono_gap = now_mono - ws->last_imu_mono_ns;
++		time_duration_ns hw_gap = now_hw - ws->last_imu_hw_ns;
++		bool draining = ws->last_imu_mono_ns != 0 && hw_gap > 0 && mono_gap * 2 < hw_gap;
++		ws->imu_late_run++;
++		if (draining) {
++			ws->imu_backlog_run++;
++		}
++		if (!draining && ws->imu_late_run >= RESEED_AFTER_LATE_RUN) {
++			// Late, but at the normal rate, for 100 ms: the offset really moved.
++			ws->imu_offset_reseeds++;
++			WMR_WARN(ws,
++			         "IMU clock offset jumped by %.1f ms at the normal arrival rate -- re-seeding hw2mono "
++			         "(%u late samples, %u of them in a drain; re-seed #%" PRIu64 ")",
++			         (double)(got_a2b - ws->hw2mono) / 1e6, ws->imu_late_run, ws->imu_backlog_run,
++			         ws->imu_offset_reseeds);
++			ws->hw2mono = got_a2b;
++			ws->imu_late_run = 0;
++			ws->imu_backlog_run = 0;
++		}
++		if (ws->imu_late_run == 1) {
++			ws->imu_backlog_bursts++;
++			WMR_INFO(ws,
++			         "IMU sample arrived %.1f ms late against hw2mono (mono gap %.1f ms, hw gap %.1f ms) -- "
++			         "holding the offset instead of learning from it (burst #%" PRIu64 ")",
++			         (double)(got_a2b - ws->hw2mono) / 1e6, (double)mono_gap / 1e6, (double)hw_gap / 1e6,
++			         ws->imu_backlog_bursts);
++		}
++		ws->imu_backlog_samples++;
++		ts = now_hw + ws->hw2mono; // held offset, no filter update
++	} else {
++		if (ws->imu_late_run > 0) {
++			WMR_INFO(ws,
++			         "IMU arrival back to normal after %u late samples (%u in a drain); %" PRIu64
++			         " held-offset samples this session",
++			         ws->imu_late_run, ws->imu_backlog_run, ws->imu_backlog_samples);
++			ws->imu_late_run = 0;
++			ws->imu_backlog_run = 0;
++		}
++		ts = m_clock_offset_a2b(IMU_FREQ, now_hw, now_mono, &ws->hw2mono);
++	}
+ 	ws->last_imu_hw_ns = now_hw; // raw hw stamp, for the cam clockskew diagnostic (docs/44)
++	ws->last_imu_mono_ns = now_mono;
+ 
+ 	// TRIED AND REVERTED (2026-08-12): swapping this for m_clock_windowed_skew_tracker, the
+ 	// windowed minimum-skew estimator already in this tree (and already used by the Rift
+-- 
+2.47.3
+

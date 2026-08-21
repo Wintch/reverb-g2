@@ -161,6 +161,15 @@ column that matters when quoting a number.
 | `pose-lag.py` | **Wall-clock delivery delay** | Both CSVs carry frame timestamps (when the pose WAS), not arrival times — a pose delivered 0.85 s late cross-correlates at ~0 lag. T180: the tracker ran 0.8 s behind real time for weeks while this tool read "delivered leads raw by 5 ms", and both numbers are true. `timing.csv` col2−col1 is the instrument for delivery delay |
 | Any of them | **Window focus** | Unreal and DXVK throttle when the game window is not focused. Two measurements minutes apart are not comparable unless both state their focus state |
 
+**Root cause of the `GPU time` pin, found 2026-08-21 (T244)**: `comp_multi_compositor.c`'s wait
+thread marks `gpu_done` after `wait_fence()`, but it handles one frame at a time and the previous
+iteration ends in `wait_for_scheduled_free()` — so frame N's fence wait only *starts* after frame
+N-1 was consumed by the compositor tick, and `gpu_done(N) − delivered(N)` ≈ one period for any app
+running a frame ahead. The column is not a measurement of GPU work; and the app pacer feeds it
+into `calc_app_period()` (period doubling) and the pipelined engage test, which is how a title
+with the GPU at 25-54% got paced to 45 fps. Instrument that caught it: the `Delivered frame`
+count below, read against `nvidia-smi` power at two render scales.
+
 **The real app frame rate**, until a script wraps it:
 
 ```bash

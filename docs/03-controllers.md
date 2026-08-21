@@ -1276,3 +1276,43 @@ orientation is no longer an open problem for the right hand, and is down to a sm
 bounded, actively-being-fitted residual for the left. Position acquisition slowness
 (parked-at-anchor, late jumps toward real positions) remains the separate, still-open
 constellation-matching thread.
+
+## T244 (2026-08-21): pairing3.pcapng re-mined offline — both open leads closed as clean negatives
+
+Desk work from NEXT-STEP's path #4, over the same capture as T243 (87,102 frames, 224 s, tshark
+4.4.16, `usb.bmRequestType==0x21 and usb.bus_id==2 and usb.data_fragment` plus
+`usbhid.data.report_id==5` for the radio log). Device map on that bus: addr1 `04b4:6504` hub,
+addr2 `045e:0659` HoloLens Sensors — **the device the PAIR goes to** — addr3 `0bda:4c15` audio,
+addr4 `03f0:0580` companion. At t≈115.4-116.3 s HoloLens Sensors **re-enumerated on Windows too**
+(addr2 → addr5, same VID:PID), which is why the provisioning narration appears twice.
+
+**(a) The SET_LOCAL_BDA / SET_REMOTE_BDA "provisioning preamble" is not a host command.** The
+radio log narrates it twice, byte-identical (t=64.231-64.247 on addr2, t=117.517-117.524 on
+addr5): `COMMAND_SET_LOCAL_BDA 0x3` → `WMR Embedded Host Address [b4 a9 fc cf e7 22]` →
+`COMMAND_SET_LEFT_REMOTE_BDA 0x13` / `Provisioned MC_LEFT <b4 a9 fc b2 2d 07>` →
+`COMMAND_SET_RIGHT_REMOTE_BDA 0x14` / `Provisioned MC_RIGHT <b4 a9 fc b2 26 2d>` →
+`COMMAND_SET_VISIBILITY 0x8` → `HIDH_COMMAND_ADD 0x1303` → `COMMAND_PUSH_NVRAM_DATA 0x5` /
+`BR/EDR LinkKey 932159EF…` / `NVRAM write: 138`. In both windows the only host→device frames are
+`GET_DESCRIPTOR STRING` boilerplate, empty interrupt-IN re-arms, and one `SET_IDLE` at t=63.028
+(wValue 0, content-free). No `0x16`, no vendor request, nothing. **It is the WICED radio
+re-loading its own NVRAM at chip init, once per enumeration** — docs/03's earlier "pushed by the
+host" reading is withdrawn; the wire shows no push.
+
+**(b) The Output-report `02` channel, whole capture.** Only two host→device report ids ever reach
+HoloLens Sensors: `02` (851 frames on addr2, 1283 on addr5) and `16` (3 frames: `16 09 00`
+@141.324, `16 05 00` @188.331, `16 09 01` @207.223). The complete `02` vocabulary is
+`{04, 06, 07, 08, 0b}`, always the bare fixed frame `02 xx 00…00` (65 bytes), no parameter ever
+varies. **`02 08` is not a heartbeat**: it is a dense post-enumeration burst (852 frames in 1.2 s
+on addr2; ~1700 in 17 s on addr5, 133-150 s) and then silence — 150-224 s holds exactly the
+three `16` frames, six `02 07` frames at **t=196.577-196.853**, and one `02 0b` at 214.897. The
+six `02 07` bracket the radio's CONNECTED sequence (two before `hidh_con_ctrl_connected` at
+196.589, four after the last config-pull at 196.620), replacing `02 08` entirely for 276 ms —
+**8.2 s after PAIR, at controller connect**, not at pairing entry. T241's "MotionControllerHid.dll
+sends an enter-pairing-mode command on `02 xx`" is therefore **not supported** by this capture; the
+one real `02 07` event reads as a new-HID-device-attached polling-profile refresh. Worth one
+targeted check later: does `02 07` also fire when an already-paired controller reconnects?
+
+**Around PAIR itself (t=186-200), exhaustively**: seven host→device frames total — `16 05 00` and
+the six `02 07`. Nothing precedes the PAIR on any report id, any device. The Linux-side pairing
+attempt's framing (`16 05 0x`) stands as the complete host contribution visible on USB; what
+remains unexplained about our negative (T235/T236) is not a missing preamble.

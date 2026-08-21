@@ -1,6 +1,38 @@
 # Next step
 
-> ## START HERE (2026-08-21, ~03:45 — the paths-forward evaluation after the T243 marathon)
+> ## START HERE (2026-08-21, ~17:15 — T244: paths #1, #4 and #5 of the table below, DONE)
+>
+> **Path #1 closed, and it was bigger than a diagnosis.** The 45/30 fps ceiling over 17-20 titles
+> was the app pacer, twice over: the `gpu` column is structurally one period (multi-compositor
+> wait-thread serialisation, docs/32), so `calc_app_period()` flaps into period-doubling, and the
+> pipelined model double-counted its own promise shift (45 fps by construction). Patch **0092** +
+> `U_PACING_APP_USE_MIN_FRAME_PERIOD=true` (launcher default now, `VR_MIN_PERIOD=0` reverts):
+> Dead Herring VR **44 → 89-90 fps**, GPU not the limiter at either scale, verified worn. docs/23.
+>
+> **A second bug fell out of the wearer test.** "Turned on the left controller and appeared far
+> below" was a companion USB2 drop: 0090's post-reconnect proximity feature read **blocks 1.4-5 s
+> inside the IMU reader** (never answered), the hidraw ring's backlog then drags `hw2mono` into a
+> 3.5 s "from the past" rejection hole. Patches **0093** (backlog-aware offset) + **0094** (read
+> off, run-loop stall warnings): **66 natural re-enumerations in one session, zero SLAM holes**,
+> wearer: "the view no longer flies away". That is most of the T243 "flying away" class. docs/06.
+>
+> **Path #4 closed as two clean negatives** (docs/03 T244): the BDA provisioning is the radio's own
+> NVRAM reload, not a host command; the `02` channel is `{04,06,07,08,0b}`, `02 08` is a
+> post-enumeration burst not a heartbeat, and the only non-08 event near pairing is six `02 07`
+> at CONNECTED, 8 s after PAIR. T241's lead is not supported. HoloLens Sensors re-enumerated on
+> Windows too (t≈115 s). **Path #5's first step answered in passing**: 0090 fires on natural
+> drops, 66 times in ~9 min today — the densest storm measured; the link question stands.
+>
+> **Still open from the table**: #2 (`pop_pose` teardown join — not started), #3 (seeded-recovery
+> runaway guard), the one-in-75 3.0 s `open()` stall at reconnect (finer instrument queued: time
+> `companion_find_hidraw_path` and `os_hid_open_hidraw` separately), and the **retest of the whole
+> 45/30-fps title list under the new defaults** — the `det(Q1Jl)==0` count was 12k in the long
+> worn session (0 in short ones), worth watching during that retest. Next session: that retest
+> with a wearer (start with Wolfenstein Cyberpilot and Vertical Shift, the 30-fps exemplars).
+>
+> ---
+
+> ## PREVIOUS (2026-08-21, ~03:45 — the paths-forward evaluation after the T243 marathon)
 >
 > Written after a full documentation review plus an adversarial verification pass (10 agents:
 > 5 doc-cluster readers, 4 path verifiers that read the actual code and core dumps, 1

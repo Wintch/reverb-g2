@@ -1,0 +1,159 @@
+From 40740c8673b45922ee2423ea10a12362dc8648cb Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Fri, 21 Aug 2026 17:05:15 -0300
+Subject: [PATCH] d/wmr: companion reconnect, stop blocking the IMU reader on a
+ proximity feature read
+
+0090's reconnect path ended with os_hid_get_feature(WMR_CONTROL_MSG_IPD_VALUE) on the
+freshly re-enumerated companion, documented as "the experiment that finds out" whether
+the device answers. Measured: it never does (0 successes, 48 failures across the logs),
+and the read blocks 1.4-5.0 s (the usbhid control-transfer timeout) inside the shared
+run loop that is also the IMU/camera reader -- so every companion drop stalled the
+sensors stream by up to 5 s with the headset still sending (hidraw ring full). Gate it
+behind WMR_COMPANION_RECONNECT_RESYNC=1, default off.
+
+Also time each step of the run loop and warn on a stall (>50 ms control/keepalives,
+>150 ms sensors read), which is how the culprit was named: "proximity feature read
+took 1375 / 3990 / 5030 ms". After: 66 reconnects, 0 stalls above 60 ms except one
+3.0 s open() (1 in 75, left for a finer instrument).
+---
+ src/xrt/drivers/wmr/wmr_hmd.c | 88 ++++++++++++++++++++++++++---------
+ 1 file changed, 66 insertions(+), 22 deletions(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_hmd.c b/src/xrt/drivers/wmr/wmr_hmd.c
+index b7820c66c..4fc653103 100644
+--- a/src/xrt/drivers/wmr/wmr_hmd.c
++++ b/src/xrt/drivers/wmr/wmr_hmd.c
+@@ -765,13 +765,24 @@ static bool
+ wmr_hmd_companion_reconnect(struct wmr_hmd *wh)
+ {
+ 	char path[PATH_MAX];
+-	if (!companion_find_hidraw_path(wh, path, sizeof(path))) {
++	int64_t f0 = os_monotonic_get_ns(); // T244: time the scan and the open separately (one 3.0 s
++	                                     // stall in 75 reconnects was left unexplained by the loop instrument)
++	bool present = companion_find_hidraw_path(wh, path, sizeof(path));
++	int64_t f1 = os_monotonic_get_ns();
++	if (f1 - f0 > 20 * U_TIME_1MS_IN_NS) {
++		WMR_WARN(wh, "reconnect: hidraw scan took %.1f ms (present=%d)", (double)(f1 - f0) / 1e6, present);
++	}
++	if (!present) {
+ 		// Still absent. Expected for the duration of the outage.
+ 		return false;
+ 	}
+ 
+ 	struct os_hid_device *fresh = NULL;
+ 	int ret = os_hid_open_hidraw(path, &fresh);
++	int64_t f2 = os_monotonic_get_ns();
++	if (f2 - f1 > 20 * U_TIME_1MS_IN_NS) {
++		WMR_WARN(wh, "reconnect: open(%s) took %.1f ms (ret=%d)", path, (double)(f2 - f1) / 1e6, ret);
++	}
+ 	if (ret != 0 || fresh == NULL) {
+ 		wh->companion_reconnect_failures++;
+ 		// EACCES here is systematic, not transient: the node reappeared before udev
+@@ -820,29 +831,49 @@ wmr_hmd_companion_reconnect(struct wmr_hmd *wh)
+ 		reassert_screen = (env == NULL || env[0] != '0');
+ 	}
+ 	if (reassert_screen && wh->hmd_desc != NULL && wh->hmd_desc->screen_enable_func != NULL) {
++		int64_t se0 = os_monotonic_get_ns();
+ 		wh->hmd_desc->screen_enable_func(wh, wh->hmd_screen_enable);
++		WMR_INFO(wh, "reconnect: screen re-assert took %.1f ms", (double)(os_monotonic_get_ns() - se0) / 1e6);
++	}
++
++	// Proximity/IPD re-sync after a reconnect: OFF by default since 2026-08-21 (T244).
++	// 0090 added a feature-report read of WMR_CONTROL_MSG_IPD_VALUE here as "the experiment
++	// that finds out" whether the device answers. Measured: it does NOT answer, and the read
++	// blocks for 1.4-5.0 s (the usbhid control-transfer timeout) INSIDE the shared run loop,
++	// which is also the IMU reader -- so every companion re-enumeration stalled the IMU and
++	// camera streams by up to 5 s (kernel hidraw ring full, headset still sending), and the
++	// backlog then dragged the hw2mono filter (see wmr_source.c) into a 3.5 s rejection
++	// hole. The wearer got relocated on every natural USB2 drop. WMR_COMPANION_RECONNECT_RESYNC=1
++	// re-enables the read for a future A/B; presence stays on its pre-outage value until the
++	// sensor next changes, which is the lesser evil by a wide margin.
++	static int resync_enabled = -1;
++	if (resync_enabled == -1) {
++		const char *env = getenv("WMR_COMPANION_RECONNECT_RESYNC");
++		resync_enabled = (env != NULL && env[0] == '1');
++	}
++	if (resync_enabled) {
++		// Try to re-sync the proximity/IPD value. This message is CHANGE-driven, so after a
++		// reconnect the driver can sit indefinitely on a value from before the outage -- if the
++		// wearer took the headset off during it, presence would be wrong until they moved it
++		// again. Whether the device answers a feature-report read of this id is unknown (the
++		// activation path does exactly this for ids 0x50/0x09/0x08/0x06), so this is also the
++		// experiment that finds out; the answer is logged either way and costs one syscall.
++		unsigned char resync[64] = {WMR_CONTROL_MSG_IPD_VALUE};
++		int64_t rs0 = os_monotonic_get_ns();
++		os_mutex_lock(&wh->hid_lock);
++		int rret = os_hid_get_feature(wh->hid_control_dev, resync[0], resync, sizeof(resync));
++		os_mutex_unlock(&wh->hid_lock);
++		WMR_INFO(wh, "reconnect: proximity feature read took %.1f ms", (double)(os_monotonic_get_ns() - rs0) / 1e6);
++		if (rret >= 3 && resync[0] == WMR_CONTROL_MSG_IPD_VALUE) {
++			WMR_INFO(wh, "Companion proximity re-synced by feature read after reconnect (%i bytes)", rret);
++			control_ipd_value_decode(wh, resync, rret);
++		} else {
++			WMR_INFO(wh,
++			         "Companion proximity could NOT be re-synced by feature read (returned %i); presence stays "
++			         "on its pre-outage value until the sensor next changes",
++			         rret);
++		}
+ 	}
+-
+-	// Try to re-sync the proximity/IPD value. This message is CHANGE-driven, so after a
+-	// reconnect the driver can sit indefinitely on a value from before the outage -- if the
+-	// wearer took the headset off during it, presence would be wrong until they moved it
+-	// again. Whether the device answers a feature-report read of this id is unknown (the
+-	// activation path does exactly this for ids 0x50/0x09/0x08/0x06), so this is also the
+-	// experiment that finds out; the answer is logged either way and costs one syscall.
+-	unsigned char resync[64] = {WMR_CONTROL_MSG_IPD_VALUE};
+-	os_mutex_lock(&wh->hid_lock);
+-	int rret = os_hid_get_feature(wh->hid_control_dev, resync[0], resync, sizeof(resync));
+-	os_mutex_unlock(&wh->hid_lock);
+-	if (rret >= 3 && resync[0] == WMR_CONTROL_MSG_IPD_VALUE) {
+-		WMR_INFO(wh, "Companion proximity re-synced by feature read after reconnect (%i bytes)", rret);
+-		control_ipd_value_decode(wh, resync, rret);
+-	} else {
+-		WMR_INFO(wh,
+-		         "Companion proximity could NOT be re-synced by feature read (returned %i); presence stays "
+-		         "on its pre-outage value until the sensor next changes",
+-		         rret);
+-	}
+-
+ 	return true;
+ }
+ #endif // XRT_OS_LINUX
+@@ -1081,19 +1112,32 @@ wmr_run_thread(void *ptr)
+ 		os_thread_helper_unlock(&wh->oth);
+ 
+ 		// Does not block.
++		int64_t t0 = os_monotonic_get_ns(); // T244 run-loop stall instrument
+ 		if (!control_read_packets(wh)) {
+ 			break;
+ 		}
++		int64_t t1 = os_monotonic_get_ns();
+ 
+ 		// Does block for a bit.
+ 		if (!hololens_sensors_read_packets(wh)) {
+ 			break;
+ 		}
++		int64_t t2 = os_monotonic_get_ns();
++		if (t1 - t0 > 50 * U_TIME_1MS_IN_NS) {
++			WMR_WARN(wh, "run loop: control_read_packets blocked %.1f ms", (double)(t1 - t0) / 1e6);
++		}
++		if (t2 - t1 > 150 * U_TIME_1MS_IN_NS) {
++			WMR_WARN(wh, "run loop: hololens_sensors_read_packets blocked %.1f ms", (double)(t2 - t1) / 1e6);
++		}
+ 
+ 		// WMR_CONTROLLER_KEEPALIVE_S v2: client-independent, ticks every loop iteration.
+ 		// No locks are held here (both read_packets calls above only hold hid_lock briefly
+ 		// around the raw HID read itself) -- see wmr_hmd_send_controller_keepalives.
+ 		wmr_hmd_send_controller_keepalives(wh);
++		int64_t t3 = os_monotonic_get_ns();
++		if (t3 - t2 > 50 * U_TIME_1MS_IN_NS) {
++			WMR_WARN(wh, "run loop: controller keepalives blocked %.1f ms", (double)(t3 - t2) / 1e6);
++		}
+ 
+ 		os_thread_helper_lock(&wh->oth);
+ 	}
+-- 
+2.47.3
+

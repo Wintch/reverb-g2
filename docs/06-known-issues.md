@@ -479,6 +479,53 @@ especially when killing titles by signal instead of their own quit path. Feeds
 `idea_arcade_mode_headless_vr` (agent memory) — any unattended long-running mode needs a
 periodic clean-restart policy for exactly this reason, not just crash recovery.
 
+## The wearer gets relocated on every companion drop (RESOLVED 2026-08-21, T244)
+
+The "flying away" / "I appeared far below the map" class of the T243 sweep (Dead Herring VR,
+Chornobayivka VR, ISS Tour VR, Blast the Past, Vertical Shift, Sniper Elite VR...) had a
+mechanism that was neither SLAM CPU starvation nor the `pop_pose` crash: **every natural USB2
+companion re-enumeration stalled the driver's shared read loop — the IMU/camera reader — for
+1.4-5.1 s**, and the backlog then poisoned the clock-offset filter for another 3.5 s.
+
+The chain, each link measured (`scripts/usb-reset-device.py --vid 03f0 --pid 0580` reproduces
+it on demand):
+
+1. Companion drops → 0090 reconnects (~3.3 s dead, fine). The reconnect path then did
+   `os_hid_get_feature(WMR_CONTROL_MSG_IPD_VALUE)` on the fresh node, "the experiment that
+   finds out whether the device answers". It never answers (0 successes / 48 failures across
+   logs) and the read blocks for the usbhid control-transfer timeout: **"proximity feature read
+   took 1375 / 3990 / 5030 ms"**, inside `wmr_run_thread`, which is also the sensors reader.
+2. The headset keeps sending; the kernel hidraw ring (64 reports) fills; the rest is lost.
+3. On resume the ~60 buffered IMU samples arrive in one burst, each with
+   `arrival - hw = true_offset + stall`. Through `m_clock_offset_a2b`'s 5%-per-sample filter, 64
+   of them drag `hw2mono` ~96% of the way to +stall: the **first live sample is stamped ~3 s in
+   the future**, accepted as `last_imu_ns`, and every real sample for the next ~3.3 s is rejected
+   as "from the past" — log signature `dropped 251/501/751/1001 ... 3.49 → 2.48 → 1.48 → 0.47 s`,
+   camera bundles dropped the same way via `cam_hw2mono`. docs/61 had recorded this as "the
+   headset's internal clock is perturbed"; it was ours.
+4. SLAM blind for stall + rejection (~8 s), IMU-only extrapolation runs away → relocation.
+
+**Fixes** (patches 0093, 0094): the reconnect's proximity read is off by default
+(`WMR_COMPANION_RECONNECT_RESYNC=1` re-enables); the IMU offset filter is backlog-aware — a
+sample >50 ms late that arrived faster than real time (mono gap ≪ hw gap) keeps the held offset
+instead of teaching the filter, while late samples at the normal rate for 25 in a row re-seed it
+(genuine clock restart, the 8.23 s case of 2026-08-12). The run loop now warns on any step >50 ms.
+
+**Measured after**: one session, **66 natural + 3 forced re-enumerations** (the densest storm
+on record, ~7/min), 0 "from the past" rejections, 0 dropped frame bundles, 2 IMU bursts of 54
+ms, no reader stall above 60 ms except one 3.0 s `open()` (1 in 75, instrument queued). Wearer,
+left controller on, ~10 min (translated): "the view no longer flies away, stays within a few
+pixels; then it accumulates error and moves a few cm to one side, sits there ~20 s, readjusts;
+a bit of latency turning, could be the game; overall good." The few-cm drift/readjust is
+docs/58's residual, not this.
+
+## The 45 / 30 fps ceiling across 17-20 titles (RESOLVED 2026-08-21, T244)
+
+Not GPU (half the pixels, same 45 fps, 90 W), not tracking (survived 3dof), not engine age: the
+app pacer. Full table and mechanism in docs/23 ("RESOLVED 2026-08-21, T244"); patch 0092 plus
+`U_PACING_APP_USE_MIN_FRAME_PERIOD=true` as the launcher default. 44 → 89-90 fps on Dead Herring
+VR, verified in the headset.
+
 ## The headset being connected can break the entire KDE desktop (2026-08-06)
 
 This isn't the 90Hz bug (`docs/13`) — it's different and more severe: with the headset

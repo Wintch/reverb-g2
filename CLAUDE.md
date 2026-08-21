@@ -1,5 +1,12 @@
 # Context for the 90Hz lab agent
 
+> ## UPDATE 2026-08-21 ~17:15 (T244) — read NEXT-STEP's START HERE first. Two session-wide bugs
+> fixed and verified worn: the **45/30 fps ceiling** (app pacer, 0092 + `U_PACING_APP_USE_MIN_FRAME_PERIOD`
+> launcher default → 44 → 90 fps) and the **"flying away"/relocation on every companion drop**
+> (0090's blocking proximity read + backlog-poisoned `hw2mono`; 0093/0094 → 66 drops, zero SLAM
+> holes). Pairing capture re-mining (docs/03 T244) closed two leads as clean negatives. Every
+> T243 fps/flying-away verdict in docs/23 predates these fixes and needs a retest.
+>
 > ## START HERE (2026-08-20, ~01:45 — the "run it all without Windows" night, T226-T237).
 > Read `docs/00` + `docs/03` + `docs/60`-`63` + T226-T237 + NEXT-STEP. Supersedes the block below
 > on every point where they disagree. The tracking work (T223-T225) is unchanged and still true;

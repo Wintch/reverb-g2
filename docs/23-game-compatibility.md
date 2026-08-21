@@ -311,6 +311,52 @@ story above. **Next step, not done yet**: check whether any of these titles expo
 flag or config file forcing a target frame rate, and look for a correlation between each
 title's engine/release year and its observed fps ceiling across the table above.
 
+**RESOLVED 2026-08-21, T244 — the fps ceiling was the APP PACER, not the GPU, not the tracking
+stack, not the engines.** Measured with the real instrument (count of `Delivered frame` lines
+with `U_PACING_APP_LOG=debug`, docs/32), Dead Herring VR, fresh `monado-service` each run:
+
+| Run | Config | app fps | GPU (nvidia-smi) |
+|---|---|---|---|
+| A | as the night before (pipelined pacer, render scale 140%) | **44** | 168 W / 54% |
+| B | `XRT_COMPOSITOR_SCALE_PERCENTAGE=100` (half the pixels) | **45** | 90 W / 39% — **not GPU-bound** |
+| C | serial pacer (`VR_PIPELINED=0`) | 63 | — |
+| D | pipelined + patch 0092 (promise/gate bookkeeping) | 58 | — |
+| E | D + `U_PACING_APP_USE_MIN_FRAME_PERIOD=true` | **89-90** | 161 W / 54% |
+
+Mechanism, two layers: (1) the pacer's `gpu` column is structurally ~1 display period (the
+multi-compositor's wait thread only starts waiting on frame N's fence after frame N-1 was
+consumed, so `gpu_done` is quantised to the compositor tick — docs/32 had already caught it
+not moving with pixel count). `calc_app_period()` doubles the app period whenever that column
+exceeds 11.11 ms, and it flaps on that edge: 37-42% of frames at `period: 22.22` → 58-63 fps.
+(2) the pipelined model (T175) required the next promise to lie past the previous *shifted*
+promise and then added the shift again → promises two periods apart by construction → a hard
+45 fps whenever pipelined engaged, which with the bogus gpu column was always. A title whose
+`draw` also tripped the doubling landed on 30 (=90/3): the per-title 30/40/45 submultiples are
+the same bug through different stages, not engine age. **Fix shipped**: patch 0092 + the
+launcher now sets `U_PACING_APP_USE_MIN_FRAME_PERIOD=true` by default (`VR_MIN_PERIOD=0`
+reverts). Wearer on Dead Herring VR at 90 fps (translated): "smooth, correct position...
+overall good". The engine-age hypothesis above is closed — not the cause. Every title in the
+"SLAM/constellation CPU starvation → fps ceiling" row needs a retest under the new default;
+the "flying away" half of that row was a separate bug, also fixed the same session (docs/06,
+"The wearer gets relocated on every companion drop").
+
+**First retests under the new defaults, same day (T244, 0092-0094 + `U_PACING_APP_USE_MIN_FRAME_PERIOD`, render scale 100%):**
+
+| Title | before (T243) | after (T244) | wearer (translated) | hands |
+|---|---|---|---|---|
+| Vertical Shift (1807480) | 30 fps, "far from the map" | **66-77 fps** (`Delivered frame` count), 87 W / 42% GPU | "well positioned, no headset drift" | never visible in this title in any session — inconclusive for controllers, not counted against it |
+| Sniper Elite VR (752480) | 45 fps "at moments", "world very high" | **89 fps**, GPU not limiting | "rest fine"; a blue pointer from a fixed point in front that does not move, game waits for a recalibrate-controls OK | the run was with `WMR_CONSTELLATION_CONTROLLERS=0` (the launcher's `6dof` default — constellation is only implied by `ctrl`; export it explicitly) → controllers had orientation but no position, which this title refuses. Retest with constellation ON was blocked by the USB2 branch dying outright at 17:15 (`device not accepting address, error -71`, census 2/5 SS-only, T186 cold replug needed). |
+
+| Sniper Elite VR (752480), second run, constellation ON, both controllers registered at start | — | **87 fps** | "same, no controllers; I'm higher than I should be but that's a known thing of this title — that's why it starts with the calibration; pointer immobile, but good performance at least" | **the driver IS tracking them**: `constellation sample #1440 … matched_blobs=6 reproj_err_px=0.17`, solve-yaw correction `locked=true` on the right. Monado has the poses; the immobile pointer is an **xrizer ↔ title input/pose-binding problem** — a new, separate class (the title also waits for a "recalibrate controls" confirmation that never arrives, so its action bindings probably do not resolve). Not investigated this session; needs a PROTON_LOG/xrizer-log run. |
+
+| Dead Herring VR (1498490), constellation ON, both controllers registered at start, 11 companion drops during the run | 44-45 fps + "flying away" | **80-90 fps**, no relocation | "left controller visible, usually anchored but rotating well; then it jumps in front of me, where it belongs — roughly 70% wrong / 30% right; the right one does not appear, quite possibly the game itself, same happened in Google Earth" | `constellation sample #2130 matched_blobs=12`. This is docs/58's known residual (parked-at-anchor, late jumps toward the real position; worn presence ~50-60%), unchanged by today's fixes and not their target. The fps ceiling and the relocation are gone on this exemplar. |
+
+Two launcher facts worth knowing for the rest of the retest list: (1) `up 1 6dof` does NOT turn
+controller constellation on — T243's runs exported `WMR_CONSTELLATION_CONTROLLERS=1` by hand;
+(2) a controller powered on after `monado-service` started gets its config read (battery shows
+up) but stays `<none>` in the role list — Vertical Shift never showed it; a clean restart with
+both powered on registered `left:`/`right:` at once. Start the controllers BEFORE Monado.
+
 **Cutoff decided 2026-08-21, late-night follow-up**: the physical panel itself confirmed
 staying at true 90Hz all night (`found display mode 4320x2160@90.00` in every launch's log,
 never fell back to 60Hz) — so the "flicker" feeling on low-fps titles is compositor

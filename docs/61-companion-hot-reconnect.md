@@ -133,3 +133,16 @@ Expect one error line and one `Companion device RECONNECTED on /dev/hidrawN afte
 per re-enumeration. `USBDEVFS_RESET` does not always tear the device down — when devnum and the
 node both stay put and the driver logs nothing, the reset was a no-op and the run tested
 nothing. Run it again; that is why the tool prints context and leaves the verdict to the log.
+
+## Follow-up 2026-08-21 (T244): the side-finding was ours, and it is fixed
+
+The "clock-domain disturbance per re-enumeration" above was not the headset's clock. Timing each
+step of `wmr_run_thread` named it: the proximity re-sync `os_hid_get_feature` this patch added
+after a reconnect **blocks 1.4-5.0 s** (usbhid control-transfer timeout; the device never answers
+— 0 successes, 48 failures) inside the loop that also reads the IMU and cameras. The backlog then
+pulled `hw2mono` into a 3.5 s rejection hole. Patch 0094 gates the read off
+(`WMR_COMPANION_RECONNECT_RESYNC=1` for an A/B) and keeps the per-step stall warnings; patch 0093
+makes the IMU offset filter backlog-aware. 66 natural re-enumerations in one session afterwards:
+no rejection, no dropped bundles, no stall above 60 ms but one 3.0 s `open()`. Full chain in
+docs/06, "The wearer gets relocated on every companion drop". 0090's recovery itself (re-find,
+swap, re-assert panel at ~1.5 ms) is unchanged and was exercised 66 times.

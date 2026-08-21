@@ -501,3 +501,38 @@ surplus, not the ownership count.
 split between hands. Which is where T224's ceiling argument already pointed: the candidate pool can
 be narrowed, but with 10-30° of heading noise the right candidate cannot be picked within it.
 **The hand inversion remains a measured, unexplained fact; only the proposed explanation is dead.**
+
+## 0090 — companion hot-reconnect (2026-08-20, T227)
+
+A companion silent for 500 ms is dead; re-find its current hidraw node by VID/PID, swap the handle
+under `hid_lock`, re-assert the panel state. 13/13 forced re-enumerations recovered at 3.34 s
+(the kernel's time, not ours). Full story docs/61; `scripts/usb-reset-device.py` is the
+regression test. Retires `companion_errors` as a metric.
+
+## 0091 — blob PHOTOMETRY per device (2026-08-20, T229/T230)
+
+Logs per-blob area and brightness per controller: brightness saturates, area does not, which is
+how the Windows-vs-Linux LED-drive asymmetry (2.45× blob area on the left ring under Windows)
+became measurable. Instrument only; the LED-drive investigation is still queued.
+
+## 0092 — pipelined pacer: advance past the previous GATE, not the shifted promise (2026-08-21, T244)
+
+The pipelined model (T175) promised each frame one period after its gate slot, then required the
+NEXT promise to clear the previous *promise* and added the shift again: promises two periods apart
+by construction, every pipelined app at exactly half the panel rate. 44-45 → 58 fps alone; 89-90
+with `U_PACING_APP_USE_MIN_FRAME_PERIOD=true` (now the launcher default), because the remaining
+gap is `calc_app_period()` doubling on the structurally-bogus gpu column (docs/32). The whole
+T243 "17-20 titles at 45/30 fps" class.
+
+## 0093 — backlog-aware IMU clock offset (2026-08-21, T244)
+
+A sample >50 ms late against `hw2mono` that arrived faster than real time is a draining backlog:
+keep the held offset, stamp it late-but-correct. Late at the normal rate for 25 samples: genuine
+offset change, re-seed. Kills the 3.5 s "from the past" rejection hole after every reader stall.
+
+## 0094 — companion reconnect: stop blocking the IMU reader (2026-08-21, T244)
+
+0090's post-reconnect proximity feature read never gets an answer and blocked 1.4-5.0 s inside
+the shared run loop. Default off (`WMR_COMPANION_RECONNECT_RESYNC=1` re-enables); the run loop now
+warns on any step >50 ms, which is the instrument that named it. With 0093: 66 natural drops in
+one session, zero SLAM holes, wearer no longer relocated. docs/06.
