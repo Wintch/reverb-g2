@@ -23,6 +23,10 @@
 > Windows too (t≈115 s). **Path #5's first step answered in passing**: 0090 fires on natural
 > drops, 66 times in ~9 min today — the densest storm measured; the link question stands.
 >
+> **Process-state hygiene, found at the very end**: wrapper-only kills leave the Wine tree alive; Dead
+> Herring ran behind the whole Wolfenstein test. `scripts/game-stop.py` is the fix; `vr-launcher.py`
+> has no stop path at all and should call it (and check `status` before every launch).
+>
 > **Still open from the table**: #2 (`pop_pose` teardown join — not started), #3 (seeded-recovery
 > runaway guard), the one-in-75 3.0 s `open()` stall at reconnect (finer instrument queued: time
 > `companion_find_hidraw_path` and `os_hid_open_hidraw` separately), and the **retest of the whole

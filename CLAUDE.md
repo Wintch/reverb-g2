@@ -422,6 +422,17 @@ blocker.
   session or lease, and silently fell back to flat rendering — `client_connected` stays at
   0 in Monado's log while the game looks alive and even routes audio to the headset.
   Check that file before debugging anything else; xrizer must be first (or alone).
+- **Killing the Steam wrapper does NOT stop the game** (found 2026-08-21, T244 close).
+  `kill $(pgrep -f "AppId=NNN")` or matching the title in a cmdline only takes down
+  `reaper`/`steam-launch-wrapper`/`proton`; the Windows binary keeps running under
+  wineserver inside pressure-vessel, keeps its OpenVR session and keeps rendering. Two titles
+  ran at once for a whole test this way (151 "Delivered frame"/s = two clients, CPU/GPU numbers
+  invalid), and taking Monado down under the orphans produced xrizer `ERROR_INSTANCE_LOST`
+  crash dialogs ("compositor + overlay"). Use **`scripts/game-stop.py status|stop <appid>|all`**
+  — it finds every process by `STEAM_COMPAT_DATA_PATH=.../compatdata/<appid>`, SIGTERMs the
+  main exe, then the rest, and verifies. Before any launch or measurement: `game-stop.py
+  status` must say "no Proton game trees running", and Monado's log must show the previous
+  `client_disconnected`.
 - **`pgrep -f` matches itself** in environments where the shell carries the pattern in its
   cmdline. Use `pgrep -f "monado[-]service"`. A PID that changes on every check is the
   tell. **This bites when killing games too**: `kill $(pgrep -f "Aircar")` from this
