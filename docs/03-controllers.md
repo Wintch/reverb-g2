@@ -972,6 +972,71 @@ Capture 2 (the "long" one, next morning): `16 09 00` at 108.3s, `16 09 01` at 11
   This is what actually lets `controller-pair.py` replicate the sequence instead of just the
   bytes.
 
+### T243 (2026-08-21, ~00:47-00:51): the planned timed capture landed — a single clean LEFT
+pairing with no UNPAIR and no `0x16 07`, and the internal WICED BT log gives byte-level status
+semantics a live timeline for the first time
+
+`pairing3.pcapng` (444 MB, 224 s, `debug_vr/`, dumpcap) is the deliberately-timed capture T242
+asked for: LEFT controller only, via the `windows-kit/power-on.ps1` flow ("Start pairing new
+Left motion controller" / "power on, press ok when ready"). Decoded with the same recipe as
+T242 (`usbhid.data.report_id`, not `usb.capdata` — that field only carries the unrelated
+`Dlo+` camera/IMU bulk stream on this device) plus one new field: `usbhid.data.report_id==5`
+recovers the radio-side debug log as plain ASCII, not just the command bytes T242 had.
+
+**The command side is a single clean attempt**: `16 09 00` (status, left) at t=141.3, `16 05 00`
+(**PAIR, left**) at t=188.331, `16 09 01` (status, right — just a post-check, no PAIR sent for
+right all session) at t=207.2. **No UNPAIR, no `0x16 07`.** The left controller paired first
+try, which weakens T240's "`0x16 07` might be needed before a successful retry" candidate —
+here there was no retry and no `0x16 07` and it still worked.
+
+**Full radio-side timeline, this attempt:**
+
+| t (s) | event |
+|---|---|
+| 188.334-188.339 | `16 05 00` → `SET_VISIBILITY`(discoverability 0, connectability 1) → `SET_PAIRING_MODE`("allowed 1") → `COMMAND_INQUIRY` → "inquiry started" — same <10ms 3-step dance T240 found, now on a first-try clean case |
+| 189.514 | **"Found by address: Motion Controller - Left"**, RSSI -48 — only **1.17s** after inquiry started |
+| 194.743 | "inquiry complete" — the scan still runs its full ~5.2s window even though the target was found almost immediately; BT inquiry has no early-exit |
+| 194.746-196.620 | `HIDH_COMMAND_CONNECT` → SDP discover → Product ID `0x066a` found → HID service found → IO-caps exchange → **new link key generated, `nvram_id 22` allocated ("First time")** → encrypted → `CONNECTED` → controller's own feature reports (`0x4`,`0x7`,`0x8` — config/calibration blobs) pulled over the new link |
+
+**PAIR-to-CONNECTED: 196.600 − 188.331 = 8.27s**, matching T238's ~7s estimate and T240's 8.3s
+measurement almost exactly — this is evidently a stable, repeatable duration, not
+attempt-dependent noise.
+
+**Does NOT fully close T242's "unmeasured discovery-window timing" item.** This is one
+real, controlled trial (the physical button was held before the operator pressed OK, per
+`power-on.ps1`'s own prompt) and it shows the controller was already discoverable well within
+the 1.17s-to-found mark — but a single sufficient delay doesn't establish the *minimum* window,
+which needs several trials at deliberately shortened delays to find where it starts failing.
+Left open for a real minimum-window characterization if it's ever needed.
+
+**New, not in any prior capture: the headset gets its known controller addresses PUSHED to it
+by the host at session start, independent of pairing.** Twice in this capture, both well before
+the PAIR command (t=64.2 and t=117.5 — two back-to-back boot/reconnect passes), the host sends
+`COMMAND_SET_LOCAL_BDA` (the headset's own embedded-host BT address), then
+`COMMAND_SET_LEFT_REMOTE_BDA` / `COMMAND_SET_RIGHT_REMOTE_BDA`, logged by the radio as
+`Provisioned MC_LEFT <b4:a9:fc:b2:2d:07>` / `Provisioned MC_RIGHT <b4:a9:fc:b2:26:2d>` — followed
+immediately by `HIDH_COMMAND_ADD` and an NVRAM push for the **right** controller (already
+bonded, reconnecting on its known link key). The left address provisioned here is the *same*
+address later found by live inquiry during the actual pairing at t=189.5 — consistent with
+T240's "addresses survive an unbond" finding, but this is the first time the *provisioning
+step itself* (host telling the radio which BDA is "left"/"right") has been seen on the wire, as
+distinct from the radio's own bond/NVRAM state. What this address is actually used FOR by the
+radio (inquiry filtering? pure bookkeeping?) is not established — the later PAIR still ran a
+real over-the-air inquiry scan rather than connecting directly to the provisioned address, so
+it does not look load-bearing for pairing itself. Left as an open question, not a claim.
+
+**Confirms the existing status-byte semantics live, for the first time watched in the same
+capture as the command that causes them** (semantics already documented in
+`controller-pair-check.py`/`docs/12`, byte2: `0x0` UNPAIRED, `0x1` OFFLINE, `0x2` ONLINE —
+nothing new here, just the first live before/after): report `0x17` for the left controller
+(`17 00 ...`) reads `17 00 00 00 00 00` (UNPAIRED) continuously from t=180 through t=196.324,
+then at **t=196.556** (inside the same 50ms window as `BTM_PAIRED_DEVICE_LINK_KEYS_UPDATE_EVT`
+→ `nvram_id` allocation in the debug log) flips to `17 00 01 5e 04 00`, then at t=196.606 to
+`17 00 02 5e 04 6a` (ONLINE, VID/PID bytes populated) — a ~50ms UNPAIRED→OFFLINE→ONLINE
+transition, synced tightly enough to the debug-log events to use as a cross-check in any future
+capture. The right controller's status (`17 01 01 5e 04 6a 06`, paired-offline) never changed
+across the whole 224s session — confirms it was never touched, only status-polled.
+
 ### Pairing checker
 
 ```bash
