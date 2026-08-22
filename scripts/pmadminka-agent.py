@@ -23,6 +23,25 @@ just the handoff doc's summary):
     so it must be sent every cycle even when nothing changed).
   - POST /inventory/<mac>: throttled client-side (on content-hash change or
     every 30 min), not server-rate-limited.
+  - POST /screens/<mac>: throttled like inventory. GET /stream/<mac> says
+    whether anyone is watching right now ({"on": bool}). Only when "on",
+    capture ONE jpeg and POST it raw to /frame/<mac> (header X-Screen: 0) --
+    zero cost while nobody's looking, matches the existing Windows agent's
+    demand-gated design (deploy/run.ps1's Capture-Jpeg, maxW=1280, q=50).
+
+PREVIEW CAPTURE, Linux-specific finding (2026-08-22, tested live): GNOME's
+own screenshot D-Bus interface (org.gnome.Shell.Screenshot) refuses non-
+portal callers (AccessDenied), and the XDG portal equivalent pops an
+interactive consent dialog -- neither is scriptable headlessly. Root-window
+capture via Xwayland (`import -window root`) also fails outright: Xwayland
+in rootless mode has no real composited root framebuffer to grab. What DOES
+work: capturing a SPECIFIC mapped window by ID via XComposite (`import
+-window <id>`) -- confirmed live against a plain xterm. So this can only
+preview an actual running Xwayland client (a game), picked heuristically as
+the largest mapped window -- not the native Wayland desktop background.
+That's an acceptable trade for this use case: an idle desktop isn't a
+useful preview anyway, and a running game is exactly what a renter wants to
+see.
 
 KNOWN GAP, not fixable from this repo: the hub's heartbeat handler
 (deploy/server.py) builds the "hw" dict from a fixed field whitelist
@@ -61,10 +80,15 @@ STEAMAPPS_DIR = os.path.expanduser("~/.steam/steam/steamapps")
 
 HEARTBEAT_INTERVAL_S = 60
 RUN_WAIT_S = 25
-RUN_HTTP_TIMEOUT_S = RUN_WAIT_S + 10
 POST_TIMEOUT_S = 10
 INVENTORY_POST_TIMEOUT_S = 15
 INVENTORY_MIN_INTERVAL_S = 30 * 60
+SCREENS_MIN_INTERVAL_S = 5 * 60
+STREAM_WANT_TIMEOUT_S = 8
+PREVIEW_MAX_W = 1280
+PREVIEW_QUALITY = 50
+PREVIEW_MIN_WIN_W = 200
+PREVIEW_MIN_WIN_H = 150
 
 _last_heartbeat_ok = 0.0
 
@@ -271,9 +295,121 @@ def heartbeat_loop(server, mac):
         time.sleep(HEARTBEAT_INTERVAL_S)
 
 
+_WIN_RE = re.compile(r'(0x[0-9a-f]+)\s+(?:"[^"]*"|\(has no name\))\s*:\s*\(([^)]*)\)\s+(\d+)x(\d+)\+-?\d+\+-?\d+')
+
+
+def find_preview_window(min_w=PREVIEW_MIN_WIN_W, min_h=PREVIEW_MIN_WIN_H):
+    """Best mapped Xwayland window to preview: the largest by area (a running
+    game is almost always the biggest thing on screen), among windows that
+    have a real WM_CLASS. Root-window capture doesn't work here -- see
+    module docstring. The empty-class requirement matters: Mutter's own
+    "mutter guard window" is a real, full-screen (1920x1080), invisible
+    utility window with NO class -- without this filter it wins on size
+    every time and the preview would always capture nothing (confirmed
+    live, 2026-08-22)."""
+    try:
+        out = subprocess.run(
+            ["xwininfo", "-root", "-tree"], capture_output=True, text=True,
+            env=gui_env.get(), timeout=5,
+        ).stdout
+    except Exception:
+        return None
+    best_id, best_area = None, 0
+    for line in out.splitlines():
+        m = _WIN_RE.search(line)
+        if not m:
+            continue
+        wid, wm_class, w, h = m.group(1), m.group(2), int(m.group(3)), int(m.group(4))
+        if not wm_class.strip():
+            continue
+        if w < min_w or h < min_h:
+            continue
+        area = w * h
+        if area > best_area:
+            best_area, best_id = area, wid
+    return best_id
+
+
+def capture_jpeg(max_w=PREVIEW_MAX_W, quality=PREVIEW_QUALITY):
+    wid = find_preview_window()
+    if not wid:
+        return None
+    tmp = f"/tmp/pmadminka-agent-preview-{os.getpid()}.jpg"
+    try:
+        r = subprocess.run(
+            ["import", "-window", wid, "-resize", f"{max_w}x", "-quality", str(quality), tmp],
+            env=gui_env.get(), capture_output=True, timeout=10,
+        )
+        if r.returncode != 0 or not os.path.exists(tmp):
+            return None
+        with open(tmp, "rb") as f:
+            return f.read()
+    except Exception as e:
+        print(f"[preview] capture failed: {e}", file=sys.stderr)
+        return None
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
+def report_screens(server, mac, last_hash, last_post):
+    # Static single-screen report -- this rig has no desktop mirroring
+    # concept to expose, just "is there something to preview or not"
+    # (see capture_jpeg). Resolution from the X11 root geometry.
+    w, h = 1920, 1080
+    try:
+        out = subprocess.run(["xwininfo", "-root"], capture_output=True, text=True,
+                              env=gui_env.get(), timeout=5).stdout
+        mw = re.search(r"Width:\s*(\d+)", out)
+        mh = re.search(r"Height:\s*(\d+)", out)
+        if mw and mh:
+            w, h = int(mw.group(1)), int(mh.group(1))
+    except Exception:
+        pass
+    screens = [{"i": 0, "w": w, "h": h, "primary": True, "name": "iashur"}]
+    h_now = hashlib.sha256(json.dumps(screens, sort_keys=True).encode()).hexdigest()
+    now = time.time()
+    if h_now != last_hash or (now - last_post) > SCREENS_MIN_INTERVAL_S:
+        try:
+            _post_json(f"{server}/screens/{mac}", screens, POST_TIMEOUT_S)
+            return h_now, now
+        except Exception as e:
+            print(f"[screens] post failed: {e}", file=sys.stderr)
+    return last_hash, last_post
+
+
+def maybe_post_preview(server, mac):
+    """Zero-cost while nobody's watching: one GET to check, nothing else."""
+    try:
+        want = _get_json(f"{server}/stream/{mac}", STREAM_WANT_TIMEOUT_S)
+    except Exception as e:
+        print(f"[preview] stream-want check failed: {e}", file=sys.stderr)
+        return False
+    if not isinstance(want, dict) or not want.get("on"):
+        return False
+    jpg = capture_jpeg()
+    if not jpg:
+        return False
+    try:
+        req = urllib.request.Request(
+            f"{server}/frame/{mac}", data=jpg,
+            headers={"Content-Type": "image/jpeg", "X-Screen": "0"}, method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=POST_TIMEOUT_S):
+            pass
+        return True
+    except Exception as e:
+        print(f"[preview] frame post failed: {e}", file=sys.stderr)
+        return False
+
+
 def run_loop(server, mac):
     last_inventory_hash = None
     last_inventory_post = 0.0
+    last_screens_hash = None
+    last_screens_post = 0.0
 
     while True:
         steam, steam_ids = scan_inventory()
@@ -295,8 +431,14 @@ def run_loop(server, mac):
                 except Exception:
                     pass
 
+        last_screens_hash, last_screens_post = report_screens(server, mac, last_screens_hash, last_screens_post)
+        previewed = maybe_post_preview(server, mac)
+        # Stay responsive to the preview loop while someone's watching, don't
+        # burn a full long-poll window on it -- same tradeoff run.ps1 makes.
+        wait = 2 if previewed else RUN_WAIT_S
+
         try:
-            resp = _get_json(f"{server}/run/{mac}?wait={RUN_WAIT_S}", RUN_HTTP_TIMEOUT_S)
+            resp = _get_json(f"{server}/run/{mac}?wait={wait}", wait + 10)
             if not isinstance(resp, dict):
                 resp = {}
         except Exception as e:
