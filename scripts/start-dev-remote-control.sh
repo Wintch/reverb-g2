@@ -14,7 +14,11 @@ set -u
 SESSION="dev-remote-control"
 REPO_DIR="$HOME/Documents/reverb-g2"
 PERMISSION_MODE="acceptEdits"
-MODEL="haiku"
+# Absolute path -- a non-interactive SSH/systemd shell doesn't source the
+# .bashrc bits that put ~/.local/bin on PATH for an interactive shell
+# (confirmed 2026-08-21: `claude` alone silently failed under tmux's
+# non-interactive pane, which tears the whole session down on exit).
+CLAUDE_BIN="$HOME/.local/bin/claude"
 
 cd "$REPO_DIR" || { echo "cannot cd to $REPO_DIR" >&2; exit 1; }
 
@@ -24,10 +28,18 @@ if tmux has-session -t "$SESSION" 2>/dev/null; then
     exit 1
 fi
 
-# --model must come BEFORE the remote-control subcommand -- it errors as an
-# "Unknown argument" if placed after (tested 2026-08-21).
+if [ ! -x "$CLAUDE_BIN" ]; then
+    echo "claude binary not found at $CLAUDE_BIN -- check the install path" >&2
+    exit 1
+fi
+
+# `claude --model haiku remote-control --name X` errors "unknown option
+# '--name'" on 2.1.239 -- a real CLI parsing bug combining the global
+# --model flag with the remote-control subcommand's own flags (confirmed
+# 2026-08-21, reproduced on two machines, same version). ANTHROPIC_MODEL as
+# an env var sidesteps it cleanly.
 tmux new-session -d -s "$SESSION" -c "$REPO_DIR" \
-    "claude --model $MODEL remote-control --name reverb-g2-dev --permission-mode $PERMISSION_MODE"
+    "ANTHROPIC_MODEL=claude-haiku-4-5-20251001 $CLAUDE_BIN remote-control --name reverb-g2-dev --permission-mode $PERMISSION_MODE"
 
 echo "Started tmux session '$SESSION' running claude remote-control (fresh, $PERMISSION_MODE)."
 echo "Attach with: tmux attach -t $SESSION   (detach again with Ctrl+B D)"
