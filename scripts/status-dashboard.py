@@ -7,9 +7,14 @@ into the boot path yet.
 import json
 import os
 import subprocess
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wmr_usb_ids import KNOWN_USB  # noqa: E402 -- shared with pmadminka-agent.py
+import gui_env  # noqa: E402 -- shared with pmadminka-agent.py
 
 ATTENTION_FILE = "/tmp/vr-needs-attention.json"
 
@@ -22,14 +27,6 @@ ATTENTION_FILE = "/tmp/vr-needs-attention.json"
 _cache_lock = threading.Lock()
 _cache = {"data": None, "ts": 0.0}
 MIN_REFRESH_INTERVAL_S = 4.0
-
-KNOWN_USB = {
-    "04b4:6506": "WMR hub (USB2)",
-    "0bda:4c15": "USB Audio",
-    "03f0:0580": "QHMD companion (HID control)",
-    "04b4:6504": "WMR hub (USB3)",
-    "045e:0659": "HoloLens Sensors (cameras)",
-}
 
 
 def run(cmd, timeout=5):
@@ -117,14 +114,7 @@ def uptime():
 # DISPLAY, XAUTHORITY all needed for anything GUI-shaped). Every command
 # here was already run by hand and confirmed working earlier this session --
 # nothing new or unverified is exposed as a button.
-GUI_ENV = {
-    **os.environ,
-    "XDG_RUNTIME_DIR": "/run/user/1000",
-    "XDG_SESSION_TYPE": "wayland",
-    "WAYLAND_DISPLAY": "wayland-0",
-    "DISPLAY": ":0",
-    "XAUTHORITY": "/run/user/1000/.mutter-Xwaylandauth.50FFU3",
-}
+GUI_ENV = gui_env.get()
 HOME = os.path.expanduser("~")
 ACTIONS = {
     "compositor-up": {

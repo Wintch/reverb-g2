@@ -1,0 +1,34 @@
+# pmadminka-agent.service -- NOT installed/enabled by default, same convention as
+# status-dashboard.service, vr-boot-selector.service and dev-remote-control.service
+# in this directory: test by hand first, install as a separate deliberate step.
+#
+# Runs scripts/pmadminka-agent.py as a systemd --user unit (needs the Wayland/X11
+# session env to launch Steam titles, same reason status-dashboard.service is a
+# --user unit rather than a system one -- see gui_env.py).
+#
+# Requires ~/.config/pmadminka-agent/config.json to exist first -- see the
+# script's own header for its shape. install-pmadminka-agent.sh checks for it.
+#
+# Install (after confirming the script works by hand):
+#   mkdir -p ~/.config/systemd/user
+#   cp scripts/pmadminka-agent.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now pmadminka-agent.service
+#
+# Uninstall:
+#   systemctl --user disable --now pmadminka-agent.service
+#   rm ~/.config/systemd/user/pmadminka-agent.service
+
+[Unit]
+Description=pmadminka reservation-hub agent (heartbeat, run-queue, inventory)
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/Documents/reverb-g2/scripts/pmadminka-agent.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target
