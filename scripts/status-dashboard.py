@@ -139,7 +139,7 @@ PAGE = """<!doctype html>
   .grid { display:grid; grid-template-columns: 1fr 1fr; gap:16px; }
   .card { background:#141821; border:1px solid #2a3040; border-radius:10px; padding:16px; }
   .card h2 { margin:0 0 10px; font-size:14px; text-transform:uppercase; letter-spacing:.06em; color:#8b93a7; }
-  .ok { color:#4fd67a; } .bad { color:#ff6b6b; } .warn { color:#ffb454; }
+  .ok { color:#4fd67a; } .bad { color:#ff6b6b; } .warn { color:#ffb454; } .dim { color:#6b7488; }
   .row { display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px dashed #232838; font-size:14px; }
   pre { white-space:pre-wrap; font-size:12px; color:#a9b1c3; margin:6px 0 0; }
   .ts { color:#5b6377; font-size:12px; margin-top:20px; }
@@ -170,24 +170,41 @@ async function tick() {
     } else {
       attn.style.display = 'none';
     }
+    // A DP connector reading "disconnected" and monado not running are the
+    // NORMAL resting state -- the G2 never raises DP hotplug until
+    // panel.py activate runs, and the compositor is only up during an
+    // actual session (docs/22, T048/T049). Only treat these as alarming
+    // when a session IS supposed to be active (monado running).
+    const sessionActive = d.monado.running;
     const usbRows = Object.entries(d.usb.devices).map(([id, v]) =>
       `<div class="row"><span>${v.label}</span><span class="${v.present?'ok':'bad'}">${v.present?'OK':'MISSING'} (${id})</span></div>`
     ).join('');
-    const drmRows = Object.entries(d.drm).map(([c, s]) =>
-      `<div class="row"><span>${c}</span><span class="${s==='connected'?'ok':(s==='disconnected'?'bad':'warn')}">${s}</span></div>`
-    ).join('');
+    const drmRows = Object.entries(d.drm).map(([c, s]) => {
+      let cls, label;
+      if (s === 'connected') { cls = 'ok'; label = s; }
+      else if (s === 'disconnected' && !sessionActive) { cls = 'dim'; label = s + ' (idle, expected)'; }
+      else if (s === 'disconnected') { cls = 'bad'; label = s; }
+      else { cls = 'warn'; label = s; }
+      return `<div class="row"><span>${c}</span><span class="${cls}">${label}</span></div>`;
+    }).join('');
+    const monadoCls = sessionActive ? 'ok' : 'dim';
+    const monadoLabel = sessionActive ? 'yes (' + d.monado.pids.join(',') + ')' : 'no (idle -- no session running)';
     document.getElementById('grid').innerHTML = `
+      <div class="card" style="grid-column:1/-1">
+        <h2>Session</h2>
+        <div class="row"><span>state</span><span class="${sessionActive?'ok':'dim'}">${sessionActive?'ACTIVE -- compositor running':'IDLE -- no game/compositor session right now, this is normal at rest'}</span></div>
+      </div>
       <div class="card"><h2>USB (${d.usb.present_count}/${d.usb.total})</h2>${usbRows}</div>
       <div class="card"><h2>Display connectors</h2>${drmRows}</div>
       <div class="card"><h2>monado-service</h2>
-        <div class="row"><span>running</span><span class="${d.monado.running?'ok':'bad'}">${d.monado.running?'yes ('+d.monado.pids.join(',')+')':'no'}</span></div>
+        <div class="row"><span>running</span><span class="${monadoCls}">${monadoLabel}</span></div>
         <div class="row"><span>coredumps (total)</span><span class="${d.coredumps.count>0?'warn':'ok'}">${d.coredumps.count}</span></div>
         <pre>${d.coredumps.last || 'none'}</pre>
       </div>
       <div class="card"><h2>GPU</h2><pre>${d.gpu}</pre></div>
       <div class="card"><h2>repo (reverb-g2)</h2>
         <pre>${d.repo.head}</pre>
-        <div class="row"><span>working tree</span><span class="${d.repo.dirty?'warn':'ok'}">${d.repo.dirty?'dirty':'clean'}</span></div>
+        <div class="row"><span>working tree</span><span class="${d.repo.dirty?'warn':'ok'}">${d.repo.dirty?'dirty (routine -- telemetry/logs)':'clean'}</span></div>
       </div>
       <div class="card"><h2>system</h2><pre>${d.uptime}</pre></div>
     `;
