@@ -90,6 +90,78 @@ def uptime():
     return out
 
 
+# Action buttons -- each launches a real command, detached (survives this
+# server process), with the desktop-session env vars a plain systemd/SSH
+# shell doesn't have (found the hard way earlier today: WAYLAND_DISPLAY,
+# DISPLAY, XAUTHORITY all needed for anything GUI-shaped). Every command
+# here was already run by hand and confirmed working earlier this session --
+# nothing new or unverified is exposed as a button.
+GUI_ENV = {
+    **os.environ,
+    "XDG_RUNTIME_DIR": "/run/user/1000",
+    "XDG_SESSION_TYPE": "wayland",
+    "WAYLAND_DISPLAY": "wayland-0",
+    "DISPLAY": ":0",
+    "XAUTHORITY": "/run/user/1000/.mutter-Xwaylandauth.50FFU3",
+}
+HOME = os.path.expanduser("~")
+ACTIONS = {
+    "compositor-up": {
+        "label": "Start compositor (6dof)",
+        "cmd": [f"{HOME}/vr/jack-in-wayland.sh", "dev", "1", "6dof"],
+        "cwd": f"{HOME}/vr",
+    },
+    "compositor-down": {
+        "label": "Stop compositor",
+        "cmd": [f"{HOME}/vr/jack-in-wayland.sh", "down"],
+        "cwd": f"{HOME}/vr",
+    },
+    "activate-panel": {
+        "label": "Activate panel (HMD)",
+        "cmd": ["python3", f"{HOME}/Documents/reverb-g2/scripts/panel.py", "activate"],
+        "cwd": f"{HOME}/Documents/reverb-g2",
+    },
+    "stop-games": {
+        "label": "Stop all games",
+        "cmd": ["python3", "scripts/game-stop.py", "stop", "all"],
+        "cwd": f"{HOME}/Documents/reverb-g2",
+    },
+    "launch-aircar": {
+        "label": "Launch Aircar",
+        "cmd": ["steam", "-applaunch", "1073390"],
+        "cwd": f"{HOME}/vr",
+    },
+    "launch-deadherring": {
+        "label": "Launch Dead Herring VR",
+        "cmd": ["steam", "-applaunch", "1498490"],
+        "cwd": f"{HOME}/vr",
+    },
+    "launch-cyberpilot": {
+        "label": "Launch Wolfenstein Cyberpilot",
+        "cmd": ["steam", "-applaunch", "1056970"],
+        "cwd": f"{HOME}/vr",
+    },
+}
+
+
+def run_action(action_id):
+    action = ACTIONS.get(action_id)
+    if action is None:
+        return False, "unknown action"
+    log_path = f"/tmp/vr-action-{action_id}.log"
+    with open(log_path, "w") as logf:
+        subprocess.Popen(
+            action["cmd"],
+            cwd=action["cwd"],
+            env=GUI_ENV,
+            stdin=subprocess.DEVNULL,
+            stdout=logf,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    return True, f"launched, log: {log_path}"
+
+
 def read_attention():
     if not os.path.exists(ATTENTION_FILE):
         return {"active": False}
@@ -150,13 +222,52 @@ PAGE = """<!doctype html>
           animation: pulse 1.6s infinite; }
   #attn b { color:#ff9d9d; }
   @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.55; } }
+  #actions { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; }
+  #actions button { background:#1b2130; color:#dfe4ee; border:1px solid #333c50;
+                     border-radius:8px; padding:8px 14px; font-size:13px; cursor:pointer;
+                     font-family:inherit; }
+  #actions button:hover { background:#242c40; }
+  #actions button:disabled { opacity:.5; cursor:default; }
+  #action-msg { font-size:13px; color:#8b93a7; min-height:18px; margin-bottom:16px; }
 </style></head>
 <body>
 <h1>iashur -- HP Reverb G2 lab status</h1>
 <div id="attn"></div>
+<div id="actions">loading actions...</div>
+<div id="action-msg"></div>
 <div class="grid" id="grid">loading...</div>
 <div class="ts" id="ts"></div>
 <script>
+async function loadActions() {
+  try {
+    const r = await fetch('/api/actions');
+    const actions = await r.json();
+    const el = document.getElementById('actions');
+    el.innerHTML = '';
+    for (const [id, label] of Object.entries(actions)) {
+      const btn = document.createElement('button');
+      btn.textContent = label;
+      btn.onclick = () => runAction(id, btn);
+      el.appendChild(btn);
+    }
+  } catch(e) {
+    document.getElementById('actions').textContent = 'failed to load actions: ' + e;
+  }
+}
+async function runAction(id, btn) {
+  const msg = document.getElementById('action-msg');
+  btn.disabled = true;
+  msg.textContent = 'running: ' + btn.textContent + ' ...';
+  try {
+    const r = await fetch('/api/action/' + id, {method: 'POST'});
+    const d = await r.json();
+    msg.textContent = (d.ok ? 'OK -- ' : 'FAILED -- ') + d.message;
+  } catch(e) {
+    msg.textContent = 'request failed: ' + e;
+  }
+  btn.disabled = false;
+}
+loadActions();
 async function tick() {
   try {
     const r = await fetch('/api/status', {cache: 'no-store'});
@@ -223,7 +334,14 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
-        if self.path.startswith("/api/status"):
+        if self.path.startswith("/api/actions"):
+            body = json.dumps({k: v["label"] for k, v in ACTIONS.items()}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif self.path.startswith("/api/status"):
             body = json.dumps(get_status()).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -239,7 +357,16 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
 
     def do_POST(self):
-        if self.path.startswith("/api/attention"):
+        if self.path.startswith("/api/action/"):
+            action_id = self.path.split("/api/action/", 1)[1].strip("/")
+            ok, msg = run_action(action_id)
+            body = json.dumps({"ok": ok, "message": msg}).encode()
+            self.send_response(200 if ok else 400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif self.path.startswith("/api/attention"):
             length = int(self.headers.get("Content-Length", 0))
             raw = self.rfile.read(length) if length else b"{}"
             try:
