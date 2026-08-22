@@ -79,6 +79,27 @@ def driver_info():
     return out
 
 
+def gpu_power():
+    # Numeric, unit-stripped fields for the live indicator -- driver_info()
+    # above stays the free-text summary line.
+    out, rc = run(["nvidia-smi",
+                    "--query-gpu=utilization.gpu,power.draw,power.limit,power.default_limit,power.max_limit",
+                    "--format=csv,noheader,nounits"])
+    if rc != 0 or not out:
+        return None
+    try:
+        util, draw, limit, default_limit, max_limit = [float(x.strip()) for x in out.split(",")]
+        return {
+            "util_pct": util,
+            "draw_w": draw,
+            "limit_w": limit,
+            "default_limit_w": default_limit,
+            "max_limit_w": max_limit,
+        }
+    except Exception:
+        return None
+
+
 def git_head():
     out, _ = run(["git", "-C", "/home/iam/Documents/reverb-g2", "log", "-1", "--format=%h %s"])
     dirty, _ = run(["git", "-C", "/home/iam/Documents/reverb-g2", "status", "--short"])
@@ -181,6 +202,7 @@ def build_status():
         "coredumps": coredump_info(),
         "monado": monado_running(),
         "gpu": driver_info(),
+        "gpu_power": gpu_power(),
         "repo": git_head(),
         "uptime": uptime(),
     }
@@ -229,6 +251,11 @@ PAGE = """<!doctype html>
   #actions button:hover { background:#242c40; }
   #actions button:disabled { opacity:.5; cursor:default; }
   #action-msg { font-size:13px; color:#8b93a7; min-height:18px; margin-bottom:16px; }
+  .pwr-wrap { margin-bottom:10px; }
+  .pwr-nums { display:flex; justify-content:space-between; font-size:13px; margin-bottom:4px; }
+  .pwr-track { height:10px; border-radius:5px; background:#1c2230; overflow:hidden; position:relative; }
+  .pwr-fill { height:100%; border-radius:5px; transition:width .4s ease, background .4s ease; }
+  .pwr-limit-marker { position:absolute; top:0; bottom:0; width:2px; background:#ffffff55; }
 </style></head>
 <body>
 <h1>iashur -- HP Reverb G2 lab status</h1>
@@ -268,6 +295,28 @@ async function runAction(id, btn) {
   btn.disabled = false;
 }
 loadActions();
+function gpuPowerHtml(p) {
+  if (!p) return '<div class="pwr-wrap"><span class="dim">power data unavailable</span></div>';
+  const pct = Math.max(0, Math.min(100, (p.draw_w / p.max_limit_w) * 100));
+  const defaultPct = (p.default_limit_w / p.max_limit_w) * 100;
+  // color ramps with draw relative to the FACTORY DEFAULT limit, not the
+  // absolute max -- drawing right up to default is normal, past it is the
+  // signal worth flagging (this card is Gigabyte 240W default / 250W max,
+  // see docs/22's GPU-identity section).
+  const ratio = p.draw_w / p.default_limit_w;
+  const color = ratio > 0.95 ? '#ff6b6b' : (ratio > 0.7 ? '#ffb454' : '#4fd67a');
+  return `
+    <div class="pwr-wrap">
+      <div class="pwr-nums">
+        <span><b style="color:${color}">${p.draw_w.toFixed(1)} W</b> / ${p.default_limit_w.toFixed(0)} W default (max ${p.max_limit_w.toFixed(0)} W)</span>
+        <span class="dim">${p.util_pct.toFixed(0)}% util</span>
+      </div>
+      <div class="pwr-track">
+        <div class="pwr-fill" style="width:${pct}%; background:${color}"></div>
+        <div class="pwr-limit-marker" style="left:${defaultPct}%"></div>
+      </div>
+    </div>`;
+}
 async function tick() {
   try {
     const r = await fetch('/api/status', {cache: 'no-store'});
@@ -311,7 +360,7 @@ async function tick() {
         <div class="row"><span>coredumps (total)</span><span class="${d.coredumps.count>0?'warn':'ok'}">${d.coredumps.count}</span></div>
         <pre>${d.coredumps.last || 'none'}</pre>
       </div>
-      <div class="card"><h2>GPU</h2><pre>${d.gpu}</pre></div>
+      <div class="card"><h2>GPU</h2>${gpuPowerHtml(d.gpu_power)}<pre>${d.gpu}</pre></div>
       <div class="card"><h2>repo (reverb-g2)</h2>
         <pre>${d.repo.head}</pre>
         <div class="row"><span>working tree</span><span class="${d.repo.dirty?'warn':'ok'}">${d.repo.dirty?'dirty (routine -- telemetry/logs)':'clean'}</span></div>
