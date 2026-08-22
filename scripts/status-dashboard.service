@@ -1,0 +1,31 @@
+# status-dashboard.service -- NOT installed/enabled by default, same convention as
+# vr-boot-selector.service and dev-remote-control.service in this directory:
+# test by hand first, install as a separate deliberate step.
+#
+# Runs scripts/status-dashboard.py (read-only, localhost:8765 only, see the
+# script's own header) as a systemd --user unit so it survives reboots without
+# anyone needing to SSH in and start it by hand.
+#
+# Install (after confirming the script works by hand):
+#   mkdir -p ~/.config/systemd/user
+#   cp scripts/status-dashboard.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now status-dashboard.service
+#
+# Uninstall:
+#   systemctl --user disable --now status-dashboard.service
+#   rm ~/.config/systemd/user/status-dashboard.service
+
+[Unit]
+Description=VR lab status dashboard (localhost:8765, read-only)
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/Documents/reverb-g2/scripts/status-dashboard.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target
