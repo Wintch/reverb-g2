@@ -130,7 +130,6 @@ def get_status():
 
 PAGE = """<!doctype html>
 <html><head><meta charset="utf-8"><title>iashur status</title>
-<meta http-equiv="refresh" content="0">
 <style>
   :root { color-scheme: dark; }
   body { background:#0b0e14; color:#e6e6e6; font-family: 'JetBrains Mono', 'Consolas', monospace;
