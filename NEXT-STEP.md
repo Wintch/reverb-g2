@@ -56,6 +56,29 @@
 >
 > ---
 
+> ## PATCH-IN-PROGRESS NOTE (2026-08-21, ~22:05 — pop_pose fix confirmed NOT sufficient alone)
+>
+> Live-caught, right before a reboot test: `jack-in-wayland.sh down` (SIGTERM -> cooperative
+> `vs->running = false` in `ipc_server_handle_shutdown_signal`, not an abrupt kill) still
+> SIGSEGV'd tearing down a session that had been idle-but-tracking for 1h05m (the `bslt-optflow`
+> threads were pinned near 100%/70%/70%/60% CPU with zero GPU load and no app connected -- the
+> #3 seeded-recovery-runaway-guard symptom, caught live for the first time with numbers).
+> Confirmed the crashing binary WAS the patched one (built 19:40:31, after the wmr_camera.c
+> edit at 19:40:17; the process that crashed started at 20:58, well after). **New backtrace
+> shape, not identical to the original find**: the crash is directly inside `receive_frame`
+> (`t_tracker_slam.cpp:2080`, not via `flush_poses` at line 1337 like the first find), and the
+> teardown's OWN main thread (the original process thread) is stuck deep inside
+> `libnvidia-eglcore.so`/`ioctl` at the moment of crash -- almost certainly mid-EGL/Vulkan
+> context destruction -- meaning it hadn't reached `wmr_hmd_destroy()`/`wmr_camera_stop()` yet
+> when the camera thread delivered a fatal frame. **Reading**: the 0092/pop_pose join fixes the
+> camera-thread-vs-constellation-tracker race specifically, but there's a SECOND race between
+> the graphics/EGL teardown and the camera thread that it does not cover. Needs its own
+> instrumentation (thread apply all bt on a few more of these, specifically watching what the
+> EGL-stuck thread is doing) before a second fix is attempted -- not done tonight, flagging so
+> the "stress test passed" claim from earlier tonight's `docs/22` entry is NOT trusted at face
+> value: one clean session doesn't mean this class of crash is gone, tonight's own later evidence
+> says it isn't.
+
 > ## PREVIOUS (2026-08-21, ~17:15 — T244: paths #1, #4 and #5 of the table below, DONE)
 >
 > **Path #1 closed, and it was bigger than a diagnosis.** The 45/30 fps ceiling over 17-20 titles
