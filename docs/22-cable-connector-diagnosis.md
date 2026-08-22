@@ -1039,3 +1039,52 @@ this socket, same exact signature both times.
 
 **Reading**: T186's lever restores a branch to a seat that *has already proven it can carry it*;
 it does not convert a seat that never has. One attempt, one socket — a first datum, not a law.
+
+### New dedicated hardware, 2026-08-21 (T244 cont.): DP connector renamed DP-1→DP-2, and the USB2-branch fault this session was a chipset-vs-CPU port mixup, not a marginal contact
+
+**Hardware context**: the lab machine (`iashur`) moved off the SSD-swapped-between-rigs setup
+onto its own dedicated board today: **Gigabyte A520M K V2**, Ryzen 5 5600X, RTX 3060 Ti. This is
+a DIFFERENT board from the one this doc's point 10 above calls "the 5600 machine" (`DP-1`) — same
+CPU model, different motherboard, different DP connector name. **Confirms point 10's own warning
+in the strongest possible way**: don't trust a remembered connector name, not even by CPU model —
+scan `/sys/class/drm/card*-DP-*` fresh every time. On this specific board, the headset is **`DP-2`**.
+
+**What actually happened this session, in order** (useful because every step was tried and the
+outcome recorded, not just the fix): after the hardware move, USB came up 5/5 clean at boot. A
+sequence of physical changes then chased what looked like the familiar USB2-branch fault — PC-end
+USB-C replug (regressed 5/5→2/5), a visor-end connector reseat + 220V mains cycle (no change,
+and the kernel log showed literal silence on the USB2 bus, not even a failed negotiation
+attempt), a second visor-end reseat + another 220V cycle (still no change). **None of these
+fixed it**, because none of them were the actual cause this time: the headset's USB-C plug had
+been in a USB port fed by the **A520 chipset controller** (PCI `02:00.0`), not the CPU's own
+controller (PCI `07:00.3`, still USB-ID-named "Matisse" even on this Vermeer-class CPU — a
+shared-silicon label, not a CPU-generation tell). **Moving to a CPU-fed rear port fixed the USB2
+branch immediately, first try, no reseat or power-cycle needed alongside it** — 5/5 within
+seconds of the physical swap.
+
+With USB2 back (specifically the companion `03f0:0580`), `./scripts/panel.py activate` could
+finally run — it had been failing silently by omission before (no companion device to open).
+Ran clean, and `DP-2` went `connected` with the healthy **384-byte EDID**, confirming the
+existing "must run activation before judging DP state" rule (this doc, T048/T049) held on the
+new board too: DP read `disconnected` the entire time the USB2 branch was down, and that reading
+turned out to be uninformative noise, not a second independent fault — once USB2 was actually
+fixed, DP resolved itself via the normal activation path, zero video-specific troubleshooting
+needed.
+
+**Generalizable lesson for this board specifically**: the chipset-vs-CPU controller rule (this
+doc, elsewhere) holds, but **which physical rear socket is CPU-fed is a property of this specific
+Gigabyte A520M K V2, not inherited from any other board this project has used** — measure with
+`lsusb -t` + `lspci -nn` (look for the device under `07:00.3` vs `02:00.0`) before trusting any
+port-position claim on this machine, exactly as flagged as an open item when the hardware first
+moved today.
+
+**GPU identity, same session (T244 cont.)**: the RTX 3060 Ti on this board is not a reference
+card. `lspci -vvv -s 05:00.0` shows `Subsystem: [1458:405e]` — `1458` is Gigabyte's PCI vendor ID,
+confirmed independently via `nvidia-smi --query-gpu=pci.sub_device_id` (`0x405E1458`, same pair).
+`nvidia-smi -q -d POWER` shows **Default Power Limit 240 W, Max Power Limit 250 W** (vs the
+reference RTX 3060 Ti's 200 W TGP — +20% at the factory default, +25% headroom available).
+`nvidia-smi --query-gpu=name` and `nvidia-settings -q gpus` both return only the generic
+"NVIDIA GeForce RTX 3060 Ti" string — no marketing model name is exposed anywhere on this system
+(driver, `dmesg`, `glxinfo`), so the exact Gigabyte SKU (e.g. GAMING OC PRO) is inferred from the
+subsystem ID + power-limit profile, not confirmed by name string. VBIOS `94.04.38.40.BD`, GPU part
+number `2486-200-A1`.

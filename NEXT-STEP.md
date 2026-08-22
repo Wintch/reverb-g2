@@ -1,6 +1,62 @@
 # Next step
 
-> ## START HERE (2026-08-21, ~17:15 — T244: paths #1, #4 and #5 of the table below, DONE)
+> ## START HERE (2026-08-21, ~21:25 — dedicated hardware move + Sunshine remote access, USB/DP fault chased and closed)
+>
+> **The lab machine got its own dedicated hardware today, no longer an SSD swapped between rigs**:
+> Gigabyte A520M K V2, Ryzen 5 5600X (unchanged), and a **Gigabyte-branded RTX 3060 Ti** (subsystem
+> `1458:405e`, 240W default/250W max power limit vs the 200W reference TGP — confirmed via
+> `lspci -vvv`/`nvidia-smi`, not just the generic name string). Full detail in `docs/22`'s two new
+> sections at the end.
+>
+> **An hour was lost chasing the wrong hypothesis on the new board's USB2-branch dropout** (PC-end
+> replug, two visor-end reseats, two 220V mains cycles — none fixed it) before finding the real
+> cause: the headset's USB-C plug was in the board's **chipset-fed** port (`02:00.0`), not the
+> **CPU-fed** one (`07:00.3`) — moving it fixed 5/5 instantly, no reseat/cycle needed. This board's
+> headset connector is also **`DP-2`, not `DP-1`** (point 10 of `docs/22` — different board, same
+> CPU model, different DP name, don't trust either by memory). A second agent independently
+> re-verified both the PCI addresses and the `docs/22` writeup via `usb-port-map.sh map`+`qualify`
+> — confirmed accurate, physical rear-socket labeling (which case port is which controller, by
+> sight) is still open, needs hands-on port-by-port testing next time someone's physically there.
+>
+> **The `pop_pose()` teardown fix (path #2 from the previous block) is written and compiles, not
+> yet stress-tested.** `os_thread_helper_stop_and_wait(&cam->usb_thread)` added to
+> `wmr_camera_stop()` in `~/vr/monado` (branch `lab-full`, uncommitted as of this writing — the
+> monado tree is a separate git repo from this one, upstream-bound via the existing MR relationship,
+> see [[project-monado-upstreaming]]-equivalent context, do not push without deciding on the MR
+> path first). One real session (compositor up, one game launched and cleanly stopped via
+> `game-stop.py`) produced zero teardown crashes, but that's not the repeated-restart stress test
+> the fix actually needs before calling it validated.
+>
+> **Wolfenstein Cyberpilot re-confirmed working at full 90Hz on the new hardware** — real gameplay
+> reached (Fossilize shader compilation active, `Cyberpilot_x64vk.exe` alive, no coredump). Hit and
+> fixed a **generalizable Steam trap along the way**: this title's `LaunchOptions` (the
+> `XR_RUNTIME_JSON=... IPC_IGNORE_VERSION=1 PRESSURE_VESSEL_FILESYSTEMS_RW=/run/user/1000/monado_comp_ipc
+> %command%` string every working title needs) was missing from `localconfig.vdf` despite the title
+> having a prior T243-night session recorded — worth an audit pass over every "✓" title in `docs/23`
+> to confirm none of them silently lost their launch options the same way; a title that never
+> connects to the OpenXR runtime fails with `xrizer::clientcore ERROR_RUNTIME_UNAVAILABLE` in
+> `~/.steam/steam/logs/console-linux.txt`, not a Monado-side error, easy to misdiagnose as a
+> compositor problem.
+>
+> **Sunshine + Moonlight remote access installed and paired** (`v2026.516.143833`,
+> `sunshine-debian-trixie-amd64.deb`), admin credentials in `~/.config/reverb-g2-tokens/
+> sunshine-admin.token` on the everyday-system side, per [[feedback-secret-hygiene]]. Solves the
+> "manos remotas" need for anything GUI-shaped (Steam dialogs, error windows) that plain SSH
+> couldn't show. User-facing ideas noted but explicitly deferred (not started): a web version of
+> this so technical staff can stay on LAN, a spectator/safety monitor mirroring the wearer's camera
+> view on the lab's unused second screen, desktop-window management during VR (already has a start
+> in a different repo). See the diagnostic-automation project memory for the full list.
+>
+> **Still open**: everything the previous block already listed (#2's stress test as above, #3
+> seeded-recovery runaway guard, the one-in-75 `open()` stall, the fps-ceiling retest across the
+> full 45/30fps title list) is unchanged by today's hardware move — none of it was worked this
+> session, the whole session went to the hardware-topology fire drill and remote-access setup
+> instead. Next session should still start with the retest, now on hardware that's confirmed
+> healthy top to bottom.
+>
+> ---
+
+> ## PREVIOUS (2026-08-21, ~17:15 — T244: paths #1, #4 and #5 of the table below, DONE)
 >
 > **Path #1 closed, and it was bigger than a diagnosis.** The 45/30 fps ceiling over 17-20 titles
 > was the app pacer, twice over: the `gpu` column is structurally one period (multi-compositor
