@@ -244,12 +244,15 @@ PAGE = """<!doctype html>
           animation: pulse 1.6s infinite; }
   #attn b { color:#ff9d9d; }
   @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.55; } }
-  #actions { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; }
-  #actions button { background:#1b2130; color:#dfe4ee; border:1px solid #333c50;
+  #actions { display:flex; flex-wrap:wrap; gap:8px; }
+  #actions button, #compositor-toggle { background:#1b2130; color:#dfe4ee; border:1px solid #333c50;
                      border-radius:8px; padding:8px 14px; font-size:13px; cursor:pointer;
                      font-family:inherit; }
-  #actions button:hover { background:#242c40; }
-  #actions button:disabled { opacity:.5; cursor:default; }
+  #actions button:hover, #compositor-toggle:hover { background:#242c40; }
+  #actions button:disabled, #compositor-toggle:disabled { opacity:.5; cursor:default; }
+  #compositor-toggle { font-weight:600; border-width:2px; }
+  #compositor-toggle.on { border-color:#4fd67a; color:#4fd67a; }
+  #compositor-toggle.off { border-color:#6b7488; color:#dfe4ee; }
   #action-msg { font-size:13px; color:#8b93a7; min-height:18px; margin-bottom:16px; }
   .pwr-wrap { margin-bottom:10px; }
   .pwr-nums { display:flex; justify-content:space-between; font-size:13px; margin-bottom:4px; }
@@ -260,11 +263,18 @@ PAGE = """<!doctype html>
 <body>
 <h1>iashur -- HP Reverb G2 lab status</h1>
 <div id="attn"></div>
-<div id="actions">loading actions...</div>
+<div id="actions-row" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:16px;">
+  <button id="compositor-toggle" disabled>compositor: --</button>
+  <div id="actions">loading actions...</div>
+</div>
 <div id="action-msg"></div>
 <div class="grid" id="grid">loading...</div>
 <div class="ts" id="ts"></div>
 <script>
+// compositor-up/down are handled by the dedicated toggle button below, not
+// listed among the generic one-shot action buttons.
+const COMPOSITOR_ACTION_IDS = new Set(['compositor-up', 'compositor-down']);
+
 async function loadActions() {
   try {
     const r = await fetch('/api/actions');
@@ -272,6 +282,7 @@ async function loadActions() {
     const el = document.getElementById('actions');
     el.innerHTML = '';
     for (const [id, label] of Object.entries(actions)) {
+      if (COMPOSITOR_ACTION_IDS.has(id)) continue;
       const btn = document.createElement('button');
       btn.textContent = label;
       btn.onclick = () => runAction(id, btn);
@@ -293,6 +304,13 @@ async function runAction(id, btn) {
     msg.textContent = 'request failed: ' + e;
   }
   btn.disabled = false;
+}
+function updateCompositorToggle(running) {
+  const btn = document.getElementById('compositor-toggle');
+  btn.disabled = false;
+  btn.className = running ? 'on' : 'off';
+  btn.textContent = running ? '● compositor ON -- click to stop' : '○ compositor off -- click to start';
+  btn.onclick = () => runAction(running ? 'compositor-down' : 'compositor-up', btn);
 }
 loadActions();
 function gpuPowerHtml(p) {
@@ -335,6 +353,7 @@ async function tick() {
     // actual session (docs/22, T048/T049). Only treat these as alarming
     // when a session IS supposed to be active (monado running).
     const sessionActive = d.monado.running;
+    updateCompositorToggle(sessionActive);
     const usbRows = Object.entries(d.usb.devices).map(([id, v]) =>
       `<div class="row"><span>${v.label}</span><span class="${v.present?'ok':'bad'}">${v.present?'OK':'MISSING'} (${id})</span></div>`
     ).join('');
