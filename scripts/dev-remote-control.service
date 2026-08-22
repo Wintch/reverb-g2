@@ -1,0 +1,45 @@
+# dev-remote-control.service -- NOT installed/enabled by default. This file is
+# a reference to review and install by hand, deliberately -- same convention
+# as vr-boot-selector.service and vr-launcher-console.service in this same
+# scripts/ directory: build and test the script it runs by hand first, only
+# then install this unit as its own separate, documented step.
+#
+# Starts a FRESH (never resumed, see the script's own header) Claude Code
+# Remote Control session for this repo, inside a detached tmux session, so
+# the everyday-system session can reach it via SendMessage/ListAgents without
+# anyone needing to be logged into iashur's desktop. Runs on the Haiku model
+# (cheap/fast -- it executes what the everyday-system session directs, it
+# does not need to be the one drawing conclusions) under acceptEdits
+# permissions (auto-approves file edits, still confirms risky commands --
+# accepted tradeoff: it may stall waiting for an approval nobody will give,
+# rather than run something destructive on real hardware unattended).
+#
+# Install (after testing scripts/start-dev-remote-control.sh by hand first):
+#   sudo cp scripts/dev-remote-control.service /etc/systemd/system/
+#   sudo systemctl enable dev-remote-control.service
+#
+# Uninstall:
+#   sudo systemctl disable dev-remote-control.service
+#   sudo rm /etc/systemd/system/dev-remote-control.service
+#
+# This is a --user-adjacent workload (needs the graphical session's D-Bus/
+# XDG_RUNTIME_DIR to reach tmux the same user is in) but installed as a
+# SYSTEM unit that runs as user iam, matching this project's existing
+# vr-boot-selector.service idiom rather than introducing a second install
+# path (systemctl --user) for someone to remember separately.
+
+[Unit]
+Description=Claude Code Remote Control (reverb-g2-dev), fresh session every start, in tmux
+After=graphical.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=iam
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+ExecStart=/home/iam/Documents/reverb-g2/scripts/start-dev-remote-control.sh
+ExecStop=/usr/bin/tmux kill-session -t dev-remote-control
+
+[Install]
+WantedBy=graphical.target
