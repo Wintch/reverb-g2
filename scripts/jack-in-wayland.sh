@@ -217,6 +217,15 @@ if [ "$ACTION" = down ]; then
     # left untouched on purpose -- a session that just failed is exactly the one you don't
     # want a teardown silently erasing.
     echo "Socket removed ($SOCKET). $LOG left untouched."
+    # --- Idle-blank restore (2026-08-22) -------------------------------------------------
+    # Mirror image of the suppression set below at launch: the desktop's own idle-blank
+    # (idle-delay=60s, no lock, no suspend -- set up 2026-08-22 for the "reduced light" idle
+    # mode) is safe to re-enable now that there is no live session for it to interrupt.
+    export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+    export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
+    dconf write /org/gnome/desktop/session/idle-delay "uint32 60" 2>/dev/null \
+        && echo "Idle-blank restored (60s)." \
+        || echo "  (could not restore idle-blank -- no session bus reachable, harmless if headless)"
     exit 0
 fi
 
@@ -886,6 +895,22 @@ if [ "$SUCCESS" = 1 ]; then
     # The ONLY thing that clears the marker: a launch that actually reached a usable
     # compositor. Not an attempt, not a teardown, not the passage of time.
     rm -f "$FAIL_MARKER"
+    # --- Idle-blank suppression (2026-08-22) ---------------------------------------------
+    # The desktop's own idle-blank (idle-delay=60s, set up 2026-08-22 for the "reduced
+    # light" idle mode) tracks keyboard/mouse only -- it has no idea a VR session is live.
+    # A session driven purely by the headset + controllers (the normal case) can go well
+    # past 60s without touching either, so left alone this would blank mid-session. The G2
+    # DOES have a real proximity/presence signal (wmr_hmd.c, XRT_INPUT_GENERIC_HEAD_DETECT,
+    # opt-in via WMR_USER_PRESENCE=1) but its worn/not-worn threshold is explicitly flagged
+    # there as provisional and never confirmed against a clean donning gesture -- not
+    # something to trust yet for silently blanking a live session. Coarse and safe instead:
+    # no blanking at all for as long as the compositor is up; restored in the 'down' path
+    # above the moment there is no session left to interrupt.
+    export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+    export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
+    dconf write /org/gnome/desktop/session/idle-delay "uint32 0" 2>/dev/null \
+        && echo "Idle-blank suppressed for this session." \
+        || echo "  (could not suppress idle-blank -- no session bus reachable, harmless if headless)"
     if [ "$ACTION" = quiet ]; then
         # quiet suppresses the dev usage banner (docs/43) -- no human is reading it on an
         # unattended station.
