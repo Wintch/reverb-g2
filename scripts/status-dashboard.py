@@ -7,10 +7,21 @@ into the boot path yet.
 import json
 import os
 import subprocess
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ATTENTION_FILE = "/tmp/vr-needs-attention.json"
+
+# 2026-08-21 incident: the kiosk client polls every few seconds, and with 200+
+# coredumps `coredumpctl list` alone can take longer than that -- concurrent
+# requests each spawned their own full subprocess fan-out (ThreadingHTTPServer,
+# one thread per request), piling up faster than they finished and driving
+# load average past 10 with nothing actually wrong on the machine. Cache the
+# result and let only one thread at a time actually rebuild it.
+_cache_lock = threading.Lock()
+_cache = {"data": None, "ts": 0.0}
+MIN_REFRESH_INTERVAL_S = 4.0
 
 KNOWN_USB = {
     "04b4:6506": "WMR hub (USB2)",
@@ -103,6 +114,20 @@ def build_status():
     }
 
 
+def get_status():
+    """Cached wrapper -- only one thread rebuilds at a time, everyone else
+    gets the last-known-good result immediately instead of piling on more
+    subprocess calls."""
+    with _cache_lock:
+        now = time.monotonic()
+        if _cache["data"] is not None and (now - _cache["ts"]) < MIN_REFRESH_INTERVAL_S:
+            return _cache["data"]
+        data = build_status()
+        _cache["data"] = data
+        _cache["ts"] = now
+        return data
+
+
 PAGE = """<!doctype html>
 <html><head><meta charset="utf-8"><title>iashur status</title>
 <meta http-equiv="refresh" content="0">
@@ -170,7 +195,7 @@ async function tick() {
   } catch(e) {
     document.getElementById('grid').innerHTML = '<div class="card bad">fetch failed: ' + e + '</div>';
   }
-  setTimeout(tick, 3000);
+  setTimeout(tick, 6000);
 }
 tick();
 </script>
@@ -183,7 +208,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.startswith("/api/status"):
-            body = json.dumps(build_status()).encode()
+            body = json.dumps(get_status()).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
