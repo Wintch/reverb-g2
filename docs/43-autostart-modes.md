@@ -227,6 +227,8 @@ modes** — it is a failure signal that goes to stderr, not to disk, so it does 
 
 ## Mirroring this on dev's `jack-in-wayland.sh`
 
+> **Update 2026-08-23 (docs/67 D1):** implemented since — `scripts/jack-in-wayland.sh` carries the full `up/dev/quiet/down` contract (`ACTION`, `FAIL_MARKER` gate, `SCRUB_ENV`), named exactly as suggested below. The paragraph that follows is history.
+
 This is a **note for dev**, not implemented in this pass (session-role split: the lab
 install is where the Wayland autostart lives). `scripts/jack-in-wayland.sh` is the real
 90Hz DRM-lease autostart and has a **different logging model** — master switches

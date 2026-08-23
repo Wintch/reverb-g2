@@ -536,3 +536,23 @@ offset change, re-seed. Kills the 3.5 s "from the past" rejection hole after eve
 the shared run loop. Default off (`WMR_COMPANION_RECONNECT_RESYNC=1` re-enables); the run loop now
 warns on any step >50 ms, which is the instrument that named it. With 0093: 66 natural drops in
 one session, zero SLAM holes, wearer no longer relocated. docs/06.
+
+## 0095 — join the camera USB thread in `wmr_camera_stop()` (2026-08-21, T244 close)
+
+`wmr_camera_stop()` cancelled the transfers and deactivated the stream but never joined
+`cam->usb_thread`, so `wmr_cam_usb_thread` could still be inside `img_xfer_cb() → pop_pose()`
+while `wmr_hmd_destroy()` tore the tracker down on another thread — the teardown SIGSEGV on 20+
+cores (`thread apply all bt`, NEXT-STEP's correction #1). Adds
+`os_thread_helper_stop_and_wait(&cam->usb_thread)` right after the cancel loop, the precedented
+pattern from `constellation_tracker_node_break_apart`. Vulnerable code is byte-identical to
+upstream: upstreamable.
+
+## 0096 — `wmr_camera_start()` never set `cam->running` (2026-08-22)
+
+Which made 0095 dead code: `wmr_camera_stop()`'s `if (!cam->running) return;` guard skipped the
+join (and the cancel loop) on every teardown. Sets `running = true` once all transfers are
+submitted. **Not closed**: the same night a SIGSEGV with a DIFFERENT shape (directly in
+`receive_frame`, `t_tracker_slam.cpp:2080`, with the main thread stuck in
+`libnvidia-eglcore`/`ioctl`) showed a second race between the EGL/Vulkan teardown and the camera
+thread that this join does not cover — race #2 in docs/06 / the 2026-08-22 plan (docs/67). Treat
+"teardown crash fixed" as unverified until the EGL-side ordering is instrumented.

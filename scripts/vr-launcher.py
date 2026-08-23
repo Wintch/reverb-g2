@@ -16,9 +16,22 @@ Launch Options) -- docs/23's "Trap: Steam launch options edited on disk don't
 exist" already established that editing localconfig.vdf directly while Steam
 runs is unreliable/dangerous.
 
-  ./scripts/vr-launcher.py [mode] [3dof|6dof]   (passed through to jack-in-wayland.sh)
+  ./scripts/vr-launcher.py [mode] [3dof|6dof|ctrl]   (passed through to jack-in-wayland.sh)
+  ./scripts/vr-launcher.py status                    (which Proton game trees are alive)
+  ./scripts/vr-launcher.py stop [appid|all]          (stop them for real, via game-stop.py)
+
+Process-state rule (2026-08-21, T244 close; docs/06, NEXT-STEP): a Steam title killed by its
+wrapper keeps running under wineserver, keeps its OpenVR session and keeps rendering -- Dead
+Herring VR rendered behind a whole Wolfenstein Cyberpilot test that way (151 "Delivered
+frame"/s = two clients, every CPU/GPU number invalid). So this launcher now refuses to be the
+second client by accident: it runs `game-stop.py status` BEFORE bringing Monado up and stops
+(default) or aborts when a tree is still alive. It also reads the controller role list after
+Monado is up and says out loud when a hand is `<none>` (a controller powered on AFTER
+monado-service never registers -- docs/23 "Start the controllers BEFORE Monado"). Neither check
+restarts the service on its own: chaining monado-service restarts is a known USB2-fault trigger.
 """
 import os
+import re
 import select
 import subprocess
 import sys
@@ -32,7 +45,12 @@ if (Path.home() / "vr" / "monado").is_dir():
 MODE = sys.argv[1] if len(sys.argv) > 1 else "1"
 TRACKING = sys.argv[2] if len(sys.argv) > 2 else "3dof"
 
-IPC_SOCKET = Path("/run/user/1000/monado_comp_ipc")
+# Not a literal /run/user/1000: jack-in-wayland.sh derives it the same way, and this rig is
+# meant to run unattended on more than one box/user.
+IPC_SOCKET = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")) / "monado_comp_ipc"
+# Monado's own log, written by jack-in-wayland.sh (the role list lives there).
+MONADO_LOG = VR / "jack-in-wayland.log"
+GAME_STOP = HERE / "game-stop.py"
 
 # Verbose logging, per the docs/27 survey -- turned ON here (not left as a
 # someday-maybe) because that's what was asked for after the survey landed.
@@ -69,7 +87,8 @@ GAME_ENV = {
 # Player.log, just go read it.
 
 # name, Steam AppID -- from docs/23-game-compatibility.md's "Working" table only.
-# Order matches the doc (roughly discovery order, not a ranking).
+# Order matches the doc (roughly discovery order, not a ranking). installed_games()
+# filters this down to what has an appmanifest right now, so a long list costs nothing.
 GAMES = [
     ("International Space Station Tour VR", "797200"),
     ("Aliens Attack VR", "932190"),
@@ -83,6 +102,20 @@ GAMES = [
     ("Dead Herring VR", "1498490"),
     ("Tank Mechanic Simulator VR", "1463010"),
     ("SafeZoneVR", "1701090"),
+    # Added 2026-08-23 (docs/23 rows that existed but were never copied here).
+    ("Wolfenstein: Cyberpilot", "1056970"),
+    ("Sniper Elite VR", "752480"),
+    ("Vertical Shift", "1807480"),
+    ("Hellblade: Senua's Sacrifice VR Edition", "747350"),
+    ("Interkosmos", "579110"),
+    ("Emergence", "1337820"),
+    ("Blast the Past", "943170"),
+    ("Audio Factory", "722590"),
+    ("VersaillesVR | The Palace is yours", "1098190"),
+    ("Steam 360 Video Player", "613220"),
+    ("Aperture Hand Lab", "868020"),
+    ("Transmissions: Element 120", "365300"),
+    ("OpenVR Benchmark", "955610"),
 ]
 DEFAULT_GAME = "Aircar"
 
@@ -98,8 +131,18 @@ TITLE_PROFILES = {
     # Aircar: the reference gamepad title -- controllers optional, hands never
     # needed. Constellation off = fewer subsystems live during a demo.
     "1073390": {"WMR_CONSTELLATION_CONTROLLERS": "0"},
+    # ISS Tour VR: Aircar-class (does not render hands, docs/23) and the heaviest
+    # content measured in the whole sweep (8K, monado-service at 519% CPU on T243
+    # night) -- the last thing it needs is ~140 solves/s of constellation it never shows.
+    "797200": {"WMR_CONSTELLATION_CONTROLLERS": "0"},
+    # OpenVR Benchmark: a pure GPU/pacing loop, no hands, used as an instrument --
+    # constellation would only add CPU noise to the number being measured.
+    "955610": {"WMR_CONSTELLATION_CONTROLLERS": "0"},
 }
 PROFILE_DEFAULT = {"WMR_CONSTELLATION_CONTROLLERS": "1"}
+# Titles whose verdict in docs/23 does not depend on hands at all (gamepad class): the
+# controller-registration check below stays informational for them instead of loud.
+NO_HANDS_TITLES = {"1073390", "797200", "955610"}
 
 
 JACKIN_OUT_LOG = LOG_DIR / "jack-in-launcher.log"
@@ -207,6 +250,87 @@ def check_network_link():
         print(f"(no pude correr network-link-check.py: {e} -- no bloquea, sigo igual)")
 
 
+def game_trees_status():
+    """Returns (text, alive) from `game-stop.py status`. alive=False also when the script
+    is missing -- then the caller says so and moves on, it does not invent a clean state."""
+    if not GAME_STOP.exists():
+        return f"(no encuentro {GAME_STOP} -- no puedo verificar si quedo un juego corriendo)", False
+    try:
+        r = subprocess.run([sys.executable, str(GAME_STOP), "status"],
+                           capture_output=True, text=True, timeout=15)
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return f"(game-stop.py status fallo: {e})", False
+    text = (r.stdout or "").strip()
+    alive = bool(text) and "no Proton game trees running" not in text
+    return text, alive
+
+
+def check_no_game_running():
+    """The second-client trap, closed at the launcher: if any Proton tree is still alive,
+    stop it (default after 10 s, or Enter/'s'), or 'n' to go on anyway (an experiment that
+    WANTS two clients must say so), or 'q' to abort. Returns False to abort the launch."""
+    text, alive = game_trees_status()
+    if not alive:
+        if text:
+            print(f"  juegos previos: {text}")
+        return True
+    print("!! Hay un juego de Steam TODAVIA corriendo (el wrapper murio, el arbol Wine no):")
+    for line in text.splitlines():
+        print(f"     {line}")
+    print("   Lanzar otro encima = dos clientes en Monado, numeros de CPU/GPU/fps invalidos.")
+    ans = read_choice_with_timeout(
+        "   [Enter/s] pararlos ahora   [n] seguir igual   [q] abortar   (10s -> parar): ",
+        10, "s", "pararlos",
+    ).lower()
+    if ans == "q":
+        print("   abortado por pedido.")
+        return False
+    if ans == "n":
+        print("   siguiendo con el juego previo vivo -- anotalo en la medicion.")
+        return True
+    r = subprocess.run([sys.executable, str(GAME_STOP), "stop", "all"], text=True)
+    if r.returncode != 0:
+        print("   game-stop.py no pudo parar todo (ver arriba). No lanzo otro encima.")
+        return False
+    return True
+
+
+ROLE_LINE = re.compile(r"^\s*(left|right):\s*(.+?)\s*$")
+
+
+def check_controllers_registered(appid):
+    """Read Monado's role list from its own log after it came up. A controller powered on
+    after monado-service started gets its config read (battery shows up) but stays `<none>`
+    for the whole session (docs/23, T244; the right-hand startup race in CLAUDE.md). We only
+    REPORT: restarting the service here would chain restarts, which is a USB2-fault trigger.
+    Loud for hands titles, one line for the gamepad class (NO_HANDS_TITLES)."""
+    roles = {}
+    try:
+        with open(MONADO_LOG, errors="replace") as f:
+            for line in f:
+                m = ROLE_LINE.match(line)
+                if m and m.group(1) not in roles:  # first role list = this service start
+                    roles[m.group(1)] = m.group(2)
+    except OSError as e:
+        print(f"  (no pude leer {MONADO_LOG} para los roles de los controles: {e})")
+        return
+    if not roles:
+        print("  (Monado no imprimio todavia su lista de roles -- no se si los controles registraron)")
+        return
+    missing = [h for h in ("left", "right") if roles.get(h, "<none>").startswith("<none>")]
+    summary = ", ".join(f"{h}: {roles.get(h, '?')}" for h in ("left", "right"))
+    if not missing:
+        print(f"  controles registrados: {summary}")
+        return
+    if appid in NO_HANDS_TITLES:
+        print(f"  controles: {summary} -- titulo sin manos, sigue igual.")
+        return
+    print(f"!! Controles NO registrados en esta sesion: {', '.join(missing)} ({summary}).")
+    print("   Un control prendido DESPUES de monado-service no registra nunca. Si el titulo")
+    print("   necesita manos: bajar con jack-in-wayland.sh down, prender los dos controles,")
+    print("   y volver a subir -- una vez, no en loop (reinicios encadenados = falla USB2).")
+
+
 def find_steamapps_dir():
     """A handful of real, common install locations -- Steam itself has used
     different ones across distros/versions. None found -> None, callers must
@@ -251,6 +375,15 @@ def read_choice_with_timeout(prompt, timeout, default_choice, default_label):
 
 
 def main():
+    # Subcommands that do not launch anything: process-state hygiene from the console.
+    if MODE == "status":
+        text, _alive = game_trees_status()
+        print(text)
+        return
+    if MODE == "stop":
+        target = TRACKING if len(sys.argv) > 2 else "all"
+        sys.exit(subprocess.run([sys.executable, str(GAME_STOP), "stop", target]).returncode)
+
     games = installed_games()
 
     print("==================================================")
@@ -279,9 +412,23 @@ def main():
         default_n, default_label = 1, "el player 360"
     else:
         default_label = DEFAULT_GAME
-    choice = read_choice_with_timeout(
-        f"Elegí [1-{stub_n}], 15s -> {default_label}: ", 15, str(default_n), default_label,
-    )
+    # Non-interactive pick (an agent driving a measurement session, or a future arcade mode):
+    # VR_LAUNCH_APPID=<appid> (or "player") skips the 15 s prompt entirely. Without it, stdin at
+    # EOF (as under a non-interactive shell) would read "" and land on "Opcion invalida".
+    forced = os.environ.get("VR_LAUNCH_APPID")
+    if forced == "player":
+        choice = "1"
+    elif forced:
+        hit = [str(2 + i) for i, (_n, a) in enumerate(games) if a == forced]
+        if not hit:
+            print(f"VR_LAUNCH_APPID={forced} no esta instalado/en el catalogo -- no lanzo nada.")
+            sys.exit(2)
+        choice = hit[0]
+        print(f"  (VR_LAUNCH_APPID={forced} -> opcion {choice}, sin prompt)")
+    else:
+        choice = read_choice_with_timeout(
+            f"Elegí [1-{stub_n}], 15s -> {default_label}: ", 15, str(default_n), default_label,
+        )
 
     if choice == str(stub_n):
         print(f"Opcion {stub_n} todavia no tiene nada real conectado -- no hay ningun juego")
@@ -312,11 +459,16 @@ def main():
             os.environ[k] = v
             print(f"perfil de titulo: {k}={v}")
 
+    # No second client by accident: a previous title's Wine tree must be gone first.
+    if not check_no_game_running():
+        sys.exit(1)
+
     if not bring_up_monado():
         print("No lanzo nada -- Monado no quedo listo.")
         sys.exit(1)
 
     check_controller_battery()
+    check_controllers_registered(_appid)
 
     name, appid = selected
     if name == "__player__":

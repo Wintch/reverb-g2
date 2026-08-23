@@ -1,0 +1,63 @@
+From b5ba12f27b3caa22c4dd1216974875ed17618187 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Sat, 22 Aug 2026 06:13:46 -0300
+Subject: [PATCH 96/96] wmr: fix wmr_camera_stop() early-return skipping USB
+ thread teardown
+
+wmr_camera_start() never set cam->running = true on the success path, so
+every call to wmr_camera_stop() hit its `if (!cam->running) return;`
+guard and skipped os_thread_helper_stop_and_wait() -- the USB capture
+thread was never actually joined or its transfers cancelled on teardown.
+This was the root cause of a recurring SIGSEGV on compositor shutdown.
+
+Fix: set cam->running = true once all transfers are submitted and the
+USB thread is confirmed running, right before wmr_camera_start() returns
+success.
+
+Verified live across multiple clean start/stop cycles (including one
+requiring SIGKILL escalation after an unresponsive service): no new
+coredumps, clean "Server exiting: '0'" teardown.
+---
+ src/xrt/auxiliary/tracking/t_tracker_slam.cpp | 1 +
+ src/xrt/drivers/wmr/wmr_camera.c              | 6 ++++++
+ 2 files changed, 7 insertions(+)
+
+diff --git a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+index fbd171035..0bddab08a 100644
+--- a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
++++ b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+@@ -20,6 +20,7 @@
+ #include "util/u_trace_marker.h"
+ 
+ #include "os/os_threading.h"
++#include <cstdio>
+ 
+ #include "math/m_api.h"
+ #include "math/m_filter_fifo.h"
+diff --git a/src/xrt/drivers/wmr/wmr_camera.c b/src/xrt/drivers/wmr/wmr_camera.c
+index 35b95acb5..085624c58 100644
+--- a/src/xrt/drivers/wmr/wmr_camera.c
++++ b/src/xrt/drivers/wmr/wmr_camera.c
+@@ -30,6 +30,7 @@
+ #include <libusb.h>
+ #include <stdlib.h>
+ #include <assert.h>
++#include <stdio.h>
+ 
+ //! Specifies whether the user wants to enable autoexposure from the start.
+ DEBUG_GET_ONCE_BOOL_OPTION(wmr_autoexposure, "WMR_AUTOEXPOSURE", true)
+@@ -733,6 +734,11 @@ wmr_camera_start(struct wmr_camera *cam)
+ 		}
+ 	}
+ 
++	// All transfers submitted successfully and the USB thread is running: mark the camera as
++	// running so wmr_camera_stop() actually performs teardown (join the USB thread, cancel
++	// transfers) instead of early-returning on its `!cam->running` guard.
++	cam->running = true;
++
+ 	WMR_CAM_INFO(cam, "WMR camera started");
+ 
+ 	return true;
+-- 
+2.47.3
+

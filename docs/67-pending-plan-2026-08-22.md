@@ -1,0 +1,209 @@
+# 67 — Everything pending, as one plan: Aircar "like on Windows" first, 6DoF in parallel (2026-08-22/23)
+
+**Status: APPROVED by the user 2026-08-22 ~23:55, S1 started the same night.** This is the
+plan of record; `NEXT-STEP.md`'s START HERE block points here. Sessions log to
+`docs/pruebas.jsonl` as usual and update the per-topic docs named below **in the same commit**.
+
+## 0. The question, and why it is not an either/or
+
+The user asked: *"o llevamos un título a un estado 'como en Windows' o arreglamos 6DoF"* —
+plan everything pending. Reading the whole record (docs/23, 03, 58, 59, 06, 60-63,
+`docs/re-windows/`, all of `NEXT-STEP.md`, the scripts, the `~/vr/monado` tree) shows the two
+options are the same plan viewed from two ends:
+
+- **Titles that render hands** (Cyberpilot, Dead Herring, Sniper Elite, Google Earth…) are
+  blocked, per title, by one of: the docs/58 controller-6DoF residual (worn presence 50-60 %,
+  parked hands, 10-20 cm yaw-ghost shifts, hand inversion, right hand absent), an
+  xrizer↔title binding bug (Sniper Elite: the driver tracks, `matched_blobs=6`, the in-game
+  pointer never moves), one of the named xrizer gaps (Water Bears swapchain loop, Maquette
+  chaperone, War Robots presence — re-opened by docs/23:129 in T243 despite NEXT-STEP:190's
+  "validated"), or a title-private fault (Tank Mechanic: 405 `0xc0000005` exceptions).
+  Cyberpilot in T244 ran 70-80 fps with a second client confounding it, and the wearer's own
+  residual was *"the vertical readjustment is nauseating"* — head SLAM under load is not clean
+  there either (anchor age ~150 ms + docs/58).
+- **Titles that do not render hands** (gamepad class: **Aircar**, ISS Tour VR 8K) are the only
+  ones where "like on Windows" is reachable without controller 6DoF — and Aircar is nearly
+  there (89-90 fps, 0.13 % late, *"100 % funcional"*, T161/T163). Its residuals are head-SLAM
+  residuals: roll drift on long 6dof sessions (+0.9°/min, gyro-bias-under-dynamics, WS2),
+  origin anchoring where the headset sat (procedure: start worn, in play position; the A
+  button recentres), 6dof pacing 7-11 % late vs 2.8 % in 3dof (T163; 4-7 % pinned with
+  threads=4, T204) — **never measured under the T244 defaults** (the T243 retest was
+  inconclusive: no gamepad plugged).
+
+The two bugs that masked everything were closed in T244 and verified worn (45/30 fps ceiling →
+patch 0092 + `U_PACING_APP_USE_MIN_FRAME_PERIOD`; relocation on every companion drop →
+0093/0094). **No docs/23 verdict older than T244 stands without a retest.**
+
+**User decisions (2026-08-22, 23:50):** the parity exam is **Aircar** (gamepad class);
+Cyberpilot is the second exam; the Windows session (capture + baseline) happens **later** —
+S2-S4 must not depend on it; S1 starts now.
+
+## 1. Findings from the planning pass that the record had not connected
+
+1. **Windows programs the controllers' LED pulse train; Monado sends no LED command at all.**
+   `docs/re-windows/04-led-model.md`: `CrystalKeySetLedPulseTrain` (count 1-399, mode 1-4,
+   period 1-5 ms, 55-bit duration, 11-byte body), and Monado's own
+   `t_led_sync_refinement` is wired only to `pssense`. `NEXT-STEP.md:329` carried "NAMED NEXT
+   INVESTIGATION: find what Oasis sends the controllers that we do not" — the static answer was
+   in the repo and was never connected to it. Caveats that bound it: `re-windows/06` ranks it
+   P4 (last) behind P1 (clock pops — partly covered by 0055/0093, to be reconciled) and P3 (the
+   single shared reader loop, still the architecture; it is why one companion stall froze the
+   USB3 cameras 14-24 s, WS6); and `04:261` says firing it from Linux is **unverified, static
+   analysis only**.
+2. **No existing Windows capture shows what Windows sends the controllers during tracking.**
+   Checked with tshark on 2026-08-22: `windows-kit2/results/90hz.pcapng` (Oasis at 90 Hz,
+   101 s, 45,663 frames) has **zero** controller-tunnel output reports (no `0x06`/`0x0E`), the
+   host→HoloLens Sensors vocabulary is `02 {04,06,07,08,0b}` ×849 + one `16 04` — identical to
+   pairing3's (T244). Device→host is the HMD IMU report `01` (381 B, 13,538), `02` (33 B), `17`
+   (7 B, controller status), `05` (radio log), `03` (config reads). Controllers were off in that
+   capture. So the LED lever needs a **new** capture with controllers on and tracking active, and
+   it is **not** ported blind (T236/docs/54 rule). It sits behind the gain/exposure sweep, which
+   needs no Windows and already has a datapoint (T223: gain 255 turned a 75 cm zero into 87
+   poses of poor quality).
+3. **`~/vr/monado` (`lab-full`) was two commits ahead of `patches/monado/`** (`c3843a24b`,
+   `b5ba12f27`, the `wmr_camera_stop()` USB-thread join) — the T068 class of drift. Exported
+   as **0095/0096** in S1 (README updated: 0096 notes the join was dead code until
+   `cam->running` was set, and that a second, EGL-side teardown race remains).
+4. **`vr-launcher.py` never called `game-stop.py`** — the second-client confounder was still
+   armed at the launcher. Fixed in S1 (§6).
+
+## 2. Acceptance criteria (measurable, with instruments that already exist)
+
+| What | Criterion | Instrument |
+|---|---|---|
+| **Aircar "like on Windows"** | 6dof head, constellation OFF (its profile), Xbox pad; **≥ 30 min** worn; `Delivered frame` 88-90/s sustained; 3 pacing windows ≤ 3 % late (3dof control 2.8 %, T163); no relocation; recentres needed counted (target ≤ 1 per 10 min — no number under T244 yet); companion drops survived (0090); no core at `down`; audio in the headset; started from the picker hands-free | `scripts/app-fps.sh` (new, S1), `frame-pacing.sh`, `constellation-session-report.py` (channel health), `coredumpctl`, wearer |
+| **Controller 6DoF "fixed"** (per hand, worn, arm's reach, 10-min window) | positional presence **≥ 90 %** (today 50-60 %); no "parked" > 1 s; no jumps ≥ 10 cm; jitter ≤ ~1 cm; both hands at once (today they invert) | `constellation-session-report.py`, wearer |
+| **Tracking volume** | cliff ≥ 80 cm (today 50-75 cm); scale slope in [0.95, 1.05] | docs/59 (b)/(a) with the fixture |
+| **Cyberpilot (2nd exam)** | Aircar's bar + controllers usable in-game + no nauseating vertical settle | same + wearer |
+| **Better than Windows (one honest number)** | OpenVR Benchmark pass-1 vs pass-1 at 2576×2520 (Windows: 26.02 / 20.39 / 19.70, T226); docs/30 baseline (never run) | benchmark; Windows session |
+
+## 3. Track A — tracking (head first, for Aircar; controllers in parallel)
+
+- **A-head-1. Roll drift / gyro bias under dynamics** (T225's named lever and WS2's residual):
+  run the turntable for its primary purpose (docs/38, never done for this); Basalt
+  `gyro_bias_std`; a *stillness-detected bias update* for the controllers (WS3 idea, not
+  built). Measure with `drift-measure.py`, `head-jitter.py`, recentres/10 min in Aircar. Serves
+  Aircar AND the controllers' yaw ghost (heading noise floor 10-30° vs 11° LED spacing).
+- **A-head-2. Seeded-recovery runaway guard** (100k+ attempts at 500 % CPU, seen live
+  2026-08-21; docs/40's budget mechanism defaults off): bounded retries + backoff; validate that
+  "SLAM starvation under load" (anchor age 745→4949 ms) drops — still OPEN and distinct from
+  0093/0094. Code without the headset; validation under load.
+- **A-ctrl-1. Tracking volume, no Windows needed:** fixture (docs/59 §1, string+knots, 15 min,
+  user's hands) → **(c) gain sweep 100/150/200/255 scored by `agree_frac` first** (de-risk:
+  if agree_frac saturates on gain/exposure alone, LED drive stops being the presumed
+  bottleneck), (b) cliff map in 5 cm steps with 50 cm bracketing, (a) scale; plus the exposure
+  sweep (`WMR_CONTROLLER_CAM_EXPOSURE_US`, 0083) docs/59 left out; the position/battery swaps
+  of T229/T230 (a minute each). docs/59 rules: battery band 100-150, liveness before/after.
+- **A-ctrl-2. Hand inversion + 1 cm jitter:** re-measure AFTER A-head-1/A-ctrl-1 (they may
+  move on their own); if they persist, instrument (0089 already refuted blob competition).
+- **A-ctrl-3. Correspondence assignment from the trusted heading** (T215, "major surgery"):
+  only if the above does not close the ghost. Do not start earlier.
+- **A-win (a single future Windows boot):** USBPcap on `045e:0659` with controllers on, from
+  before tracking activates through 2 min of play (pulse train and anything else to the
+  `0x06`/`0x0E` tunnel; 5-min dry run first: USBPcap attaches, waking/moving controllers
+  produces anything other than `02`/`16`) + magnetometer bytes (docs/54's unblock) + docs/30
+  baseline + battery calibration (T227 `using_1v2_batteries`) + OpenVR Benchmark pass-1. If the
+  pulse train shows up: port `t_led_sync_refinement` to `wmr` with the real report, behind an
+  env knob, default off until presence is measured.
+
+## 4. Track B — titles
+
+- **B0. Launcher hygiene (no headset; prerequisite of any valid measurement):** DONE in S1 (§6).
+- **B1. Aircar certification** (the exam): run #1 in S1 (30 min or what the session gives),
+  run #2 soak in S3 after A-head-1/2; residual table in docs/23. Then **ISS Tour VR 8K** (same
+  class, heavy content) once A-head-2 lands.
+- **B2. Cyberpilot clean** (2nd exam): one verified client, constellation ON, both controllers
+  registered, fresh monado; fps by `Delivered frame`, 3 windows, wearer; residual list
+  (per-title deadzone; vertical latency → A-head).
+- **B3. Sniper Elite VR — xrizer↔title binding** (frozen pointer with valid poses): `PROTON_LOG`
+  + xrizer log, action manifest; new, cheap class, protects Cyberpilot.
+- **B4. Named xrizer / per-title gaps** (docs/23:288-297): War Robots (retest with don/doff
+  calibration first), Maquette `GetPlayAreaSize/Rect` (small fix), Water Bears swapchain loop
+  (`compositor.rs:1247`), Tank Mechanic exception storm (isolate).
+- **B5. Retest of the 45/30 fps list (16 titles)** under the new defaults: fast triage, fixed
+  protocol (fresh monado, one at a time, `game-stop.py status` empty, `Delivered frame`);
+  Hellblade deserves a full pass.
+- **B6. OpenVR Benchmark** Linux pass-1 at 2576×2520 now (no Windows needed): our half of the
+  first honest number.
+
+## 5. Tracks C (session integrity) and D (debt), and the do-not-relitigate list
+
+**C1.** `pop_pose` race #2 (EGL teardown vs camera thread; 21 cores): `thread apply all bt` on
+the next cores; destroy the camera BEFORE the graphics teardown, or join before the compositor
+is destroyed. Race #1 exported (0095/0096). **C2.** The 1-in-75 3 s `open()` stall: time
+`companion_find_hidraw_path` and `os_hid_open_hidraw` separately. **C3.** USB2 link: docs/22's
+free ladder in order; label this board's rear sockets (10 min, hands-on); rev2A cable
+(`22J68AA` / SPS `M52188-001`) as step 7 of 7. **C4.** Periodic clean restart in unattended
+mode (8 GB VRAM marathon hang). **C5.** Keepalive v2 (0058) >15-min A/B (never validated).
+**C6.** Battery: cliff byte never observed directly; timed charge cycle; Windows cross-check
+(A-win). **C7.** The single shared reader loop (re-windows/06 P3): 0055/0094 removed the worst
+blockers, the architecture is still one loop; scope the thread split (companion vs sensors) —
+the structural cause of WS6's "USB3 cameras stalled 14-24 s".
+
+**D1.** Export 0095/0096 + README (DONE S1); strike "0090/0091 undocumented" (they are
+documented); update docs/43 (up/dev/quiet/down is implemented); decide the 4 upstream MRs
+(docs/18: never filed — file or park explicitly). **D2.** Dashboard: `dashboard-kiosk.service`
+not installed (half-installed); `pmadminka` install or not; the non-Steam stub in
+vr-launcher. **D3.** WS4 tooling (3-window harness, motion-to-photon; per-box `power.conf`
+exists, GPU 70 %) — parked unless a free window. **D4.** Buy NiMH cells. **D5.** GPU offload
+of the vision stages: scope before the freeze, do not start.
+
+**Do not re-litigate (measured negative or retracted):** yaw prior (wrong instrument),
+`SEED_FIRST`, 14° gravity gate, `WMR_HMD_GYRO_MOUNT_FIX` (never enable), `WMR_CLOCK_MIN_LATENCY`,
+windowed skew tracker, `SEARCH_BUDGET_US=3000`, discrete keepalive (myth), "engine age" as the
+fps-ceiling cause, `companion_errors` as a metric, the cable "ruled out" (that retraction was
+itself retracted: the link storms the same on Windows). Magnetometer: not closed but **blocked
+on a capture** (docs/54) — goes in A-win, no blind probing.
+
+## 6. S1 — what was done on 2026-08-23, 00:00-00:30 (no headset yet)
+
+- **D1:** `patches/monado/0095` (join the camera USB thread in `wmr_camera_stop()`) and `0096`
+  (`wmr_camera_start()` never set `cam->running`, which made 0095 dead code) exported from
+  `lab-full` with `git format-patch`; README sections added, including the warning that the
+  EGL-side race #2 is not covered.
+- **B0:** `scripts/vr-launcher.py` — `status`/`stop` subcommands; `check_no_game_running()`
+  runs `game-stop.py status` BEFORE Monado comes up and stops (default after 10 s) / continues
+  (`n`, for a deliberate two-client experiment) / aborts (`q`); `check_controllers_registered()`
+  reads the first role list in `~/vr/jack-in-wayland.log` and says out loud when a hand is
+  `<none>` (loud for hands titles, one line for `NO_HANDS_TITLES`) — it does NOT restart the
+  service (chained restarts are a USB2-fault trigger); `TITLE_PROFILES` gained ISS Tour VR and
+  OpenVR Benchmark (constellation off, no hands); the `GAMES` catalog gained the docs/23 rows
+  that had never been copied (Cyberpilot, Sniper Elite, Vertical Shift, Hellblade, Interkosmos,
+  Emergence, Blast the Past, Audio Factory, VersaillesVR, Steam 360 Video Player, Aperture Hand
+  Lab, Transmissions, OpenVR Benchmark); `IPC_SOCKET` derives from `XDG_RUNTIME_DIR`/uid. Deployed
+  flat to `~/vr/` together with `game-stop.py` (which was not there — docs/53's deployment class).
+- **Launch-options audit:** `scripts/backup-steam-config.sh` re-run with Steam closed
+  (snapshot `~/vr/backups/steam-20260823-000138`, `docs/steam-launch-options.md` regenerated):
+  every installed VR title carries the base recipe (Aircar, DOOM VFR, Sniper Elite, Steam 360
+  Video Player, Vertical Shift, Wolfenstein: Cyberpilot); BlazeRush still MISSING (known,
+  docs/23); the catalog shrank from 46 to 15 installed since 2026-08-13 (the mass uninstall).
+- **New instrument:** `scripts/app-fps.sh [window_s] [repeats] [log]` — counts `Delivered
+  frame` lines per second from Monado's log (needs `U_PACING_APP_LOG=debug` on the service;
+  ambient wins over `VR_PACING=1`'s `info`). It is the honest app-fps number frame-pacing.sh and
+  the Steam overlay cannot give (docs/32, T244).
+- **Machine state at that hour:** `vr-power-setup.sh report` shows the box **unpinned after the
+  reboot** (governor `powersave`, EPP `balance_performance`, ASPM `default`, GPU 240/250 W);
+  `--apply` needs root and is the first thing before any B1 measurement.
+
+## 7. S1 — B1 Aircar run #1 (2026-08-23 00:11-00:41, T245)
+
+Through the real path (`VR_LAUNCH_APPID=1073390 vr-launcher.py 1 6dof`, pinned machine, GPU 70 %
+cap, constellation OFF, Xbox pad), wearer on 13.5 min in a **dim** room, then resting.
+
+| Criterion | Result |
+|---|---|
+| `Delivered frame` 88-90/s sustained | **MET** — 89.5/79.1/85.2 loading, then 88.9-90.05 in four 3×20 s windows |
+| 3 pacing windows ≤ 3 % late | **MET** — 0 late frames in 6×30 s |
+| Companion drops survived | **MET** — 1 reconnect (3.3 s), 0 holes |
+| Started from the picker hands-free | **MET** (the new `VR_LAUNCH_APPID` path) |
+| No relocation / recentres ≤ 1 per 10 min | **NOT MET** — 3 VIO runaways in the first 75 s seated (two auto-reset, one parked the raw pose at 41 m), walks read as tens of metres, wearer recentred with A; seated drift 0.33 m/min |
+| No core at `down` | **NOT MET as "clean"** — no core, but `down` hung > 10 s → SIGKILL (docs/06) |
+| ≥ 30 min worn | not reached (13.5 min worn + resting) |
+
+New facts: the 70 % GPU cap is **active the whole time** (174 W, ~1.8 GHz) yet fps holds — no
+longer "free" as in T209 (the app now renders 90, not 45); SLAM was **not starved** during the
+runaways (300 frames/10 s, 40 ms) — the dim room is the variable (docs/56 addendum); after t+340 s
+SLAM ran at 26 fps / ~100 ms (optflow threads 100/80/80/80 %, machine 37 %); the 10 m/s auto-reset
+let a 3.8 m/s runaway through; resting produced a reset storm from 00:30:12 — the wearer
+handled the headset at ~00:30 (his own timing), so not a spontaneous storm. **Next for B1:** run #2 in normal light, ≥ 30 min worn (S3), and the in-session light
+A/B the user deferred tonight; the startup low-light warning moves to the front of A-head.

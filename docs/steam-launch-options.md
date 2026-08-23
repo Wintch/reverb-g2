@@ -14,53 +14,22 @@ launch options can be worth a large fraction of the framerate (the user's own ex
 Half-Life: Alyx, where forcing fog and LOD settings from the launcher is what made it
 playable). A title can "work" and still be leaving half its performance unclaimed.
 
-Snapshot: 2026-08-13 — 46 installed titles.
+Snapshot: 2026-08-23 — 15 installed titles.
 
 | Title | AppID | Base recipe | Extra options |
 |---|---|---|---|
 | Aircar | 1073390 | yes | — |
-| Aliens Attack VR | 932190 | yes | — |
-| Amoreon NightClub | 701100 | yes | — |
-| Audio Factory | 722590 | yes | — |
-| Back to Dinosaur Island  | 412940 | yes | — |
-| Back to Dinosaur Island 2 | 452640 | yes | — |
-| Blast the Past | 943170 | yes | — |
 | BlazeRush | 302710 | **MISSING** | — |
-| Cosmic Flow: A Relaxing VR Experience | 1267950 | yes | — |
-| Dagon | 1481400 | yes | — |
-| Dark Room VR | 1394640 | yes | — |
-| Dead Herring VR | 1498490 | yes | — |
-| Emergence | 1337820 | yes | — |
+| DOOM VFR | 650000 | yes | — |
 | fpsVR | 908520 | yes | — |
-| Google Earth VR | 348250 | yes | — |
-| IL DIVINO - Michelangelo's Sistine Ceiling in VR | 1165850 | yes | — |
-| InCell VR | 396030 | yes | — |
-| InMind VR | 343740 | yes | — |
-| Interkosmos | 579110 | yes | — |
-| International Space Station Tour VR | 797200 | yes | — |
-| Meditation VR | 1301850 | yes | — |
-| Microsoft Maquette | 967490 | yes | — |
-| NVIDIA® VR Funhouse | 468700 | yes | — |
-| Overkill VR | 518720 | yes | — |
-| Poly Runner VR | 462910 | yes | — |
-| Propagation VR | 1363430 | yes | — |
 | Proton Experimental | 1493710 | **MISSING** | — |
-| Quake II RTX | 1089130 | **MISSING** | — |
-| SafeZoneVR | 1701090 | yes | — |
+| Proton Hotfix | 2180100 | **MISSING** | — |
+| Sniper Elite VR | 752480 | yes | — |
 | Steam 360 Video Player | 613220 | yes | — |
 | Steam Linux Runtime 1.0 (scout) | 1070560 | **MISSING** | — |
 | Steam Linux Runtime 2.0 (soldier) | 1391110 | **MISSING** | — |
 | Steam Linux Runtime 3.0 (sniper) | 1628350 | **MISSING** | — |
 | Steam Linux Runtime 4.0 | 4183110 | **MISSING** | — |
-| SteamVR | 250820 | **MISSING** | — |
-| SUPERHOT VR | 617830 | yes | — |
-| Surgeon Simulator VR: Meet The Medic | 457420 | yes | — |
-| Tank Mechanic Simulator VR | 1463010 | yes | — |
-| VersaillesVR | The Palace is yours | 1098190 | yes | — |
-| VRChat | 438100 | yes | — |
-| VRSailing by BeTomorrow | 579050 | yes | — |
-| War Robots VR: The Skirmish | 672640 | yes | — |
-| Water Bears VR | 394130 | yes | — |
-| Welcome to Chornobayivka VR | 2064150 | yes | — |
-| Windows Mixed Reality for SteamVR  | 719950 | **MISSING** | — |
-| World of Guns: VR | 1111760 | yes | — |
+| SteamVR | 250820 | **incomplete** | `WMR_LOG=debug WMR_SLAM=0 WMR_CAMERAS=0 WMR_CONSTELLATION_CONTROLLERS=0` |
+| Vertical Shift | 1807480 | yes | — |
+| Wolfenstein: Cyberpilot | 1056970 | yes | — |

@@ -1,5 +1,10 @@
 # Context for the 90Hz lab agent
 
+> ## UPDATE 2026-08-23 ~00:30 — the plan of record is `docs/67-pending-plan-2026-08-22.md`
+> (Aircar is the "like on Windows" exam, Cyberpilot second, controller 6DoF in parallel, Windows
+> capture deferred; acceptance criteria with numbers; S1 log). Read it and NEXT-STEP's START HERE
+> before anything below.
+
 > ## UPDATE 2026-08-21 ~17:15 (T244) — read NEXT-STEP's START HERE first. Two session-wide bugs
 > fixed and verified worn: the **45/30 fps ceiling** (app pacer, 0092 + `U_PACING_APP_USE_MIN_FRAME_PERIOD`
 > launcher default → 44 → 90 fps) and the **"flying away"/relocation on every companion drop**

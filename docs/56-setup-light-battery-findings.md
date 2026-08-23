@@ -69,3 +69,17 @@ camera (`fast processing for camera ... with N blobs`):
   over-bright corruption): the warning must be **proactive** ("charge/swap before the next
   session"), not reactive ("it died") — the perfect-service line for the commercial-showcase
   framing.
+
+
+## Addendum 2026-08-23 (T245, docs/67 S1) — dim room, head SLAM: three runaways in the first minute, scale lost when walking
+
+Aircar run #1, wearer seated from the start, room light "tenue" (wearer's word), constellation OFF
+(head SLAM only). Raw `tracking.csv` in 2 s buckets: runaways at t+8-24 s (0.6 → 8.6 m/s, cut by
+the 10 m/s auto-reset), t+34-46 s (reset #2), t+52-74 s (peaked 3.8 m/s, **no reset**, raw pose
+parked at 41 m) — the last one and a later +10 m excursion coincide exactly with the wearer's two
+short walks (00:12, 00:15: *"I ended ~5 m outside the ship; A recentres"*). Basalt received 300
+frames/10 s at 40 ms end-to-end throughout, so this is not starvation: it is the feature supply in
+a dim room. Seated flying drifted ~0.33 m/min (T163's 0.37). **The startup low-light warning (memory
+`idea_low_light_tracking_warning`, approved 2026-08-17, never built) moves to the front of the
+queue; the in-session light A/B (same walk, room lit) is the next measurement.** `det(Q1Jl)==0`
+count: 63 worn, 2011 by teardown (mostly while resting).

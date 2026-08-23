@@ -1,0 +1,44 @@
+From c3843a24b55846c1d437123c69a5e9380028ec68 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Fri, 21 Aug 2026 21:28:02 -0300
+Subject: [PATCH 95/96] d/wmr: join the USB thread in wmr_camera_stop before
+ other node teardown can race it
+
+wmr_camera_stop() cancelled in-flight transfers and deactivated the stream but
+never joined cam->usb_thread, so wmr_cam_usb_thread could still be inside
+img_xfer_cb() -> pop_pose() delivering a frame while wmr_hmd_destroy() was
+concurrently tearing down the constellation tracker on another thread -- a
+SIGSEGV confirmed on 20+ coredumps over several days (thread apply all bt shows
+the crash inside pop_pose() while wmr_hmd_destroy is mid-flight on another
+thread). Adds os_thread_helper_stop_and_wait(&cam->usb_thread) right after the
+transfer-cancel loop, unconditionally, before set_active(cam, false) -- the
+precedented fix used elsewhere in this file (constellation_tracker_node_break_apart).
+Confirmed byte-identical to upstream Monado, not project-local code.
+
+Compiles clean. One live session (compositor up, Wolfenstein Cyberpilot launched
+and cleanly stopped) produced zero teardown crashes, but that is not the
+repeated-restart stress test this fix actually needs -- not claiming it's fully
+validated yet.
+---
+ src/xrt/drivers/wmr/wmr_camera.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/src/xrt/drivers/wmr/wmr_camera.c b/src/xrt/drivers/wmr/wmr_camera.c
+index 3263764ac..35b95acb5 100644
+--- a/src/xrt/drivers/wmr/wmr_camera.c
++++ b/src/xrt/drivers/wmr/wmr_camera.c
+@@ -767,6 +767,11 @@ wmr_camera_stop(struct wmr_camera *cam)
+ 		}
+ 	}
+ 
++	// Join the USB thread before any other frame-node's teardown can proceed --
++	// otherwise an in-flight callback can still deliver a frame into a tracker
++	// that is concurrently being destroyed (SIGSEGV in pop_pose()).
++	os_thread_helper_stop_and_wait(&cam->usb_thread);
++
+ 	res = set_active(cam, false);
+ 	if (res < 0) {
+ 		goto fail;
+-- 
+2.47.3
+

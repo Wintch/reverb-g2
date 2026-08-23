@@ -529,6 +529,19 @@ tracker being destroyed). Nothing user-visible (it is the service exiting), but 
 21st core; the one-line `os_thread_helper_stop_and_wait(&cam->usb_thread)` in
 `wmr_camera_stop()` remains path #2, not started.
 
+**Update 2026-08-23 (S1 of docs/67):** the join is written and exported as `patches/monado/0095`,
+plus `0096` (`wmr_camera_start()` never set `cam->running`, so the join was dead code until
+then). **Not closed**: the same night (2026-08-21 ~22:05) a SIGSEGV with a different shape —
+directly in `receive_frame` (`t_tracker_slam.cpp:2080`), main thread stuck inside
+`libnvidia-eglcore`/`ioctl` — showed a second race between the EGL/Vulkan teardown and the
+camera thread that the join does not cover. That is C1 in docs/67: instrument the next cores
+with `thread apply all bt`, then order the camera destroy before the graphics teardown.
+**2026-08-23 (T245):** with 0095/0096 built in, `jack-in-wayland.sh down` after a 30-min session
+did not crash — it **hung**: SIGTERM, "Still running after 10s, escalating to SIGKILL", log ending
+after `COMP_DESTROY` / `Finished VIOFilter`, no core. Same teardown-ordering family, new shape
+(hang instead of SIGSEGV); instrument the next one with `gdb -p` / `thread apply all bt` before
+the 10 s escalation fires.
+
 ## The 45 / 30 fps ceiling across 17-20 titles (RESOLVED 2026-08-21, T244)
 
 Not GPU (half the pixels, same 45 fps, 90 W), not tracking (survived 3dof), not engine age: the

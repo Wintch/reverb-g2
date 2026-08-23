@@ -1,5 +1,28 @@
 # Next step
 
+> ## START HERE (2026-08-23, ~00:30 — the plan of record is now `docs/67-pending-plan-2026-08-22.md`)
+>
+> Everything pending was re-read end to end on 2026-08-22 (docs, NEXT-STEP, scripts, the monado
+> tree) and turned into ONE approved plan: **Aircar is the "like on Windows" exam (gamepad class,
+> no controller 6DoF needed), Cyberpilot is the second exam, controller 6DoF runs in parallel,
+> the Windows capture session is deferred.** docs/67 has the acceptance criteria (numbers + the
+> instrument for each), the tracks (A tracking / B titles / C session integrity / D debt), the
+> session sequence S1-S4 + S-win, the do-not-relitigate list, and the S1 log. Two findings from
+> that pass that were NOT connected anywhere before: (1) Windows drives a controller LED
+> **pulse train** (`docs/re-windows/04`) and Monado sends no LED command — and no existing
+> Windows capture has controllers on during tracking (verified with tshark on `90hz.pcapng`), so
+> the lever needs a new capture, not a blind port; (2) `~/vr/monado` was 2 commits ahead of
+> `patches/monado/` (now 0095/0096). S1 (2026-08-23, started 00:00): patches exported,
+> `vr-launcher.py` now calls `game-stop.py status` before Monado and checks the controller role
+> list, `scripts/app-fps.sh` counts `Delivered frame`/s, launch-options audit clean; the Aircar
+> run #1 ran 00:11-00:41 (T245): **render half of the Aircar bar met (90 fps, 0 late
+> frames, 70 % GPU cap active and still enough), head-SLAM half not — dim room: three VIO runaways in
+> the first minute seated, walks read as tens of metres, `down` hung → SIGKILL.** Run #2 in normal
+> light is S3; the low-light startup warning moves to the front. **Read docs/67 before this file's
+> older blocks.**
+>
+> ---
+
 > ## START HERE (2026-08-21, ~21:25 — dedicated hardware move + Sunshine remote access, USB/DP fault chased and closed)
 >
 > **The lab machine got its own dedicated hardware today, no longer an SSD swapped between rigs**:

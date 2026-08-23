@@ -46,3 +46,9 @@
 {"iso_time": "2026-08-20T21:49:16-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": false, "gamepad_present": false}
 {"iso_time": "2026-08-21T15:53:47-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": false, "gamepad_present": false}
 {"iso_time": "2026-08-21T19:01:47-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": false, "gamepad_present": true}
+{"iso_time": "2026-08-21T22:23:24-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": false, "gamepad_present": true}
+{"iso_time": "2026-08-21T22:47:21-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": false, "gamepad_present": true}
+{"iso_time": "2026-08-21T23:09:25-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": false, "gamepad_present": true}
+{"iso_time": "2026-08-22T03:07:43-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": false, "gamepad_present": true}
+{"iso_time": "2026-08-22T05:12:34-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": false, "gamepad_present": true}
+{"iso_time": "2026-08-22T23:29:41-0300", "verdict": "LISTO", "step_reached": 5, "mode": "1", "tracking": "3dof", "pre_login": true, "controllers_ok": false, "gamepad_present": true}
