@@ -1,5 +1,64 @@
 # Next step
 
+> ## START HERE (2026-08-23, ~16:00 — T246: automatic power modes, boot-time headset diagnostic deprecated)
+>
+> **Two related "start light, go full only when actually needed" changes, both live on this
+> machine right now.** Doesn't change anything in docs/67's plan of record below — this is
+> infra, not tracking/titles work.
+>
+> **1. `scripts/vr-power-watchdog.py` + `.service` (new, root, enabled)**: polls every 10s for
+> a live `monado-service` or a running Proton game tree (`game-stop.py scan()`); flips
+> `vr-power-setup.sh --apply` (full performance) the moment either is true, and `--saver`
+> (governor `powersave`, EPP `power`, GPU floor 100W) after ~30s confirmed idle. Forces `saver`
+> once on its own startup, which is what makes every boot start light with no separate boot
+> unit. `vr-power-setup.sh` gained the `--saver` mode itself (mirrors `--apply`, never touches
+> GPU persistence — display-modeset risk on this box, same GPU drives the desktop monitor).
+> Writes `/run/vr-power-mode`, read by `pmadminka-agent.py`'s heartbeat (`power_mode` field,
+> same "sent anyway, dropped until the hub whitelist grows one entry" pattern as `vr_device`)
+> and by `status-dashboard.py`'s :8765 page (new row in the Session card). `vr-cockpit.py`'s
+> power check no longer warns about `powersave` while idle -- only when the watchdog itself
+> expects `performance` and the governor disagrees. Verified live end to end with a real
+> Aircar launch/close: `saver`→`performance` in ~10s, back to `saver` ~20-30s after
+> `game-stop.py stop` + `jack-in-wayland.sh down`.
+>
+> **2. Boot-time headset diagnostic DEPRECATED, moved to launch-time.** Until today, EVERY
+> boot ran `power-on.py --pre-login` unattended (`vr-boot-selector.service`, tty1, default
+> target `multi-user.target`) and its step 4/5 called `panel.py activate` unconditionally --
+> waking the panel before anyone had decided to use VR that session. `docs/22` already
+> documents panel on/off cycling as a real WEAR cost, not just watts -- same "wasted at rest"
+> problem as (1), one layer up. Worse: the chain that was supposed to use that early wake
+> (`~/.config/autostart/vr-launcher-autostart.desktop` auto-opening the picker post-login) was
+> DEAD -- its target script, `scripts/vr-launcher-autostart.sh`, was never actually committed,
+> no git history at all. So the panel was waking at every boot for a payoff that never fired.
+> Fix: default target back to `graphical.target`, `vr-boot-selector.service` disabled (files
+> kept in the repo -- real documented incidents T129/T130/T172/T182 live in its comments,
+> worth keeping as reference), the dead autostart entry removed. Confirmed live after a real
+> reboot: no tty1 console, straight to GNOME, `DP-1`/`DP-2` both `disconnected` (panel never
+> woke), watchdog already in `saver`. **Verified this was the ENTIRE fix needed** --
+> `jack-in-wayland.sh` already does its own `panel.py activate` + DP-connector poll (T050)
+> right before Monado comes up, lazily, at real launch time; boot was the only place waking
+> the panel early. TRIED also rerouting `status-dashboard.py`'s "Start compositor" button
+> through `power-on.py`/`vr-launcher.py` (the on-demand diagnostic-then-launch entry point,
+> unchanged, still there for a human at a terminal) so its extra checks (USB census, camera
+> speed, controllers) would run before every manual launch too -- **REVERTED same day**, live:
+> the button's subprocess runs with `stdin=DEVNULL`, and `vr-launcher.py`'s picker reads EOF
+> from that instantly instead of waiting its 15s timeout, landing on "Opcion invalida" with
+> nothing launched (the exact trap `VR_LAUNCH_APPID`'s own code comment already named). Worse,
+> the button is supposed to leave a BARE compositor for the separate "Launch Aircar/etc."
+> buttons to use afterward -- `power-on.py` always ends by launching one specific title, a
+> real semantic mismatch, not just a stdin bug. Button reverted to calling
+> `jack-in-wayland.sh` directly, exactly as before. SDDM autologin (`iam` → GNOME Wayland)
+> deliberately left as-is, now a static config instead of a per-boot rewrite -- flagged as a
+> call worth revisiting if it turns out to be wrong. `vr-launcher.py`, `jack-in-wayland.sh`,
+> `panel.py` internals untouched.
+>
+> Also same session: `status-dashboard.py` (:8765) and `pmadminka-agent.py`'s heartbeat now
+> share one module, `scripts/rig_telemetry.py` (CPU/GPU/RAM specs, sunshine, power_mode,
+> tracking-mode-from-monado's-own-environ) -- the dashboard mirrors everything the heartbeat
+> sends plus the 3dof/6dof/ctrl tracking mode, verified live via `curl :8765/api/status`.
+>
+> ---
+
 > ## START HERE (2026-08-23, ~00:30 — the plan of record is now `docs/67-pending-plan-2026-08-22.md`)
 >
 > Everything pending was re-read end to end on 2026-08-22 (docs, NEXT-STEP, scripts, the monado

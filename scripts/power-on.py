@@ -11,6 +11,23 @@ in one of three states:
 
   ./scripts/power-on.py [mode] [3dof|6dof]   (same args as jack-in-wayland.sh)
 
+This (no --pre-login) is the on-demand "diagnose, then launch" entry point for a human
+at a terminal -- run it by hand any time hardware is in doubt. NOT wired into
+status-dashboard.py's "Start compositor" button (tried 2026-08-23, reverted same day:
+that button needs a BARE compositor for its separate "Launch <game>" buttons, but this
+script always ends by launching one specific title via vr-launcher.py's picker, which
+also doesn't handle a non-interactive stdin the button's subprocess gives it -- see
+status-dashboard.py's ACTIONS["compositor-up"] comment for the full story).
+`--pre-login` mode (below) is DEPRECATED and unused as of the same date:
+it used to run unconditionally at every boot via vr-boot-selector.service, which woke
+the panel (step 4/5) before anyone had decided to use VR that session -- a real wear
+cost per docs/22, not just watts, and the console's own downstream payoff
+(~/.config/autostart's auto-open-the-picker step) turned out to be dead code anyway
+(its target script was never committed). Boot now goes straight to graphical.target;
+vr-boot-selector.service is disabled but left in the repo as reference/history. The
+--pre-login code path itself is left in place, not deleted, in case a future need for
+an unattended pre-login console comes back.
+
 Linux-only for now (lsusb, udevadm, sysfs, journalctl) -- written in Python
 specifically so the step structure and messages can become the shared core
 of a future Windows-equivalent checklist, per the project's diagnostic-

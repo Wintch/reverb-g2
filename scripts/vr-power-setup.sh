@@ -5,8 +5,13 @@
 #
 #   ./vr-power-setup.sh              report current state (no root needed, changes nothing)
 #   sudo ./vr-power-setup.sh --apply     set everything to full performance
+#   sudo ./vr-power-setup.sh --saver     set everything to minimum watts (idle baseline)
 #   sudo ./vr-power-setup.sh --restore   put the defaults back
 #   sudo ./vr-power-setup.sh --gpu-limit 80    cap the GPU at 80% of its max watts
+#
+# Normally you don't call --apply/--saver by hand: scripts/vr-power-watchdog.py does it
+# automatically (saver at rest, apply the moment a VR session or a game is actually
+# running) -- see that script's header.
 #
 # Why this exists (2026-08-12, T163): a dropped frame in VR is not a statistic, it is the
 # compositor re-showing the previous frame, which the wearer sees as the view snapping back
@@ -188,6 +193,21 @@ need_root() {
 	[ "$(id -u)" = 0 ] || { echo "this needs root: sudo $0 $*" >&2; exit 1; }
 }
 
+# Shared by --apply and --saver: headset devices must never autosuspend regardless of the
+# power policy in effect, since the USB2 branch on this cable is already marginal (docs/22)
+# and a suspended companion looks exactly like the cable fault. This is a hardware-quirk
+# fix, not a power/performance tradeoff, so it's unconditional in both modes.
+hmd_usb_no_autosuspend() {
+	for id in $HMD_USB_IDS; do
+		local v="${id%%:*}" p="${id##*:}"
+		for d in /sys/bus/usb/devices/*/; do
+			[ "$(cat "$d/idVendor" 2>/dev/null)" = "$v" ] || continue
+			[ "$(cat "$d/idProduct" 2>/dev/null)" = "$p" ] || continue
+			echo on > "$d/power/control" 2>/dev/null
+		done
+	done
+}
+
 apply() {
 	need_root "$@"
 	mkdir -p "$STATE_DIR"
@@ -234,18 +254,38 @@ apply() {
 		done
 	fi
 
-	# Headset devices must never autosuspend: the USB2 branch on this cable is already
-	# marginal (docs/22), and a suspended companion looks exactly like the cable fault.
-	for id in $HMD_USB_IDS; do
-		local v="${id%%:*}" p="${id##*:}"
-		for d in /sys/bus/usb/devices/*/; do
-			[ "$(cat "$d/idVendor" 2>/dev/null)" = "$v" ] || continue
-			[ "$(cat "$d/idProduct" 2>/dev/null)" = "$p" ] || continue
-			echo on > "$d/power/control" 2>/dev/null
-		done
-	done
+	hmd_usb_no_autosuspend
 
 	echo "applied."
+	echo
+	REPORT_ONLY=0 report
+}
+
+# The deliberate opposite of --apply: minimum watts everywhere, for the machine sitting
+# idle between sessions (2026-08-23, T246 -- "arrancar light, prender full solo cuando el
+# juego realmente está andando"). Unlike --apply/--restore this has no saved-state dance:
+# saver is always the same deterministic target, not "whatever was there before". Deliberately
+# does NOT touch GPU persistence mode -- toggling it has been seen to disturb an attached
+# display's modeset on this card, and the desktop monitor lives on the same GPU (see this
+# repo's rule about not breaking the vertical monitor). vr-power-watchdog.py is the normal
+# caller; safe to run by hand too.
+saver() {
+	need_root "$@"
+	for f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+		[ -e "$f" ] && echo powersave > "$f" 2>/dev/null
+	done
+	for f in /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference; do
+		[ -e "$f" ] && echo power > "$f" 2>/dev/null
+	done
+	echo 0 > /sys/devices/system/cpu/cpufreq/boost 2>/dev/null
+	echo powersave > /sys/module/pcie_aspm/parameters/policy 2>/dev/null
+
+	local min; min="$(nvidia-smi --query-gpu=power.min_limit --format=csv,noheader,nounits 2>/dev/null | head -1 | cut -d. -f1)"
+	[ -n "$min" ] && nvidia-smi -pl "$min" >/dev/null 2>&1
+
+	hmd_usb_no_autosuspend
+
+	echo "saver applied."
 	echo
 	REPORT_ONLY=0 report
 }
@@ -290,7 +330,8 @@ load_power_conf
 case "$MODE" in
 	report)       report ;;
 	--apply)      apply "$@" ;;
+	--saver)      saver "$@" ;;
 	--restore)    restore "$@" ;;
 	--gpu-limit)  gpu_limit "$@" ;;
-	*) echo "usage: $0 [--apply|--restore|--gpu-limit <pct>]" >&2; exit 1 ;;
+	*) echo "usage: $0 [--apply|--saver|--restore|--gpu-limit <pct>]" >&2; exit 1 ;;
 esac

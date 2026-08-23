@@ -551,6 +551,18 @@ def gather_power():
     lines, reasons = [], []
     status = GO
 
+    # vr-power-watchdog.py (2026-08-23, T246) pins performance automatically the moment a
+    # session/game is live and drops to powersave at rest -- powersave while idle is now the
+    # NORMAL expected state, not a problem. Only escalate when the watchdog itself thinks
+    # performance should be in effect (or isn't installed at all, the pre-watchdog world)
+    # and the governor disagrees -- that's a real fault, not idle housekeeping.
+    watchdog_mode = None
+    try:
+        watchdog_mode = Path("/run/vr-power-mode").read_text().strip()
+    except OSError:
+        pass
+    session_active = find_monado_pid() is not None
+
     governor = None
     try:
         governor = Path("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor").read_text().strip()
@@ -558,10 +570,15 @@ def gather_power():
         pass
     if governor:
         ok = governor == "performance"
-        lines.append(("ok" if ok else "warn", f"CPU governor: {governor}"))
-        if not ok:
+        expect_performance = watchdog_mode == "performance" or session_active or watchdog_mode is None
+        if ok:
+            lines.append(("ok", f"CPU governor: {governor}"))
+        elif expect_performance:
+            lines.append(("warn", f"CPU governor: {governor}"))
             status = worse(status, WARN)
             reasons.append(f"CPU governor is '{governor}', not 'performance' -- can add scheduling jitter")
+        else:
+            lines.append(("dim", f"CPU governor: {governor} (idle, watchdog will pin performance once a session starts)"))
     else:
         lines.append(("warn", "CPU governor: unreadable (no cpufreq on this machine?)"))
         status = worse(status, WARN)

@@ -1,0 +1,32 @@
+# vr-power-watchdog.service -- system unit (root), unlike most .service files in this
+# directory which are --user units. Needs root to write CPU/GPU sysfs and call nvidia-smi
+# directly (see vr-power-setup.sh and vr-power-watchdog.py's own headers for why).
+#
+# Runs continuously: saver at rest, --apply the moment a VR session or a game is actually
+# running (checked every 10s, see vr-power-watchdog.py). Forces saver once on its own
+# startup, which is what makes every boot start "light" without a separate boot unit.
+#
+# Install:
+#   sudo cp scripts/vr-power-watchdog.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now vr-power-watchdog.service
+#
+# Uninstall (leaves the machine in whatever mode the watchdog last set -- run
+# `sudo ./vr-power-setup.sh --apply` or `--saver` by hand afterward if that matters):
+#   sudo systemctl disable --now vr-power-watchdog.service
+#   sudo rm /etc/systemd/system/vr-power-watchdog.service
+#   sudo systemctl daemon-reload
+
+[Unit]
+Description=VR rig power watchdog (saver at rest, performance while a session/game is live)
+After=multi-user.target
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /home/iam/Documents/reverb-g2/scripts/vr-power-watchdog.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

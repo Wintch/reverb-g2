@@ -45,10 +45,11 @@ see.
 
 KNOWN GAP, not fixable from this repo: the hub's heartbeat handler
 (deploy/server.py) builds the "hw" dict from a fixed field whitelist
-that does NOT currently include "vr_device" -- so the vr_device field this
-agent sends is silently dropped until that whitelist gets one entry added
-on the pmadminka side. Sent anyway so it's a one-line hub fix away from
-working, not a two-sided change.
+that does NOT currently include "vr_device" (or, as of 2026-08-23,
+"power_mode"/"tracking") -- so those fields this agent sends are silently
+dropped until that whitelist gets an entry added on the pmadminka side,
+one per field. Sent anyway so it's a one-line hub fix away from working,
+not a two-sided change.
 
 Explicitly NOT handled here (see docs/handoff-agente-vr-reverb-g2.md in the
 pmadminka repo for the original proposal): VR compositor lifecycle
@@ -74,6 +75,7 @@ REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 sys.path.insert(0, SCRIPT_DIR)
 from wmr_usb_ids import all_present as vr_device_present  # noqa: E402
 import gui_env  # noqa: E402
+import rig_telemetry  # noqa: E402 -- shared with status-dashboard.py
 
 CONFIG_PATH = os.path.expanduser("~/.config/pmadminka-agent/config.json")
 STEAMAPPS_DIR = os.path.expanduser("~/.steam/steam/steamapps")
@@ -146,44 +148,9 @@ def identity():
     return host, mac, ip, gw
 
 
-def machine_specs():
-    script = os.path.join(SCRIPT_DIR, "machine-specs.sh")
-    try:
-        out = subprocess.run([script, "--json"], capture_output=True, text=True, timeout=10).stdout
-        return json.loads(out)
-    except Exception as e:
-        print(f"[specs] machine-specs.sh failed: {e}", file=sys.stderr)
-        return {}
-
-
-def gpu_telemetry():
-    out = _run([
-        "nvidia-smi",
-        "--query-gpu=utilization.gpu,power.draw,temperature.gpu",
-        "--format=csv,noheader,nounits",
-    ]).strip()
-    try:
-        util, watts, temp = [p.strip() for p in out.split(",")]
-        return float(util), float(watts), float(temp)
-    except Exception:
-        return None, None, None
-
-
-def ram_percent():
-    try:
-        info = {}
-        with open("/proc/meminfo") as f:
-            for line in f:
-                k, v = line.split(":", 1)
-                info[k] = int(v.strip().split()[0])
-        return round(100.0 * (info["MemTotal"] - info["MemAvailable"]) / info["MemTotal"], 1)
-    except Exception:
-        return None
-
-
-def sunshine_active():
-    r = subprocess.run(["systemctl", "is-active", "sunshine"], capture_output=True, text=True, timeout=5)
-    return r.stdout.strip() == "active"
+# machine_specs/gpu_telemetry/ram_percent/sunshine_active/power_mode moved to
+# rig_telemetry.py (2026-08-23) -- shared verbatim with status-dashboard.py so the two
+# never drift into reporting the same fact two different ways.
 
 
 def _post_json(url, payload, timeout):
@@ -262,8 +229,8 @@ def heartbeat_loop(server, mac):
     while True:
         try:
             host, _, ip, gw = identity()
-            specs = machine_specs()
-            gpu_util, gpu_w, gpu_temp = gpu_telemetry()
+            specs = rig_telemetry.machine_specs()
+            gpu_util, gpu_w, gpu_temp = rig_telemetry.gpu_telemetry()
             body = {
                 "host": host,
                 "mac": mac,
@@ -274,18 +241,24 @@ def heartbeat_loop(server, mac):
                 "threads": specs.get("cpu", {}).get("threads"),
                 "ram_gb": specs.get("ram_gb"),
                 "gpu_name": specs.get("gpu", {}).get("name"),
-                "ram": ram_percent(),
+                "ram": rig_telemetry.ram_percent(),
                 "gpu": gpu_util,
                 "gpu_w": gpu_w,
                 "gpu_temp": gpu_temp,
                 "parsec": False,
-                "sunshine": sunshine_active(),
+                "sunshine": rig_telemetry.sunshine_active(),
                 "rec": False,
                 "run_age": -1,
                 "last_hang": "",
                 # See module docstring -- dropped hub-side until server.py's
                 # heartbeat "hw" whitelist grows this one key.
                 "vr_device": "HP Reverb G2" if vr_device_present() else None,
+                # Same KNOWN GAP as vr_device above: sent anyway, one hub-side whitelist
+                # entry away from actually showing up. "saver"/"performance", or absent
+                # if vr-power-watchdog.service isn't installed on this box.
+                "power_mode": rig_telemetry.power_mode(),
+                # "3dof"/"6dof"/"ctrl", absent when no VR session is live.
+                "tracking": rig_telemetry.tracking_mode(),
             }
             body = {k: v for k, v in body.items() if v is not None}
             _post_json(f"{server}/heartbeat", body, POST_TIMEOUT_S)

@@ -13,8 +13,9 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from wmr_usb_ids import KNOWN_USB  # noqa: E402 -- shared with pmadminka-agent.py
+from wmr_usb_ids import KNOWN_USB, all_present as vr_device_present  # noqa: E402 -- shared with pmadminka-agent.py
 import gui_env  # noqa: E402 -- shared with pmadminka-agent.py
+import rig_telemetry  # noqa: E402 -- shared with pmadminka-agent.py
 
 ATTENTION_FILE = "/tmp/vr-needs-attention.json"
 
@@ -118,6 +119,22 @@ GUI_ENV = gui_env.get()
 HOME = os.path.expanduser("~")
 ACTIONS = {
     "compositor-up": {
+        # TRIED going through power-on.py -> vr-launcher.py here (2026-08-23, T246
+        # follow-up) so the panel diagnostic would run before every manual launch
+        # too, not just so it stopped running at boot. REVERTED live the same day:
+        # (1) vr-launcher.py's game picker reads stdin with a 15s select() timeout,
+        # but this button's subprocess runs with stdin=DEVNULL -- /dev/null is
+        # always "ready", so the read returns EOF instantly instead of waiting,
+        # landing on "Opcion invalida" with nothing launched (the exact trap
+        # vr-launcher.py's own VR_LAUNCH_APPID comment already documents -- this
+        # button just wasn't setting it). (2) Worse, even fixing that would change
+        # this button's actual job: it's meant to bring up a BARE compositor for
+        # the separate "Launch Aircar/Cyberpilot/..." buttons below to use,
+        # power-on.py always ends by launching a specific title. jack-in-wayland.sh
+        # already does its own panel.py activate + DP-connector poll before Monado
+        # comes up (T050) -- that was never the boot-time problem. The actual fix
+        # for "don't wake the panel at boot" is disabling vr-boot-selector.service
+        # (NEXT-STEP.md, same date); this button never needed to change.
         "label": "Start compositor (6dof)",
         "cmd": [f"{HOME}/vr/jack-in-wayland.sh", "dev", "1", "6dof"],
         "cwd": f"{HOME}/vr",
@@ -184,15 +201,25 @@ def read_attention():
 
 
 def build_status():
+    monado = monado_running()
+    specs = rig_telemetry.machine_specs()
     return {
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S %z"),
         "attention": read_attention(),
         "usb": usb_census(),
         "drm": drm_status(),
         "coredumps": coredump_info(),
-        "monado": monado_running(),
+        "monado": monado,
+        "tracking": rig_telemetry.tracking_mode(monado["pids"][0] if monado["running"] else None),
         "gpu": driver_info(),
         "gpu_power": gpu_power(),
+        "power_mode": rig_telemetry.power_mode(),
+        # Everything below this line mirrors pmadminka-agent.py's heartbeat body
+        # (2026-08-23) -- same source functions, so the two never disagree.
+        "specs": specs,
+        "ram_pct": rig_telemetry.ram_percent(),
+        "sunshine": rig_telemetry.sunshine_active(),
+        "vr_device": vr_device_present(),
         "repo": git_head(),
         "uptime": uptime(),
     }
@@ -357,10 +384,25 @@ async function tick() {
     }).join('');
     const monadoCls = sessionActive ? 'ok' : 'dim';
     const monadoLabel = sessionActive ? 'yes (' + d.monado.pids.join(',') + ')' : 'no (idle -- no session running)';
+    let powerRow;
+    if (d.power_mode === 'performance') {
+      powerRow = `<span class="ok">PERFORMANCE -- session/game live, full watts</span>`;
+    } else if (d.power_mode === 'saver') {
+      powerRow = `<span class="dim">SAVER -- idle, minimum watts (normal at rest)</span>`;
+    } else {
+      powerRow = `<span class="warn">unknown -- vr-power-watchdog.service not installed</span>`;
+    }
+    const trackingRow = sessionActive
+      ? `<div class="row"><span>tracking</span><span class="ok">${d.tracking || '?'}</span></div>`
+      : `<div class="row"><span>tracking</span><span class="dim">n/a -- no session</span></div>`;
+    const specs = d.specs || {};
+    const cpu = specs.cpu || {}, gpuSpec = specs.gpu || {};
     document.getElementById('grid').innerHTML = `
       <div class="card" style="grid-column:1/-1">
         <h2>Session</h2>
         <div class="row"><span>state</span><span class="${sessionActive?'ok':'dim'}">${sessionActive?'ACTIVE -- compositor running':'IDLE -- no game/compositor session right now, this is normal at rest'}</span></div>
+        <div class="row"><span>power mode</span>${powerRow}</div>
+        ${trackingRow}
       </div>
       <div class="card"><h2>USB (${d.usb.present_count}/${d.usb.total})</h2>${usbRows}</div>
       <div class="card"><h2>Display connectors</h2>${drmRows}</div>
@@ -374,7 +416,14 @@ async function tick() {
         <pre>${d.repo.head}</pre>
         <div class="row"><span>working tree</span><span class="${d.repo.dirty?'warn':'ok'}">${d.repo.dirty?'dirty (routine -- telemetry/logs)':'clean'}</span></div>
       </div>
-      <div class="card"><h2>system</h2><pre>${d.uptime}</pre></div>
+      <div class="card"><h2>system</h2>
+        <div class="row"><span>cpu</span><span>${cpu.model || '?'}${cpu.cores ? ' (' + cpu.cores + 'c/' + (cpu.threads||'?') + 't)' : ''}</span></div>
+        <div class="row"><span>gpu</span><span>${gpuSpec.name || '?'}</span></div>
+        <div class="row"><span>ram</span><span class="${d.ram_pct > 90 ? 'warn' : ''}">${d.ram_pct != null ? d.ram_pct + '%' : '?'}${specs.ram_gb ? ' of ' + specs.ram_gb + ' GB' : ''}</span></div>
+        <div class="row"><span>sunshine (remote play)</span><span class="${d.sunshine?'ok':'dim'}">${d.sunshine ? 'active' : 'inactive'}</span></div>
+        <div class="row"><span>vr device present</span><span class="${d.vr_device?'ok':'dim'}">${d.vr_device ? 'yes' : 'no'}</span></div>
+        <pre>${d.uptime}</pre>
+      </div>
     `;
     document.getElementById('ts').textContent = 'updated ' + d.generated_at;
   } catch(e) {
