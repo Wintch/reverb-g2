@@ -57,6 +57,19 @@
 > tracking-mode-from-monado's-own-environ) -- the dashboard mirrors everything the heartbeat
 > sends plus the 3dof/6dof/ctrl tracking mode, verified live via `curl :8765/api/status`.
 >
+> **First flat (non-VR) title validated end to end, and a real GPU-power boundary case
+> found.** Quake II RTX (native Linux, non-Proton) launched via `steam -applaunch` +
+> `timedemo` proved `game-stop.py`'s `SteamAppId`-based detection and
+> `vr-power-watchdog.py`'s performance/saver switching both work generically for ANY Steam
+> title, not just Proton/VR ones -- exactly what pmadminka's flat-game rental queue needs.
+> Then, with the watchdog held still on purpose, measured what T209's "105W==210W free"
+> result does NOT cover: Quake II RTX's path tracer is genuinely GPU-bound (95% util), and
+> capping it to the idle-`saver` floor (100W, 40%) cost **-24.2% fps** (69.73 -> 52.84)
+> against `power.conf`'s VR-tuned 175W (70%) default -- full writeup and the "workload-aware
+> cap, not one flat number" idea this opens up in `docs/48`'s new closing section. The
+> pmadminka repo itself (Windows agent's own existing benchmark mechanism, which this Linux
+> side should expand toward) is still not reachable from this box -- user is sourcing it.
+>
 > ---
 
 > ## START HERE (2026-08-23, ~00:30 — the plan of record is now `docs/67-pending-plan-2026-08-22.md`)
