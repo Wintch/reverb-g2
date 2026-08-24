@@ -269,6 +269,12 @@ apply() {
 # display's modeset on this card, and the desktop monitor lives on the same GPU (see this
 # repo's rule about not breaking the vertical monitor). vr-power-watchdog.py is the normal
 # caller; safe to run by hand too.
+#
+# MEASURED (docs/48, same date): the GPU power floor here does NOT actually lower idle
+# draw -- 100W-capped and fully uncapped (250W) both measured 44.9W total (GPU+CPU pkg) at
+# rest, because idle already sits at the GPU's lowest P-state regardless of the ceiling.
+# This function's real job is capping a stray spike while the machine is supposed to be
+# resting, not saving idle watts -- it doesn't.
 saver() {
 	need_root "$@"
 	for f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do

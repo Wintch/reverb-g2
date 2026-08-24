@@ -19,6 +19,15 @@
 # before Monado ever starts (docs/23's per-title profile idea, same session) -- this script
 # is the piece that runs in that gap.
 #
+# `ram` mode's actual benefit measured for the first time 2026-08-24 (T246 follow-up), not
+# just assumed: Aircar, U_PACING_APP_LOG=debug, app-fps.sh in 2s windows from the moment
+# Steam launched it. Cache mode's app-warming transition window landed at 24 fps before
+# reaching steady 90; ram mode's landed at 51 fps and reached steady 90 one whole window
+# (2s) sooner. Single A/B pair, not yet repeated 3x per this project's own variance
+# discipline -- but the direction and rough size match the hypothesis (the map-load
+# texture/shader stream-in is the hitch, and having the whole install already resident in
+# RAM instead of read from NVMe measurably softens it) exactly.
+#
 # TWO MODES, deliberately different strength:
 #
 #   cache (default) -- page-cache warm. Reads every byte of the title's install dir, Proton

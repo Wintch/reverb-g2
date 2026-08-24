@@ -100,6 +100,45 @@
 > Proton-version A/B. pmadminka repo (source of its own existing Windows benchmark
 > mechanism to expand toward) still not reachable from this box.
 >
+> **`scripts/bench-launcher.py` built**: one controlled entry point for benchmarks/games,
+> folding in every lesson from today's ad-hoc runs -- a lock file so nothing launches twice
+> (the direct fix for a real live incident: Heaven ended up open in two windows at once),
+> automatic prewarm (`vr-prewarm.sh` for Steam appids, `vmtouch` for the standalone Proton
+> prefix), automatic power-mode bracketing for `proton-standalone` targets (invisible to
+> `vr-power-watchdog.py`, so left alone it would silently run an entire benchmark capped at
+> the idle `saver` floor -- caught live building this: a first quake2 run through the
+> script logged a fps number next to a stale pre-launch power snapshot that didn't match
+> what the GPU was actually doing by the time the run finished; fixed by snapshotting
+> AFTER the run, not before), and one appended JSONL row per run
+> (`~/vr/logs/bench-results.jsonl`) meant to answer future "did X regress" questions
+> instead of re-deriving everything from a chat log. `quake2` is fully automated and
+> verified end to end (including the duplicate-lock guard and `--force-kill`); `heaven` is
+> CLI-driven for launch/API (no more dropdown-clicking) but still ends in a screenshot for
+> a human to read the score off -- Heaven's free edition has no CLI result export, and a
+> first automated timing pass landed back on the free-fly view instead of the results
+> dialog (fixed wait didn't match that run's actual duration), not resolved yet.
+> Also owned-but-uninstalled catalog candidates found for the DX9/10/11/12 spread:
+> **Metro Exodus** (DX11+DX12+RT, 4A Games' own reviewer-standard benchmark tool -- the
+> best next addition) and the Metro 2033/Last Light (Redux) pairs.
+>
+> **`vr-prewarm.sh`'s `ram` mode measured for the first time, not just assumed**: Aircar,
+> fine 2s `app-fps.sh` windows from launch. Cache mode's warm-up transition window hit 24
+> fps before reaching steady 90; ram mode hit 51 fps and reached steady 90 a whole window
+> sooner. One A/B pair, not yet repeated 3x -- but confirms the user's own hypothesis (the
+> map-load texture/shader stream-in, not steady-state rendering, is where cold storage
+> actually costs frames) in both direction and rough size.
+>
+> Session also spun off two background housekeeping passes: an alignment audit of all of
+> today's power/boot/telemetry work (clean, no bugs, only gap found was the
+> then-undocumented Unigine work) and a doc/comment tidy-up pass that produced
+> `docs/69-flat-benchmark-tooling.md` (vmtouch real flags, the standalone-Proton-prefix
+> pattern, Heaven's discovered CLI syntax, the DX9 result, Superposition's suspected
+> license-gated CLI). Separately, DaVinci Resolve's pending validation (`docs/05`) got a
+> status pass: NVIDIA CUDA driver confirmed live (595.71.05, matches this project's
+> branch), `makeresolvedeb` staged, blocked on a human logging into Blackmagic's site to
+> download Resolve **Studio** (the user has the activation dongle, confirmed not currently
+> plugged in) -- unrelated to the VR project, parked there.
+>
 > ---
 
 > ## START HERE (2026-08-23, ~00:30 — the plan of record is now `docs/67-pending-plan-2026-08-22.md`)

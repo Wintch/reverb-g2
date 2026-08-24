@@ -16,6 +16,16 @@ now", and that's cheaper and more robust than chasing every launcher.
 game tree (imported directly, not shelled out, same trick pmadminka-agent.py already uses
 for the same module -- the filename has a hyphen so it can't be a normal import).
 
+KNOWN GAP (2026-08-23, found running Unigine Heaven/Superposition benchmarks in a
+standalone Proton prefix outside Steam): game_stop.scan() only recognizes processes Steam
+itself launched (it matches on the SteamAppId/STEAM_COMPAT_DATA_PATH env vars Steam sets).
+A Windows .exe run via a hand-built `STEAM_COMPAT_DATA_PATH=... proton run ...` invocation,
+with no Steam appmanifest at all, is invisible to this watchdog -- it will sit in `saver`
+even while such a benchmark is actually GPU-bound. Not fixed here; a caller doing that kind
+of standalone run should bracket it with vr-power-setup.sh --apply/--saver itself (see
+q2rtx-power-sweep.sh for the pattern), the same way it already has to hold this watchdog
+stopped for a controlled measurement.
+
 Debounce: going TO performance is immediate (more watts is never disruptive). Going back to
 saver waits for IDLE_DEBOUNCE_TICKS consecutive idle checks, so a brief gap between one
 game's exit and the next launch (or a Monado restart cycle) doesn't cause flapping.
