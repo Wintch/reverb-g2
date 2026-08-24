@@ -460,7 +460,6 @@ docs/01-bringup-monado.md   runtime build and startup
 docs/02-player-360.md       the 360/VR180 player (v3): projections, pipeline, measurement
 docs/03-controllers.md      controller status (3DoF, upstream driver limitation)
 docs/04-lab-90hz.md         >>> YOUR SCRIPT <<<
-docs/05-resolve.md          DaVinci Resolve (another rig goal, unrelated to this)
 docs/06-known-issues.md     what's ruled out, with evidence
 docs/07-windows-hid-capture.md  ARCHIVED: the mode command doesn't exist (see ch. 09)
 docs/08-passthrough-limits.md  passthrough idea + limits by brand (not started)
@@ -478,6 +477,8 @@ docs/19-nvidia-bug-5923212-followup.md  >>> THE RESOLUTION <<< how 90Hz actually
 docs/20-desktop-plasma-crash.md  the connected headset vs. the KDE desktop
 docs/21-project-retrospective.md  project retrospective
 docs/22-cable-connector-diagnosis.md  >>> LINK ANATOMY <<< piece-by-piece diagnosis of cable/connector/power
+(DaVinci Resolve notes moved out -- unrelated to VR, now in the "resolve-linux" repo,
+ not yet published/linked here; local copy at ~/Documents/resolve-linux/README.md)
 docs/31-windows-bringup-and-errors.md  >>> WINDOWS MANUAL <<< Oasis on 24H2, and what errors 108/422 mean
 forum-attachments/          the thread's attachments, already assembled and ready to upload
 windows-kit/                Windows capture package (packaged into windows-kit.7z)
