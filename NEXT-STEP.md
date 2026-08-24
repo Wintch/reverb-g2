@@ -1,5 +1,32 @@
 # Next step
 
+> ## START HERE (2026-08-24, ~05:00 — T246 cont.: VRto3D installed, Crysis 2's native Stereo 3D confirmed on Linux)
+>
+> Full writeup: `docs/71-vrto3d-and-native-stereo-3d.md`. Short version: chasing the user's
+> "does a simple anaglyph/shutter-glasses-style stereo VR port thing still exist" question
+> (VorpX is Windows-only; its Linux-capable modern analog is **VRto3D**, a real SteamVR
+> driver, now installed here and confirmed not to interfere with the G2's actual Monado/
+> xrizer pipeline). Cross-checked owned titles against PCGamingWiki's Native-3D list (a real
+> reference, not folklore -- Portal is on NEITHER the native nor modded list, so drop that
+> assumption) and landed on **Crysis 2**, already installed. Hit and fixed the SAME NTFS
+> prefix-symlink failure as docs/70 (silent this time -- empty `dosdevices/`, not a loud
+> crash), then a genuine unrelated **Wine bug (bugzilla #35860)**: CryEngine 3.x's WMI VRAM
+> probe is misreported by Wine on every distro, triggering an "Unsupported GPU" dialog with a
+> ~1s watchdog-kill window too fast for scripted clicks or a human to reliably beat under
+> Proton Experimental. **GE-Proton happened to render the dialog slow enough once for the user
+> to click through it live** -- not a guaranteed fix, a timing coincidence worth re-testing.
+> Once past it: **user physically confirmed the screen split into two side-by-side halves**
+> after enabling Crysis 2's own in-game Stereo 3D Options (Side-by-Side, native engine
+> feature, no mod) -- first time this exact stack (native stereo 3D + Linux + GE-Proton) has
+> been validated for this project. **Not done**: routing that SBS output through VRto3D itself
+> (its own "Native SbS" compatibility row implies it can, but the actual capture mechanism for
+> a non-VR game's own window wasn't identified -- read its source/wiki before assuming Crysis
+> 2 is "one step from the headset"). `bench-launcher.py` also gained a `metro2033` target this
+> session (unrelated, already committed separately, `3d556b2`) -- see `docs/69` for that
+> thread's context if picking it back up.
+>
+> ---
+
 > ## START HERE (2026-08-24, ~02:50 — T246 cont.: GE-Proton vs Experimental A/B on Cyberpunk 2077, two real NTFS/Steam gotchas)
 >
 > Full writeup: `docs/70-ge-proton-ab-and-ntfs-steam-library.md`. Short version: installed
