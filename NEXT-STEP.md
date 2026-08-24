@@ -128,6 +128,22 @@
 > map-load texture/shader stream-in, not steady-state rendering, is where cold storage
 > actually costs frames) in both direction and rough size.
 >
+> **Repeated with Quake II RTX (same session, user's own follow-up ask) -- opposite
+> result, title-dependent, not universal.** GPU power pinned to 175W for both arms this
+> time (bracketing it manually the way `bench-launcher.py`'s `PowerControl` now does
+> automatically) so a watchdog power-state difference couldn't confound a fast title the
+> way it nearly did the first pass. Timed via Steam's own `content_log.txt` "App Running"
+> window: every cache/SSD run all session landed at 21-27s total; `ram` mode ran 54s
+> (power uncontrolled, first attempt) and 71s (power pinned, second attempt) -- 2-3x
+> SLOWER, reproduced twice, restoring to SSD immediately snapped back to 17.7s. The
+> demo's own playback fps was near-identical either way (68-69 fps) once power was
+> controlled -- confirms steady-state rendering doesn't care about storage location, but
+> ram mode measurably hurt Quake2's LAUNCH, the opposite of what it did for Aircar. Root
+> cause not identified (leading guess: a filesystem-scan or Steam-side symlink-resolution
+> cost, not confirmed). **Actionable conclusion: `ram` mode is not a blanket win -- has to
+> be measured per title with `bench-launcher.py`, not defaulted on "because RAM is
+> faster".** Full detail in `vr-prewarm.sh`'s own header now.
+>
 > Session also spun off two background housekeeping passes: an alignment audit of all of
 > today's power/boot/telemetry work (clean, no bugs, only gap found was the
 > then-undocumented Unigine work) and a doc/comment tidy-up pass that produced
