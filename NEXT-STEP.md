@@ -13,14 +13,6 @@
 > repeated 3x -- the FSR gap needs confirming isn't just this rig's own known ~5-9%
 > per-window variance before it's settled.
 >
-> Also this session: the LAN's default route was found on `192.168.1.1`
-> (Personal/Telecom, AS7303) instead of the documented-fixed Claro path -- switched at
-> the user's request to an alternate same-subnet gateway `192.168.1.2` to help a
-> concurrent download in the separate `resolve-linux` session, runtime-only (not
-> persisted past reboot). Ping looked identical on both `.1` and `.2`; a real throughput
-> comparison was never actually run, so "which one is really Claro vs Personal" is still
-> not nailed down by measurement, only by memory of the 08-19 cutover.
->
 > ---
 
 > ## START HERE (2026-08-23, ~16:00 — T246: automatic power modes, boot-time headset diagnostic deprecated)

@@ -181,20 +181,6 @@ already (both numbers land within that noise band of each other), but the FSR mi
 gap, while bigger than the DLSS gap, is not yet clearly bigger than this rig's own
 noise floor either. Re-run before quoting the +7.0% number as settled.
 
-## Network note from the same session (unrelated, logged here since it surfaced mid-test)
-
-While downloading GE-Proton, noticed the box's default route was via `192.168.1.1`
-(ASN `AS7303`, Telecom Argentina "Personal") instead of the Claro path documented as
-the fixed one in the project's dual-WAN history — `192.168.100.1` (Claro) was still
-reachable, routed through `.1`, and a same-subnet alternate `192.168.1.2` tested clean
-(0% loss, ~4.5ms, similar to `.1`'s own ping) but wasn't distinguishable from `.1` on
-latency alone — a real bandwidth comparison (not done here) would need an actual
-throughput test, not ping. Switched the default route to `.2` as a live experiment
-(`ip route replace default via 192.168.1.2 dev enp4s0`) at the user's request, to help
-a concurrent download in the separate `resolve-linux` session — this is a **runtime-only
-change**, not persisted past a reboot/reconnect; revisit if a permanent switch is
-wanted.
-
 ## Files / paths touched
 
 ```
