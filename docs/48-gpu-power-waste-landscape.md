@@ -80,6 +80,37 @@ minimum watts at rest, not for being consequence-free under load, which is why
 `vr-power-watchdog.py` always switches to `--apply` before anything real runs rather
 than leaving the machine at the saver floor.
 
+## The actual curve, not just one point (`scripts/q2rtx-power-sweep.sh`)
+
+Built a small reusable sweep script (same discipline as `scripts/gpu-load-sweep.sh`'s VR
+side: multiple reps per level, CSV output) and ran 100/150/175/200 W × 2 reps on the same
+`q2demo1` timedemo, watchdog held stopped for the duration:
+
+| watts (% of 250W max) | rep 1 | rep 2 | mean | vs. 100W |
+|---|---|---|---|---|
+| 100 (40%) | 54.01 | 52.88 | **53.45** | — |
+| 150 (60%) | 69.37 | 71.62 | **70.50** | +31.9% |
+| 175 (70%) | 76.03 | 70.13 | **73.08** | +36.7% |
+| 200 (80%) | 75.59 | 73.50 | **74.54** | +39.4% |
+
+Raw data: `~/vr/logs/q2rtx-power-sweep-20260823-2258.csv`.
+
+**The knee is around 150W (60%), not down at the saver floor.** The gain from 100→150W
+is a real +31.9%; every step past that is diminishing returns (150→175W: +3.7%,
+175→200W: +2.0%, both smaller than the ~5-9% rep-to-rep spread already visible in the
+table — e.g. 175W's two reps alone span 70.13 to 76.03). That spread matches this
+project's own documented per-window variance on this rig (3.44%/7.22%, `vr-power-
+setup.sh`'s header) — two reps per level is enough to see the shape, not enough to trust
+any single number to better than ~5%. This is the concrete version of the der8auer-style
+efficiency curve cited above (peak efficiency well below 100% PL), just localized to
+this exact card/title instead of a generic press number.
+
+**Caught live while running this**: the sweep script must run as the normal desktop
+user, not root/`sudo -i` — under root, `steam -applaunch` has no Wayland session to
+launch into and `$HOME` silently becomes `/root`, so every rep just times out waiting
+for a result that can never arrive (no error printed). `q2rtx-power-sweep.sh` now
+refuses to start as root with a clear message instead of burning 8×60s finding out.
+
 **Opens the door for**: a workload-aware cap instead of one number for everything —
 detect (or classify per-title, the way `docs/23`'s per-game profiles already do for
 tracking/constellation settings) whether a title is pacing-bound (VR titles measured

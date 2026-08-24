@@ -70,6 +70,15 @@
 > pmadminka repo itself (Windows agent's own existing benchmark mechanism, which this Linux
 > side should expand toward) is still not reachable from this box -- user is sourcing it.
 >
+> **Full 4-point sweep run** (`scripts/q2rtx-power-sweep.sh`, new): 100/150/175/200W × 2
+> reps on the same timedemo. Mean fps: 53.45 / 70.50 / 73.08 / 74.54 -- the real knee is
+> ~150W (60%), not down at the saver floor: 100→150W is +31.9%, every step past that is
+> diminishing returns (≤3.7%), smaller than the ~5-9% rep-to-rep spread already visible.
+> Full table in `docs/48`. **Live footgun caught and fixed**: the sweep script must run as
+> the normal desktop user -- run under a root/`sudo -i` shell, `steam -applaunch` has no
+> Wayland session to launch into and `$HOME` silently becomes `/root`, so every rep just
+> times out with no error. Script now refuses to start as root.
+>
 > ---
 
 > ## START HERE (2026-08-23, ~00:30 — the plan of record is now `docs/67-pending-plan-2026-08-22.md`)
