@@ -154,6 +154,25 @@ minutes. Fixed by adding `--user`; this also silently fixes the same bug in
 `pmadminka-agent.py`'s heartbeat, which shared the same code before the move to
 `rig_telemetry.py`.
 
+## 4. `/etc/sudoers.d/reverb-g2-power` — measurement scripts without a password prompt
+
+Added while building `scripts/q2rtx-power-sweep.sh` (docs/48): a NOPASSWD grant for
+user `iam`, scoped to exactly two things --
+
+- `vr-power-setup.sh` (any args) — the single audited script for CPU governor/EPP/
+  boost/ASPM/GPU power/HMD USB autosuspend. Its own internal logic is the safety
+  boundary, not sudoers.
+- `systemctl start`/`stop` of `vr-power-watchdog.service` by exact unit name only.
+
+Deliberately does **not** grant `nvidia-smi` directly — `q2rtx-power-sweep.sh` computes
+a percentage and calls `vr-power-setup.sh --gpu-limit <pct>` instead of a raw
+`nvidia-smi -pl <watts>`, so the sudoers surface stays one reviewed script wide, not a
+second generic binary. Same convention as the pre-existing `/etc/sudoers.d/
+reverb-g2-agent` file (a separate file per feature area, not one growing list).
+Verified live: `sudo -n vr-power-setup.sh --gpu-limit 100` and both `systemctl`
+verbs run with no prompt; `sudo -n nvidia-smi -pm 1` (something NOT granted) still
+asks for a password, confirming the scope actually holds.
+
 ## Files
 
 ```
@@ -165,9 +184,11 @@ scripts/pmadminka-agent.py       uses rig_telemetry; heartbeat gained power_mode
 scripts/status-dashboard.py      uses rig_telemetry; mirrors the heartbeat fields + tracking
 scripts/vr-cockpit.py            power check no longer warns on idle powersave
 scripts/power-on.py              header updated: --pre-login deprecated, unused, not deleted
+scripts/q2rtx-power-sweep.sh     new -- GPU power/fps sweep (docs/48), uses the sudoers grant above
 ```
 
 System-level (not in git, recorded here since `docs/22`-style hardware/config state
 belongs on paper somewhere): `systemctl set-default graphical.target`, `systemctl
 disable vr-boot-selector.service`, `systemctl enable --now vr-power-watchdog.service`,
-`~/.config/autostart/vr-launcher-autostart.desktop` removed.
+`~/.config/autostart/vr-launcher-autostart.desktop` removed, `/etc/sudoers.d/
+reverb-g2-power` installed.

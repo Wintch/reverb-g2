@@ -80,6 +80,32 @@ minimum watts at rest, not for being consequence-free under load, which is why
 `vr-power-watchdog.py` always switches to `--apply` before anything real runs rather
 than leaving the machine at the saver floor.
 
+## The saver floor doesn't reduce idle draw at all -- measured
+
+Obvious-in-hindsight question, asked directly: how much does the machine actually draw
+at idle, and is the `saver` 100W cap buying anything there? Measured with
+`power-log.sh` (30s windows, GPU via `nvidia-smi`, CPU package via RAPL):
+
+| state | GPU | CPU pkg | total |
+|---|---|---|---|
+| `saver` (100W cap) | 19.9 W | 25.0 W | **44.9 W** |
+| uncapped (250W) | 19.8 W | 25.1 W | **44.9 W** |
+
+**Identical.** A first pass measured `saver` at 67.6W total and looked like the cap was
+somehow making idle WORSE -- re-measured immediately rather than reported, and it was
+residual activity from the benchmark sweep still settling (the whole reason this
+project's rule is remeasure when a number doesn't make physical sense, not rationalize
+it). The real number matches the physics: at idle the GPU is already at its lowest
+P-state (P8, minimal clocks) regardless of the configured ceiling, so a 100W vs. 250W
+cap changes nothing when nothing is asking for more than a few watts anyway.
+
+**So what is the `saver` floor actually for?** Not reducing idle watts -- it's
+insurance against a SPIKE while the machine is supposed to be at rest (a stray
+background process that starts using the GPU without a real session/game running would
+otherwise be free to boost all the way to 250W). `vr-power-watchdog.py` still applies
+it unconditionally at rest for that reason, just not because it saves power sitting
+idle -- it doesn't.
+
 ## The actual curve, not just one point (`scripts/q2rtx-power-sweep.sh`)
 
 Built a small reusable sweep script (same discipline as `scripts/gpu-load-sweep.sh`'s VR

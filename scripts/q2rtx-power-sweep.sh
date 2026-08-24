@@ -16,11 +16,12 @@
 #
 # vr-power-watchdog.py is stopped for the duration (would otherwise flip the cap back to
 # power.conf's GPU_LIMIT_PCT the moment it notices the game running) and always restarted
-# on exit, including Ctrl-C or a crash -- see the trap below. Needs root for `nvidia-smi
-# -pl` and `systemctl stop/start` -- run as your normal user, not via sudo directly: each
-# of those calls does its own `sudo`, so you get exactly one password prompt (sudo's
-# credential cache covers the rest of the sweep) and Steam/the game still launch with your
-# normal desktop session env, not root's.
+# on exit, including Ctrl-C or a crash -- see the trap below. Needs root for
+# vr-power-setup.sh --gpu-limit and `systemctl stop/start vr-power-watchdog.service` --
+# run as your normal user, not via sudo directly: each of those calls does its own `sudo`,
+# so with /etc/sudoers.d's reverb-g2-power grant (see docs/68) there's no password prompt
+# at all; without it, sudo asks once and caches the rest of the sweep. Steam/the game
+# launch with your normal desktop session env either way, not root's.
 #
 # Requires: Quake II RTX installed (Steam appid 1089130), Steam already running (a cold
 # Steam boot adds ~30-60s to the first rep only), game-stop.py next to this script.
@@ -97,11 +98,18 @@ fi
 mkdir -p "$(dirname "$OUT_CSV")"
 echo "watts,rep,frames,seconds,fps" > "$OUT_CSV"
 
+GPU_MAX_W="$(nvidia-smi --query-gpu=power.max_limit --format=csv,noheader,nounits | cut -d. -f1)"
+
 run_one() {
     local watts="$1" rep="$2"
-    local before_lines after_lines line frames seconds fps waited
+    local before_lines after_lines line frames seconds fps waited pct
 
-    sudo nvidia-smi -pl "$watts" >/dev/null || { echo "  nvidia-smi -pl $watts failed -- skipping"; return 1; }
+    # Routed through vr-power-setup.sh --gpu-limit (percent of max), not a raw
+    # `sudo nvidia-smi -pl` call -- keeps the sudoers grant this needs down to one
+    # already-reviewed script instead of a second, more generic binary.
+    pct=$(( watts * 100 / GPU_MAX_W ))
+    sudo "$HERE/vr-power-setup.sh" --gpu-limit "$pct" >/dev/null \
+        || { echo "  --gpu-limit $pct (${watts}W) failed -- skipping"; return 1; }
 
     before_lines=0
     [ -f "$CONSOLE_LOG" ] && before_lines="$(wc -l < "$CONSOLE_LOG")"

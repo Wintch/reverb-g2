@@ -79,6 +79,27 @@
 > Wayland session to launch into and `$HOME` silently becomes `/root`, so every rep just
 > times out with no error. Script now refuses to start as root.
 >
+> **Idle draw measured, and it does NOT depend on the GPU power cap**: `saver` (100W)
+> and uncapped (250W) both measured 44.9W total (GPU+CPU pkg) at rest, `power-log.sh`
+> 30s windows -- physically expected (idle is already at the lowest P-state regardless
+> of the ceiling), but a first pass read 67.6W for `saver` and looked backwards; that was
+> residual sweep activity, re-measured immediately rather than reported as-is. The
+> `saver` floor's real job is capping a stray spike at rest, not lowering idle watts --
+> it doesn't. Full note in `docs/48`.
+>
+> **`/etc/sudoers.d/reverb-g2-power` installed**: NOPASSWD for `vr-power-setup.sh` (any
+> args) and `systemctl start`/`stop vr-power-watchdog.service` by exact unit name --
+> nothing else, deliberately not `nvidia-smi` directly (the sweep script routes GPU
+> power changes through `vr-power-setup.sh --gpu-limit` instead). Verified live: both
+> granted calls run passwordless, an ungranted one (`nvidia-smi -pm 1`) still prompts.
+> Detail in `docs/68`.
+>
+> **Next real fork in the road, not started**: which other installed title makes a good
+> DX9/DX11/Vulkan comparison point (asked, not yet answered -- see this session's next
+> message) so the GPU-bound-vs-pacing-bound split isn't a one-title finding, plus a
+> Proton-version A/B. pmadminka repo (source of its own existing Windows benchmark
+> mechanism to expand toward) still not reachable from this box.
+>
 > ---
 
 > ## START HERE (2026-08-23, ~00:30 — the plan of record is now `docs/67-pending-plan-2026-08-22.md`)
