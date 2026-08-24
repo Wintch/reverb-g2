@@ -103,6 +103,28 @@ TARGETS = {
         "appid": "1073390",
         "result": {"type": "app-fps", "window_s": 20, "repeats": 3},
     },
+    "metro2033": {
+        # Native Linux build (no Proton), same "steam" kind as quake2 -- Steam just
+        # launches the bare ELF binary directly. The install has its own
+        # benchmark.sh wrapping this exact invocation; -output_file/-close_on_finish
+        # write a result file and exit on their own, no polling a growing log needed.
+        "kind": "steam",
+        "appid": "286690",
+        "launch_args": [
+            "-benchmark", "benchmarks\\benchmark33", "-bench_runs", "2",
+            "-output_file", "~/vr/logs/metro2033-bench-result.log", "-close_on_finish",
+        ],
+        "result": {
+            "type": "file",
+            "path": "~/vr/logs/metro2033-bench-result.log",
+            "timeout_s": 240,
+            # KNOWN GAP, confirmed live 2026-08-24: this file's min_fps/max_fps/frames
+            # fields are broken placeholders (0.00 / 1000.00 / equal to total_time,
+            # not a real per-frame count) -- only aver_fps and total_time are real.
+            # No 1%-low from this path; get that from a separate MangoHud pass
+            # (same fix already applied for Cyberpunk, docs/70) if the lows matter.
+        },
+    },
 }
 
 
@@ -281,8 +303,13 @@ def stop_target(spec):
 # ---------------------------------------------------------------------------- launch
 
 def launch_steam(spec):
+    # `steam -applaunch` hands these argv straight to the game binary, no shell in
+    # between -- a literal "~" is never expanded by the engine either. Confirmed live
+    # 2026-08-24: metro2033's -output_file ~/vr/... created a real directory named
+    # "~" inside the game's own install dir instead of writing under $HOME.
+    launch_args = [expand(a) if a.startswith("~/") else a for a in spec.get("launch_args", [])]
     subprocess.Popen(
-        ["steam", "-applaunch", spec["appid"], *spec.get("launch_args", [])],
+        ["steam", "-applaunch", spec["appid"], *launch_args],
         env=gui_env.get(), stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
     )
@@ -334,6 +361,31 @@ def wait_for_log_result(spec):
                 return {"frames": int(frames), "seconds": float(seconds), "fps": float(fps),
                         "min_fps": None, "max_fps": None}  # gap: this log line has no min/max
     log(f"timed out after {timeout_s}s waiting for a result in {path}")
+    return None
+
+
+def wait_for_file_result(spec):
+    """For targets whose own -output_file/-close_on_finish-style flags write a
+    result file and exit on their own (metro2033) -- unlike wait_for_log_result
+    there's no running process left to tell a stale prior file from a fresh one, so
+    main() deletes this path before launching and its reappearance IS the
+    completion signal, not a line pattern inside a growing log."""
+    path = Path(expand(spec["path"]))
+    timeout_s = spec["timeout_s"]
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        if path.exists() and path.stat().st_size > 0:
+            values = {}
+            for line in path.read_text(errors="replace").splitlines():
+                parts = line.split()
+                if len(parts) == 2:
+                    try:
+                        values[parts[0]] = float(parts[1])
+                    except ValueError:
+                        pass
+            return values or None
+        time.sleep(2)
+    log(f"timed out after {timeout_s}s waiting for {path}")
     return None
 
 
@@ -428,8 +480,14 @@ def main():
             write_lock(args.target, pid_for_lock)
             if spec["kind"] == "steam":
                 log(f"launching {args.target} (steam appid {spec['appid']})...")
+                rtype = spec["result"]["type"]
+                if rtype == "file":
+                    Path(expand(spec["result"]["path"])).unlink(missing_ok=True)
                 launch_steam(spec)
-                result = wait_for_log_result(spec["result"])
+                if rtype == "log":
+                    result = wait_for_log_result(spec["result"])
+                elif rtype == "file":
+                    result = wait_for_file_result(spec["result"])
             elif spec["kind"] == "proton-standalone":
                 log(f"launching {args.target} (Proton standalone, api={args.api})...")
                 launch_proton_standalone(spec, args.api)
