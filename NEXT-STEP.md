@@ -1,5 +1,23 @@
 # Next step
 
+> ## START HERE (2026-08-25 cont. — SLAM_THREADS=8 sanity check run, partial/inconclusive
+> result, A-head-3 fully wrapped up)
+>
+> Ran the last open item from A-head-3: `SLAM_THREADS=8` against real controller diversion.
+> Took two live attempts (controller powered on but out of camera view first — 0.0%
+> diversion, useless; then held still in front of the headset — real constellation samples,
+> but only 3.6% diversion since it wasn't being actively played with, well below the 21-39%
+> seen in real Cyberpilot sessions). At that low diversion: detect+match dropped ~18% (21ms→
+> 17.2ms) at 8 vs 4 threads — some real improvement, but much smaller than tracking's
+> parallelized ~40-50% drop over the same change, directionally consistent with "detection
+> is mostly single-threaded" without being a clean proof. Not worth chasing a fully
+> diversion-matched version of this check — it would need active real play, defeating the
+> point of a cheap sanity check, and the bigger findings (firmware-determined split,
+> frontend already over-budget) don't depend on this number either way. **A-head-3 is now
+> fully wrapped up**, full detail in docs/67 §3.
+>
+> ---
+
 > ## START HERE (2026-08-25 cont. — pulse train FOUND and decoded, magnetometer bytes
 > CLOSED (confirmed not a magnetometer on Windows either) -- both mined from the existing
 > capture, no new boot needed)

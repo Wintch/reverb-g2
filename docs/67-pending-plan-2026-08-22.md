@@ -189,10 +189,24 @@ S2-S4 must not depend on it; S1 starts now.
     hardware ceiling; put future effort into A-ctrl-1's exposure/gain sweep (may shift WHICH
     fraction gets tagged SLAM within the fixed 90Hz budget, not the frontend's ability to
     consume more) or prediction/filtering UX around the known rate, not the rate itself.
-  - **One cheap, no-headset sanity check still worth running, not yet done**: a
-    diversion-matched `SLAM_THREADS=8` or `12` A/B, diffing frontend total against today's
-    4-thread baseline -- purely to confirm (not fix) the ~21ms detection floor is real
-    before this whole line of inquiry is fully closed.
+  - **Sanity check RUN 2026-08-25, partial result -- directionally consistent, not fully
+    conclusive.** `SLAM_THREADS=8`, controller held still and pointed at the headset
+    (needed a live human twice: first attempt had the controller powered on but out of
+    camera view, 0.0% diversion the whole session, useless; second attempt with it actually
+    in view got real constellation samples but the controller was HELD STILL rather than in
+    active play, so diversion only reached 3.6% -- much lower than the 21-39% seen in real
+    Cyberpilot sessions, likely because diversion correlates with active
+    re-acquisition/motion, not just visibility). At that low diversion: detect+match p50
+    dropped from ~21ms (4-thread baseline) to **17.2ms** at 8 threads (~18% improvement) --
+    some real improvement, but much smaller than tracking's parallelized ~40-50% drop
+    (24.6ms→13.4ms) over the same thread change. Directionally supports "detection is mostly
+    but maybe not 100% single-threaded" rather than a clean confirm/refute of a hard floor;
+    p90 total still spiked to 110.1ms despite the low diversion rate. **Not worth chasing
+    further** -- getting a genuinely diversion-matched (30%+) sanity-check session needs
+    either active real play (defeats the "cheap, no full session" point of this check) or
+    accepting this partial result. The bigger findings above (firmware-determined frame
+    split, frontend already over-budget at the current rate) don't depend on this number
+    either way.
 
   Separately noted, different axis, not chased as a fix (but independently RE-CONFIRMED,
   see A-ctrl below): the right controller's constellation-vs-IMU orientation disagreement
