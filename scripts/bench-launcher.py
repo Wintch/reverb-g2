@@ -299,8 +299,24 @@ def stop_target(spec):
     if kind in ("steam", "vr-game"):
         appid = spec.get("appid")
         if appid:
-            subprocess.run([sys.executable, str(SCRIPT_DIR / "game-stop.py"), "stop", appid],
-                            capture_output=True, timeout=30)
+            # Found 2026-08-25: a single game-stop.py call can return before the game's own
+            # process tree has finished spawning (Steam keeps adding PIDs for several more
+            # seconds after the first ones appear -- confirmed live via console-linux.txt's
+            # "Adding process" lines), so game-stop.py's own scan() can miss the real main
+            # exe and report clean while it's still alive. game-stop.py itself already
+            # exits 1 when something of the appid is still running after its SIGTERM/SIGKILL
+            # sequence -- retry on that exit code instead of firing once and trusting it.
+            for attempt in range(3):
+                r = subprocess.run([sys.executable, str(SCRIPT_DIR / "game-stop.py"), "stop", appid],
+                                    capture_output=True, text=True, timeout=30)
+                if r.returncode == 0:
+                    break
+                log(f"game-stop.py stop {appid} attempt {attempt + 1}/3 still found it running:\n"
+                    f"{r.stdout.strip()}")
+                time.sleep(3)
+            else:
+                log(f"game-stop.py could not confirm appid {appid} stopped after 3 attempts -- "
+                    f"check `game-stop.py status` by hand.")
     elif kind == "proton-standalone":
         match = spec.get("process_match")
         if match:
