@@ -94,59 +94,67 @@ S2-S4 must not depend on it; S1 starts now.
   bottleneck), (b) cliff map in 5 cm steps with 50 cm bracketing, (a) scale; plus the exposure
   sweep (`WMR_CONTROLLER_CAM_EXPOSURE_US`, 0083) docs/59 left out; the position/battery swaps
   of T229/T230 (a minute each). docs/59 rules: battery band 100-150, liveness before/after.
-- **A-head-3. SLAM+constellation contention, NEW (2026-08-25, post-hoc dissection of the B2
-  Cyberpilot sessions, no headset needed -- `docs/pruebas` timing.csv already on disk):** the
-  first time this project ran head SLAM 6dof + controller constellation together showed
-  40-45% late frames and pose rate down to 21.6-22.4 Hz (vs the T203 no-constellation
-  baseline of 25.9 Hz at `SLAM_THREADS=4`, 30 Hz camera ceiling) -- reproduced consistently
-  across 3 separate sessions (cache arm, ram arm, the long real-play session), same numbers
-  each time. Root cause isolated via the per-stage `timing.csv` columns: the optical-flow
-  TRACKING stage itself is FINE (25-26ms p50, in line with or better than T203's 28.4ms) --
-  the cost is almost entirely a ~50ms p50 / ~63ms p90 QUEUEING delay between
-  `frames_pushed` and `frontend_frames_received` (the frontend thread not picking up the
-  frame, not the frame taking longer to process once picked up), plus a confirmed ≥300
-  camera frames dropped from `input_img_queue` ("frontend slower than camera") in the long
-  session. `SLAM_THREADS=4` was tuned at T203 with NO constellation competing for the same
-  camera/CPU budget -- the ctrl-mode code comment already says constellation search "gets
-  the whole camera and CPU budget" when it's the only camera consumer; today it shared that
-  budget with SLAM's frontend for the first time and nobody re-tuned for it.
+- **A-head-3. SLAM+constellation contention, NEW (2026-08-25) -- REAL ROOT CAUSE FOUND: a
+  HARDWARE camera frame-type split, not a software scheduling bug. Two earlier hypotheses
+  this same day (SLAM_THREADS undersized; verbose logging) are both now understood to be
+  confounded/wrong; kept below for the record with corrections inline, not deleted.**
 
-  **`SLAM_THREADS=6` A/B, zero-app-load pass: a real fix in isolation, but does NOT hold
-  under real game load -- REJECTED as a default change.** First pass (6dof+ctrl,
-  `jack-in-wayland.sh up` alone with NO client ever launched) at 6 threads: pose rate
-  **29.99 Hz** (the full 30 Hz camera ceiling, up from baseline's 21.6-22.4 Hz), queue
-  delay collapsed to **p50 0.0ms / p90 2.6ms** (from ~50/63ms), tracking stage itself also
-  dropped 25→12.6ms p50, **0 dropped frames** (from ≥300). CORRECTION (caught same day):
-  this was described at the time as "the `play360.sh` static-image player" -- it was not.
-  The intended `play360.sh` invocation (`HELLO_XR_PHOTO360=... play360.sh -t N`, no
-  positional file arg) fails its own arg check (`$# -lt 1`) and exits immediately with a
-  usage error before ever launching `hello_xr`; the saved launch logs for all three
-  "light-player" runs this session show exactly that, and `client_connected` never appears
-  in any of their `jack-in-wayland.log`s. What was actually measured is Monado's own
-  SLAM+camera+constellation pipeline running completely standalone with zero client
-  connected -- an even cleaner isolation of "no competing app load" than intended, not a
-  weaker one, so the comparison and conclusion below still stand; only the description of
-  the control condition was wrong. Controlled with the same zero-load setup at 4 threads:
-  confirmed the ~50ms delay and drops (1500) reproduce identically -- the 6-thread win was
-  real, not an artifact. **Then repeated with Cyberpilot itself actually running and being
-  played (human wearing the headset, controllers on, a real connected client)**, the
-  missing validation flagged above: at 6 threads, real game, pose rate only ticked up to
-  **23.6 Hz** (barely past the 4-thread real-game baseline of 21.8 Hz) while `Delivered
-  frame` lateness got WORSE, **73.8% late** (vs 40-45% at 4 threads) and dropped frames rose
-  to **3000** (vs 300-1500 at 4 threads) -- confirms T203's original tradeoff exactly: more
-  SLAM threads buys tracking throughput but costs app frame pacing, and under real
-  rendering load the cost dominates. **Verdict: `SLAM_THREADS=6` stays a zero-app-load-only
-  result, not adopted as a default.** Keep `SLAM_THREADS=4` (the T203 default) for any title
-  that renders real content, constellation or not.
+  **The actual mechanism (found by reading `wmr_camera.c`, confirmed quantitatively against
+  7 sessions' `timing.csv`):** every camera frame carries a `frametype` field read straight
+  off its header (`WMR_FRAMETYPE_SLAM=0x0` vs `WMR_FRAMETYPE_CONTROLLER=0x2`,
+  `wmr_camera.c:411-413`), and `wmr_camera_frame_received()` routes each frame to EITHER
+  the SLAM sinks OR the controller/constellation sinks (`if (slam_tracking_frame) {...}
+  else {...}`, never both). This is the G2's own camera firmware alternating frame purpose
+  within its ~30 Hz stream, not a Monado software decision -- SLAM structurally gets FEWER
+  than 30 fps worth of frames whenever constellation is active, at the source, before any
+  queue is involved. Confirmed by inter-frame-timestamp analysis: with constellation on,
+  ~33ms gaps (consecutive SLAM frames) and ~66ms gaps (one controller frame diverted in
+  between) both appear, at a **consistent 34-39% diversion rate across every real-Cyberpilot
+  session measured** (34.3%, 37.7%, 38.8%, 29.2%, 39.4%) -- this directly explains the
+  21.6-23.6 Hz pose rate seen all day (30 Hz camera × ~62-66% actually SLAM-tagged ≈
+  matches exactly) without needing a software-contention story at all.
 
-  Separately, same day: the user's own hypothesis that verbose per-frame INFO logging
-  (`WMR_LOG`/`SLAM_LOG` both default to INFO; the service launches under `stdbuf -oL -eL`,
-  one `write()` syscall per log line) could be contributing to the ~50ms queueing delay was
-  tested the same zero-client way, `WMR_LOG=warn SLAM_LOG=warn` vs the INFO default at 4
-  threads: **REFUTED** -- queue delay measured p50 49.6ms / p90 63.2ms with logging
-  silenced, statistically the same as the INFO-default control (p50 49.6ms / p90 63.0ms).
-  Logging I/O is not the mechanism; the contention is genuinely algorithmic/scheduling
-  between SLAM's frontend and the constellation search, not an I/O artifact.
+  **The ~50ms software "queueing delay" (`frames_pushed` -> `frontend_frames_received`) is
+  a SEPARATE, smaller effect layered on top, and looks like a fixed per-diversion-event
+  cost, not a scaling backlog:** comparing queue delay against diversion % across 7
+  sessions, delay jumps from ~0ms (0.2% diversion) to ~47ms already at just 6.8% diversion,
+  then stays flat at ~49-50ms all the way through 39.4% diversion -- it does not grow
+  further with more diversion. Leading hypothesis (not yet confirmed in the actual
+  synchronous-call code path, a good next step): controller-frame constellation/blob
+  processing runs synchronously on the same camera-receive thread that also has to hand
+  the NEXT frame to SLAM, so any diverted frame's processing blocks that handoff for a
+  roughly fixed ~50ms, regardless of how often it recurs.
+
+  **Correcting the day's own two intermediate hypotheses, in order:**
+  1. *"SLAM_THREADS=4 undersized for constellation, bump to 6."* The zero-client
+     `SLAM_THREADS=6` test that looked like a clean win (29.99 Hz, 0ms queue delay) had
+     **0.2% frame diversion** measured after the fact -- the controllers were essentially
+     not being tracked in that specific window, by chance, not because 6 threads fixed
+     anything. Its own "4-thread control" (same zero-client setup, same thread-count-only
+     variable intended) had 21.6% diversion and showed the delay -- the two arms were never
+     actually matched on the one variable that matters. The real-game validation (6
+     threads, human wearing the headset, 29.2% diversion, pose rate only 23.6 Hz, app
+     pacing WORSE at 73.8% late vs 40-45%) remains the one trustworthy datapoint here, and
+     it already correctly rejected `SLAM_THREADS=6` as a default -- that verdict stands,
+     now for the right reason: more Basalt worker threads cannot manufacture SLAM frames
+     the camera firmware routed to controller tracking instead, and under real GPU/CPU load
+     the extra threads cost real app pacing for close to nothing in return.
+  2. *"Verbose per-frame INFO logging (`WMR_LOG`/`SLAM_LOG` default INFO, `stdbuf -oL`
+     write-per-line) could explain the ~50ms delay"* (the user's own hypothesis): tested
+     `WMR_LOG=warn SLAM_LOG=warn` (20.4% diversion) against an INFO-default control (21.6%
+     diversion) -- both landed at the same ~49.6ms p50 delay. This comparison WAS
+     diversion-matched (both arms had real, similar diversion), so the refutation holds:
+     logging I/O is not the mechanism, it's downstream of the same hardware-diversion
+     effect described above.
+
+  **Actionable, once a human is back with the headset**: with the real mechanism now
+  understood, the only real levers are (a) reduce how much the controllers need
+  camera-frame diversion in the first place (exposure/gain tuning per A-ctrl-1's gain
+  sweep, or a lower controller-tracking frame request rate if one is configurable) or (b)
+  accept 21-24 Hz SLAM pose rate as the real ceiling whenever constellation runs alongside
+  head SLAM on this camera hardware, and tune expectations/UX (e.g. prediction/filtering)
+  around that number instead of chasing it as a bug. `SLAM_THREADS` tuning is a dead end
+  for this specific problem either way.
 
   Separately noted, different axis, not chased as a fix (but independently RE-CONFIRMED,
   see A-ctrl below): the right controller's constellation-vs-IMU orientation disagreement

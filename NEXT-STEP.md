@@ -1,5 +1,47 @@
 # Next step
 
+> ## START HERE (2026-08-25 cont. — the REAL cause of the SLAM+constellation pacing cost:
+> the camera firmware itself splits its frame stream between SLAM and controller tracking;
+> both `SLAM_THREADS` entries below are now understood to have been confounded)
+>
+> Kept digging in the source after refuting the logging hypothesis (below) and found the
+> actual mechanism, verified quantitatively, not just read off the code: `wmr_camera.c`
+> reads a `frametype` field straight off each camera frame's own header
+> (`WMR_FRAMETYPE_SLAM`/`WMR_FRAMETYPE_CONTROLLER`) and routes every frame to EITHER SLAM
+> OR controller/constellation tracking, never both -- this is the G2's own camera firmware
+> alternating purpose within its ~30 Hz stream, at the hardware source, before any software
+> queue exists. Confirmed by inter-frame-timestamp analysis across 7 sessions' `timing.csv`:
+> real Cyberpilot sessions consistently show 29-39% of camera frames diverted to controller
+> tracking, matching the 21.6-23.6 Hz SLAM pose rate seen all day almost exactly (30 Hz × the
+> non-diverted fraction). The ~50ms software "queueing delay" is a smaller, separate effect
+> on top -- it looks like a roughly FIXED per-diversion-event cost (jumps to ~47-50ms at
+> just 6.8% diversion, then stays flat through 39.4%, doesn't scale with more diversion),
+> leading hypothesis being that constellation's blob processing runs synchronously on the
+> same camera-receive thread that has to hand the next frame to SLAM.
+>
+> **This means the `SLAM_THREADS=6` zero-client "win" documented earlier the same day was
+> itself confounded**: checked after the fact, that specific test happened to have only
+> 0.2% frame diversion (controllers weren't really being tracked in that window, by chance)
+> against its "control" arm's 21.6% -- the two were never actually matched on the variable
+> that matters, so thread count was never really isolated. The real-game validation (6
+> threads, human wearing the headset, 29.2% diversion, pose rate barely moved while app
+> pacing got worse) is the one trustworthy datapoint and it already correctly rejected
+> `SLAM_THREADS=6` -- that verdict is unchanged, now for the right reason: more Basalt
+> worker threads can't conjure frames the camera firmware routed elsewhere. The
+> verbose-logging refutation from earlier IS diversion-matched between its two arms (20.4%
+> vs 21.6%) and stands as tested.
+>
+> **Practical takeaway for when the headset is back**: `SLAM_THREADS` tuning is a dead end
+> for this specific cost. The real levers are either reducing how much camera budget
+> controller tracking needs (exposure/gain tuning, A-ctrl-1's gain sweep) or accepting
+> ~21-24 Hz as the real SLAM pose-rate ceiling whenever constellation runs alongside head
+> SLAM on this camera hardware, and designing prediction/filtering around that number
+> instead of chasing it as a fixable bug. Full writeup in docs/67 §3's A-head-3 (rewritten
+> to lead with the correct mechanism, both superseded hypotheses kept inline with
+> corrections, nothing deleted).
+>
+> ---
+
 > ## START HERE (2026-08-25 cont. — CORRECTION to two entries below: the "light player" tests
 > never actually ran a player; also, WMR_LOG=warn does NOT fix the queueing delay)
 >
