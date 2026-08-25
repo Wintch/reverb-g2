@@ -1,5 +1,33 @@
 # Next step
 
+> ## START HERE (2026-08-25 cont. — the fullscreen/focus fps bug's REAL mechanism found: window visibility, not focus; minimize the window for real 90fps)
+>
+> Refined the earlier fullscreen/focus finding into its actual, precise mechanism, live: the
+> desktop monitor runs 59.96 Hz (`xrandr`); a windowed, non-fullscreen game companion window
+> that `xprop` reported as NOT focused still locked to a clean 60.0-60.4 fps (near-exact
+> monitor match) as long as it was VISIBLE on screen -- because mutter has to composite any
+> visible window against the desktop's own vsync, independent of literal keyboard focus.
+> `xdotool windowminimize` on that exact window, same game state, same instant: snapped
+> straight to 90.00-90.20 fps. Fully reproducible, isolated, not noise. **Practical rule,
+> replaces the earlier "avoid fullscreen+focus" framing: minimize the game window (not just
+> unfocus it) for a real 90fps VR session on this rig** — memory `feedback_windowed_default_
+> fullscreen_ab` and docs/23's Cyberpilot row both updated. Believed Linux/mutter-specific.
+>
+> Also this session: confirmed the "stuck at the menu, 60fps" the wearer hit was NOT a menu
+> fps cap (measured 60fps again once actually past the menu and in real gameplay) -- it was
+> this same visibility mechanism the whole time. And a live hypothesis from the user (verbose
+> per-frame INFO logging -- `WMR_LOG` defaults to INFO, `predict_pose`/`clockskew`/
+> `constellation_sample_store` log unconditionally, and the service's own launch uses
+> `stdbuf -oL -eL` = one `write()` syscall per log line) as a possible contributor to the
+> earlier-measured ~50ms SLAM+constellation queueing delay -- plausible, matches a real
+> historical precedent in `wmr_controller_base.c`'s own comments (a past `WMR_LOG=debug`
+> session collapsed the constellation solve rate 3.4/s -> 0.1/s), but NOT YET TESTED --
+> `WMR_LOG=warn` A/B against the same `timing.csv` queueing-delay metric is the next
+> concrete step, cheap and headset-independent (light player is enough, per today's earlier
+> controlled-A/B method).
+>
+> ---
+
 > ## START HERE (2026-08-25 cont. — SLAM_THREADS=6 REJECTED under real load; Rx180 controller-frame finding independently reconfirmed)
 >
 > Closed out the two open threads below with a human wearing the headset. **SLAM_THREADS=6
