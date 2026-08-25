@@ -199,10 +199,11 @@ if [ "$ACTION" = down ]; then
     fi
     rm -f "$SOCKET"
     # Ramdisk CSV lifecycle (user directive 2026-08-18): session CSVs live on the
-    # 10G tmpfs; at close they either get compressed to the SSD (only when the
-    # operator says this session's data matters: VR_ARCHIVE_CSV=1) or simply
-    # evaporate at reboot/overwrite. Archiving is zstd (fast, ~5-10x on these
-    # CSVs); nothing here ever touches dirs already on the SSD path.
+    # 20G tmpfs (10G until the 2026-08-25 RAM upgrade to 32G); at close they either
+    # get compressed to the SSD (only when the operator says this session's data
+    # matters: VR_ARCHIVE_CSV=1) or simply evaporate at reboot/overwrite. Archiving
+    # is zstd (fast, ~5-10x on these CSVs); nothing here ever touches dirs already
+    # on the SSD path.
     if [ "${VR_ARCHIVE_CSV:-0}" = 1 ] && mountpoint -q /mnt/vrtmp 2>/dev/null; then
         NEWEST="$(ls -dt /mnt/vrtmp/slam-* 2>/dev/null | head -1)"
         if [ -n "$NEWEST" ]; then
@@ -687,7 +688,7 @@ fi
 # few hundred KB over a long session. VR_POSE_CSVS=0 turns them off on their own.
 CSV_ENV=()
 if [ "$POSE_CSVS" = 1 ]; then
-    # Big-temporary data goes to the 10G tmpfs when mounted (user directive
+    # Big-temporary data goes to the 20G tmpfs when mounted (user directive
     # 2026-08-18: save SSD write cycles + speed; ~190 MB/h of CSVs per session,
     # 5.7 GB had silently accumulated in ~/vr/logs). RAM contents die on
     # reboot/umount BY DESIGN -- copy a session's dir to $VR/logs before reboot

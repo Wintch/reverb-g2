@@ -1,5 +1,27 @@
 # Next step
 
+> ## START HERE (2026-08-25 — physical RAM upgrade to 32G, /mnt/vrtmp and vr-prewarm.sh's ram-mode cap raised to match)
+>
+> Machine now has 32G RAM (`free -h`: 31Gi). Raised the two things that were deliberately
+> capped conservative under the old ~16G (docs/23:410 had flagged this exact spot: "bump
+> tmpfs — RAM is 31G total, careful"): `/mnt/vrtmp`'s tmpfs 10G → 20G (`/etc/fstab` +
+> live remount, no reboot needed, user ran it) and `vr-prewarm.sh`'s `RAM_SIZE_LIMIT_BYTES`
+> 12G → 16G (16G + 15% margin = 18.4G, leaves 1.6G of the 20G tmpfs for the session CSVs
+> that already live there per jack-in-wayland.sh's "Ramdisk CSV lifecycle"). Verified live:
+> `--status` shows 20G free; a real (non-dry-run) `--mode ram` swap + `--restore` on Aircar
+> round-tripped clean; `--dry-run` on Cyberpunk 2077 (62G) correctly still refuses at the new
+> 16G cap, so the safety rail itself wasn't accidentally loosened past intent, just widened.
+> **This does NOT change the T246 finding that `ram` mode helped Aircar and hurt Quake II
+> RTX's launch** — that was never about tmpfs size, re-measure per title as before.
+> CyberPilot VR (~15G, docs/23's next-sweep-batch row, the plan-of-record's 2nd exam title)
+> is now size-eligible for `ram` mode for the first time, but it's currently NOT INSTALLED
+> (caught by this session's own `--dry-run` probe — the 2026-08-23 mass uninstall took it
+> too) so it hasn't actually been run through it yet; reinstall + `--dry-run` first before
+> trusting the eligibility claim in practice, don't assume `du -sb` matches the old "~15G,
+> entra apenas" estimate exactly.
+>
+> ---
+
 > ## START HERE (2026-08-24, ~05:00 — T246 cont.: VRto3D installed, Crysis 2's native Stereo 3D confirmed on Linux)
 >
 > Full writeup: `docs/71-vrto3d-and-native-stereo-3d.md`. Short version: chasing the user's

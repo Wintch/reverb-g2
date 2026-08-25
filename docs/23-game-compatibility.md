@@ -407,7 +407,7 @@ The catalog is a ROTATING pipeline with a disk budget, not a static install base
 
 | candidate | size note | tier thought |
 |---|---|---|
-| CyberPilot VR | ~15G — "entra apenas" | too big for the 10G tmpfs ram-mode; cache-mode prewarm only (or bump tmpfs — RAM is 31G total, careful) |
+| CyberPilot VR | ~15G — "entra apenas" | fits now: 2026-08-25 RAM upgrade to 32G, tmpfs bumped 10G→20G and vr-prewarm.sh's ram-mode cap 12G→16G — not yet actually run through `--mode ram`, just eligible |
 | Tank Mechanic Simulator VR (1463010) | already a ✓ row (2026-08-09, 3dof era) | "tema serio ahí" — re-verdict on the current full-6dof stack |
 | Star Wars: Droid Repair Bay | small (the big Star Wars titles don't fit the budget) | free title, showcase-friendly |
 | Sniper Elite VR | fits | fresh test |

@@ -23,6 +23,12 @@
 # just assumed -- and the result is TITLE-DEPENDENT, not a universal win. Don't assume
 # "RAM is always better" from either half of this without re-measuring the specific title:
 #
+# 2026-08-25: the box got a physical RAM upgrade to 32G. /mnt/vrtmp went 10G -> 20G and the
+# ram-mode size cap went 12G -> 16G (both below, see SAFETY RAILS) -- more headroom for
+# bigger titles to even be ELIGIBLE, this does not change the Aircar-helped/Quake2-hurt
+# finding above, which was never about tmpfs size in the first place. Re-measure per title,
+# same as before.
+#
 #   Aircar (VR, U_PACING_APP_LOG=debug, app-fps.sh in 2s windows from launch): ram mode
 #   helped. Cache mode's app-warming transition window landed at 24 fps before reaching
 #   steady 90; ram mode landed at 51 fps and reached steady 90 one whole window (2s)
@@ -57,7 +63,7 @@
 #   working set for real RAM on a 31G box -- if a title needs the hard guarantee, that's
 #   what `ram` mode is for, not a root-escalated cache mode.
 #
-#   ram -- hard guarantee. rsync's the install dir onto the 10G tmpfs at /mnt/vrtmp (see
+#   ram -- hard guarantee. rsync's the install dir onto the 20G tmpfs at /mnt/vrtmp (see
 #   jack-in-wayland.sh's "Ramdisk CSV lifecycle" section -- the same tmpfs already carries
 #   session CSVs at its top level as /mnt/vrtmp/slam-<timestamp>; this script deliberately
 #   nests games one level down at /mnt/vrtmp/games/<installdir> so the two never collide),
@@ -68,8 +74,9 @@
 #   that tmpfs (the CSVs).
 #
 # SAFETY RAILS:
-#   - ram mode refuses any title over 12G outright (--mode ram never even checks tmpfs
-#     free space past that -- a flat no).
+#   - ram mode refuses any title over 16G outright (--mode ram never even checks tmpfs
+#     free space past that -- a flat no; 16G + 15% margin = 18.4G, leaving 1.6G of the 20G
+#     tmpfs for the session CSVs that already live there).
 #   - ram mode refuses if (size + 15% margin) doesn't fit in tmpfs's CURRENT free space --
 #     the margin covers rsync's transient double-write and leaves headroom for the CSVs
 #     that already live on the same tmpfs.
@@ -360,7 +367,7 @@ cache_mode_warm() {
 
 # --- ram mode ------------------------------------------------------------------------
 
-RAM_SIZE_LIMIT_BYTES=$((12 * 1024 * 1024 * 1024))
+RAM_SIZE_LIMIT_BYTES=$((16 * 1024 * 1024 * 1024))
 
 resolve_exe_basenames() {
 	find "$1" -maxdepth 4 -iname "*.exe" -printf '%f\n' 2>/dev/null | sed -E 's/\.[Ee][Xx][Ee]$//'
@@ -411,7 +418,7 @@ ram_mode_swap() {
 	size_bytes="${size_bytes:-0}"
 
 	if [ "$size_bytes" -gt "$RAM_SIZE_LIMIT_BYTES" ]; then
-		echo "vr-prewarm: '$NAME' is $(human "$size_bytes") -- over the 12G ram-mode safety limit. Refusing." >&2
+		echo "vr-prewarm: '$NAME' is $(human "$size_bytes") -- over the 16G ram-mode safety limit. Refusing." >&2
 		exit 1
 	fi
 
