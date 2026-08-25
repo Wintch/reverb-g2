@@ -1,5 +1,31 @@
 # Next step
 
+> ## START HERE (2026-08-25 cont. — pulse train is a continuous ~15Hz adaptive loop, not a
+> one-shot command; plausible partial mechanism found for T230's years-old LED asymmetry)
+>
+> Follow-up mining of the same capture, one more fork: extracted all 10,503 pulse-train
+> commands (5,124/5,379 split across the two controllers' report IDs) and found the earlier
+> "sent once on tracking start/stop" delivery model was WRONG -- both controllers get a new
+> pulse-train command every ~60-66ms (~15/sec) continuously for the whole tracking session,
+> a real-time adaptive loop, not a rare mode-change event. Corrected in
+> `docs/re-windows/04-led-model.md`.
+>
+> This continuous re-send let a direct test of T230's long-standing mystery (Windows: left
+> LED ring ~2.45× the photographed area / ~1.9× flux of the right, Linux: identical --
+> "find what Oasis sends the controllers that we do not" was the named next step at the
+> time). **Result: a real, consistent-direction commanded on-time difference exists (~1.3-
+> 1.4× average, driven by pulse COUNT not period) matching T230's direction, but smaller
+> than the photographed ratio, and with high per-window variance (0.48×-3.22× across 30
+> windows, sometimes flipping which controller runs longer)** -- reads as an adaptive
+> feedback loop (plausibly retuning drive per how well each controller is currently tracked)
+> rather than a fixed hardware asymmetry. Reframes T230's "left is always brighter" as
+> probably "whichever controller has worse tracking right now gets driven harder" -- a
+> different, more interesting claim, not fully proven. Camera-blooming nonlinearity is a
+> plausible (unverified) amplifier from the moderate on-time gap to the larger photographed
+> area gap. Full writeup with numbers in docs/re-windows/04's new correction section.
+>
+> ---
+
 > ## START HERE (2026-08-25 cont. — SLAM_THREADS=8 sanity check run, partial/inconclusive
 > result, A-head-3 fully wrapped up)
 >

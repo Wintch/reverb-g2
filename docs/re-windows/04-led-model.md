@@ -197,11 +197,54 @@ section's prediction closely enough to confirm it, not just correlate with it:
   for 100% of samples, hitting the doc's declared boundary exactly (max observed: 399).
 - Timing match: each controller's first `0x08`/`0x10` write lands ~2-3s after that
   controller's own motion-report stream begins (tracking start), and its last write
-  coincides almost to the frame with that stream's last packet (tracking stop) -- exactly
-  the "sent once when the blink pattern needs to change" delivery model this section
-  predicted from the decompile, not a per-frame command.
+  coincides almost to the frame with that stream's last packet (tracking stop).
 - Both controllers get an **identical first command** at connection (`06 21 03
   00 00 00 00 00 00 80 2c`: seq=1, count=200, mode_raw=0, period=1000µs) before diverging.
+
+**CORRECTION, same day, follow-up pass**: the "sent once when the blink pattern needs to
+change... not a per-frame command" delivery model above is WRONG -- a full extraction of
+all 10,503 pulse-train commands in the capture (5,124 on `0x08`, 5,379 on `0x10`) shows both
+controllers get a NEW pulse-train command roughly every 60-66ms (median gap 66.5ms, ~15/sec)
+continuously from tracking-start to tracking-stop, not a rare one-shot mode-change event.
+This is a **real-time adaptive control loop**, closer in spirit to per-frame than to
+connection-setup, even though it's not literally locked to the 90Hz camera cadence. The
+static decompile's "asynchronous, event-driven" framing describes the *mechanism*
+(SetEvent-driven worker thread) correctly but not the *cadence* Windows actually drives it
+at in practice.
+
+### T230's LED-area asymmetry: a plausible partial mechanism found, not a clean confirmation
+
+This continuous re-send let a follow-up pass compare the two controllers' actual commanded
+duty cycle (`count × period_us`, an "on-time per pulse train" proxy) across the whole
+session, testing whether this pulse-train command is what explains
+`NEXT-STEP.md`'s long-standing T230 finding (Windows: left ring ~2.45× the photographed
+blob area / ~1.9× the light flux of the right ring; Linux: identical, both dim -- named next
+investigation at the time was exactly "find what Oasis sends the controllers that we do
+not"). Result:
+- Report ID `0x08` commands **~1.3-1.4× the on-time** of `0x10` on average (mean 681,751 vs
+  496,987; median 568,561 vs 430,800) -- a real, consistent-direction difference, matching
+  T230's asymmetry direction. `period_us` itself is nearly identical between the two
+  (~3040µs mean each) -- the difference is driven by `count`, not period.
+- The magnitude (1.3-1.4×) is smaller than the photographed 1.9-2.45×, but camera-blooming
+  nonlinearity (T230's own photometry doc: "area is what keeps growing past saturation") is
+  a physically plausible amplifier from a moderate on-time difference to a larger apparent
+  area difference -- not verified, but not implausible either.
+- **Per-10s-window ratio varies a lot**: mean 1.45×, median 1.30×, but range 0.48×-3.22×
+  across 30 windows -- the ratio sometimes flips which controller runs the longer on-time.
+  This argues AGAINST a fixed hardware-side "left is always brighter" bias and FOR an
+  adaptive feedback loop (plausibly retuning per-controller drive based on how well each is
+  currently being tracked/exposed at that moment) -- meaning T230's single photograph likely
+  caught one specific adaptive state, not a fixed per-hand asymmetry. A repeat photo at a
+  different moment could plausibly show a different or even reversed ratio.
+- Handedness (which report ID is left vs. right) still not determined.
+
+**Verdict: plausible partial mechanism, not a clean 1:1 confirmation of T230.** Real,
+consistent-direction, right-order-of-magnitude difference exists and is commanded by
+software (refuting "nothing commands LED intensity" for the FIRST time with a real observed
+command) -- but the exact photographed ratio isn't fully explained by on-time alone, and the
+high per-window variance reframes T230's original "left is always brighter" wording as
+probably "whichever controller currently has worse tracking gets driven harder", a
+meaningfully different (and more interesting) claim than a fixed hardware asymmetry.
 
 **Still open after this pass** (flagged honestly, not guessed further): an unexplained
 leading byte before the modeled seq/count/mode/period/duration fields (the doc's own field
