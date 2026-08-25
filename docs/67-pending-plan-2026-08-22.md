@@ -109,14 +109,30 @@ S2-S4 must not depend on it; S1 starts now.
   session. `SLAM_THREADS=4` was tuned at T203 with NO constellation competing for the same
   camera/CPU budget -- the ctrl-mode code comment already says constellation search "gets
   the whole camera and CPU budget" when it's the only camera consumer; today it shared that
-  budget with SLAM's frontend for the first time and nobody re-tuned for it. **Candidate
-  next step, not yet tried**: `SLAM_THREADS=6` or `8` A/B under this exact combined
-  workload (6dof + ctrl together), same per-stage timing.csv method to check whether the
-  queueing delay actually shrinks or whether it's a camera-exposure-slot contention that
-  more SLAM threads can't fix. Separately noted, different axis, not chased: the right
-  controller's constellation-vs-IMU orientation disagreement ran 160-176° (near-total
-  flip) throughout -- likely explains the wearer's own "controllers jump" complaint, feeds
-  A-ctrl below, not A-head.
+  budget with SLAM's frontend for the first time and nobody re-tuned for it.
+
+  **`SLAM_THREADS=6` A/B run same day, CONFIRMED a real fix, not an app-load artifact.**
+  First pass (6dof+ctrl, `play360.sh` static-image player, no headset wear needed since it's
+  not Steam-gated) at 6 threads: pose rate **29.99 Hz** (the full 30 Hz camera ceiling, up
+  from baseline's 21.6-22.4 Hz), queue delay collapsed to **p50 0.0ms / p90 2.6ms** (from
+  ~50/63ms), tracking stage itself also dropped 25→12.6ms p50, **0 dropped frames** (from
+  ≥300). Then re-ran the SAME light player at 4 threads as a proper control (isolating the
+  thread-count variable from the app-load one, since the original 4-thread numbers all came
+  from full Cyberpilot sessions): confirmed the ~50ms queueing delay and dropped frames
+  (1500 this time) reproduce identically at 4 threads even under the light player -- the
+  6-thread win is real, not an artifact of a lighter app. **Still open before recommending
+  `SLAM_THREADS=6` as the default under constellation**: this A/B never had a real game
+  rendering and competing for the same CPU/GPU -- T203's own original 4-thread tuning was a
+  deliberate tracking-quality-vs-frame-pacing tradeoff (3 threads cost 10.8-11.6% late
+  *app* frames despite better tracking), so the open question is whether 6 threads costs
+  Cyberpilot's own `Delivered frame` pacing while fixing SLAM's pose rate. Next: repeat with
+  Cyberpilot itself running (needs a human wearing the headset), `app-fps.sh` alongside the
+  same `timing.csv` method, before changing the default.
+
+  Separately noted, different axis, not chased: the right controller's constellation-vs-IMU
+  orientation disagreement ran 160-176° (near-total flip) throughout, reproduced in this
+  session too -- likely explains the wearer's own "controllers jump" complaint, feeds A-ctrl
+  below, not A-head.
 - **A-ctrl-2. Hand inversion + 1 cm jitter:** re-measure AFTER A-head-1/A-ctrl-1 (they may
   move on their own); if they persist, instrument (0089 already refuted blob competition).
 - **A-ctrl-3. Correspondence assignment from the trusted heading** (T215, "major surgery"):

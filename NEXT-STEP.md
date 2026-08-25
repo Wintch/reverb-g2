@@ -1,5 +1,26 @@
 # Next step
 
+> ## START HERE (2026-08-25 cont. — SLAM_THREADS=6 confirmed fixes the SLAM+constellation queueing bottleneck, controlled A/B, still needs a real-game validation before becoming the default)
+>
+> Followed up on the pacing dissection below with a controlled `SLAM_THREADS` A/B (no headset
+> wear needed -- used `play360.sh`'s static-image player, not Steam-gated). At 6 threads:
+> pose rate **29.99 Hz** (the full 30 Hz camera ceiling, was 21.6-22.4 Hz), queueing delay
+> collapsed from ~50ms p50/63ms p90 to **0.0/2.6ms**, tracking stage itself dropped 25→12.6ms
+> p50, **0 dropped frames** (was ≥300-1500). Re-ran the identical light player at 4 threads as
+> a proper control to isolate the thread-count variable from app-load: confirmed the ~50ms
+> delay and 1500 dropped frames reproduce even under the light player -- the 6-thread result
+> is real, not an artifact of a lighter app running. Full numbers in docs/67 §3's updated
+> A-head-3. **Not yet done, and load-bearing before changing any default**: this A/B never
+> had a real game rendering and competing for CPU/GPU -- T203's own original 4-thread choice
+> was deliberately a tracking-quality-vs-app-frame-pacing tradeoff (more threads bought
+> tracking but cost `Delivered frame` lateness), so the open question is whether 6 threads
+> fixes SLAM's pose rate while *costing* Cyberpilot's own pacing. Next: repeat with Cyberpilot
+> itself running (needs a human wearing the headset), `app-fps.sh` alongside the same
+> `timing.csv` method, before recommending `SLAM_THREADS=6` as the default under
+> constellation.
+>
+> ---
+
 > ## START HERE (2026-08-25 cont. — SLAM+constellation pacing cost dissected, root cause isolated, no headset needed)
 >
 > Post-hoc dissection of the B2 Cyberpilot sessions' `timing.csv` (per-stage SLAM pipeline
