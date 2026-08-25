@@ -1,5 +1,36 @@
 # Next step
 
+> ## START HERE (2026-08-25 cont. — CORRECTION to two entries below: the "light player" tests
+> never actually ran a player; also, WMR_LOG=warn does NOT fix the queueing delay)
+>
+> **Correcting the method description, not the conclusions, on the two `SLAM_THREADS` A/B
+> entries further down** (search "zero-app-load" in docs/67 §3's A-head-3 for the fixed
+> text). All three "light-player" test invocations this session used
+> `HELLO_XR_PHOTO360=... play360.sh -t N` with no positional file argument -- but
+> `play360.sh` requires one (`$# -lt 1` check) and exits on a usage error before ever
+> launching `hello_xr`. Confirmed from the saved launch logs (all three show only the usage
+> line) and from `client_connected` appearing zero times in any of the session's
+> `jack-in-wayland.log`s. What those three tests actually measured was Monado's own
+> SLAM+camera+constellation pipeline running with NO client connected at all -- an even
+> cleaner "no competing app load" isolation than a light player would have been, so the
+> `SLAM_THREADS=6` comparison and its conclusion (real win at zero load, doesn't hold under
+> Cyberpilot's real load, stay on 4) are unaffected. Caught and fixed the same session,
+> before it could compound.
+>
+> **The user's verbose-logging hypothesis from earlier today was tested properly (same
+> zero-client method) and REFUTED.** `WMR_LOG` and `SLAM_LOG` both default to `INFO`
+> (`predict_pose`/`clockskew`/`constellation_sample_store` log unconditionally, and the
+> service launches under `stdbuf -oL -eL` -- one `write()` per log line, a real and
+> plausible I/O-latency mechanism, with historical precedent in `wmr_controller_base.c`'s
+> own comments about a past `WMR_LOG=debug` session collapsing the solve rate). Silencing
+> both (`WMR_LOG=warn SLAM_LOG=warn`) at 4 threads measured queue delay p50 49.6ms / p90
+> 63.2ms -- statistically identical to the INFO-default control's p50 49.6ms / p90 63.0ms.
+> **Logging I/O is not the mechanism.** The ~50ms SLAM+constellation queueing delay is
+> genuinely algorithmic/scheduling contention, not a logging artifact -- ruled out cleanly,
+> one less candidate to chase.
+>
+> ---
+
 > ## START HERE (2026-08-25 cont. — RETRACTION: "minimize fixes the fps" did not survive a
 > retest; leading suspect is now the GPU's 70% power cap, untested against real Cyberpilot
 > load, needs a human back with the headset)

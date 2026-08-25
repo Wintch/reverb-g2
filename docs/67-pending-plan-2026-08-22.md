@@ -111,23 +111,42 @@ S2-S4 must not depend on it; S1 starts now.
   the whole camera and CPU budget" when it's the only camera consumer; today it shared that
   budget with SLAM's frontend for the first time and nobody re-tuned for it.
 
-  **`SLAM_THREADS=6` A/B, light-player pass: a real fix in isolation, but does NOT hold under
-  real game load -- REJECTED as a default change.** First pass (6dof+ctrl, `play360.sh`
-  static-image player, no headset wear needed since it's not Steam-gated) at 6 threads: pose
-  rate **29.99 Hz** (the full 30 Hz camera ceiling, up from baseline's 21.6-22.4 Hz), queue
+  **`SLAM_THREADS=6` A/B, zero-app-load pass: a real fix in isolation, but does NOT hold
+  under real game load -- REJECTED as a default change.** First pass (6dof+ctrl,
+  `jack-in-wayland.sh up` alone with NO client ever launched) at 6 threads: pose rate
+  **29.99 Hz** (the full 30 Hz camera ceiling, up from baseline's 21.6-22.4 Hz), queue
   delay collapsed to **p50 0.0ms / p90 2.6ms** (from ~50/63ms), tracking stage itself also
-  dropped 25→12.6ms p50, **0 dropped frames** (from ≥300). Controlled with the same light
-  player at 4 threads: confirmed the ~50ms delay and drops (1500) reproduce identically --
-  the light-player win was real, not an app-load artifact. **Then repeated with Cyberpilot
-  itself actually running and being played (human wearing the headset, controllers on)**,
-  the missing validation flagged above: at 6 threads, real game, pose rate only ticked up to
+  dropped 25→12.6ms p50, **0 dropped frames** (from ≥300). CORRECTION (caught same day):
+  this was described at the time as "the `play360.sh` static-image player" -- it was not.
+  The intended `play360.sh` invocation (`HELLO_XR_PHOTO360=... play360.sh -t N`, no
+  positional file arg) fails its own arg check (`$# -lt 1`) and exits immediately with a
+  usage error before ever launching `hello_xr`; the saved launch logs for all three
+  "light-player" runs this session show exactly that, and `client_connected` never appears
+  in any of their `jack-in-wayland.log`s. What was actually measured is Monado's own
+  SLAM+camera+constellation pipeline running completely standalone with zero client
+  connected -- an even cleaner isolation of "no competing app load" than intended, not a
+  weaker one, so the comparison and conclusion below still stand; only the description of
+  the control condition was wrong. Controlled with the same zero-load setup at 4 threads:
+  confirmed the ~50ms delay and drops (1500) reproduce identically -- the 6-thread win was
+  real, not an artifact. **Then repeated with Cyberpilot itself actually running and being
+  played (human wearing the headset, controllers on, a real connected client)**, the
+  missing validation flagged above: at 6 threads, real game, pose rate only ticked up to
   **23.6 Hz** (barely past the 4-thread real-game baseline of 21.8 Hz) while `Delivered
   frame` lateness got WORSE, **73.8% late** (vs 40-45% at 4 threads) and dropped frames rose
   to **3000** (vs 300-1500 at 4 threads) -- confirms T203's original tradeoff exactly: more
   SLAM threads buys tracking throughput but costs app frame pacing, and under real
-  rendering load the cost dominates. **Verdict: `SLAM_THREADS=6` stays a light-load-only
+  rendering load the cost dominates. **Verdict: `SLAM_THREADS=6` stays a zero-app-load-only
   result, not adopted as a default.** Keep `SLAM_THREADS=4` (the T203 default) for any title
   that renders real content, constellation or not.
+
+  Separately, same day: the user's own hypothesis that verbose per-frame INFO logging
+  (`WMR_LOG`/`SLAM_LOG` both default to INFO; the service launches under `stdbuf -oL -eL`,
+  one `write()` syscall per log line) could be contributing to the ~50ms queueing delay was
+  tested the same zero-client way, `WMR_LOG=warn SLAM_LOG=warn` vs the INFO default at 4
+  threads: **REFUTED** -- queue delay measured p50 49.6ms / p90 63.2ms with logging
+  silenced, statistically the same as the INFO-default control (p50 49.6ms / p90 63.0ms).
+  Logging I/O is not the mechanism; the contention is genuinely algorithmic/scheduling
+  between SLAM's frontend and the constellation search, not an I/O artifact.
 
   Separately noted, different axis, not chased as a fix (but independently RE-CONFIRMED,
   see A-ctrl below): the right controller's constellation-vs-IMU orientation disagreement
