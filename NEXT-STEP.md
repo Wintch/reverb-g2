@@ -1,5 +1,37 @@
 # Next step
 
+> ## START HERE (2026-08-25 cont. — A-head-3 CLOSED: the camera's 90Hz-vs-30Hz question
+> answered with a real Windows capture, and a second bigger ceiling found underneath it)
+>
+> Got a live Windows USBPcap capture (`docs/72`'s checklist, manual, controllers on, real
+> Cyberpilot play, 730s/55GB/690k packets, saved to
+> `windows-kit2/results/frametype-capture-20260825.pcapng`) and ran a 3-way parallel
+> investigation (Linux source, the capture's own control-transfer traffic, a CPU-cost model
+> from today's `timing.csv`) that converged cleanly: **the camera already streams at a fixed
+> ~90Hz raw rate on BOTH Linux and Windows** (confirmed via Monado's own frame-footer
+> timestamp math AND live measurement of 39,698 Windows-captured frames at 90.09Hz) — what's
+> capped at ~30fps was only ever the SLAM-tagged fraction, and **no USB command sets that tag
+> on either OS**: the G2 camera's entire command vocabulary is 3 values (GAIN/ON/OFF),
+> confirmed exhaustive against all 2,193 commands in the full Windows capture, zero
+> vendor-specific control transfers anywhere, no UVC rate-negotiation mechanism present at
+> all. Hardware/firmware-determined, not a software knob — closed.
+>
+> **Second, independent, and honestly bigger finding**: Basalt's SLAM frontend already can't
+> keep up with the CURRENT rate, before camera-rate is even a question. Frontend total is
+> p50 46ms — already 1.4x over the 33ms budget the current ~30Hz-tagged rate needs. The
+> bottleneck (detection+matching, ~21ms) is confirmed single-threaded in
+> `frame_to_frame_optical_flow.h` — more `SLAM_THREADS` cannot fix it, extending today's
+> earlier `SLAM_THREADS=6` rejection with the actual code-level reason. **Practical verdict:
+> retire the "chase higher camera rate" idea entirely — closed on both "can we" and "should
+> we."** One cheap sanity check still worth running (no headset needed): diversion-matched
+> `SLAM_THREADS=8/12` vs the 4-thread baseline, purely to confirm the ~21ms detection floor
+> doesn't move. Full writeup in docs/67 §3's A-head-3 (now closed) and the A-win item (now
+> marked partially done — capture happened, but the pulse-train/magnetometer/CPU-baseline/
+> battery/benchmark items from `docs/72`'s checklist were explicitly skipped this boot, the
+> user stuck strictly to the capture procedure).
+>
+> ---
+
 > ## START HERE (2026-08-25 cont. — the REAL cause of the SLAM+constellation pacing cost:
 > the camera firmware itself splits its frame stream between SLAM and controller tracking;
 > both `SLAM_THREADS` entries below are now understood to have been confounded)

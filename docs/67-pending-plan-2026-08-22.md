@@ -147,14 +147,52 @@ S2-S4 must not depend on it; S1 starts now.
      logging I/O is not the mechanism, it's downstream of the same hardware-diversion
      effect described above.
 
-  **Actionable, once a human is back with the headset**: with the real mechanism now
-  understood, the only real levers are (a) reduce how much the controllers need
-  camera-frame diversion in the first place (exposure/gain tuning per A-ctrl-1's gain
-  sweep, or a lower controller-tracking frame request rate if one is configurable) or (b)
-  accept 21-24 Hz SLAM pose rate as the real ceiling whenever constellation runs alongside
-  head SLAM on this camera hardware, and tune expectations/UX (e.g. prediction/filtering)
-  around that number instead of chasing it as a bug. `SLAM_THREADS` tuning is a dead end
-  for this specific problem either way.
+  **CLOSED same day (A-win capture executed): the diversion is firmware-fixed, not a
+  configurable request -- and there's a second, independent, bigger ceiling underneath it.**
+  A live Windows USBPcap capture (`windows-kit2/results/frametype-capture-20260825.pcapng`,
+  730s/55GB/690k packets, real Cyberpilot session) plus a 3-way parallel investigation
+  (Linux source, the capture's control-transfer traffic, and a CPU-cost model from today's
+  own `timing.csv`) converged cleanly:
+  - **The camera streams at a fixed ~90 Hz raw rate on BOTH OSes already** -- confirmed two
+    independent ways: `wmr_camera.c:398`'s own frame-footer timestamp math (`end_ts` ~111000
+    ×100ns after `start_ts`, i.e. ~90Hz, already true on Linux, nobody had connected this to
+    the SLAM-rate question before) and live measurement on the Windows capture (39,698
+    camera-endpoint frames, median inter-frame delta 11.097ms = 90.09Hz). What's capped at
+    ~30fps was never the raw camera rate -- only the SLAM-tagged fraction of it.
+  - **No USB command sets or influences the `frametype` tag, on either OS.** The G2's
+    camera command vocabulary is exactly three values (`WMR_CAMERA_CMD_{GAIN,ON,OFF}`,
+    `wmr_camera.c:65-67`) -- confirmed exhaustive by decoding all 2,193
+    Windows→device commands in the full capture: only those same three ever appear, same
+    struct layout Linux already implements. Zero vendor-specific control transfers appear
+    anywhere in the 730s capture; no USB Video Class descriptors; no alternate-settings
+    bandwidth negotiation (the mechanism UVC cameras normally use for rate selection isn't
+    present on this device at all). `wmr_source_enumerate_modes()`/
+    `wmr_source_configure_capture()` are literal `WMR_ASSERT(false, "Not implemented")`
+    stubs -- nobody has ever wired a mode-request path, and the capture confirms there is no
+    such mode to request even if one were wired. **Verdict: hardware/firmware-determined,
+    not a software knob, on either OS -- as close to a definitive "no" as this kind of
+    investigation produces.**
+  - **Second, independent, BIGGER ceiling found: Basalt's own frontend already can't keep
+    up with the current rate.** Real numbers from today's `timing.csv` (two ~100-200K-row
+    sessions, `SLAM_THREADS=4`): frontend total (frame-received to keypoints-pushed) is
+    **p50 46ms** -- already 1.4x OVER the 33ms budget the *current* ~30Hz-tagged rate needs,
+    and would be 4x over the 11.1ms budget a hypothetical 90Hz rate would need. The
+    bottleneck (detection+matching, ~21ms of the 46ms) is confirmed **single-threaded in
+    source** (`frame_to_frame_optical_flow.h`: only the LK-tracking half uses
+    `tbb::parallel_for`; detection/matching are plain sequential loops) -- so more
+    `SLAM_THREADS` cannot close this gap, consistent with and extending this same session's
+    earlier `SLAM_THREADS=6` rejection. The backend also runs on every frame (not
+    keyframe-gated), so it scales with input count too.
+  - **Practical conclusion: retire the "chase higher camera rate" idea entirely.** It's
+    closed on both the "can we" (no) and "should we" (frontend can't consume today's rate,
+    let alone 3x) fronts. Accept 21-24Hz SLAM pose rate under constellation as the real
+    hardware ceiling; put future effort into A-ctrl-1's exposure/gain sweep (may shift WHICH
+    fraction gets tagged SLAM within the fixed 90Hz budget, not the frontend's ability to
+    consume more) or prediction/filtering UX around the known rate, not the rate itself.
+  - **One cheap, no-headset sanity check still worth running, not yet done**: a
+    diversion-matched `SLAM_THREADS=8` or `12` A/B, diffing frontend total against today's
+    4-thread baseline -- purely to confirm (not fix) the ~21ms detection floor is real
+    before this whole line of inquiry is fully closed.
 
   Separately noted, different axis, not chased as a fix (but independently RE-CONFIRMED,
   see A-ctrl below): the right controller's constellation-vs-IMU orientation disagreement
@@ -177,13 +215,19 @@ S2-S4 must not depend on it; S1 starts now.
   the wearer reported the right hand started "parked" (only left tracking) and both
   recovered together after ~20s of deliberately waving them in view -- a possible practical
   re-acquisition technique, not yet measured as a repeatable procedure.
-- **A-win (a single future Windows boot):** USBPcap on `045e:0659` with controllers on, from
-  before tracking activates through 2 min of play (pulse train and anything else to the
-  `0x06`/`0x0E` tunnel; 5-min dry run first: USBPcap attaches, waking/moving controllers
-  produces anything other than `02`/`16`) + magnetometer bytes (docs/54's unblock) + docs/30
-  baseline + battery calibration (T227 `using_1v2_batteries`) + OpenVR Benchmark pass-1. If the
-  pulse train shows up: port `t_led_sync_refinement` to `wmr` with the real report, behind an
-  env knob, default off until presence is measured.
+- **A-win (single Windows boot): PARTIALLY DONE 2026-08-25.** USBPcap capture executed
+  (`docs/72`'s checklist, manual, all USBPcap interfaces, one merged 730s/55GB/690k-packet
+  file) with controllers on and a real Cyberpilot play session -- **this is what answered
+  A-head-3's camera-rate question above** (the actual reason this boot happened), a genuine
+  bonus beyond the original controller-pulse-train scope. **Still not done from the original
+  A-win list**: the pulse-train command to the `0x06`/`0x0E` controller tunnel itself was not
+  specifically isolated/analyzed in this pass (the capture exists and could still be mined
+  for it); magnetometer bytes (docs/54), docs/30's CPU baseline, battery calibration (T227),
+  and OpenVR Benchmark pass-1 were explicitly NOT done this boot -- the user stuck strictly
+  to the capture procedure ("solo respeté el procedimiento") and didn't run the other
+  checklist items. Next Windows boot: mine the existing capture for the pulse train +
+  magnetometer bytes first (no new boot needed, the data is already here) before doing
+  another live session for the CPU/battery/benchmark items specifically.
 
 ## 4. Track B — titles
 
