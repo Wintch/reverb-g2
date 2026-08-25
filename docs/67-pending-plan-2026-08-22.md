@@ -207,3 +207,40 @@ SLAM ran at 26 fps / ~100 ms (optflow threads 100/80/80/80 %, machine 37 %); the
 let a 3.8 m/s runaway through; resting produced a reset storm from 00:30:12 — the wearer
 handled the headset at ~00:30 (his own timing), so not a spontaneous storm. **Next for B1:** run #2 in normal light, ≥ 30 min worn (S3), and the in-session light
 A/B the user deferred tonight; the startup low-light warning moves to the front of A-head.
+
+## 8. B2 — Cyberpilot run #1 (2026-08-25, extended session)
+
+Reinstalled to the NVMe/NTFS library specifically to size-qualify for `vr-prewarm.sh` ram mode
+after the same-day 32G RAM upgrade (tmpfs 10G→20G, cap 12G→16G). Hit and fixed two real bugs
+first (full detail in docs/23's Cyberpilot row): the NTFS `dosdevices/c:` Errno 22 (docs/70's
+bug, on this title's Proton prefix) and `bench-launcher.py` needing a new `--controllers` flag
+to combine `WMR_SLAM=1` with `WMR_CAMERAS=1 WMR_CONSTELLATION_CONTROLLERS=1` (the `--tracking`
+enum alone can't). Manual launch (`jack-in-wayland.sh` directly, human wearing the headset each
+time — required: the real XR session only opens once the wear sensor fires, which is why every
+unattended `bench-launcher.py` attempt saw only a harmless instant capability-probe session and
+never the real one).
+
+| Criterion (from §2's acceptance table) | Result |
+|---|---|
+| Same bar as Aircar (constellation ON here, unlike Aircar's OFF) | fps converges to Aircar-like 89-90 once loaded + unfocused; SLAM+constellation together (a first for this project) costs real pacing headroom — 40-45% late frames both prewarm arms, vs Aircar's 0% in the same table's B1 run |
+| Controllers usable in-game | **MET, with the known residual** — wearer: "the joysticks let me manage okay overall," first (dog) mission genuinely playable after in-game control/render-scaling tuning; position tracking "isn't perfect... they jump" — docs/58's already-known controller-jitter residual, reconfirmed, not new |
+| No nauseating vertical settle | **Not reported this session** (T244's Cyberpilot residual) — wearer's complaint this time was head-movement judder, not vertical settle; plausibly the same pacing/late-frame cause, not measured as a separate axis |
+| One verified client, fresh monado | MET — `game-stop.py status` checked clean before each of the 3 launches this session |
+
+**New, unplanned finding, promoted to a general testing rule** (memory:
+`feedback_windowed_default_fullscreen_ab`): window focus state, not just fullscreen/windowed,
+swings fps hugely — fullscreen+focused locks a hard 30.00 fps ceiling (`Fake pacer fell behind`
+spam), windowed+focused is noisy 60-89, any unfocused state runs clean ~90 when idle. Default to
+windowed, A/B fullscreen per title going forward — do not assume Cyberpilot's numbers transfer.
+
+**Cache vs ram, the original question this reinstall was for**: ram mode wins on load (first
+frame ~22s vs cache's ~28s from a genuinely cache-cold state; clean fast climb to steady 90fps
+vs cache's noisy climb that dipped to 36fps mid-ramp) but the two converge once steady and
+unfocused (~62-66fps either way, in real gameplay, not menu) — prewarm buys the transition, not
+steady-state, matching T246's Aircar precedent.
+
+**Next for B2**: the vertical-settle question specifically (T244's original Cyberpilot residual)
+wasn't re-asked this session — the wearer's spontaneous report was head-movement judder instead;
+worth asking directly next time. The 40-45% late-frame rate with SLAM+constellation together is
+now this project's first real datapoint on that combined cost and belongs in Track A's pacing
+work, not just this title's row.

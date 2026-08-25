@@ -1,5 +1,40 @@
 # Next step
 
+> ## START HERE (2026-08-25 cont. — Cyberpilot RESOLVED and playable, ram-vs-cache answered, a real focus/fullscreen bug found and promoted to a general testing rule)
+>
+> Closing out the session below: the "still open" instant-session-end from the previous entry
+> was NOT a menu-navigation gap after all — a human wearing the headset revealed a SECOND
+> `BEGIN_SESSION` fires ~1s after the first (a harmless xrizer/engine capability probe), and the
+> REAL session only opens once the wear sensor fires, which unattended `bench-launcher.py` runs
+> can never trigger. With a human wearing it: **Cyberpilot works, is playable** (wearer tuned
+> in-game controls + turned off render supersampling, first/dog mission became genuinely
+> playable), and the original question this reinstall was for got a real answer — **ram-mode
+> prewarm wins on load** (first frame ~22s vs cache's ~28s from a genuinely cold page cache,
+> `echo 3 > drop_caches` first; clean fast climb to steady 90fps vs cache's noisy climb that
+> dipped to 36fps mid-ramp) but both converge to the same ~62-66fps once steady, unfocused, and
+> in real gameplay — prewarm buys the load transition only, matching the T246 Aircar precedent.
+> **Second, bigger, unplanned finding**: window FOCUS state (not just fullscreen/windowed)
+> swings fps hugely and reproduced identically across both prewarm arms — fullscreen+focused
+> locks a hard 30.00fps ceiling (`Fake pacer fell behind` spam in Monado's log), windowed+focused
+> is noisy 60-89, any unfocused/background state runs clean ~90 when idle (unfocused seems to
+> cost audio though, not chased). Promoted to a general project testing rule, memory-saved:
+> default to windowed, A/B fullscreen per title, don't assume one title's numbers transfer.
+> Both prewarm arms also measured 40-45% late frames + elevated anchor age (133-171ms) — the
+> first time this project ran head SLAM 6dof + controller constellation together, and it clearly
+> costs real pacing headroom versus either alone (docs/67 §8's new B2 log has the full table).
+> Wearer's verdict matches every measured number: controllers "jump" (docs/58's known residual,
+> reconfirmed, not new), head judder while moving matches the late-frame rate, "if I stay still,
+> the headset's 6dof is almost perfect" matches a passive drift read (~31mm/~1.3° over 21.5s).
+> Full detail: docs/23's Cyberpilot row (session narrative), docs/67 §8 (acceptance-table
+> format). `bench-launcher.py` gained a permanent `--controllers` flag and Cyberpilot's Proton
+> prefix fix (NTFS relocation) is permanent. **Not yet done**: T244's original Cyberpilot
+> residual (nauseating vertical settle) wasn't re-asked directly this session — the wearer's
+> spontaneous complaint was head judder instead, possibly the same cause, not confirmed as the
+> same axis. `bench-launcher.py`'s teardown not reliably killing the process on an unattended
+> run (found, not fixed) is still open too.
+>
+> ---
+
 > ## START HERE (2026-08-25 cont. — Cyberpilot reinstalled, two real bugs found+fixed via bench-launcher.py, one still open and needs a human)
 >
 > Following up on the RAM-upgrade session below: reinstalled Wolfenstein: Cyberpilot
