@@ -1,5 +1,25 @@
 # Next step
 
+> ## START HERE (2026-08-25 cont. — SLAM+constellation pacing cost dissected, root cause isolated, no headset needed)
+>
+> Post-hoc dissection of the B2 Cyberpilot sessions' `timing.csv` (per-stage SLAM pipeline
+> timestamps, already on disk in `/mnt/vrtmp/slam-*`, no new hardware session needed) found
+> the actual source of the 40-45% late-frame rate first measured today: it is NOT the SLAM
+> compute itself getting slower (the optical-flow TRACKING stage is 25-26ms p50, in line with
+> or better than T203's no-constellation 28.4ms baseline) — it's a ~50ms p50/~63ms p90
+> QUEUEING delay between a camera frame being pushed and SLAM's frontend picking it up,
+> reproduced near-identically across 3 separate sessions (cache/ram/long-play, same numbers
+> each time), plus a confirmed ≥300 dropped frames from `input_img_queue`. Pose rate: 21.6-
+> 22.4 Hz vs T203's 25.9 Hz baseline. Leading explanation: `SLAM_THREADS=4` was tuned at T203
+> with no constellation competing for the same camera/CPU budget, and today is the first time
+> the two ran together. Candidate next step (docs/67 §3, new A-head-3): `SLAM_THREADS=6/8` A/B
+> under the combined 6dof+ctrl workload, same per-stage method. Separately noted: the right
+> controller's constellation-vs-IMU orientation disagreement ran 160-176° throughout (a
+> near-total flip) — likely the "controllers jump" the wearer felt, a different axis (A-ctrl),
+> not chased today.
+>
+> ---
+
 > ## START HERE (2026-08-25 cont. — Cyberpilot RESOLVED and playable, ram-vs-cache answered, a real focus/fullscreen bug found and promoted to a general testing rule)
 >
 > Closing out the session below: the "still open" instant-session-end from the previous entry

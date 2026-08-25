@@ -94,6 +94,29 @@ S2-S4 must not depend on it; S1 starts now.
   bottleneck), (b) cliff map in 5 cm steps with 50 cm bracketing, (a) scale; plus the exposure
   sweep (`WMR_CONTROLLER_CAM_EXPOSURE_US`, 0083) docs/59 left out; the position/battery swaps
   of T229/T230 (a minute each). docs/59 rules: battery band 100-150, liveness before/after.
+- **A-head-3. SLAM+constellation contention, NEW (2026-08-25, post-hoc dissection of the B2
+  Cyberpilot sessions, no headset needed -- `docs/pruebas` timing.csv already on disk):** the
+  first time this project ran head SLAM 6dof + controller constellation together showed
+  40-45% late frames and pose rate down to 21.6-22.4 Hz (vs the T203 no-constellation
+  baseline of 25.9 Hz at `SLAM_THREADS=4`, 30 Hz camera ceiling) -- reproduced consistently
+  across 3 separate sessions (cache arm, ram arm, the long real-play session), same numbers
+  each time. Root cause isolated via the per-stage `timing.csv` columns: the optical-flow
+  TRACKING stage itself is FINE (25-26ms p50, in line with or better than T203's 28.4ms) --
+  the cost is almost entirely a ~50ms p50 / ~63ms p90 QUEUEING delay between
+  `frames_pushed` and `frontend_frames_received` (the frontend thread not picking up the
+  frame, not the frame taking longer to process once picked up), plus a confirmed ≥300
+  camera frames dropped from `input_img_queue` ("frontend slower than camera") in the long
+  session. `SLAM_THREADS=4` was tuned at T203 with NO constellation competing for the same
+  camera/CPU budget -- the ctrl-mode code comment already says constellation search "gets
+  the whole camera and CPU budget" when it's the only camera consumer; today it shared that
+  budget with SLAM's frontend for the first time and nobody re-tuned for it. **Candidate
+  next step, not yet tried**: `SLAM_THREADS=6` or `8` A/B under this exact combined
+  workload (6dof + ctrl together), same per-stage timing.csv method to check whether the
+  queueing delay actually shrinks or whether it's a camera-exposure-slot contention that
+  more SLAM threads can't fix. Separately noted, different axis, not chased: the right
+  controller's constellation-vs-IMU orientation disagreement ran 160-176° (near-total
+  flip) throughout -- likely explains the wearer's own "controllers jump" complaint, feeds
+  A-ctrl below, not A-head.
 - **A-ctrl-2. Hand inversion + 1 cm jitter:** re-measure AFTER A-head-1/A-ctrl-1 (they may
   move on their own); if they persist, instrument (0089 already refuted blob competition).
 - **A-ctrl-3. Correspondence assignment from the trusted heading** (T215, "major surgery"):
