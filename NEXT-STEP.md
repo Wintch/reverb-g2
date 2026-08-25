@@ -1,5 +1,42 @@
 # Next step
 
+> ## START HERE (2026-08-25 cont. — RETRACTION: "minimize fixes the fps" did not survive a
+> retest; leading suspect is now the GPU's 70% power cap, untested against real Cyberpilot
+> load, needs a human back with the headset)
+>
+> The entry below this one claimed "minimize the window -> clean 90fps" as a confirmed,
+> reproducible finding, from ONE before/after pair. A careful same-session retest (~40 min
+> later, mid real Cyberpilot gameplay: focused -> unfocused-but-visible -> minimized, each
+> measured with `app-fps.sh`) never recovered above a noisy 53-67 fps, minimize included --
+> **the causal claim does not hold up and is retracted** (memory `feedback_windowed_default_
+> fullscreen_ab` updated with the retraction, docs/23's Cyberpilot row too). The
+> fullscreen+focused 30fps hard lock from earlier the same session is separate evidence and
+> stays standing; only "minimize alone is the fix" is in question.
+>
+> At the moment of the failed retest, GPU power draw measured 166W against a
+> software-capped 175W limit (`~/vr/power.conf`'s `GPU_LIMIT_PCT=70` -- 70% of the card's
+> real 250W max). That cap was validated "pacing-free" back in T204/T209 for **Aircar**, a
+> much lighter title, and never re-validated for a heavy idTech game like Cyberpilot.
+> Leading suspicion now: the original successful minimize pair likely coincided with a
+> lighter-rendering moment in real gameplay (menu-adjacent, less motion) rather than a real
+> window-compositor causal link, and the GPU power cap -- not window visibility -- may be
+> the actual ~60fps ceiling for this specific title.
+>
+> **Tried to test this directly and hit a hard blocker: Cyberpilot does not render real
+> content unattended.** Confirmed the passwordless sudo path works (`vr-power-setup.sh
+> --gpu-limit`, via the existing sudoers grant, docs/68 -- no more classifier friction like
+> a raw `nvidia-smi -pl` hit), but a same-day unattended relaunch attempt (no one wearing
+> the headset) never got past the harmless capability-probe session -- confirms again that
+> Cyberpilot specifically needs a human wearing the headset to open a real session (the
+> earlier B2 finding), so a genuine GPU-load power sweep against this title's actual content
+> can't be automated. **Next, when the user is back with the headset**: raise the GPU cap
+> (`vr-power-setup.sh --gpu-limit 100`, stop `vr-power-watchdog.service` first per
+> `q2rtx-power-sweep.sh`'s own pattern, restore both after) and re-measure `app-fps.sh` in
+> the SAME window/focus state as the failed retest, to see whether power alone explains the
+> ~60fps ceiling independent of window visibility.
+>
+> ---
+
 > ## START HERE (2026-08-25 cont. — the fullscreen/focus fps bug's REAL mechanism found: window visibility, not focus; minimize the window for real 90fps)
 >
 > Refined the earlier fullscreen/focus finding into its actual, precise mechanism, live: the
