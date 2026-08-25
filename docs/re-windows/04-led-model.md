@@ -246,20 +246,41 @@ high per-window variance reframes T230's original "left is always brighter" word
 probably "whichever controller currently has worse tracking gets driven harder", a
 meaningfully different (and more interesting) claim than a fixed hardware asymmetry.
 
-**Still open after this pass** (flagged honestly, not guessed further): an unexplained
-leading byte before the modeled seq/count/mode/period/duration fields (the doc's own field
-list only accounts for 79 of the body's 88 bits); `period_raw` was observed spanning its
-full range under every `mode_raw` value rather than being gated to two of four as the
-API-level description implies; the 55-bit `duration` field's ~10^16 magnitude doesn't
-cleanly read as milliseconds or correlate with capture-relative time (a masked/truncated
-high-res absolute timestamp is a plausible guess, unverified); and which of `0x08`/`0x10`
-is left vs. right was not determined (no per-hand labeling event in this capture).
+**Leading byte: RESOLVED, same-day follow-up.** It's a per-message wraparound sequence
+counter, independent of the separate 2-bit `seq` field inside the body: 254 unique values
+per controller (range 1-254, never 0 or 255), incrementing by 1 (~53% of steps) or 2 (~46%)
+between consecutive commands, wrapping at the 1-254 boundary -- not junk, not a fixed
+opcode byte, a real per-message tag.
+
+**Byte-alignment hypothesis for the remaining anomalies: TESTED, refuted.** Tried shifting
+the whole field layout by one byte to see if that explained BOTH the leading byte (turned
+out not to need explaining, see above) and the `period_raw`/`mode_raw` gating mismatch.
+Result: the "shifted" alignment is measurably worse on every count that can be checked
+(`seq` no longer cycles cleanly 1→2→3, spreads across all 4 values instead; `count` no
+longer stays in [1,399], 33-35% of samples land outside that range) -- the ORIGINAL
+alignment (skip the now-explained leading byte, fields from bit 8) remains clearly correct.
+The period/mode gating mismatch is confirmed NOT a byte-alignment artifact -- something
+else explains why `period_raw` spans its full range under every `mode_raw` value instead of
+being gated to two of four modes as the Windows-API-level description implies (still open;
+leading guess, unconfirmed: the on-wire packing may simply not zero/omit those bits when
+unused, i.e. the API-level "unused when mode∈{3,4}" description may only apply to what the
+caller is required to pass in, not to what ends up serialized).
+
+**Duration as a timestamp: TESTED, refuted.** Consecutive same-controller `duration`
+deltas are wildly non-monotonic (range roughly ±10^15, including hitting exactly 2^53 as a
+max) against a steady ~66ms real-world gap between commands -- no stable tick-to-time ratio
+exists. Whatever this 55-bit field encodes, it is not a timestamp or a simple duration
+counter. Still fully open.
+
+**Still open after this follow-up pass**: the `duration` field's actual meaning (confirmed
+not a timestamp, nothing else tried yet); the `period_raw`/`mode_raw` gating mismatch;
+which of `0x08`/`0x10` is left vs. right (no per-hand labeling event in this capture).
 
 **Not yet done**: porting this to `wmr` (`t_led_sync_refinement` per this file's own §5
-plan) -- deliberately not attempted from this analysis pass alone given the open questions
-above, especially the unexplained leading byte and unverified duration units. Replicating a
-still-partially-understood command to real hardware needs those closed first, or at minimum
-an explicit, deliberate decision to try it anyway with the risk named.
+plan) -- deliberately not attempted given `duration`'s meaning and the period/mode gating
+mismatch are still both unresolved. Replicating a still-partially-understood command to
+real hardware needs those closed first, or at minimum an explicit, deliberate decision to
+try it anyway with the risk named.
 
 ## 4. Monado's LED control on WMR — none
 

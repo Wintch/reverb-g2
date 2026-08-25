@@ -1,5 +1,24 @@
 # Next step
 
+> ## START HERE (2026-08-25 cont. — pulse-train leading byte resolved (sequence counter),
+> byte-alignment hypothesis tested and refuted, duration confirmed NOT a timestamp)
+>
+> One more resumed pass on the pulse-train mystery: tried shifting the field alignment by
+> one byte to explain both the leading byte and the period/mode gating mismatch -- turned
+> out the "shift" was already what the current model does (no-op), and the genuine
+> alternative (no leading byte at all) is measurably worse (seq no longer cycles cleanly,
+> count spills outside its documented [1,399] range on ~34% of samples). **The leading byte
+> is now explained on its own terms**: a per-message wraparound sequence counter (1-254,
+> steps of 1 or 2, independent of the body's own 2-bit `seq` field) -- a real, clean finding.
+> **Duration tested as a possible timestamp and refuted**: consecutive deltas are wildly
+> non-monotonic against the steady ~66ms real gap between commands, no stable tick ratio.
+> **Still open**: duration's actual meaning (unknown, not a timestamp), the period/mode
+> gating mismatch (not a byte-alignment artifact after all -- something else explains it),
+> and handedness. Full detail in docs/re-windows/04-led-model.md. Porting the pulse train to
+> `wmr` stays deliberately not attempted until duration and the gating mismatch are closed.
+>
+> ---
+
 > ## START HERE (2026-08-25 cont. — pulse train is a continuous ~15Hz adaptive loop, not a
 > one-shot command; plausible partial mechanism found for T230's years-old LED asymmetry)
 >
