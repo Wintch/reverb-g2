@@ -44,13 +44,40 @@ this session:
    but map to a report structure this G2 unit's firmware doesn't actually send (revision
    difference, or the RE pass read calibrator/config data rather than the live streaming report).
 
-## Not done
+## CLOSED 2026-08-25 — Windows capture confirms: not a magnetometer, and the "not done" step above is now done
 
-Did not attempt to send an HID feature/output report to try enabling the sensor (real risk of
-sending an unknown command to live hardware without a Windows-side capture to compare against —
-exactly the kind of action this project treats as needing a captured reference first, not a
-guess). Next real step, if this is picked up again: get an actual Windows USB capture (per the
-original RE doc's own suggested method) to compare byte-for-byte against this live dump, rather
-than guessing further from the Linux side alone. Until then, Phase 3's magnetometer decode is
-blocked, not just unpinned.
+Live USBPcap capture (`windows-kit2/results/frametype-capture-20260825.pcapng`, 730s, real
+Cyberpilot session, both controllers on) gives the byte-for-byte Windows-side comparison this
+doc asked for. Located the same 45-byte HID interrupt-IN report on the wire (bus 2, device
+addr 5, endpoint `0x84`; byte 0 = `0x06` left / `0x0E` right, matching `wmr_protocol.h`), and
+walked the parser's own byte consumption (`wmr_controller_hp_packet_parse`) to confirm the
+trailing 12 bytes land at payload offset 32-43, same place `WMR_CONTROLLER_TAIL_LOG` already
+dumps them.
+
+**Result: Windows does NOT carry a Mag X/Y/Z triplet there either — confirmed, not just
+consistent with this doc's negative result.** Across 126,371 reports spanning stationary,
+deliberate multi-axis waving (both hands), and live gameplay motion:
+- Bytes 0-5 of the 12: always exactly zero (same as the Linux capture found).
+- Byte 6: a rotating status/phase tag (13-14 discrete values), correlation with gyro
+  magnitude **0.0009** — not sensor data.
+- Byte 7: a near-perfectly linear real-time ramp, slope ≈24.4-24.9 units/sec, **identical
+  whether the controller is sitting still or being violently rotated** (50-100× gyro
+  magnitude difference, same ramp rate, residual std <1 count).
+- Bytes 10-11: a 16-bit little-endian hardware tick counter (byte 10 slope ≈152.6/s, byte 11
+  = its own carry), same rate regardless of motion.
+- Bytes 8-9: noisy, but correlation with gyro/accel magnitude ≤0.02 — ruled out too.
+
+This **extends** rather than just reconfirms the original finding: this doc's 2026-08-18
+Linux capture only ran ~20s and apparently caught the controller's ~0.5s post-power-on
+transient (flat zero + one low cycling byte) — the fresh Windows capture shows the SAME
+early-power-on shape (`00 00 00 00 00 00 00 03 00 00 00 00` at t=354.017s, right controller's
+first packet) before settling into the always-changing counter content above. So the
+original "flat zero" observation was real but incomplete, not wrong — the bytes do carry
+real, changing content on longer sessions, it's just not sensor data.
+
+**Verdict, high confidence**: these 12 bytes are firmware housekeeping (a tick/sequence
+counter plus a rotating status byte), not a magnetometer, on either OS. Not chased further:
+which report ID (if any) carries real magnetometer data was out of scope for this pass — the
+same capture likely has a much larger (~381-byte) report on the same endpoint that's very
+probably the headset's own IMU/camera-adjacent stream, unexamined for this question.
 </content>

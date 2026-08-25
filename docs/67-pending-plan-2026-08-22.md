@@ -215,19 +215,29 @@ S2-S4 must not depend on it; S1 starts now.
   the wearer reported the right hand started "parked" (only left tracking) and both
   recovered together after ~20s of deliberately waving them in view -- a possible practical
   re-acquisition technique, not yet measured as a repeatable procedure.
-- **A-win (single Windows boot): PARTIALLY DONE 2026-08-25.** USBPcap capture executed
+- **A-win (single Windows boot): MOSTLY DONE 2026-08-25.** USBPcap capture executed
   (`docs/72`'s checklist, manual, all USBPcap interfaces, one merged 730s/55GB/690k-packet
-  file) with controllers on and a real Cyberpilot play session -- **this is what answered
-  A-head-3's camera-rate question above** (the actual reason this boot happened), a genuine
-  bonus beyond the original controller-pulse-train scope. **Still not done from the original
-  A-win list**: the pulse-train command to the `0x06`/`0x0E` controller tunnel itself was not
-  specifically isolated/analyzed in this pass (the capture exists and could still be mined
-  for it); magnetometer bytes (docs/54), docs/30's CPU baseline, battery calibration (T227),
-  and OpenVR Benchmark pass-1 were explicitly NOT done this boot -- the user stuck strictly
-  to the capture procedure ("solo respeté el procedimiento") and didn't run the other
-  checklist items. Next Windows boot: mine the existing capture for the pulse train +
-  magnetometer bytes first (no new boot needed, the data is already here) before doing
-  another live session for the CPU/battery/benchmark items specifically.
+  file, `windows-kit2/results/frametype-capture-20260825.pcapng`) with controllers on and a
+  real Cyberpilot play session. Three of the original items now closed by mining this one
+  capture (no new boot needed for any of them):
+  - **Camera rate question (A-head-3 above)** -- answered, closed.
+  - **Pulse-train command -- FOUND and decoded.** Report ID `0x08`/`0x10` (per controller,
+    `+8` offset), 11-byte body via `SET_REPORT` output, confirmed by HID descriptor size
+    match + rotating sequence field + count-field range + tracking-start/stop timing
+    correlation. Full decode, exact frames, and honest open questions (an unexplained
+    leading byte, `period_raw`/`duration` units) in `docs/re-windows/04-led-model.md`'s new
+    "CONFIRMED LIVE ON THE WIRE" section. **Porting to `wmr` deliberately not attempted**
+    yet -- the open questions above need closing first, or an explicit deliberate decision
+    to try anyway.
+  - **Magnetometer bytes -- CLOSED, not a magnetometer, high confidence.** The trailing 12
+    bytes are firmware housekeeping counters (linear real-time ramps, motion-independent
+    across stationary/waving/gameplay, correlation with gyro ≤0.02), confirmed on Windows
+    too, not just Linux -- `docs/54` updated with the full byte-level evidence and closed.
+  **Still not done**: docs/30's CPU baseline, battery calibration (T227), and OpenVR
+  Benchmark pass-1 were explicitly NOT done this boot -- the user stuck strictly to the
+  capture procedure ("solo respeté el procedimiento") and skipped the other checklist
+  items. That's the only real gap left in A-win now; next Windows boot can go straight to
+  those three, no more capture-mining needed first.
 
 ## 4. Track B — titles
 

@@ -1,5 +1,40 @@
 # Next step
 
+> ## START HERE (2026-08-25 cont. — pulse train FOUND and decoded, magnetometer bytes
+> CLOSED (confirmed not a magnetometer on Windows either) -- both mined from the existing
+> capture, no new boot needed)
+>
+> Two more items closed out of the same Windows capture (`windows-kit2/results/
+> frametype-capture-20260825.pcapng`), a parallel 2-agent mining pass:
+>
+> **Controller LED pulse-train command: FOUND on the wire, matching the static decompile's
+> prediction closely enough to confirm it.** Report ID `0x08`/`0x10` (one per controller,
+> `+8` offset), 11-byte body via `SET_REPORT` output — confirmed via HID descriptor size
+> match (exactly 88 bits, the only report with that shape), a rotating 2-bit sequence field
+> cycling 1→2→3 across 5000+ samples, a 9-bit count field landing in [1,399] 100% of the
+> time (max observed exactly 399), and timing that starts/stops in lockstep with each
+> controller's own tracking start/stop. Full decode + exact frames in
+> `docs/re-windows/04-led-model.md`'s new "CONFIRMED LIVE ON THE WIRE" section. Real open
+> questions remain (an unexplained leading byte, `period_raw`/`duration` units not fully
+> pinned, handedness not determined) — **porting to `wmr` deliberately not attempted yet**,
+> those need closing first or a deliberate decision to try anyway.
+>
+> **Magnetometer bytes: CLOSED, high confidence, not a magnetometer on Windows either.**
+> The trailing 12 bytes of the controller's 44-byte report are firmware housekeeping
+> counters (linear real-time ramps at ~25/s and ~152.6/s, correlation with gyro magnitude
+> ≤0.02) — tested across stationary, deliberate multi-axis waving, and live gameplay motion,
+> both controllers independently. This *extends* rather than just reconfirms `docs/54`'s
+> 2026-08-18 Linux finding: that capture only ran ~20s and caught the controller's ~0.5s
+> post-power-on transient (flat zero + one cycling byte); the fresh capture shows that same
+> shape at power-on, then the always-changing counter content afterward. `docs/54` updated
+> and closed.
+>
+> A-win (docs/67 §3) is now "mostly done" — only docs/30's CPU baseline, battery
+> calibration (T227), and OpenVR Benchmark pass-1 remain, for whenever the next Windows
+> boot happens for another reason; no more capture-mining needed first.
+>
+> ---
+
 > ## START HERE (2026-08-25 cont. — A-head-3 CLOSED: the camera's 90Hz-vs-30Hz question
 > answered with a real Windows capture, and a second bigger ceiling found underneath it)
 >

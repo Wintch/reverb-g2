@@ -178,6 +178,46 @@ through a real, gated (device confirms via event) command channel. This is
 architecturally the same shape as CV1/PSVR-style "LED sync" protocols: a
 count + duration + period, tunable to line up with camera exposure timing.
 
+### CONFIRMED LIVE ON THE WIRE, 2026-08-25
+
+This static-decompile prediction was verified against a real Windows USBPcap capture
+(`windows-kit2/results/frametype-capture-20260825.pcapng`, 730s, real Cyberpilot session,
+both controllers on) -- the command is genuinely sent, and its wire shape matches this
+section's prediction closely enough to confirm it, not just correlate with it:
+
+- **Report ID `0x08`** for one controller, **`0x10`** for the other (the two controller
+  instances mirror every report ID with a fixed `+8` offset) -- `SET_REPORT`, Output type,
+  `wLength=12` (1 report-ID byte + the predicted 11-byte body), sent to `045e:0659` (the
+  same HID tunnel that carries the controllers' own `0x06`/`0x0E` motion reports).
+- The HID Report Descriptor itself (read live from the capture) declares report `0x08`'s
+  Output collection as exactly **88 bits = 11 bytes** -- the only report ID on the device
+  with that shape.
+- Content match: bits[8:9] cycle **1→2→3→1→2→3...**, never 0, across 5,124/5,379 occurrences
+  (the doc's "rotating 2-bit sequence ID, 0 skipped"); bits[10:18] (9 bits) land in **[1,399]**
+  for 100% of samples, hitting the doc's declared boundary exactly (max observed: 399).
+- Timing match: each controller's first `0x08`/`0x10` write lands ~2-3s after that
+  controller's own motion-report stream begins (tracking start), and its last write
+  coincides almost to the frame with that stream's last packet (tracking stop) -- exactly
+  the "sent once when the blink pattern needs to change" delivery model this section
+  predicted from the decompile, not a per-frame command.
+- Both controllers get an **identical first command** at connection (`06 21 03
+  00 00 00 00 00 00 80 2c`: seq=1, count=200, mode_raw=0, period=1000µs) before diverging.
+
+**Still open after this pass** (flagged honestly, not guessed further): an unexplained
+leading byte before the modeled seq/count/mode/period/duration fields (the doc's own field
+list only accounts for 79 of the body's 88 bits); `period_raw` was observed spanning its
+full range under every `mode_raw` value rather than being gated to two of four as the
+API-level description implies; the 55-bit `duration` field's ~10^16 magnitude doesn't
+cleanly read as milliseconds or correlate with capture-relative time (a masked/truncated
+high-res absolute timestamp is a plausible guess, unverified); and which of `0x08`/`0x10`
+is left vs. right was not determined (no per-hand labeling event in this capture).
+
+**Not yet done**: porting this to `wmr` (`t_led_sync_refinement` per this file's own §5
+plan) -- deliberately not attempted from this analysis pass alone given the open questions
+above, especially the unexplained leading byte and unverified duration units. Replicating a
+still-partially-understood command to real hardware needs those closed first, or at minimum
+an explicit, deliberate decision to try it anyway with the risk named.
+
 ## 4. Monado's LED control on WMR — none
 
 Grepping `src/xrt/drivers/wmr/` for `pulse`, `blink`, `strobe`: **zero
