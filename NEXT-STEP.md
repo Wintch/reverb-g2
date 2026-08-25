@@ -1,5 +1,29 @@
 # Next step
 
+> ## START HERE (2026-08-25 cont. — SLAM_THREADS=6 REJECTED under real load; Rx180 controller-frame finding independently reconfirmed)
+>
+> Closed out the two open threads below with a human wearing the headset. **SLAM_THREADS=6
+> does not hold under real game load** — with Cyberpilot actually running and played (not the
+> light static-image player), 6 threads only nudged pose rate to 23.6 Hz (barely past 4
+> threads' 21.8 Hz) while `Delivered frame` lateness got WORSE (73.8% vs 40-45%) and dropped
+> frames rose to 3000 (vs 300-1500) — confirms T203's original tracking-vs-pacing tradeoff
+> exactly. **Verdict: stay on `SLAM_THREADS=4`, don't adopt 6 as a default.** Full numbers in
+> docs/67 §3's A-head-3.
+>
+> Separately, asked the wearer to wave both controllers ~90s for `constellation-frame-fit.py`
+> (T181's tool) and got a well-conditioned fit that independently reconfirms T181's original
+> verdict 12 days later: the LED-to-IMU frame transform is **~180° about the X axis on both
+> hands**, not the factory `P_imu_me` calibration. Still not fully explained (residuals up to
+> 120-160°, a single constant rotation isn't the whole story) but the Rx180 answer itself now
+> has two independent datasets behind it. Full numbers in docs/67 §3's A-ctrl-3. Also: a
+> mid-session hiccup where the right controller registered `<none>` (classic T051 trap --
+> controllers powered on AFTER Monado's device list finalized) was fixed with a clean
+> teardown+relaunch, no special recovery needed; and the wearer's own anecdotal report that
+> ~20s of deliberately waving a "parked" controller in view brought both hands back and kept
+> them tracking — not yet measured as a repeatable procedure, worth a controlled retest.
+>
+> ---
+
 > ## START HERE (2026-08-25 cont. — SLAM_THREADS=6 confirmed fixes the SLAM+constellation queueing bottleneck, controlled A/B, still needs a real-game validation before becoming the default)
 >
 > Followed up on the pacing dissection below with a controlled `SLAM_THREADS` A/B (no headset
