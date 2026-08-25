@@ -103,6 +103,17 @@ TARGETS = {
         "appid": "1073390",
         "result": {"type": "app-fps", "window_s": 20, "repeats": 3},
     },
+    "cyberpilot": {
+        # Wolfenstein: Cyberpilot (docs/23: constellation ON, both controllers
+        # registered -- run with --tracking ctrl, not the aircar-style default
+        # 3dof). ~15G install, added to the catalog 2026-08-25 specifically to
+        # A/B vr-prewarm.sh's cache vs ram mode now that the 32G RAM upgrade
+        # raised the tmpfs (10G->20G) and the ram-mode cap (12G->16G) enough for
+        # this title to be size-eligible for the first time (docs/23:410).
+        "kind": "vr-game",
+        "appid": "1056970",
+        "result": {"type": "app-fps", "window_s": 20, "repeats": 3},
+    },
     "metro2033": {
         # Native Linux build (no Proton), same "steam" kind as quake2 -- Steam just
         # launches the bare ELF binary directly. The install has its own
@@ -328,9 +339,20 @@ def launch_proton_standalone(spec, api):
                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
 
 
-def launch_vr_game(spec, tracking):
+def launch_vr_game(spec, tracking, controllers):
     env = gui_env.get()
     env["U_PACING_APP_LOG"] = "debug"  # app-fps.sh needs this on the SERVICE, set before jack-in
+    if controllers:
+        # jack-in-wayland.sh's TRACKING enum can't express "6dof" (WMR_SLAM=1) and "ctrl"
+        # (WMR_CAMERAS=1 + constellation) at once -- both env vars are still individually
+        # overridable on top of any tracking mode (its own "for an A/B" comment), which is
+        # what a title like Cyberpilot actually needs: SLAM head tracking AND controllers.
+        # Found 2026-08-25 investigating a Cyberpilot instant-END_SESSION: it needs
+        # controllers REGISTERED (physically powered on before monado-service starts, see
+        # docs/03/T051) -- this flag does not power them on, it only stops the "ctrl" vs
+        # "6dof" tradeoff from silently leaving constellation off.
+        env["WMR_CAMERAS"] = "1"
+        env["WMR_CONSTELLATION_CONTROLLERS"] = "1"
     r = subprocess.run([str(VR / "jack-in-wayland.sh"), "up", "1", tracking],
                         env=env, capture_output=True, text=True, timeout=180)
     if r.returncode != 0:
@@ -456,6 +478,11 @@ def main():
                      help="proton-standalone targets only (heaven)")
     ap.add_argument("--tracking", choices=["3dof", "6dof", "ctrl"], default="3dof",
                      help="vr-game targets only")
+    ap.add_argument("--controllers", action="store_true",
+                     help="vr-game targets only: force WMR_CAMERAS=1 WMR_CONSTELLATION_CONTROLLERS=1 "
+                          "on top of --tracking (e.g. for --tracking 6dof + controllers together, "
+                          "which the tracking enum alone can't express). Controllers must already "
+                          "be powered on before the run -- this does not turn them on.")
     ap.add_argument("--gpu-limit", type=int, metavar="PCT",
                      help="pause the watchdog and pin GPU power to this %% of max for the run")
     ap.add_argument("--no-prewarm", action="store_true")
@@ -493,8 +520,9 @@ def main():
                 launch_proton_standalone(spec, args.api)
                 result = wait_for_screenshot_result(spec["result"], args.target)
             elif spec["kind"] == "vr-game":
-                log(f"launching {args.target} (VR game, tracking={args.tracking})...")
-                if launch_vr_game(spec, args.tracking):
+                log(f"launching {args.target} (VR game, tracking={args.tracking}, "
+                    f"controllers={args.controllers})...")
+                if launch_vr_game(spec, args.tracking, args.controllers):
                     time.sleep(10)  # let the app actually start rendering before sampling
                     result = wait_for_app_fps_result(spec["result"])
             # Taken after the run, not before -- see PowerControl.snapshot()'s own
@@ -510,6 +538,7 @@ def main():
         "target": args.target,
         "config": {"api": args.api if spec["kind"] == "proton-standalone" else None,
                    "tracking": args.tracking if spec["kind"] == "vr-game" else None,
+                   "controllers": args.controllers if spec["kind"] == "vr-game" else None,
                    "gpu_limit_pct": args.gpu_limit},
         "result": result,
         "prewarm": prewarm_info,

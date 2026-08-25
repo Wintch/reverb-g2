@@ -1,5 +1,34 @@
 # Next step
 
+> ## START HERE (2026-08-25 cont. — Cyberpilot reinstalled, two real bugs found+fixed via bench-launcher.py, one still open and needs a human)
+>
+> Following up on the RAM-upgrade session below: reinstalled Wolfenstein: Cyberpilot
+> (appid 1056970) to the NVMe/NTFS library specifically to A/B `vr-prewarm.sh`'s cache vs ram
+> mode now that it's size-eligible (docs/23:410). First automated run
+> (`bench-launcher.py cyberpilot --tracking 6dof`) got a flat 0 fps; investigated with an
+> ultracode workflow (3 adversarial reviewers + synthesis, `wf_a1acdc09-138`) before touching
+> anything, per the user's ask -- their disagreement was itself informative: reviewers 1/2
+> built a self-consistent "missing controllers" case from `docs/23`'s own prior record, but
+> reviewer 3 checked Steam's `console-linux.txt` (a log neither of the others thought to
+> check, since `bench-launcher.py`'s `launch_steam()` sends the game's own stdout/stderr to
+> DEVNULL) and found the REAL cause: the exact `docs/70` NTFS `dosdevices/c:` `Errno 22` bug,
+> independently confirmed by hand afterward. Fixed both real bugs found: (1) `compatdata/
+> 1056970` relocated off NTFS via symlink, docs/70's recipe; (2) `bench-launcher.py` gained a
+> `--controllers` flag (`WMR_CAMERAS=1 WMR_CONSTELLATION_CONTROLLERS=1`) since `--tracking`
+> alone can't express SLAM+constellation together and this title needs both. Full detail in
+> docs/23's Cyberpilot row. **Still open, and this is where the earlier "runs great
+> unattended" pattern (Aircar, Quake2) breaks**: even with both fixes, the exact same instant
+> `BEGIN_SESSION`->`END_SESSION` happened a THIRD time, with the game process staying alive
+> for 70s+ afterward (never crashed) -- reads as an idTech intro-video/menu-navigation gap
+> `bench-launcher.py`'s unattended ~70s window can't push through, not a tracking bug. Needs
+> a human wearing the headset to get past the intro/menu once, then a real measurement pass
+> (both the cache-vs-ram prewarm A/B this session originally set out to do, and the
+> performance+6dof-stability data the user asked to focus on). Also found, not chased:
+> `bench-launcher.py`'s teardown didn't kill the game process on the first run (manual
+> `game-stop.py stop` was needed).
+>
+> ---
+
 > ## START HERE (2026-08-25 — physical RAM upgrade to 32G, /mnt/vrtmp and vr-prewarm.sh's ram-mode cap raised to match)
 >
 > Machine now has 32G RAM (`free -h`: 31Gi). Raised the two things that were deliberately
