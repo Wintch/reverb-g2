@@ -73,24 +73,70 @@ capability-probe session, because the real OpenXR session only opens once the he
 wear sensor fires — `docs/67 §8`). A human needs to actually put the headset on for any of
 these three to produce a real session.
 
-### Aircar (1073390) — the reference title, most-worked, still not fully certified
+### Aircar (1073390) — APPROVED for the demo (2026-08-26), gamepad + 3dof only
+
+**Live-tested and approved by the user 2026-08-26 with a human wearing the headset, in this
+EXACT configuration — do not substitute `6dof` for this booth, see below for why.**
 
 ```
-VR_LAUNCH_APPID=1073390 ./scripts/vr-launcher.py 1 6dof
+VR_LAUNCH_APPID=1073390 ./vr-launcher.py 1 3dof
 ```
 
-- `TITLE_PROFILES` already sets `WMR_CONSTELLATION_CONTROLLERS=0` for this appid — no manual
-  env needed, and it's in `NO_HANDS_TITLES` so the controller-registration check stays
-  informational (an Xbox pad is what it actually needs, not motion controllers).
-- **Known gotcha**: expect possible VIO runaways / relocation in the first ~75 seconds seated,
-  worse in dim light — recentre with the pad's A button. `jack-in-wayland.sh down` after a long
-  session can hang >10s before SIGKILL (`docs/06`) — that's an already-known non-fatal teardown
-  hang, not a new crash, don't panic-restart on top of it.
-- **Not fully certified per `docs/67 §2`'s own acceptance table**: run #1 (T245, 2026-08-23)
-  met sustained 88-90fps, clean pacing, and companion-drop recovery, but **failed** the
-  no-relocation criterion (3 VIO runaways in 75s) and never reached the required 30-minute worn
-  duration (only 13.5 min). Run #2 (normal light, ≥30 min soak) is `docs/67`'s own stated next
-  step and has not happened yet as of the most recent `NEXT-STEP.md` entries.
+- `TITLE_PROFILES` already sets `WMR_CONSTELLATION_CONTROLLERS=0` for this appid (Xbox pad
+  input, no hands) — `3dof` on top of that means WMR_SLAM=0 and WMR_CAMERAS=0 too: head
+  rotation only, off the IMU, no cameras/SLAM in the loop at all.
+- **Measured 2026-08-26**: clean **90.00 fps** both measurement windows (`app-fps.sh`), GPU
+  93% util / 249 W / 75°C, **zero USB disconnects** over the test. Audio confirmed stable
+  through the headset the whole time (see the audio section above — route it to `headset`
+  and set volume via `hmd-audio.sh headset`, which now defaults to 120%, before handing over
+  the headset).
+- **Why 3dof, not 6dof, for this booth**: `docs/67 §2`'s own 6dof run (T245, 2026-08-23) hit 3
+  VIO runaways/relocations in the first 75 seconds and never reached its 30-minute soak
+  target. The user's own verdict after comparing both live: *"prefiero que ande así para la
+  demo que con 6dof del casco pero a medias"* (prefer it running like this over 6dof
+  half-working) — 3dof trades positional head tracking for zero relocation risk and a
+  guests-per-hour-friendly, nothing-ever-stutters experience. This is the approved config;
+  6dof stays a research track (`docs/67`), not a demo option, until it clears its own bar.
+- **Known gotcha, only relevant if 6dof is ever revisited**: VIO runaways/relocation in the
+  first ~75 seconds seated, worse in dim light — irrelevant in 3dof (no SLAM running at all).
+  `jack-in-wayland.sh down` after a long session can hang >10s before SIGKILL (`docs/06`) —
+  that's an already-known non-fatal teardown hang, not a new crash, don't panic-restart on
+  top of it.
+
+**6dof retest, same night, later — good light was the variable, but not yet "perfect":**
+re-ran the exact `docs/67 §2` retest that had never happened (`VR_LAUNCH_APPID=1073390
+./vr-launcher.py 1 6dof`, well-lit room this time). Result: **zero VIO runaways past the
+critical first 75s** (max frame-to-frame pose jump over 375s/6.25 min worn: 0.17 m, vs. the
+previous run's raw pose parked at 41 m), clean 90.00 fps, zero USB disconnects during the
+live session. Confirms light was the real variable behind T245's failure. **Did not run the
+full 30-minute soak** — stopped at ~6 minutes worn. User's own verdict, direct quote:
+*"no es platinum, pero es gold, suma mucho a la experiencia y anda muy bien"* (not platinum,
+but gold — adds a lot, works very well) and *"apenas se nota que no es 100% como el 3dof"*
+(you can barely tell it's not 100% like 3dof). **Still NOT promoted to the approved demo
+config** — this project's own bar is "approved only when it's perfect, discard rather than
+oversell to guests" — 6dof is a strong, promising result, not yet a pass. Before it can
+replace 3dof as the approved config: complete the 30-minute soak, and get a specific answer
+to what keeps it from "platinum" (the user was asked but the session moved on before an
+answer landed — worth asking again next time 6dof comes up).
+
+**The specific answer landed later the same session: YAW is the weak axis.** User's own
+finding, live: fast head rotation around yaw drifts him out of his seated position far more
+than the same speed of rotation on the other axes — his own estimate, **~20x worse**.
+Recoverable instantly with the pad's A button (the existing recentre binding), but it *will*
+happen with first-time guests turning their head quickly, which a demo booth guarantees.
+**This is a different mechanism from `docs/55`'s yaw-ghost-layer work** — that's about
+controller constellation pose solving, not head SLAM — parallel finding, not the same fix.
+Root cause not chased tonight (a plausible generic reason: fast yaw sweeps visual features
+across the camera frame fastest of the three rotation axes, both because the WMR camera
+layout is optimized for the *forward* view and any yaw pushes it off-axis, so cheaper to
+re-litigate a separate day). **Standing instruction for the demo operator, not yet built into
+the onboarding script**: watch for a guest turning their head quickly side-to-side, and be
+ready to say "press the A button" — don't wait for them to visibly disorient first. Also hit
+during this same test: audio and gamepad input both silently stopped (only head tracking kept
+working) because the Aircar companion window had lost desktop focus with nothing re-focusing
+it — window focus governs more than fps here, it gates Wine's raw input/audio routing too.
+Fixed live by re-focusing the window (`xdotool windowactivate`); **not yet built as an
+automated alert**, flagged as a real gap for the operator script (see `docs/79`).
 
 ### Dreams of Dalí (591360) — confirmed working today, headset-only input, still no metrics
 
@@ -157,8 +203,10 @@ Before starting the next title:
 
 ## 4. What's explicitly NOT ready yet
 
-- **Aircar**: relocation/recentre criterion unmet, 30-min soak test never run. Currently the
-  most-measured of the three, but its own exam is not passed per the project's own bar.
+- **Aircar (6dof)**: relocation/recentre criterion unmet, 30-min soak test never run — still a
+  research track, not a demo option. **Aircar in `3dof` (gamepad-only) IS approved for the
+  demo (2026-08-26)**: clean 90fps, zero USB drops, live-tested and signed off by the user in
+  this exact config (see section 2 above) — use `3dof`, not `6dof`, at the booth.
 - **Dreams of Dalí**: input method and tracking mode now confirmed (headset-only gaze-dwell,
   6dof, wired into the launcher) and audio confirmed very good — but still zero recorded
   fps/pacing/duration numbers behind the good subjective result.

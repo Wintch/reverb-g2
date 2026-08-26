@@ -6,6 +6,7 @@ into the boot path yet.
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -98,6 +99,26 @@ def gpu_power():
         return None
 
 
+def audio_status():
+    # Found live 2026-08-26: the headset's USB Audio sink is never the system
+    # default on its own (this rig's onboard analog output is) -- a game
+    # launched normally plays out loud on the room speakers, not the
+    # headset. hmd-audio.sh's headset/external subcommands fix this; this
+    # just reports which one is currently active so it's visible without
+    # SSHing in mid-demo.
+    default_sink, _ = run(["pactl", "get-default-sink"])
+    route = "headset" if "usb" in default_sink.lower() else "external"
+    vol_out, _ = run(["pactl", "get-sink-volume", "@DEFAULT_SINK@"])
+    mute_out, _ = run(["pactl", "get-sink-mute", "@DEFAULT_SINK@"])
+    m = re.search(r"(\d+)%", vol_out)
+    return {
+        "default_sink": default_sink,
+        "route": route,
+        "volume_pct": int(m.group(1)) if m else None,
+        "muted": "yes" in mute_out.lower(),
+    }
+
+
 def git_head():
     out, _ = run(["git", "-C", "/home/iam/Documents/reverb-g2", "log", "-1", "--format=%h %s"])
     dirty, _ = run(["git", "-C", "/home/iam/Documents/reverb-g2", "status", "--short"])
@@ -154,22 +175,49 @@ ACTIONS = {
         "cmd": ["python3", "scripts/game-stop.py", "stop", "all"],
         "cwd": f"{HOME}/Documents/reverb-g2",
     },
-    "launch-aircar": {
-        "label": "Launch Aircar",
-        "cmd": ["steam", "-applaunch", "1073390"],
+    "audio-headset": {
+        "label": "Audio -> headset",
+        "cmd": [f"{HOME}/vr/hmd-audio.sh", "headset"],
         "cwd": f"{HOME}/vr",
     },
-    "launch-deadherring": {
-        "label": "Launch Dead Herring VR",
-        "cmd": ["steam", "-applaunch", "1498490"],
-        "cwd": f"{HOME}/vr",
-    },
-    "launch-cyberpilot": {
-        "label": "Launch Wolfenstein Cyberpilot",
-        "cmd": ["steam", "-applaunch", "1056970"],
+    "audio-external": {
+        "label": "Audio -> external",
+        "cmd": [f"{HOME}/vr/hmd-audio.sh", "external"],
         "cwd": f"{HOME}/vr",
     },
 }
+
+
+# Demo launches: one button per (title, head-tracking mode) pair, so the booth
+# only ever runs a combination that has been worn and signed off in that EXACT
+# setting (docs/75) -- the old "Launch <title>" buttons ran `steam -applaunch`
+# against whatever compositor happened to be up, tracking mode unknown. These go
+# through vr-launcher.py, which does the full compositor down/up in the requested
+# mode, applies the title's own resource profile, refuses to be a second client,
+# then launches. VR_LAUNCH_APPID is what skips its 15 s stdin prompt (the trap
+# noted on compositor-up above -- stdin is DEVNULL here). U_PACING_APP_LOG=debug so
+# app-fps.sh can measure the session afterwards.
+# status: "approved" = worn, measured and signed off for guests; "gold" = worn and
+# good but explicitly NOT approved yet (see docs/75 for the reason); "untested" =
+# never worn in this setting on this stack; "broken" = tried on this stack and it
+# does NOT work (kept visible so nobody re-tries it live thinking it's untested).
+# Only "approved" is a demo option.
+DEMO_LAUNCHES = [
+    ("Aircar", "1073390", "3dof", "approved", "Xbox pad. Recentre: A button."),
+    ("Aircar", "1073390", "6dof", "gold", "Yaw is the weak axis (~20x): fast head turns drift the seat, A button recentres. Not for guests yet."),
+    ("Dreams of Dali", "591360", "6dof", "approved", "Headset-only gaze-dwell, no controllers. 46-67 fps measured, experience still good."),
+    ("Hellblade", "747350", "6dof", "untested", "Proton prefix still on NTFS (docs/70 bug) -- will not launch until relocated. Motion-controller title."),
+    ("The Night Cafe", "482390", "6dof", "broken", "2026-08-26: launches + reaches runtime but renders FLAT 2D (0 delivered frames, headset backlight only) -- old Unity title does not engage VR via xrizer. Parked."),
+    ("Anne Frank House VR", "2877690", "6dof", "untested", "Needs Steam Launch Options set first (the XR_RUNTIME_JSON... recipe). Motion-controller title (docs/77)."),
+]
+for _name, _appid, _tracking, _status, _note in DEMO_LAUNCHES:
+    ACTIONS[f"demo-{_appid}-{_tracking}"] = {
+        "label": f"{_name} · {_tracking} [{_status}]",
+        "cmd": ["python3", f"{HOME}/vr/vr-launcher.py", "1", _tracking],
+        "cwd": f"{HOME}/vr",
+        "env": {"VR_LAUNCH_APPID": _appid, "U_PACING_APP_LOG": "debug"},
+        "demo": {"title": _name, "tracking": _tracking, "status": _status, "note": _note},
+    }
 
 
 def run_action(action_id):
@@ -181,7 +229,7 @@ def run_action(action_id):
         subprocess.Popen(
             action["cmd"],
             cwd=action["cwd"],
-            env=GUI_ENV,
+            env={**GUI_ENV, **action.get("env", {})},
             stdin=subprocess.DEVNULL,
             stdout=logf,
             stderr=subprocess.STDOUT,
@@ -214,6 +262,7 @@ def build_status():
         "gpu": driver_info(),
         "gpu_power": gpu_power(),
         "power_mode": rig_telemetry.power_mode(),
+        "audio": audio_status(),
         # Everything below this line mirrors pmadminka-agent.py's heartbeat body
         # (2026-08-23) -- same source functions, so the two never disagree.
         "specs": specs,
@@ -270,27 +319,53 @@ PAGE = """<!doctype html>
   #compositor-toggle { font-weight:600; border-width:2px; }
   #compositor-toggle.on { border-color:#4fd67a; color:#4fd67a; }
   #compositor-toggle.off { border-color:#6b7488; color:#dfe4ee; }
+  #audio-toggle.on { border-color:#4fd67a; color:#4fd67a; }
+  #audio-toggle.off { border-color:#ffb454; color:#ffb454; }
   #action-msg { font-size:13px; color:#8b93a7; min-height:18px; margin-bottom:16px; }
   .pwr-wrap { margin-bottom:10px; }
   .pwr-nums { display:flex; justify-content:space-between; font-size:13px; margin-bottom:4px; }
   .pwr-track { height:10px; border-radius:5px; background:#1c2230; overflow:hidden; position:relative; }
   .pwr-fill { height:100%; border-radius:5px; transition:width .4s ease, background .4s ease; }
   .pwr-limit-marker { position:absolute; top:0; bottom:0; width:2px; background:#ffffff55; }
+  .demo { display:flex; align-items:flex-start; gap:12px; padding:8px 0; border-bottom:1px dashed #232838; }
+  .demo button { flex:0 0 auto; min-width:190px; text-align:left; }
+  .demo .note { font-size:13px; color:#a9b1c3; }
+  .demo .st { font-size:11px; font-weight:700; padding:1px 7px; border-radius:5px; margin-right:6px; }
+  .st.approved { background:#123321; color:#4fd67a; }
+  .st.gold { background:#3a2a0f; color:#ffb454; }
+  .st.untested { background:#2a2f3d; color:#8b93a7; }
+  .st.broken { background:#3a1414; color:#ff6b6b; }
+  .guide li { font-size:13px; color:#c7cdd9; margin:4px 0 4px 16px; }
+  .guide b { color:#7fdbca; }
 </style></head>
 <body>
 <h1>iashur -- HP Reverb G2 lab status</h1>
 <div id="attn"></div>
 <div id="actions-row" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:16px;">
   <button id="compositor-toggle" disabled>compositor: --</button>
+  <button id="audio-toggle" disabled>audio: --</button>
   <div id="actions">loading actions...</div>
 </div>
 <div id="action-msg"></div>
+<div class="card" style="margin-bottom:16px">
+  <h2>Demos -- one button per title + head-tracking mode (only "approved" goes to guests)</h2>
+  <div id="demos">loading demos...</div>
+  <h2 style="margin-top:14px">Operator guide (standing, every guest)</h2>
+  <ul class="guide">
+    <li><b>Audio</b>: the "audio" toggle above must read <b>headset</b> before handing over (130%). If sound vanishes mid-session the stream got orphaned by a USB re-enumeration -- click "Audio -&gt; headset" again, it re-routes live.</li>
+    <li><b>Window focus</b>: the game's desktop window must be <b>focused</b> or Wine drops gamepad + audio (only head tracking keeps working). If a guest says "no sound / pad dead", click the game window first, don't debug.</li>
+    <li><b>Fast head turns (6dof only)</b>: yaw is the weak axis -- a quick side-to-side look drifts the seat. Tell the guest <b>"press A"</b> the moment you see it, don't wait for them to notice.</li>
+    <li><b>Light</b>: no automated low-light warning exists. Dim room = tracking runaways in the first ~75 s. Check the room before each 6dof session.</li>
+    <li><b>Between titles</b>: "Stop all games" then wait for the session card to read IDLE before the next demo button. Never launch a second title on top of a live one.</li>
+  </ul>
+</div>
 <div class="grid" id="grid">loading...</div>
 <div class="ts" id="ts"></div>
 <script>
 // compositor-up/down are handled by the dedicated toggle button below, not
 // listed among the generic one-shot action buttons.
 const COMPOSITOR_ACTION_IDS = new Set(['compositor-up', 'compositor-down']);
+const AUDIO_ACTION_IDS = new Set(['audio-headset', 'audio-external']);
 
 async function loadActions() {
   try {
@@ -299,7 +374,7 @@ async function loadActions() {
     const el = document.getElementById('actions');
     el.innerHTML = '';
     for (const [id, label] of Object.entries(actions)) {
-      if (COMPOSITOR_ACTION_IDS.has(id)) continue;
+      if (COMPOSITOR_ACTION_IDS.has(id) || AUDIO_ACTION_IDS.has(id)) continue;
       const btn = document.createElement('button');
       btn.textContent = label;
       btn.onclick = () => runAction(id, btn);
@@ -329,7 +404,39 @@ function updateCompositorToggle(running) {
   btn.textContent = running ? '● compositor ON -- click to stop' : '○ compositor off -- click to start';
   btn.onclick = () => runAction(running ? 'compositor-down' : 'compositor-up', btn);
 }
+function updateAudioToggle(route) {
+  const btn = document.getElementById('audio-toggle');
+  btn.disabled = false;
+  const onHeadset = route === 'headset';
+  btn.className = onHeadset ? 'on' : 'off';
+  btn.textContent = onHeadset ? '🎧 audio: headset -- click for external' : '🔊 audio: external -- click for headset';
+  btn.onclick = () => runAction(onHeadset ? 'audio-external' : 'audio-headset', btn);
+}
+async function loadDemos() {
+  try {
+    const r = await fetch('/api/demos');
+    const demos = await r.json();
+    const el = document.getElementById('demos');
+    el.innerHTML = '';
+    for (const [id, d] of Object.entries(demos)) {
+      const row = document.createElement('div');
+      row.className = 'demo';
+      const btn = document.createElement('button');
+      btn.textContent = `Launch ${d.title} · ${d.tracking}`;
+      btn.onclick = () => runAction(id, btn);
+      const info = document.createElement('div');
+      info.className = 'note';
+      info.innerHTML = `<span class="st ${d.status}">${d.status.toUpperCase()}</span>${d.note}`;
+      row.appendChild(btn);
+      row.appendChild(info);
+      el.appendChild(row);
+    }
+  } catch(e) {
+    document.getElementById('demos').textContent = 'failed to load demos: ' + e;
+  }
+}
 loadActions();
+loadDemos();
 function gpuPowerHtml(p) {
   if (!p) return '<div class="pwr-wrap"><span class="dim">power data unavailable</span></div>';
   const pct = Math.max(0, Math.min(100, (p.draw_w / p.max_limit_w) * 100));
@@ -371,6 +478,7 @@ async function tick() {
     // when a session IS supposed to be active (monado running).
     const sessionActive = d.monado.running;
     updateCompositorToggle(sessionActive);
+    updateAudioToggle(d.audio ? d.audio.route : 'external');
     const usbRows = Object.entries(d.usb.devices).map(([id, v]) =>
       `<div class="row"><span>${v.label}</span><span class="${v.present?'ok':'bad'}">${v.present?'OK':'MISSING'} (${id})</span></div>`
     ).join('');
@@ -395,6 +503,10 @@ async function tick() {
     const trackingRow = sessionActive
       ? `<div class="row"><span>tracking</span><span class="ok">${d.tracking || '?'}</span></div>`
       : `<div class="row"><span>tracking</span><span class="dim">n/a -- no session</span></div>`;
+    const audio = d.audio || {};
+    const audioCls = audio.route === 'headset' ? 'ok' : 'warn';
+    const audioLabel = `${audio.route || '?'}${audio.muted ? ' (MUTED)' : ''} -- ${audio.volume_pct != null ? audio.volume_pct + '%' : '?'}`;
+    const audioRow = `<div class="row"><span>audio output</span><span class="${audioCls}">${audioLabel}</span></div>`;
     const specs = d.specs || {};
     const cpu = specs.cpu || {}, gpuSpec = specs.gpu || {};
     document.getElementById('grid').innerHTML = `
@@ -403,6 +515,7 @@ async function tick() {
         <div class="row"><span>state</span><span class="${sessionActive?'ok':'dim'}">${sessionActive?'ACTIVE -- compositor running':'IDLE -- no game/compositor session right now, this is normal at rest'}</span></div>
         <div class="row"><span>power mode</span>${powerRow}</div>
         ${trackingRow}
+        ${audioRow}
       </div>
       <div class="card"><h2>USB (${d.usb.present_count}/${d.usb.total})</h2>${usbRows}</div>
       <div class="card"><h2>Display connectors</h2>${drmRows}</div>
@@ -442,7 +555,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.startswith("/api/actions"):
-            body = json.dumps({k: v["label"] for k, v in ACTIONS.items()}).encode()
+            body = json.dumps({k: v["label"] for k, v in ACTIONS.items() if "demo" not in v}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif self.path.startswith("/api/demos"):
+            body = json.dumps({k: v["demo"] for k, v in ACTIONS.items() if "demo" in v}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))

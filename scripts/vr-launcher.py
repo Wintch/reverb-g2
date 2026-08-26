@@ -119,6 +119,14 @@ GAMES = [
     ("Aperture Hand Lab", "868020"),
     ("Transmissions: Element 120", "365300"),
     ("OpenVR Benchmark", "955610"),
+    # Added 2026-08-26 from docs/77 (art/literary shortlist), both free, both installed on
+    # /mnt/win5 with their Proton prefixes pre-relocated to ext4 (docs/70 bug). Neither has
+    # been worn on this stack yet; both reportedly need controller point/grab (docs/77).
+    ("The Night Cafe", "482390"),
+    ("Anne Frank House VR", "2877690"),
+    # docs/23: its FAIL verdict (T161) was measured with launch options missing
+    # PRESSURE_VESSEL_FILESYSTEMS_RW -- recipe complete since, never retested.
+    ("NVIDIA VR Funhouse", "468700"),
 ]
 DEFAULT_GAME = "Aircar"
 
@@ -342,32 +350,53 @@ def check_controllers_registered(appid):
     print("   y volver a subir -- una vez, no en loop (reinicios encadenados = falla USB2).")
 
 
-def find_steamapps_dir():
-    """A handful of real, common install locations -- Steam itself has used
-    different ones across distros/versions. None found -> None, callers must
-    fall back to showing the full catalog unfiltered rather than crash."""
-    for candidate in (
-        Path.home() / ".steam" / "debian-installation" / "steamapps",
-        Path.home() / ".steam" / "steam" / "steamapps",
-        Path.home() / ".local" / "share" / "Steam" / "steamapps",
-    ):
-        if candidate.is_dir():
-            return candidate
-    return None
+def find_steamapps_dirs():
+    """Every real steamapps dir this rig has, primary AND secondary libraries.
+
+    Found live 2026-08-26: this used to return just the FIRST primary path it
+    found and stop there, so any title installed on a secondary library (this
+    rig has two: /mnt/win5/SteamLibrary, /mnt/videos/SteamLibrary -- Dali,
+    Hellblade and Cyberpilot all live on those, not the primary) silently read
+    as "not installed" and vanished from the picker with no error, right
+    before a live demo. Reads the primary's own libraryfolders.vdf for the
+    authoritative secondary-library list (it can lag a fresh install by one
+    write cycle, so /mnt/*/SteamLibrary is also scanned directly as a
+    fallback) rather than hardcoding mount paths that could change."""
+    primaries = (
+        Path.home() / ".steam" / "debian-installation",
+        Path.home() / ".steam" / "steam",
+        Path.home() / ".local" / "share" / "Steam",
+    )
+    primary = next((p for p in primaries if (p / "steamapps").is_dir()), None)
+    if primary is None:
+        return []
+    dirs = [primary / "steamapps"]
+    vdf = primary / "steamapps" / "libraryfolders.vdf"
+    if vdf.is_file():
+        for m in re.finditer(r'"path"\s+"([^"]+)"', vdf.read_text(errors="replace")):
+            candidate = Path(m.group(1)) / "steamapps"
+            if candidate.is_dir() and candidate not in dirs:
+                dirs.append(candidate)
+    for mnt_lib in Path("/mnt").glob("*/SteamLibrary/steamapps"):
+        if mnt_lib.is_dir() and mnt_lib not in dirs:
+            dirs.append(mnt_lib)
+    return dirs
 
 
 def installed_games():
     """"mapeamos lo que hay" -- don't just trust the hardcoded catalog, check
     which of those AppIDs are actually installed right now (an
-    appmanifest_<id>.acf really exists), so an uninstalled/removed title never
-    shows up as pickable. Falls back to the full catalog if steamapps can't be
-    found at all -- better to offer something than nothing."""
-    steamapps = find_steamapps_dir()
-    if steamapps is None:
+    appmanifest_<id>.acf really exists in ANY known library), so an
+    uninstalled/removed title never shows up as pickable, and one actually
+    installed on a secondary library isn't missed either. Falls back to the
+    full catalog if no steamapps dir at all can be found -- better to offer
+    something than nothing."""
+    steamapps_dirs = find_steamapps_dirs()
+    if not steamapps_dirs:
         return list(GAMES)
     return [
         (name, appid) for name, appid in GAMES
-        if (steamapps / f"appmanifest_{appid}.acf").exists()
+        if any((d / f"appmanifest_{appid}.acf").exists() for d in steamapps_dirs)
     ]
 
 

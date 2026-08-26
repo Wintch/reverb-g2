@@ -347,6 +347,87 @@ cleanup (`kill` after the run), since an orphaned keepalive never notices its re
 Verification: keyboard paths re-checked via fake pty after the raw-read switch (all keys
 work, clean exit in 0.06s), and the full controller flow confirmed live with the headset on.
 
+### Stereo audio (2026-08-26, `0021-*.patch`) — NOT YET VERIFIED LIVE
+
+`HELLO_XR_AUDIO=1` plays the file's audio track through PipeWire, synced to video. Scope is
+deliberately narrow: **head-locked stereo passthrough, no spatialization.** Everything this
+player actually plays comes from `get360.sh`'s `android_vr` YouTube path or is plain stereo
+to begin with — never ambisonic — so there is no HRTF/head-rotation work to do; the two
+channels just get decoded, resampled, and handed to the sound card as-is.
+
+**Default is unset, and unset means zero behavior change.** No new thread starts, no audio
+codec or `pa_simple` connection opens, and the demux loop routes audio packets exactly like
+it always did (reads them, never touches them, `av_packet_unref`s them). This was load-
+bearing for the design: the silent player is a working demo people rely on, and audio was
+not allowed to add any risk to it when off.
+
+**How it plays, when on:** `Open()` finds the file's audio stream with `av_find_best_stream`,
+opens its own `AVCodecContext`, and sets up an `swresample` context that normalizes whatever
+the file carries (any sample rate/format/channel count) to a fixed **S16LE / 48000 Hz /
+stereo**, matching what `pa_simple` is told to expect. A dedicated audio thread pulls packets
+the video demux thread now routes into a second queue (previously discarded), decodes,
+resamples, and blocks on `pa_simple_write()` — that blocking write is the entire pacing
+mechanism: PipeWire only accepts more data once the hardware has consumed what's already
+queued, the same way the video side's `TakeFreeSlot()` blocking paces decode against the
+renderer.
+
+**Sync — audio becomes the master clock once active.** The existing video clock
+(`playbackTime`, a wall-clock accumulator scaled by `rate`) is real-time-accurate but drifts
+independently of whatever's actually audible. Once `HELLO_XR_AUDIO` is active, the audio
+thread tracks how many stereo sample-pairs it has written since a known anchor point in the
+file's own pts timeline, subtracts `pa_simple`'s own reported latency (samples written but
+still sitting in the server buffer, not yet audible), and publishes the result as an atomic.
+`AcquireCurrentSlot()` reads that atomic with no locking — the render thread never calls into
+`pa_simple` itself — and uses it as `playbackTime` instead of the wall-clock accumulator.
+Falls back to the old accumulator for the brief startup window before the first audio chunk
+lands, and for one beat right after a loop seam or a manual seek while the audio thread is
+mid-flush.
+
+**Loop and seek** both already reset the video side's own clock state
+(`clockStarted`/`loopOffset`/the frame queue) in `DecodeLoop()`; the same two spots now also
+raise an `audioResetPending` flag on a second mutex/condition-variable pair dedicated to
+audio, so a busy audio thread can never add latency to the 90 Hz render path. The audio
+thread answers by draining its packet queue, calling `avcodec_flush_buffers` on its own
+codec context, flushing `pa_simple`'s buffer, and re-anchoring to the new position — so
+stale pre-seek or pre-loop audio never bleeds across the seam. (Not reset on either seam:
+`swresample`'s own internal resampling delay line, a sub-millisecond artifact at typical
+44.1/48 kHz source rates — not worth a full close/reinit on every loop.)
+
+**Pause** (`SetRate(0)`, the grip button since patch 0005) leaves the audio thread holding a
+fully-decoded, fully-resampled chunk rather than writing it, after flushing `pa_simple`
+exactly once on the transition into pause — so whatever was already buffered goes silent
+immediately instead of audibly finishing itself out over the sound server's buffer. This
+matches the gesture's intent: pause is supposed to be instant.
+
+**Rate ≠ 0 or 1 (slow-mo/fast-forward) is out of scope** — the demo only ever uses rate 1.
+Audio keeps playing at normal speed regardless of `rate` (it has no independent time-stretch
+path); the only guarantee made for other rates is that it won't crash.
+
+**Failure handling:** anything that can go wrong here — no audio stream in the file, the
+codec or resampler won't open, `pa_simple_new()` can't reach a sound server — logs exactly
+one line and falls back to silent, video-only playback. This was a hard requirement: a demo
+must never die because its audio track or output device didn't cooperate.
+
+**What's verified and what isn't.** Built clean (`ninja hello_xr`) under this project's full
+warning set (`-Wall -Werror=unused-parameter -Wpointer-arith -Werror=implicit-fallthrough
+-Werror=undef -Werror=missing-braces -Werror=unreachable-code`), linking cleanly against
+`libswresample` and `libpulse-simple`. Separately confirmed with a standalone test program
+that `pa_simple` actually reaches this box's live PipeWire-Pulse sink (connect, six chunks
+written, latency readback climbing to a plateau as expected, clean drain and shutdown) — so
+the output side of the design is known-good on this hardware. **Not yet run end to end**:
+doing that needs a live XR session (real headset or Monado's simulated-HMD fallback), which
+this change didn't attempt, matching this project's own rule that anything audiovisual is
+verified by a human, not by logs. Still to check with the headset on: audio is actually
+audible; A/V sync holds over a full loop (the seam is exactly where this design's riskiest
+logic lives); grip-pause silences audio immediately, not with a tail; and quitting mid-
+playback doesn't hang or crash (join order in the destructor: audio thread first, then
+`pa_simple_free`/`swr_free`/codec context — untested against a live process).
+
+Command to test once the headset session is up: `HELLO_XR_AUDIO=1 ~/vr/play360.sh <a
+VR180/360 file that actually has an audio track> [args]`. A file transcoded through
+`stereo3d-pack` may have dropped its audio track entirely — check with `ffprobe` before
+assuming a silent run means the feature is broken.
+
 ## Projections and stereo (v3)
 
 The player understands three projections — **360 equirect, VR180 half-equirect, flat**
@@ -432,6 +513,7 @@ the screen ends up more than 100° tall, more than the headset's FOV (the wrappe
 | `HELLO_XR_VIDEO_STATS=1` | separate decode and upload stats |
 | `HELLO_XR_POSE_STATS=1` | fps + rotation delta between frames |
 | `HELLO_XR_FIXED_POSE=1` | ignores tracking — diagnostic |
+| `HELLO_XR_AUDIO=1` | plays the file's audio track through PipeWire, head-locked stereo, synced to video (see "Stereo audio" above) — NOT YET VERIFIED LIVE |
 
 ## How the video works (v3, zero-memcpy)
 
@@ -584,7 +666,11 @@ With the headset on and `HELLO_XR_VIDEO_STATS=1`:
 - Fourth detection criterion for flat SBS without metadata (see the `stereo3d-pack` section).
   The 90 Hz freeze is over (resolved 2026-08-06, `docs/19`) — this is unblocked, pending by
   priority only.
-- Video audio (silent today; decode→PipeWire + A/V sync).
+- ~~Video audio (silent today; decode→PipeWire + A/V sync)~~ IMPLEMENTED 2026-08-26
+  (`0021-*.patch`, `HELLO_XR_AUDIO=1` — see "Stereo audio" above): built and linking clean,
+  `pa_simple` confirmed reachable on this box; the decode/resample/sync path itself and every
+  in-headset behavior (audible, A/V sync over a loop, pause, clean quit) still needs a human
+  with the headset on before it counts as verified.
 - Real zero-copy CUDA↔Vulkan (import the NVDEC surface as a Vulkan image, zero PCIe).
   Unnecessary today: we're already at full rate. This is THE optimization if 90Hz+8K demands more.
 - YouTube "mesh" projection: our half-equirect is an approximation; if stretching is

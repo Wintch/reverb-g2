@@ -1,0 +1,531 @@
+From 1ea7f129171d4e7c46845816503a869aa2b61d1a Mon Sep 17 00:00:00 2001
+From: iam <iam@iashur.internal>
+Date: Wed, 26 Aug 2026 06:39:04 -0300
+Subject: [PATCH] 360 viewer: stereo audio playback via PipeWire's pa_simple,
+ A/V sync
+
+HELLO_XR_AUDIO=1 opens the file's audio stream (if any) alongside the existing
+video decode, resamples it to S16/48000/stereo with swresample, and plays it
+through pa_simple - the PulseAudio-compatible blocking API PipeWire's own Pulse
+shim implements, the same output path the rest of this rig's audio already uses.
+Head-locked only: the content this player is built around (get360.sh's android_vr
+downloads) is plain stereo, never ambisonic, so there is no spatialization/HRTF to
+do - just decode, resample, and hand the two channels to the sound card.
+
+Unset (default): zero behavior change. No new thread, no codec/resampler/pa_simple
+opened, no packet routing changed - the existing silent player is byte-for-byte
+what it was.
+
+Sync: audio becomes the master clock once active. pa_simple_write's blocking
+pacing IS the real hardware/PipeWire clock; the audio thread tracks how many
+frames it has written since a known anchor pts and corrects for pa_simple's own
+reported latency (frames written but not yet audible), publishing the result as
+an atomic the render thread's AcquireCurrentSlot() reads with no locking. Falls
+back to the existing wall-clock*rate accumulator during the brief startup window
+and for one beat after a loop seam or seek while the audio thread is mid-flush.
+
+Loop/seek: DecodeLoop signals the audio thread (a new audioResetPending flag,
+its own mutex/cv so a busy audio thread never adds latency to the 90Hz render
+path) at the same points it already resets its own clockStarted/loopOffset - the
+audio thread answers by flushing its packet queue, pa_simple's buffer, and
+re-anchoring, so stale pre-seek/pre-loop audio never bleeds across the seam.
+
+Pause: SetRate(0) leaves the audio thread holding a fully-decoded chunk rather
+than writing it, after flushing pa_simple once on the transition so buffered
+audio goes silent immediately instead of fading out over the buffer - matching
+the grip-to-pause gesture's intent (patch 0005) to be instant.
+
+Any failure along the way (no audio stream, codec/resampler won't open, no sound
+server to talk to) is logged once and playback continues video-only - a demo
+must not die because its audio track or output device didn't cooperate.
+
+Build-verified only (`ninja hello_xr`, clean under -Wall plus this project's
+-Werror=implicit-fallthrough/-Werror=undef/-Werror=missing-braces, links against
+libswresample and libpulse-simple). Confirmed pa_simple actually reaches this
+box's live PipeWire-Pulse sink with a standalone test (connect, write, latency
+readback, drain, all clean) - the decode+resample+sync logic itself has NOT been
+run end to end: that needs a real XR session (headset or Monado's simulated HMD
+fallback), which is out of scope for this change per the project's own
+human-verification rule for anything audiovisual.
+
+CMakeLists.txt: libswresample added to the existing FFMPEG pkg-config group;
+libpulse-simple checked for separately and optional - its absence just means
+HELLO_XR_AUDIO has no effect, not a build failure.
+---
+ src/tests/hello_xr/CMakeLists.txt |  21 +-
+ src/tests/hello_xr/video360.cpp   | 337 +++++++++++++++++++++++++++++-
+ 2 files changed, 355 insertions(+), 3 deletions(-)
+
+diff --git a/src/tests/hello_xr/CMakeLists.txt b/src/tests/hello_xr/CMakeLists.txt
+index 19003e5..a703640 100644
+--- a/src/tests/hello_xr/CMakeLists.txt
++++ b/src/tests/hello_xr/CMakeLists.txt
+@@ -193,16 +193,33 @@ if(XR_USE_GRAPHICS_API_VULKAN)
+ endif()
+ 
+ # 360 equirectangular video playback (video360.cpp). Optional - without ffmpeg the viewer
+-# still shows still photos, it just refuses HELLO_XR_VIDEO360.
++# still shows still photos, it just refuses HELLO_XR_VIDEO360. libswresample rides along
++# with the rest of ffmpeg (it's used for the optional stereo audio path below, converting
++# whatever the file carries to a fixed S16/48000/stereo format).
+ find_package(PkgConfig QUIET)
+ if(PKG_CONFIG_FOUND)
+     pkg_check_modules(
+-        FFMPEG IMPORTED_TARGET libavcodec libavformat libavutil libswscale
++        FFMPEG IMPORTED_TARGET libavcodec libavformat libavutil libswscale libswresample
+     )
+ endif()
+ if(FFMPEG_FOUND)
+     target_link_libraries(hello_xr PRIVATE PkgConfig::FFMPEG)
+     target_compile_definitions(hello_xr PRIVATE HAVE_FFMPEG)
++
++    # Optional stereo audio for the 360/VR180 player, gated at runtime by HELLO_XR_AUDIO=1
++    # (video360.cpp). Output goes through pa_simple, the PulseAudio-compatible blocking API
++    # PipeWire's own Pulse shim implements - the same path the rest of this rig's audio
++    # already uses. Not required to build: without it, HELLO_XR_AUDIO simply has no effect
++    # and the player is exactly the silent demo it always was.
++    if(PKG_CONFIG_FOUND)
++        pkg_check_modules(PULSE_SIMPLE IMPORTED_TARGET libpulse-simple)
++    endif()
++    if(PULSE_SIMPLE_FOUND)
++        target_link_libraries(hello_xr PRIVATE PkgConfig::PULSE_SIMPLE)
++        target_compile_definitions(hello_xr PRIVATE HAVE_PULSE_SIMPLE)
++    else()
++        message(STATUS "hello_xr: libpulse-simple not found - HELLO_XR_AUDIO will have no effect")
++    endif()
+ else()
+     message(STATUS "hello_xr: ffmpeg not found - 360 video playback disabled")
+ endif()
+diff --git a/src/tests/hello_xr/video360.cpp b/src/tests/hello_xr/video360.cpp
+index 08df22f..d9234ed 100644
+--- a/src/tests/hello_xr/video360.cpp
++++ b/src/tests/hello_xr/video360.cpp
+@@ -49,13 +49,28 @@ int Video360::AcquireCurrentSlot() { return -1; }
+ extern "C" {
+ #include <libavcodec/avcodec.h>
+ #include <libavformat/avformat.h>
++#include <libavutil/channel_layout.h>
+ #include <libavutil/hwcontext.h>
+ #include <libavutil/imgutils.h>
+ #include <libavutil/pixdesc.h>
+ #include <libavutil/spherical.h>
+ #include <libavutil/stereo3d.h>
++#include <libswresample/swresample.h>
+ }
+ 
++// Stereo audio playback for the player, gated at runtime by HELLO_XR_AUDIO=1 (see the
++// "Stereo audio" section of docs/02-player-360.md). Head-locked only: the content this
++// player is built around (get360.sh's android_vr downloads) is plain stereo, never
++// ambisonic, so there is no spatialization/HRTF/head-rotation to do - the two channels are
++// just decoded, resampled to a fixed format, and handed to the sound card. HAVE_PULSE_SIMPLE
++// is defined by CMakeLists.txt only when libpulse-simple was found at configure time; when
++// it's absent, HELLO_XR_AUDIO is accepted but logs once and has no effect (video-only,
++// exactly today's behavior) - see the guarded call sites below.
++#if defined(HAVE_PULSE_SIMPLE)
++#include <pulse/error.h>
++#include <pulse/simple.h>
++#endif
++
+ namespace {
+ std::string AvErr(int err) {
+     char buf[AV_ERROR_MAX_STRING_SIZE]{};
+@@ -82,6 +97,11 @@ bool EnvOff(const char* name) {
+     return v != nullptr && v[0] == '0';
+ }
+ 
++bool EnvOn(const char* name) {
++    const char* v = getenv(name);
++    return v != nullptr && v[0] == '1';
++}
++
+ bool DecoderCanUseCuda(const AVCodec* codec) {
+     for (int i = 0;; i++) {
+         const AVCodecHWConfig* cfg = avcodec_get_hw_config(codec, i);
+@@ -162,6 +182,62 @@ struct Video360::Impl {
+     std::atomic<double> rate{1.0};
+     bool clockStarted{false};
+ 
++    // ---- Stereo audio (HELLO_XR_AUDIO=1) ----
++    // Fully optional, entirely self-contained here: nothing outside this block is touched
++    // when audioActive is false (the default), so the no-audio path is bit-for-bit what it
++    // was before this feature existed. audioActive is decided once in Open() (env var set,
++    // an audio stream exists, the codec/resampler/pa_simple all opened clean) and never
++    // changes after Start() - plain bool, no atomics needed, same convention as `loop` and
++    // `directXfer` above.
++    static constexpr int kAudioSampleRate = 48000;
++    static constexpr int kAudioChannels = 2;
++
++    bool audioActive{false};
++    int audioStreamIndex{-1};
++    AVCodecContext* audioDec{nullptr};
++    SwrContext* swr{nullptr};
++    double audioTimeBase{0.0};
++#if defined(HAVE_PULSE_SIMPLE)
++    pa_simple* pa{nullptr};
++#endif
++    std::thread audioThread;
++
++    // One demuxed-but-undecoded audio packet, handed from DecodeLoop's single
++    // av_read_frame call to the dedicated audio thread. loopOffsetAtRead is DecodeLoop's
++    // own `loopOffset` local, copied by value at the moment the packet was read, so the
++    // audio thread can put this packet's pts on the exact same absolute (loop-adjusted)
++    // timeline the video queue's pts already use, without the two threads sharing that
++    // variable directly.
++    struct QueuedAudioPacket {
++        AVPacket* pkt;
++        double loopOffsetAtRead;
++    };
++    // Separate mutex/cv from the video queue's `mutex`/`spaceAvailable` on purpose: the
++    // audio thread only ever touches this pair, so a busy audio thread can never add
++    // latency to AcquireCurrentSlot(), which runs on the render thread at up to 90Hz.
++    std::mutex audioMutex;
++    std::condition_variable audioPacketAvailable;
++    std::deque<QueuedAudioPacket> audioQueue;
++    bool audioResetPending{false};  // set at a loop seam or a successful manual seek;
++                                     // consumed by the audio thread, which does the actual
++                                     // pa_simple_flush/avcodec_flush_buffers - pa_simple and
++                                     // AVCodecContext are not safe to touch from two threads
++
++    // Audio playback clock. anchorPts is the absolute (loop-adjusted) pts of the sample at
++    // framesWritten == 0 for the current "epoch"; reset (audioAnchorSet = false,
++    // audioFramesWritten = 0) on every loop restart and manual seek, mirroring what
++    // clockStarted/loopOffset do for the video queue. AudioClockSeconds() below is then
++    // anchorPts + framesWritten/rate, corrected by however many of those written frames
++    // pa_simple/PipeWire is still holding, not yet audible (its own reported latency).
++    // audioClockSeconds/audioClockValid are the only fields of this whole block the render
++    // thread reads (AcquireCurrentSlot, via plain atomics, no lock) - everything else here
++    // belongs exclusively to the audio thread.
++    bool audioAnchorSet{false};
++    double audioAnchorPts{0.0};
++    int64_t audioFramesWritten{0};  // stereo sample pairs written to pa_simple since anchor
++    std::atomic<double> audioClockSeconds{0.0};
++    std::atomic<bool> audioClockValid{false};
++
+     // HELLO_XR_VIDEO_STATS: what the decode thread costs, and whether it is the bottleneck.
+     bool wantStats{false};
+     bool directXfer{true};   // HELLO_XR_VIDEO_DIRECT=0 disables, for A/B measurement
+@@ -179,7 +255,16 @@ struct Video360::Impl {
+     ~Impl() {
+         quit = true;
+         spaceAvailable.notify_all();
++        audioPacketAvailable.notify_all();
+         if (thread.joinable()) thread.join();
++#if defined(HAVE_PULSE_SIMPLE)
++        if (audioThread.joinable()) audioThread.join();
++        for (auto& qp : audioQueue) av_packet_free(&qp.pkt);
++        audioQueue.clear();
++        if (pa) pa_simple_free(pa);
++        if (swr) swr_free(&swr);
++        if (audioDec) avcodec_free_context(&audioDec);
++#endif
+         if (xferFrame) av_frame_free(&xferFrame);
+         if (dec) avcodec_free_context(&dec);
+         if (hwDevice) av_buffer_unref(&hwDevice);
+@@ -373,6 +458,16 @@ struct Video360::Impl {
+                         clockStarted = false;  // re-anchor playbackTime to the first post-seek frame
+                         loopOffset = 0.0;      // this is an absolute jump, not a loop-around
+                         spaceAvailable.notify_all();
++#if defined(HAVE_PULSE_SIMPLE)
++                        // Tell the audio thread to flush and re-anchor to the new position -
++                        // see AudioThread()'s reset handling. Only on a SUCCESSFUL seek: on
++                        // failure nothing above changed either, so there is nothing to undo.
++                        if (audioActive) {
++                            std::lock_guard<std::mutex> audioLock(audioMutex);
++                            audioResetPending = true;
++                        }
++                        audioPacketAvailable.notify_all();
++#endif
+                     }
+                     continue;
+                 }
+@@ -418,6 +513,16 @@ struct Video360::Impl {
+                     std::lock_guard<std::mutex> lock2(mutex);
+                     clockStarted = false;
+                 }
++#if defined(HAVE_PULSE_SIMPLE)
++                // Same reset the manual-seek path signals above, for the same reason: the
++                // audio thread must flush pa_simple and re-anchor to loopOffset's new value
++                // rather than let stale end-of-file audio bleed into the new loop.
++                if (audioActive) {
++                    std::lock_guard<std::mutex> audioLock(audioMutex);
++                    audioResetPending = true;
++                }
++                audioPacketAvailable.notify_all();
++#endif
+                 if (av_seek_frame(fmt, streamIndex, 0, AVSEEK_FLAG_BACKWARD) < 0) {
+                     Log::Write(Log::Level::Warning, "video360: seek to start failed, stopping playback");
+                     break;
+@@ -437,6 +542,22 @@ struct Video360::Impl {
+                     DrainDecoder(frame, swFrame, loopOffset, lastPts);
+                 }
+             }
++#if defined(HAVE_PULSE_SIMPLE)
++            else if (audioActive && packet->stream_index == audioStreamIndex) {
++                // Hand off a clone to the audio thread - `packet` itself gets reused (via
++                // av_packet_unref below) on the very next av_read_frame call, so anything
++                // crossing to another thread needs its own copy. loopOffset is captured by
++                // value now, not read later, so the audio thread never needs to touch this
++                // thread's local variable.
++                if (AVPacket* clone = av_packet_clone(packet)) {
++                    {
++                        std::lock_guard<std::mutex> audioLock(audioMutex);
++                        audioQueue.push_back(QueuedAudioPacket{clone, loopOffset});
++                    }
++                    audioPacketAvailable.notify_all();
++                }
++            }
++#endif
+             av_packet_unref(packet);
+         }
+ 
+@@ -521,6 +642,181 @@ struct Video360::Impl {
+             }
+         }
+     }
++
++#if defined(HAVE_PULSE_SIMPLE)
++    // Opens the audio decoder, the resampler (to fixed S16/48000/stereo), and a pa_simple
++    // playback stream. Called from Open() only when HELLO_XR_AUDIO=1 and the file has an
++    // audio stream. Returns false having logged exactly one line on any failure - the
++    // caller (Open()) falls back to video-only rather than letting a bad audio track or a
++    // sound server hiccup take the whole player down.
++    bool OpenAudio(const AVStream* stream, const AVCodec* codec) {
++        audioDec = avcodec_alloc_context3(codec);
++        if (!audioDec) return false;
++        int ret = avcodec_parameters_to_context(audioDec, stream->codecpar);
++        if (ret < 0) {
++            Log::Write(Log::Level::Warning,
++                       Fmt("video360: HELLO_XR_AUDIO: parameters_to_context: %s, playing video-only", AvErr(ret).c_str()));
++            return false;
++        }
++        if ((ret = avcodec_open2(audioDec, codec, nullptr)) < 0) {
++            Log::Write(Log::Level::Warning, Fmt("video360: HELLO_XR_AUDIO: cannot open audio codec '%s': %s, playing video-only",
++                                                codec->name, AvErr(ret).c_str()));
++            return false;
++        }
++        audioTimeBase = av_q2d(stream->time_base);
++
++        // Plain stereo output regardless of what the file carries (mono gets upmixed, 5.1
++        // gets downmixed, etc. by swresample) - this player has no spatialization path, so
++        // there is nothing to gain from preserving more channels than a headset has ears.
++        AVChannelLayout outLayout = AV_CHANNEL_LAYOUT_STEREO;
++        ret = swr_alloc_set_opts2(&swr, &outLayout, AV_SAMPLE_FMT_S16, kAudioSampleRate, &audioDec->ch_layout,
++                                  audioDec->sample_fmt, audioDec->sample_rate, 0, nullptr);
++        if (ret < 0 || !swr || swr_init(swr) < 0) {
++            Log::Write(Log::Level::Warning, "video360: HELLO_XR_AUDIO: cannot set up the resampler, playing video-only");
++            return false;
++        }
++
++        pa_sample_spec spec{};
++        spec.format = PA_SAMPLE_S16LE;
++        spec.channels = (uint8_t)kAudioChannels;
++        spec.rate = (uint32_t)kAudioSampleRate;
++        int paErr = 0;
++        pa = pa_simple_new(nullptr, "hello_xr", PA_STREAM_PLAYBACK, nullptr, "360 player", &spec, nullptr, nullptr, &paErr);
++        if (!pa) {
++            Log::Write(Log::Level::Warning, Fmt("video360: HELLO_XR_AUDIO: cannot connect to the PipeWire/Pulse sink (%s), playing video-only",
++                                                pa_strerror(paErr)));
++            return false;
++        }
++
++        Log::Write(Log::Level::Info,
++                   Fmt("video360: HELLO_XR_AUDIO on - '%s' %d Hz -> %d Hz stereo S16, head-locked (no spatialization)",
++                       codec->name, audioDec->sample_rate, kAudioSampleRate));
++        return true;
++    }
++
++    // Blocks while playback is paused (rate <= 0), flushing pa_simple exactly once on the
++    // transition into pause so whatever's already buffered goes silent immediately - the
++    // grip-to-pause gesture (playercontrol.cpp, patch 0005) is meant to be instant, and
++    // without this the last ~buffer's worth of audio would otherwise keep audibly playing
++    // out on its own after the video visibly stopped. Returns false if the caller should
++    // abandon the chunk it was about to write, because shutdown or a loop/seek reset
++    // arrived while waiting - in that case control belongs back at the top of AudioThread's
++    // main loop, not here.
++    bool WaitWhilePaused() {
++        if (rate.load(std::memory_order_relaxed) > 0.0) return true;
++        int flushErr = 0;
++        pa_simple_flush(pa, &flushErr);
++        std::unique_lock<std::mutex> lock(audioMutex);
++        audioPacketAvailable.wait(lock, [this] {
++            return quit.load() || audioResetPending || rate.load(std::memory_order_relaxed) > 0.0;
++        });
++        return !quit.load() && !audioResetPending;
++    }
++
++    // Dedicated audio thread: pulls packets DecodeLoop routed into audioQueue, decodes and
++    // resamples them, and blocks on pa_simple_write - that blocking write IS the pacing
++    // (PipeWire only accepts more once the hardware has consumed what's already queued),
++    // exactly like DecodeLoop's own TakeFreeSlot() blocking is what paces video decode
++    // against the renderer. Runs for the lifetime of the Video360 once started; only exists
++    // at all when audioActive was set true in Open().
++    void AudioThread() {
++        AVFrame* frame = av_frame_alloc();
++        std::vector<uint8_t> outBuf;  // resample scratch, grown on demand, never shrunk
++
++        while (!quit.load()) {
++            // Service a pending loop-seam or manual-seek reset before pulling more packets.
++            // Done here, not in DecodeLoop, because pa_simple and the audio AVCodecContext
++            // are single-threaded APIs and this is the only thread that ever touches them.
++            {
++                std::unique_lock<std::mutex> lock(audioMutex);
++                if (audioResetPending) {
++                    for (auto& qp : audioQueue) av_packet_free(&qp.pkt);
++                    audioQueue.clear();
++                    audioResetPending = false;
++                    lock.unlock();
++
++                    avcodec_flush_buffers(audioDec);
++                    // Deliberately NOT recreating swr here: whatever partial samples are
++                    // still sitting in its internal resampling delay line are, at typical
++                    // source rates (44.1/48 kHz), a sub-millisecond discontinuity - not
++                    // worth a full close/reinit at every loop restart.
++                    int flushErr = 0;
++                    pa_simple_flush(pa, &flushErr);
++                    audioAnchorSet = false;
++                    audioFramesWritten = 0;
++                    audioClockValid.store(false);
++                    continue;
++                }
++            }
++
++            QueuedAudioPacket item{nullptr, 0.0};
++            {
++                std::unique_lock<std::mutex> lock(audioMutex);
++                audioPacketAvailable.wait(lock,
++                                          [this] { return quit.load() || audioResetPending || !audioQueue.empty(); });
++                if (quit.load() || audioResetPending) continue;
++                item = audioQueue.front();
++                audioQueue.pop_front();
++            }
++
++            int ret = avcodec_send_packet(audioDec, item.pkt);
++            av_packet_free(&item.pkt);
++            if (ret < 0 && ret != AVERROR(EAGAIN)) {
++                Log::Write(Log::Level::Warning, Fmt("video360: audio send_packet: %s", AvErr(ret).c_str()));
++                continue;
++            }
++
++            while (!quit.load()) {
++                ret = avcodec_receive_frame(audioDec, frame);
++                if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) break;
++                if (ret < 0) {
++                    Log::Write(Log::Level::Warning, Fmt("video360: audio receive_frame: %s", AvErr(ret).c_str()));
++                    break;
++                }
++
++                const int64_t ts = frame->best_effort_timestamp;
++                const double framePts = (ts == AV_NOPTS_VALUE) ? -1.0 : ts * audioTimeBase + item.loopOffsetAtRead;
++
++                const int maxOut = swr_get_out_samples(swr, frame->nb_samples);
++                const size_t neededBytes = (size_t)maxOut * kAudioChannels * sizeof(int16_t);
++                if (outBuf.size() < neededBytes) outBuf.resize(neededBytes);
++                uint8_t* outPtr = outBuf.data();
++                const int converted =
++                    swr_convert(swr, &outPtr, maxOut, (const uint8_t**)frame->extended_data, frame->nb_samples);
++                av_frame_unref(frame);
++                if (converted <= 0) continue;
++
++                // Holds here (not writing, not pulling the next packet) until unpaused or a
++                // reset arrives - see WaitWhilePaused(). A reset means this chunk predates
++                // the seek/loop target, so it's simply dropped; the reset itself is handled
++                // at the top of the outer loop.
++                if (!WaitWhilePaused()) break;
++
++                if (!audioAnchorSet && framePts >= 0.0) {
++                    audioAnchorPts = framePts;
++                    audioAnchorSet = true;
++                }
++
++                int writeErr = 0;
++                pa_simple_write(pa, outBuf.data(), (size_t)converted * kAudioChannels * sizeof(int16_t), &writeErr);
++                audioFramesWritten += converted;
++
++                if (audioAnchorSet) {
++                    double clock = audioAnchorPts + (double)audioFramesWritten / kAudioSampleRate;
++                    const pa_usec_t latency = pa_simple_get_latency(pa, nullptr);
++                    // (pa_usec_t)-1 signals "unknown" (see pa_simple_get_latency(3)) - skip
++                    // the correction that one time rather than let the unsigned -1 wrap the
++                    // clock into the distant past.
++                    if (latency != (pa_usec_t)-1) clock -= (double)latency / 1000000.0;
++                    audioClockSeconds.store(clock, std::memory_order_relaxed);
++                    audioClockValid.store(true, std::memory_order_relaxed);
++                }
++            }
++        }
++
++        av_frame_free(&frame);
++    }
++#endif  // HAVE_PULSE_SIMPLE
+ };
+ 
+ Video360::Video360() : m_impl(new Impl()) {}
+@@ -663,6 +959,24 @@ bool Video360::Open(const std::string& path) {
+     if (!impl.xferFrame) return false;
+     impl.rowScratch.resize((size_t)impl.width + 64);
+ 
++    // Optional stereo audio. Never allowed to fail Open() itself: any problem here (no
++    // audio stream, a codec/resampler that won't open, no sound server to talk to) is
++    // logged once and playback continues video-only, silent exactly as it always was - a
++    // demo must not die because its audio track or output device didn't cooperate.
++    if (EnvOn("HELLO_XR_AUDIO")) {
++#if defined(HAVE_PULSE_SIMPLE)
++        const AVCodec* audioCodec = nullptr;
++        impl.audioStreamIndex = av_find_best_stream(impl.fmt, AVMEDIA_TYPE_AUDIO, -1, -1, &audioCodec, 0);
++        if (impl.audioStreamIndex < 0 || !audioCodec) {
++            Log::Write(Log::Level::Info, "video360: HELLO_XR_AUDIO=1 but the file has no audio stream, playing video-only");
++        } else {
++            impl.audioActive = impl.OpenAudio(impl.fmt->streams[impl.audioStreamIndex], audioCodec);
++        }
++#else
++        Log::Write(Log::Level::Info, "video360: HELLO_XR_AUDIO=1 but this build has no libpulse-simple, playing video-only");
++#endif
++    }
++
+     Log::Write(Log::Level::Info, Fmt("video360: '%s' %dx%d %s @ %.2f fps (decode: %s)", path.c_str(), impl.width,
+                                      impl.height, codec->name, 1.0 / impl.frameDuration,
+                                      impl.dec->hw_device_ctx ? "NVDEC requested" : "software"));
+@@ -687,11 +1001,21 @@ bool Video360::Start() {
+     impl.statWindow = std::chrono::steady_clock::now();
+     impl.started = true;
+     impl.thread = std::thread([&impl] { impl.DecodeLoop(); });
++#if defined(HAVE_PULSE_SIMPLE)
++    if (impl.audioActive) impl.audioThread = std::thread([&impl] { impl.AudioThread(); });
++#endif
+     return true;
+ }
+ 
+ void Video360::SetLoop(bool loop) { m_impl->loop = loop; }
+-void Video360::SetRate(double rate) { m_impl->rate = (rate > 0.0) ? rate : 0.0; }
++void Video360::SetRate(double rate) {
++    m_impl->rate = (rate > 0.0) ? rate : 0.0;
++    // Wakes a paused audio thread immediately (see Impl::WaitWhilePaused) instead of
++    // leaving it to notice the new rate whenever its next spurious wakeup happens. Harmless
++    // to call when audio is inactive - notifying a condition_variable with no waiters is a
++    // no-op.
++    m_impl->audioPacketAvailable.notify_all();
++}
+ 
+ bool Video360::Finished() const {
+     Impl& impl = *m_impl;
+@@ -750,6 +1074,17 @@ int Video360::AcquireCurrentSlot() {
+         impl.playbackTime = impl.queue.front().pts;
+         impl.lastTick = now;
+         impl.clockStarted = true;
++    } else if (impl.audioActive && impl.audioClockValid.load(std::memory_order_relaxed)) {
++        // Audio is the master clock once it's active: pa_simple's blocking writes are paced
++        // by the real hardware/PipeWire clock, which holds sync over minutes far better than
++        // a wall-clock accumulator running in parallel with it ever could. The audio thread
++        // updates audioClockSeconds after every chunk it writes (Impl::AudioThread).
++        // audioClockValid goes false for the brief startup window before the first chunk
++        // lands, and again for one beat right after a loop seam or manual seek while the
++        // audio thread is mid-flush - both cases fall through to the wall-clock accumulator
++        // below instead of stalling video on an audio clock that isn't ready yet.
++        impl.playbackTime = impl.audioClockSeconds.load(std::memory_order_relaxed);
++        impl.lastTick = now;
+     } else {
+         impl.playbackTime += std::chrono::duration<double>(now - impl.lastTick).count() * impl.rate.load();
+         impl.lastTick = now;
+-- 
+2.47.3
+
