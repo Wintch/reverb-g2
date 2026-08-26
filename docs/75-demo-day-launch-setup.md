@@ -9,6 +9,19 @@ into one operational sequence, and states plainly what is genuinely unverified f
 specifically. **Per this project's own rule: nothing below is "verified" just because it's
 written down — only what a human has worn/heard counts.**
 
+**Why Wayland, specifically (2026-08-26 clarification)**: all three launches below go through
+`jack-in-wayland.sh`/GNOME-on-Wayland, and the reason is concrete, not a convention —
+**Wayland is this lab SSD's verified flicker-free 90 Hz path** (`docs/01`'s own note: "the
+verified 90Hz launcher is `jack-in-wayland.sh`"). 60 Hz visibly flickers and is genuinely hard
+on the eyes worn for any length of time; that alone rules out X11 for a real audience-facing
+demo regardless of anything else. See `docs/06`'s new 2026-08-26 entry for a same-night X11
+panel-link failure on this exact SSD, still open as of this writing — not the deciding factor
+for using Wayland here, but worth knowing X11 is currently unverified on this session too.
+
+**Hellblade reinstalled (2026-08-26)**: the 24.7GB re-download flagged as a blocker earlier
+this session is done — `StateFlags: 4`, `SizeOnDisk: 24747009205`, `downloading/` empty,
+installed to `/mnt/win5/SteamLibrary`. No longer a blocker for the retest.
+
 ## 1. Pre-show checklist (once, before doors open)
 
 1. **Power**: `vr-power-watchdog.service` is installed and running (confirmed active
@@ -102,19 +115,17 @@ VR_LAUNCH_APPID=591360 ./scripts/vr-launcher.py 1 6dof
   matching the rigor already applied to Aircar and Cyberpilot — the subjective result is good,
   the numbers just aren't on file yet.
 
-### Hellblade: Senua's Sacrifice VR Edition (747350) — one good look, pre-fix, NOT CURRENTLY INSTALLED
+### Hellblade: Senua's Sacrifice VR Edition (747350) — one good look, pre-fix, reinstalled
 
-**Blocker found 2026-08-26: this title is not installed anywhere.** Checked all four Steam
-library folders (`debian-installation`, `/mnt/win3`, `/mnt/win5`, `/mnt/videos`) — no
-`appmanifest_747350.acf`, no `common/` folder. The 24.7GB downloaded live during T243-night
-(2026-08-21) is gone; it must have been uninstalled at some point since. **A full 24.7GB
-re-download is needed before this title can be retested at all** — factor that into any
-pre-show timeline, it is not a quick fix.
+**Was missing entirely, now fixed (2026-08-26).** Found gone from all four Steam library
+folders earlier tonight — the 24.7GB downloaded live during T243-night (2026-08-21) had been
+uninstalled at some point since. Re-downloaded same session: confirmed complete
+(`StateFlags: 4`, `SizeOnDisk: 24747009205`, `downloading/` empty), installed to
+`/mnt/win5/SteamLibrary`. Ready to launch; still needs the actual retest below.
 
 ```
 VR_LAUNCH_APPID=747350 ./scripts/vr-launcher.py 1 6dof
 ```
-(will not work until reinstalled)
 
 - Already in `GAMES`. **No `TITLE_PROFILES` entry** — runs with the default
   (constellation ON, treated as a hands title). Not in `NO_HANDS_TITLES`, so a missing
@@ -151,9 +162,9 @@ Before starting the next title:
 - **Dreams of Dalí**: input method and tracking mode now confirmed (headset-only gaze-dwell,
   6dof, wired into the launcher) and audio confirmed very good — but still zero recorded
   fps/pacing/duration numbers behind the good subjective result.
-- **Hellblade**: **not currently installed at all** (found 2026-08-26) — needs a full 24.7GB
-  re-download before it can even be launched, let alone retested against the T244 fix that's
-  the whole reason a retest looked promising.
+- **Hellblade**: reinstalled (2026-08-26, was missing entirely earlier tonight) — ready to
+  launch, but still not retested against the T244 fix that's the whole reason a retest looked
+  promising in the first place.
 - **No automated low-light warning** exists anywhere in the stack — it's an approved, unbuilt
   idea. Venue lighting is a real, measured risk factor for Aircar specifically.
 - **Battery**: correction above — `XRT_DEBUG_GUI=1` gives a real live per-controller reading,

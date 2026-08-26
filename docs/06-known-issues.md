@@ -38,6 +38,33 @@ this project has already been burned by: that `~/vr/monado` is built from a clea
 of `patches/monado/` (the drift trap, `docs/pruebas.jsonl` T068) and that
 `~/vr/basalt/build/libbasalt.so` actually exists (T060).
 
+## `jack-in.sh` (X11) failed to link the panel on THIS lab SSD, session-specific, not the two-SSD split above (2026-08-26)
+
+Not the same thing as the section above — this is the **patched** lab SSD (0004 present,
+90 Hz genuinely possible here), just booted into a KDE/X11 session (`plasmax11`) instead of
+the usual GNOME-on-Wayland one, for a quick controller/battery check via `jack-in.sh` while
+the desktop session itself was busy with unrelated work. `jack-in.sh up 3dof` with
+`XRT_DEBUG_GUI=1` failed **twice in a row**, both times reaching `wake_panel()`'s full 25s
+poll with the same result: `Panel never came up.` — `dp0_status()` (`xrandr`) showed every
+DP output (`DP-0/1/2/3`) as `disconnected` throughout, while the headset's USB side enumerated
+completely normally (companion `03f0:0580` and HoloLens Sensors `045e:0659` both present,
+sensors at the correct SuperSpeed link). So this is a **display-link-only** failure — the WMR
+activation HID report goes out fine, but the panel never answers with a DisplayPort hotplug.
+
+**Not root-caused tonight.** `jack-in.sh`'s own `wake_panel()` already retries via a 25s poll
+(not a naive fixed sleep), so this isn't the well-known "not long enough" timing gap — two
+full clean poll windows both came up empty. Leading suspicion: something about the physical
+DP link state left over from a prior session/session-switch on this SSD, not a driver or
+patch regression (the patches are unconditionally present here, unlike the other SSD). A full
+reboot was the agreed next step, specifically **to get a clean read on whether X11 direct-mode
+still works on this SSD at all**, independent of the fact that the actual demo work tonight is
+going through Wayland anyway (see `docs/75`) because Wayland is this SSD's *verified*
+flicker-free 90 Hz path (`docs/01`'s own note: "the verified 90Hz launcher is
+`jack-in-wayland.sh`") — X11 direct-mode was the original path used for the historical bpc-patch
+bring-up (`docs/04`) but has seen far less exercise since, so tonight's failure could equally be
+a real regression or simply an untested-in-a-while path. **Retest with `jack-in.sh` after the
+reboot before assuming either way.**
+
 Applying `patches/nvidia/` over there would give it 90 Hz and the lease path too, but it
 is a deliberate decision, not a default: it means replacing the driver with 595-open
 (`bootstrap-lab.sh` refuses to run when a different driver is loaded — the stacks are
