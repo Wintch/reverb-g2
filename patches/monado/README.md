@@ -556,3 +556,16 @@ submitted. **Not closed**: the same night a SIGSEGV with a DIFFERENT shape (dire
 `libnvidia-eglcore`/`ioctl`) showed a second race between the EGL/Vulkan teardown and the camera
 thread that this join does not cover — race #2 in docs/06 / the 2026-08-22 plan (docs/67). Treat
 "teardown crash fixed" as unverified until the EGL-side ordering is instrumented.
+
+## 0097 — SLAM_PRED_FREEZE_POSITION + SLAM_PRED_NECK_ARM_MM (seated 6dof head)
+
+Two env-gated refinements to `t_tracker_slam.cpp::predict_pose()` (both default off = no change)
+that make seated head 6dof feel like 3dof — the 2026-08-26 wearer A/B on Aircar, "super similar
+a windows" (docs/80). `SLAM_PRED_FREEZE_POSITION=1` holds position at the last SLAM anchor
+(clears the linear-velocity valid bit before `m_predict_relation`) so a fast head yaw's real
+arc velocity isn't extrapolated across the ~150 ms latency into a ~50 cm overshoot that
+accumulated to metres. `SLAM_PRED_NECK_ARM_MM=<mm>` then swings the frozen eye along the
+neck-pivot arc as orientation is predicted forward (`pos += (R_pred - R_anchor)·arm`), fixing
+the orientation/position timestamp split; 150 mm measured best. The recommended seated recipe
+also enables the existing `SLAM_CORRECTION_SPREAD_MS=50` (not new code) to stop the periodic
+re-anchor snap. Auto-applied to Aircar by `scripts/vr-launcher.py`'s TITLE_PROFILES.

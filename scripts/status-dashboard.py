@@ -204,7 +204,7 @@ ACTIONS = {
 # Only "approved" is a demo option.
 DEMO_LAUNCHES = [
     ("Aircar", "1073390", "3dof", "approved", "Xbox pad. Recentre: A button."),
-    ("Aircar", "1073390", "6dof", "gold", "Yaw is the weak axis (~20x): fast head turns drift the seat, A button recentres. Not for guests yet."),
+    ("Aircar", "1073390", "6dof", "gold", "2026-08-26 fix (patch 0097): gyro-pred + freeze + 150mm neck-arc + 50ms spread, auto-applied by the launcher. Wearer: 'super similar a windows', smooth, no bad redraws. Residual: positioning latency on FAST motion (~1m bounded, A recentres). Needs a 30-min soak to certify -> approved."),
     ("Dreams of Dali", "591360", "6dof", "approved", "Headset-only gaze-dwell, no controllers. 46-67 fps measured, experience still good."),
     ("Hellblade", "747350", "6dof", "untested", "Proton prefix still on NTFS (docs/70 bug) -- will not launch until relocated. Motion-controller title."),
     ("The Night Cafe", "482390", "6dof", "broken", "2026-08-26: launches + reaches runtime but renders FLAT 2D (0 delivered frames, headset backlight only) -- old Unity title does not engage VR via xrizer. Parked."),
@@ -215,7 +215,10 @@ for _name, _appid, _tracking, _status, _note in DEMO_LAUNCHES:
         "label": f"{_name} · {_tracking} [{_status}]",
         "cmd": ["python3", f"{HOME}/vr/vr-launcher.py", "1", _tracking],
         "cwd": f"{HOME}/vr",
-        "env": {"VR_LAUNCH_APPID": _appid, "U_PACING_APP_LOG": "debug"},
+        "env": {"VR_LAUNCH_APPID": _appid, "U_PACING_APP_LOG": "debug",
+                # Demo buttons auto-record (RAM -> permanent on session end, docs/80). Approved
+                # titles record by default; the record is what turns the live demo into the soak.
+                "VR_DEMO_RECORD": "1", "VR_DEMO_COMMENT": f"{_name} {_tracking} [{_status}]"},
         "demo": {"title": _name, "tracking": _tracking, "status": _status, "note": _note},
     }
 

@@ -238,3 +238,85 @@ worse specifically on yaw, independent of whether §2's per-degree numbers show 
   whether (per H4/Experiment 5) the same 0.15-0.20 m excursion feels dramatically different
   depending on whether it happens during a visual sweep or at rest. Only a wearer can answer
   this — it is exactly the kind of claim CLAUDE.md's verification rule exists for.
+
+## 2026-08-26 (late) — Localized: orientation/position TIMESTAMP MISMATCH, not a hidden accumulator
+
+Three traces (SLAM_PREDICTION_TYPE=0/2/2+FREEZE A/B, CSVs in
+`/home/iam/vr/logs/yaw-drift-study/`) were adversarially refuted for overreach. Facts, from the
+live source + this session's own logs: tracking.csv (t_tracker_slam.cpp:1330, `raw_pose` from
+local `nrot/npos`) is untouched by the one-euro filter mutating `rel.pose` just above
+(:1252-1256) — same meaning under every pred_type. That filter (`Output filter: one_euro`,
+`SLAM_FILTER_BEFORE_PREDICT=1`, pos cutoff 3.14 Hz/rot 20 Hz, confirmed ACTIVE tonight in both
+`jack-in-wayland.log:60-64` and `.prev.log:60-64`) runs on the anchor BEFORE `predict_pose()`,
+identically for NONE/GYRO/FREEZE. `do_position()` (m_predict.c:73-103) under FREEZE:
+`accum={0,0,0}`, so `out_rel->pose.position = rel->pose.position` exactly — no rotation, no
+lever arm — the SAME filtered-anchor value NONE also returns verbatim (predict_pose:1369-1371).
+What DOES differ: `do_orientation()` (m_predict.c:16-71) runs for GYRO(+FREEZE) but never NONE,
+forward-integrating orientation to the query's real `when_ns` from live gyro data
+(t_tracker_slam.cpp:1416-1420); NONE leaves the anchor's ~90-190 ms-stale orientation untouched.
+
+**Mechanism**: pred_type ≥ GYRO pairs a REAL-TIME orientation with a STALE (anchor-age)
+position in one relation. NONE never splits the two — both stale equally, scene lag is uniform
+("orientation delay") and never detaches from where you're looking, which is why NONE feels
+rock-solid despite its own raw SLAM noise being the SAME order as GYRO/FREEZE's (median
+per-burst residual 8.8/9.0/15.2 cm — nearly identical, off the CSVs). FREEZE removes only the
+`linear_velocity*dt` overshoot (axis = raw SLAM velocity, "right"), never `do_orientation`'s
+forward prediction — the timestamp split survives, and the SAME order-of-magnitude raw jitter
+surfaces on whatever axis the filtered anchor is moving on: axis changes, magnitude doesn't.
+
+**Next experiment (wearer A/B, not more logging)**: real kinematic compensation, not a static
+freeze. After `m_predict_relation()` returns (t_tracker_slam.cpp:1455-1457), when
+`t.pred_freeze_position`, rotate a candidate lever-arm vector by `rel.pose.orientation` and by
+`predicted_relation.pose.orientation`, add the difference to `predicted_relation.pose.position`
+(a neck-model delta reusing `do_orientation`'s own orientation change, not the discarded
+velocity). Gate via `SLAM_PRED_NECK_ARM_MM` (0 = tonight's freeze). Build (cmake regen broken,
+same path as FREEZE_POSITION): `ninja -C /home/iam/vr/monado/build aux_tracking monado-service`
+(incrementally recompiles+relinks); re-run Aircar's fast-yaw protocol.
+
+**Pass criterion (wearer, both)**: turns as responsive as GYRO/FREEZE (no return of NONE's lag)
+AND no seat displacement accumulates over repeated fast yaws — sweep 2-3 arm lengths live
+(0/80/150 mm), not derivable from tonight's data alone. If none collapses the drift toward
+NONE's stability, this is refuted and the mechanism is outside Monado (Aircar/xrizer's camera
+rig, or a real SLAM/IMU-to-eye extrinsics recalibration) — bigger work, not a tonight fix.
+
+## 2026-08-26 (late) — RESOLVED to "super similar a windows": the seated-6dof recipe
+
+Live wearer A/B sweep on Aircar (seated, gamepad, constellation off), all env-only after the
+one code change (patch 0097). Result, wearer's own words across the sweep: 2-4m accumulating
+yaw drift -> "bastante solido" -> "como 3dof pero con los 6dof" -> "muy solido... super similar
+a windows", "esta suave, sin redraws malos". **This meets the project's stated cutoff (`docs/04`:
+"headset on par with Windows or better").**
+
+**Winning config** (now auto-applied to Aircar 1073390 by `vr-launcher.py`'s TITLE_PROFILES;
+inert in 3dof since SLAM isn't running):
+```
+SLAM_PREDICTION_TYPE=2  SLAM_PRED_FREEZE_POSITION=1  SLAM_PRED_NECK_ARM_MM=150  SLAM_CORRECTION_SPREAD_MS=50
+```
+
+**What each knob does** (mechanism confirmed by the prior trace above + the per-axis wearer
+response):
+- `SLAM_PREDICTION_TYPE=2` (GYRO): predicts orientation from the gyro -> head turns are
+  responsive (no NONE-style lag). Patch 0097.
+- `SLAM_PRED_FREEZE_POSITION=1`: holds position at the last SLAM anchor instead of extrapolating
+  linear_velocity across the ~150ms latency -> kills the original ~50cm/turn overshoot that
+  accumulated to metres. Patch 0097.
+- `SLAM_PRED_NECK_ARM_MM=150`: swings the frozen eye along the neck-pivot arc as orientation
+  predicts forward (position = anchor + (R_pred - R_anchor)*arm) -> fixes the orientation/
+  position timestamp split. Swept live 80/150/200mm: 80 helped (yaw ~1m, pitch minor, roll
+  none), 150 best (rarely >50cm total), 200 no better and felt over-corrected. Patch 0097.
+- `SLAM_CORRECTION_SPREAD_MS=50`: existing Monado option (not new code), was off (0). Spreads
+  each per-anchor position correction over 50ms so the periodic re-anchor stops snapping -- the
+  wearer named that snap ("se reacomoda seguido, eso marea") as the remaining nausea source;
+  100ms smoothed it but added convergence lag, 50ms was the balance ("suave, sin redraws malos").
+
+**Remaining residual (documented, not a demo blocker)**: on FAST motion, ~1m bounded drift +
+a visible delay before position starts updating. This is the fundamental SLAM anchor age
+(~120-190ms) -- genuine head TRANSLATION (not rotation) can only be predicted with the
+accelerometer, which is exactly what reintroduces the drift, so this is the practical floor of
+this approach. For a seated cockpit demo (rotation-dominant) it is minor. A possible future
+refinement (untested): give translation a SHORT clamped-horizon position prediction (e.g. cap
+do_position's dt to ~40-50ms) to trade a little drift for less translation latency.
+
+**Still to do before flipping the demo default from 3dof to 6dof**: a 30-minute worn soak to
+confirm it holds and does not fatigue over time (per `docs/75`'s own acceptance bar). Data for
+every config in `/home/iam/vr/logs/yaw-drift-study/` (WINNER-FINAL-* is this recipe).

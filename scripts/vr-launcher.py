@@ -141,7 +141,18 @@ DEFAULT_GAME = "Aircar"
 TITLE_PROFILES = {
     # Aircar: the reference gamepad title -- controllers optional, hands never
     # needed. Constellation off = fewer subsystems live during a demo.
-    "1073390": {"WMR_CONSTELLATION_CONTROLLERS": "0"},
+    # The four SLAM knobs are the 2026-08-26 seated-6dof "feels like 3dof but with
+    # 6dof" recipe (wearer verdict "super similar a windows"; patch 0097 + docs/80):
+    # gyro-orientation prediction (2) + freeze position + 150mm neck-model arc +
+    # 50ms correction spread. Inert in 3dof (SLAM not running), so harmless on the
+    # approved 3dof demo path; they only engage on the 6dof button.
+    "1073390": {
+        "WMR_CONSTELLATION_CONTROLLERS": "0",
+        "SLAM_PREDICTION_TYPE": "2",
+        "SLAM_PRED_FREEZE_POSITION": "1",
+        "SLAM_PRED_NECK_ARM_MM": "150",
+        "SLAM_CORRECTION_SPREAD_MS": "50",
+    },
     # ISS Tour VR: Aircar-class (does not render hands, docs/23) and the heaviest
     # content measured in the whole sweep (8K, monado-service at 519% CPU on T243
     # night) -- the last thing it needs is ~140 solves/s of constellation it never shows.
@@ -519,6 +530,20 @@ def main():
         subprocess.Popen(["steam", "-applaunch", appid], env=GAME_ENV)
 
     print("  lanzado (queda corriendo en background, este script no espera a que cierre).")
+
+    # Auto-registro del demo (docs/75, docs/80). Opt-in via VR_DEMO_RECORD=1 so it fires for
+    # real demo runs (the dashboard demo buttons set it) but not for dev/tuning launches.
+    # demo-recorder.py records to RAM while the session is live and flushes to permanent
+    # storage with date + eye-height + notes when monado-service ends. It stops on its own.
+    if os.environ.get("VR_DEMO_RECORD") == "1":
+        rec = VR / "demo-recorder.py"
+        if rec.exists():
+            comment = os.environ.get("VR_DEMO_COMMENT", f"{name} {TRACKING}")
+            reclog = open(LOG_DIR / "demo-recorder.out", "a")
+            subprocess.Popen([sys.executable, str(rec), "start", comment],
+                             stdin=subprocess.DEVNULL, stdout=reclog, stderr=subprocess.STDOUT,
+                             start_new_session=True)
+            print(f"  auto-registro del demo iniciado (demo-recorder.py, comentario: {comment!r}).")
 
 
 if __name__ == "__main__":

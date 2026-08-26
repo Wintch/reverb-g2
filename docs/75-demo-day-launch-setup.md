@@ -235,3 +235,27 @@ Before starting the next title:
 5. **Dalí needs a measured pass** (fps/pacing/duration) to match the rigor already on file for
    Aircar/Cyberpilot — worth scheduling before it's treated as demo-ready, even though the
    subjective result today was good.
+
+## 6. Session recording (the demo IS the soak test — docs/80)
+
+The demo is how Aircar 6dof (and any new config) gets its real soak: many wearers of different
+heights cycling through one running title beats a solo 30-min soak. `scripts/demo-recorder.py`
+captures each run so it's on file. Design (agreed 2026-08-26): records to RAM (`/mnt/vrtmp`,
+same tmpfs as the SLAM CSVs — no disk jitter mid-demo) while the session is live, then copies
+everything to `~/vr/logs/demo-sessions/<date>/` with a `summary.json` (date, eye-height,
+wearer-session count, operator notes, the exact SLAM config in effect) when `monado-service`
+ends. Nothing is lost to a reboot — it's persisted at session close.
+
+- **Auto-start**: the dashboard demo buttons (`:8765`) set `VR_DEMO_RECORD=1`, so a demo launch
+  records automatically. From the CLI: `VR_DEMO_RECORD=1 VR_DEMO_COMMENT="run 1, tall guests"
+  ./vr-launcher.py 1 6dof`. Dev/tuning launches without that env do NOT record.
+- **Per-run eye-height**: each `start` is one run; do several at several eye-heights (taller /
+  shorter guests). The run's `summary.json` records the eye-height it ran at (from
+  jack-in-wayland.sh's own "Eye height:" line), so the runs are comparable.
+- **Operator notes, live**: `~/vr/demo-recorder.py note "person 3, ~1.9m, slight drift on fast
+  turns"` appends a timestamped comment to the active run — capture wearer reactions as they
+  happen; they land in `summary.json`'s `operator_notes`.
+- **Check / stop**: `demo-recorder.py status` (recording? wearers? eye-height?);
+  `demo-recorder.py stop` finalizes now (otherwise it finalizes on its own when the session
+  ends). Each run writes one `~/vr/logs/demo-sessions/<date>/` folder: `metrics.jsonl` (fps /
+  pacing / power / config time series), `slam/` (the run's pose CSVs), `summary.json`.
