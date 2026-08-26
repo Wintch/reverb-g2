@@ -39,6 +39,24 @@ installed to `/mnt/win5/SteamLibrary`. No longer a blocker for the retest.
    at a sane level. This lineup was picked specifically for audio impact, so check this every
    time, not just once: the sink gets torn down and recreated on every USB2-branch
    re-enumeration and can silently land muted/wrong-volume, or briefly disappear entirely.
+
+   **Command-center audio (2026-08-26): per-device, on the dashboard (`:8765`).** Each output
+   the machine has (USB headset / onboard analog / HDMI) is a **checkbox + its own volume
+   slider**; check one, another, or several. The **mic** has a toggle and comes up **OFF
+   (muted)** every dashboard start — never a hot mic. All PipeWire-native (`pactl`/`wpctl`);
+   `hmd-audio.sh {headset|external|both|outputs <sinks>|setsink <name> <pct>|mic}`.
+
+   > **Incident + fix, "the audio coupled / howled" (2026-08-26).** Playing to several outputs
+   > at once was first built with **pw-loopback** (capture sink A's monitor → play to sink B).
+   > It fed back: stale/orphaned loopbacks (an old single-pidfile scheme a later route didn't
+   > clean, plus a USB re-enumeration that left mirrors pointing at dead nodes) left a
+   > `headset→external` AND an `external→headset` mirror live at once → a loop that drove volume
+   > to 100% with a very short round-trip echo. **Fixed by switching "both/several outputs" to a
+   > `module-combine-sink`** — one virtual sink that FANS OUT to the chosen real sinks, with no
+   > monitor capture anywhere, so it **cannot** feed back. `hmd-audio.sh` also nukes any stray
+   > `pw-loopback`/combine module before each route. If audio ever howls again: `hmd-audio.sh
+   > headset` resets to a single clean output; there should be **zero** `pw-loopback` processes
+   > (`pgrep -x pw-loopback`) in the new design.
 5. **Controllers**: if a title needs hands (see per-title notes below), power both controllers
    on **before** `monado-service` starts — a controller powered on after startup reads its
    battery but is stuck at `<none>` for the whole session (right-hand startup race,

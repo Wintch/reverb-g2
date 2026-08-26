@@ -347,7 +347,128 @@ cleanup (`kill` after the run), since an orphaned keepalive never notices its re
 Verification: keyboard paths re-checked via fake pty after the raw-read switch (all keys
 work, clean exit in 0.06s), and the full controller flow confirmed live with the headset on.
 
-### Stereo audio (2026-08-26, `0021-*.patch`) — NOT YET VERIFIED LIVE
+### Stereo audio (2026-08-26, `0021-*.patch`) — **VERIFIED LIVE 2026-08-26** ("está genial")
+
+**In-headset confirmed 2026-08-26**: played the `stereo3d-pack/out/dav2` playlist with
+`HELLO_XR_AUDIO=1`; audio engaged (log: `HELLO_XR_AUDIO on - 'aac' 44100 Hz -> 48000 Hz stereo
+S16, head-locked`), the wearer heard it and confirmed A/V looked/sounded right. The feature
+works. Two follow-ups from the same session (both parked for a proper pass, not yet done):
+- **Volume is only controllable at the sink** (`hmd-audio.sh set <pct>`), not from the
+  controllers — the player's inputs are all already mapped (seek/zoom/pause/recenter/
+  brightness/next/prev), and audio is brand new so it never had a binding. Adding one needs a
+  modifier (e.g. grip-held + thumbstick-Y = volume). Wearer wanted ~50% for the dav2 clips
+  (they master loud); set at the sink for now.
+- The wearer also asked for the same next-track/playlist control to work in the **360 (photo?)
+  mode** — verify whether photo-mode has playlist navigation and add it if missing.
+
+### Mixed-format / arbitrary-size playlist projection (2026-08-26) — KNOWN ISSUE, to fix
+
+Playing a directory that mixes formats (SBS flat, VR180 half-equirect, 360) launched without an
+explicit `-e`/`-p`, the **low-resolution SBS clips render zoomed-in and wrap at the edges** —
+wearer's words: "se ven muy de cerca y parece que los bordes los unen de nuevo formando más bien
+un 380". The VR180/4K clips look right. Cause: the projection/FOV is not adapting **per video** —
+low-res SBS content is being drawn on the VR180/360 sphere instead of as a flat stereo screen.
+Fix (deferred, "hacerlo compatible con cualquier tamaño"): per-video format+FOV auto-detection
+for mixed playlists, or a per-entry mode hint, instead of one mode for the whole directory.
+
+#### Format-compat trace + fix plan (2026-08-26)
+
+Read-only trace, nothing played: source in `~/vr/OpenXR-SDK-Source/src/tests/hello_xr/`
+(`projection360.{h,cpp}`, `video360.cpp`, `graphicsplugin_vulkan.cpp`); content probed with
+`ffprobe`/`exiftool` and single-frame `ffmpeg` grabs (no headset) across the failing
+`/mnt/videos/stereo3d-pack/out/dav2/` playlist (20 files), the working
+`out/playlist-test/` set (4 files), and `stereo3d-pack/tools/m2svid_test/outputs/probe/`
+(3 files).
+
+**(1) The real spread** (WxH, full/per-eye aspect, container metadata, what the player picks):
+
+| file | WxH | aspect (full/eye) | metadata | resolved | verdict |
+|---|---|---|---|---|---|
+| `01nxkdiv_sbs.mp4` | 1120x832 | 1.35/0.67 | none | 180-half+SBS | **WRONG** — flat kitchen scene |
+| `3_1_sbs.mp4`, `video_2026-08-08_..._sbs.mp4` | 1504x416 | 3.62/1.81 | none | **360**+SBS | **WRONG**, worst case — this is the "380" |
+| `media_sbs_lowres.mp4` / `_fixed.mp4` | 960x852 | 1.13/0.56 | none | 180-half+SBS | **WRONG**, unreported twin of `01nxkdiv` |
+| `tron_legacy_sbs4k.mp4` | 3840x2160 | 1.78/0.89 (portrait/eye) | none | 180-half+SBS | **WRONG, NEW** — 4K, disproves "4K is fine" |
+| `tron_legacy_sbs2048.mp4` | 4096x1152 | 3.56/1.78 | none | Flat+SBS | correct (same scene as above, confirmed by frame grab) |
+| 6x ordinary `*_sbs.mp4` (eve_of_destruction, ton_haul, transformers, suicide_squad, 01pjni8u, 03ehybrp) | 3840x1080 | -/1.78 | none | Flat+SBS | correct, but one aspect hair from the same bug (just under 1.8) |
+| 4x `*_vr180_4k.mp4` | 3840x1920 | 2.0 | none, saved by filename `vr180` | 180-half+SBS | correct |
+| `leblon_vr180_meta.mp4` + 2 more `*_meta.mp4` | 4320x2160 / 3840x1920 | 2.0 | **real st3d+sv3d** | 180-half+SBS from metadata | correct — this is what `dav2` should emit |
+| `input_generated_probe.mp4` | 512x512 | 1.0 | none | 180-half+**Mono** | **WRONG** — flat square photo; bug also hits mono, not just SBS |
+| `m2svid_probe_relleno.mp4` | 1024x512 | 2.0 | none | **360**+Mono | **WRONG** |
+| `m2svid_probe_sbs.mp4` | 1024x512 | 2.0/1.0 | none | 180-half+SBS | **WRONG** — identical source photo as `relleno`, opposite wrong guess, purely from the filename |
+
+All 20 `dav2` files carry **zero** container metadata (`ffprobe -show_entries stream_side_data`
+empty on every one) — `stereo3d.py:566-567` only prints a suggestion to run `spatial-media`
+manually, never invokes it. Only the unrelated `playlist-test/*_meta.mp4` files carry real tags.
+
+**(2) Root cause, exact code.** `ResolvePanoLayout()`, `projection360.cpp:69-239`, resolves in
+order: (i) `HELLO_XR_PROJECTION`/`HELLO_XR_STEREO` env override (76-102); (ii) filename tokens
+(107-126: projection = `vr180`/`_180`/`-180`/`.180`/`180_`/`180-`/`360`; stereo = `sbs`/`_lr`/
+`3dh`/`half-sbs` vs `_tb`/`_ou`/`3dv`/`over-under`/`overunder`); (iii) aspect-ratio fallback
+(128-189). **The bug is 155-166**: once stereo is known (from the filename) but projection is
+still `Unknown`, `perEye = aspect/2` gets bucketed by a fixed table tuned for camera-native
+footage — `>1.8` → Equirect360 (full sphere), `1.4-1.8` → Flat, else → HalfEquirect180 (VR180
+dome) — with no lower/upper confidence bound and no actual panoramic evidence. Knowing only
+"this is *some* SBS" (a packing fact) is treated as license to guess a spherical **projection**
+from a bare number; any flat SBS clip whose per-eye shape isn't ~16:9 gets draped onto a dome.
+Confirmed empirically: every misfiring file above is genuinely rectilinear on inspection (no
+curvature in the source frame). `video360.cpp:908-931`/`933-954` read `AV_PKT_DATA_STEREO3D`/
+`_SPHERICAL` correctly and independently — the metadata layer is architecturally fine, it's just
+never fed by `dav2`, so detection there is filename+aspect only, for every file in that pack.
+
+**(3) Fix design, ordered, with a hard rule:**
+- **(a) Metadata first, and authoritative on partial presence.** Track whether stereo/spherical
+  side-data was *seen at all*, not just whether it resolved a value. If Stereo3D side-data was
+  present and Spherical side-data was **absent**, that is itself a positive "this file is Flat"
+  verdict (confirmed against the spec: injecting real metadata with the repo's own
+  `stereo3d-pack/tools/spatial-media` in V2 mode with `-p none` writes `st3d` only — no `sv3d` —
+  and `ffprobe` reads back exactly one Stereo-3D entry, no Spherical-Mapping entry) — do not fall
+  through to aspect ratio in that case.
+- **(b) Filename tokens next** — unchanged, already matches DeoVR/SKYBOX convention (no
+  `_flat`/`_2D` **projection** token exists anywhere; flat is always the unmarked default).
+- **(c) Aspect ratio strictly last**, only for whichever of {projection, stereo} is still unknown.
+- **(d) HARD RULE (the actual fix): a stereo-packing-only signal must never by itself promote a
+  file to a spherical projection.** Absent an independent positive panoramic signal (a
+  projection filename token, real spherical metadata, or `AV_SPHERICAL_RECTILINEAR`), default to
+  **Flat** — mirrors YouTube's own documented behavior: 360/180 uploads missing metadata "play as
+  a distorted flat video," never a guessed sphere.
+
+**(4) Code change points:**
+- `projection360.h:36-45` — add `bool sawStereoMetadata`/`sawSphericalMetadata` to `PanoLayout`.
+- `video360.cpp:908-931`/`933-954` — set those two bools whenever side-data is *found*, even if
+  the switch's `default:` arm (949) doesn't map it to a value; add
+  `case AV_SPHERICAL_RECTILINEAR: impl.layout.projection = PanoProjection::Flat; break;` — this
+  ffmpeg "definitely flat" value is currently silently discarded.
+- `projection360.cpp:107-116` — capture a local `nameHadProjectionToken` bool instead of only
+  assigning `out.projection` inline (currently thrown away).
+- `projection360.cpp:155-166` — before the `perEye` bucket table, insert the hard rule: `if
+  (!detected.sawSphericalMetadata && !nameHadProjectionToken) { out.projection =
+  PanoProjection::Flat; projectionSource = "default (no panoramic signal)"; } else { /* existing
+  bucket table */ }`.
+- `graphicsplugin_vulkan.cpp:1290` (`OpenVideoTexture`) already calls `ResolvePanoLayout` fresh
+  per playlist entry, including on `AdvanceTrackBy` — no change needed there.
+- **Build**: this tree's `cmake -B build` regen is currently unreliable (same state as noted for
+  the sibling `monado` tree, `docs/80`); a plain `ninja -C ~/vr/OpenXR-SDK-Source/build hello_xr`
+  after editing only these two `.cpp`/`.h` files is the safe incremental path — no new sources,
+  no `CMakeLists.txt` touched.
+
+**(5) Test matrix (in-headset, physical verification only, per this doc's own rule) + the
+crash.** Re-check after the fix: the 5 low-res/odd-aspect files in the table above must render
+flat, not zoomed/wrapped; `tron_legacy_sbs4k.mp4` specifically, since it's new and disproves "4K
+is always fine"; the 6-file 3840x1080 family + 4x `vr180_4k` + 3x `*_meta.mp4` as a **regression
+guard** (they sit right at the old cutoff or ride a different, untouched path); the
+`input_generated_probe.mp4`/`m2svid_probe_relleno.mp4`/`m2svid_probe_sbs.mp4` trio as the
+sharpest single before/after demo (`sbs.mp4` and `relleno.mp4` are the identical source photo
+with opposite wrong guesses today). **Separate bug, not fixed by any of the above**: a reported
+crash (~19:12, `cuvidCreateDecoder CUDA_ERROR_INVALID_VALUE`) during tonight's session — the
+exact file is still **unconfirmed**, no `play360` log was captured, Monado's own log doesn't
+carry `hello_xr`'s stdout, and `journalctl`/`dmesg`/`coredumpctl` show nothing in that window.
+Leading candidate by file properties alone: `01pjni8u_sbs.mp4`/`03ehybrp_sbs.mp4`, the only two
+120fps H.264 files in the whole pack. `AdvanceTrackBy` (`graphicsplugin_vulkan.cpp:1258-1277`)
+already skips a file that fails to *open* — but a decoder failure mid-playback, after a file
+opened fine, isn't covered by that guard and needs the same skip-to-next treatment instead of
+taking the session down. Concrete next step: `play360.sh ... 2>&1 | tee
+~/vr/logs/play360-$(date +%H%M%S).log` on the next run, to catch the exact file instead of
+inferring it.
 
 `HELLO_XR_AUDIO=1` plays the file's audio track through PipeWire, synced to video. Scope is
 deliberately narrow: **head-locked stereo passthrough, no spatialization.** Everything this
@@ -468,6 +589,18 @@ age-restricted ⇒ flat version only (automatic fallback).
 DIBR, on GPU, ~3.5 fps at 1080x1920). It's the other source of stereo content for this setup besides
 YouTube, and works for any flat video the user has. Its bridge over here is
 `stereo3d-pack/tools/ver-en-casco.sh`, which calls `play360.sh` with the correct flags.
+
+**Encode choice for FLAT/cinematic source — flat SBS beats VR180 (2026-08-26, blind A/B, worn).**
+The converter emits several packings of one source; a wearer blind-tested the two good Tron encodes
+(the third, `*_sbs4k` with a portrait 1920x2160 per-eye, was the "stretched vertically" one — the
+projection bug above). Result, unprompted: the **flat SBS** (`tron_legacy_sbs2048`, 4096x1152 →
+**2048x1152 per eye**) was clearly preferred over the **VR180** (`tron_legacy_vr180_4k`, 3840x1920 →
+1920x1920 per eye) on **resolution** ("se ve mejor, sobre todo resolución") and **no geometric
+deformation** ("sin deformaciones"). Mechanism: the flat SBS concentrates more horizontal pixels
+per eye into a bounded flat screen (sharp), and preserves the 16:9 framing; the VR180 spreads a
+similar pixel budget across a full 180° dome (lower effective angular resolution → looks soft/banded)
+AND warps flat cinematic content onto a hemisphere. **Takeaway: for flat/cinematic source, prefer
+the flat-SBS output; reserve VR180 for material actually captured in 180°.**
 
 **The important part on this side**: its outputs expose a hole in the detection chain.
 
@@ -675,3 +808,6 @@ With the headset on and `HELLO_XR_VIDEO_STATS=1`:
   Unnecessary today: we're already at full rate. This is THE optimization if 90Hz+8K demands more.
 - YouTube "mesh" projection: our half-equirect is an approximation; if stretching is
   noticeable at the edges, adjust with `HELLO_XR_PANO_FOV` or implement the real mesh.
+- **Controller volume (vertical bar, mirroring the seek bar) + 360/photo-mode playlist
+  control** — two feature requests from the 2026-08-26 audio session, not designed yet (see
+  "Stereo audio" above).

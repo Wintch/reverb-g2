@@ -100,23 +100,85 @@ def gpu_power():
 
 
 def audio_status():
-    # Found live 2026-08-26: the headset's USB Audio sink is never the system
-    # default on its own (this rig's onboard analog output is) -- a game
-    # launched normally plays out loud on the room speakers, not the
-    # headset. hmd-audio.sh's headset/external subcommands fix this; this
-    # just reports which one is currently active so it's visible without
-    # SSHing in mid-demo.
+    # Per-device audio for the command center (2026-08-26): a checkbox + volume slider per
+    # output the machine has. `hmd-audio.sh list` prints name|description|active|volume% per
+    # sink -- active = it's the default OR a live pw-loopback mirror target (so 'both'/'all'
+    # shows several checked). The dashboard checks a set -> POST /api/audio-outputs; a per-row
+    # slider -> POST /api/sink-volume. One source of truth: the same script the CLI uses.
+    out, rc = run([f"{HOME}/vr/hmd-audio.sh", "list"])
+    devices = []
+    if rc == 0:
+        for line in out.splitlines():
+            parts = line.split("|")
+            if len(parts) == 4:
+                name, desc, active, vol = parts
+                devices.append({"name": name, "desc": desc,
+                                "active": active == "1",
+                                "volume_pct": int(vol) if vol.isdigit() else None})
     default_sink, _ = run(["pactl", "get-default-sink"])
     route = "headset" if "usb" in default_sink.lower() else "external"
-    vol_out, _ = run(["pactl", "get-sink-volume", "@DEFAULT_SINK@"])
-    mute_out, _ = run(["pactl", "get-sink-mute", "@DEFAULT_SINK@"])
-    m = re.search(r"(\d+)%", vol_out)
+    dv = next((d for d in devices if d["name"] == default_sink), None)
+    mic_out, _ = run([f"{HOME}/vr/hmd-audio.sh", "mic", "status"])
     return {
+        "devices": devices,
         "default_sink": default_sink,
         "route": route,
-        "volume_pct": int(m.group(1)) if m else None,
-        "muted": "yes" in mute_out.lower(),
+        "volume_pct": dv["volume_pct"] if dv else None,
+        "mic": {"muted": mic_out.strip() == "muted"},
     }
+
+
+# ---- Headset/screen preview (2026-08-26) ----
+# The command-center's embedded headset image. Same PROVEN capture mechanism as
+# pmadminka-agent.py (which already pushes these to a remote server from this exact box):
+# on this Wayland rig, GNOME's screenshot D-Bus refuses non-portal callers and `import -window
+# root` fails (Xwayland rootless has no composited root framebuffer) -- but capturing a SPECIFIC
+# mapped Xwayland window by id via XComposite DOES work. We pick the largest mapped window with a
+# real WM_CLASS (the mutter guard window has none and would otherwise always win on size). For a
+# running game that's its companion window = what the headset shows.
+PREVIEW_MAX_W = 1280
+PREVIEW_QUALITY = 50
+_WIN_RE = re.compile(r'(0x[0-9a-f]+)\s+(?:"[^"]*"|\(has no name\))\s*:\s*\(([^)]*)\)\s+(\d+)x(\d+)\+-?\d+\+-?\d+')
+
+
+def find_preview_window(min_w=320, min_h=240):
+    try:
+        out = subprocess.run(["xwininfo", "-root", "-tree"], capture_output=True, text=True,
+                             env=gui_env.get(), timeout=5).stdout
+    except Exception:
+        return None
+    best_id, best_area = None, 0
+    for line in out.splitlines():
+        m = _WIN_RE.search(line)
+        if not m:
+            continue
+        wid, wm_class, w, h = m.group(1), m.group(2), int(m.group(3)), int(m.group(4))
+        if not wm_class.strip() or w < min_w or h < min_h:
+            continue
+        if w * h > best_area:
+            best_area, best_id = w * h, wid
+    return best_id
+
+
+def capture_jpeg(max_w=PREVIEW_MAX_W, quality=PREVIEW_QUALITY):
+    wid = find_preview_window()
+    if not wid:
+        return None
+    tmp = f"/tmp/dashboard-preview-{os.getpid()}.jpg"
+    try:
+        r = subprocess.run(["import", "-window", wid, "-resize", f"{max_w}x", "-quality", str(quality), tmp],
+                           env=gui_env.get(), capture_output=True, timeout=10)
+        if r.returncode != 0 or not os.path.exists(tmp):
+            return None
+        with open(tmp, "rb") as f:
+            return f.read()
+    except Exception:
+        return None
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
 
 
 def git_head():
@@ -183,6 +245,11 @@ ACTIONS = {
     "audio-external": {
         "label": "Audio -> external",
         "cmd": [f"{HOME}/vr/hmd-audio.sh", "external"],
+        "cwd": f"{HOME}/vr",
+    },
+    "audio-both": {
+        "label": "Audio -> both",
+        "cmd": [f"{HOME}/vr/hmd-audio.sh", "both"],
         "cwd": f"{HOME}/vr",
     },
 }
@@ -324,6 +391,9 @@ PAGE = """<!doctype html>
   #compositor-toggle.off { border-color:#6b7488; color:#dfe4ee; }
   #audio-toggle.on { border-color:#4fd67a; color:#4fd67a; }
   #audio-toggle.off { border-color:#ffb454; color:#ffb454; }
+  #vol-wrap { display:flex; align-items:center; gap:8px; }
+  #vol { width:150px; accent-color:#7fdbca; }
+  #vol-val { font-size:13px; color:#8b93a7; min-width:42px; }
   #action-msg { font-size:13px; color:#8b93a7; min-height:18px; margin-bottom:16px; }
   .pwr-wrap { margin-bottom:10px; }
   .pwr-nums { display:flex; justify-content:space-between; font-size:13px; margin-bottom:4px; }
@@ -340,16 +410,31 @@ PAGE = """<!doctype html>
   .st.broken { background:#3a1414; color:#ff6b6b; }
   .guide li { font-size:13px; color:#c7cdd9; margin:4px 0 4px 16px; }
   .guide b { color:#7fdbca; }
+  .adev { display:flex; align-items:center; gap:10px; padding:7px 0; border-bottom:1px dashed #232838; }
+  .adev input[type=checkbox] { width:18px; height:18px; accent-color:#4fd67a; flex:0 0 auto; }
+  .adev .aname { flex:1 1 auto; font-size:13px; }
+  .adev .aname.on { color:#4fd67a; }
+  .adev .aname.off { color:#8b93a7; }
+  .adev input[type=range] { width:120px; accent-color:#7fdbca; }
+  .adev .aval { font-size:12px; color:#8b93a7; min-width:40px; text-align:right; }
 </style></head>
 <body>
 <h1>iashur -- HP Reverb G2 lab status</h1>
 <div id="attn"></div>
 <div id="actions-row" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:16px;">
   <button id="compositor-toggle" disabled>compositor: --</button>
-  <button id="audio-toggle" disabled>audio: --</button>
   <div id="actions">loading actions...</div>
 </div>
 <div id="action-msg"></div>
+<div class="card" style="margin-bottom:16px">
+  <h2>Headset preview <span id="screen-note" class="dim" style="font-size:12px"></span></h2>
+  <img id="screen" alt="no preview" style="max-width:100%; border-radius:8px; background:#0b0e14; display:none">
+  <div id="screen-empty" class="dim" style="font-size:13px">no hay ventana para previsualizar (arrancá un juego/player)</div>
+</div>
+<div class="card" style="margin-bottom:16px">
+  <h2>Audio outputs -- check one, another, or several (duplicate); per-device volume</h2>
+  <div id="audio-devices">loading audio devices...</div>
+</div>
 <div class="card" style="margin-bottom:16px">
   <h2>Demos -- one button per title + head-tracking mode (only "approved" goes to guests)</h2>
   <div id="demos">loading demos...</div>
@@ -368,7 +453,7 @@ PAGE = """<!doctype html>
 // compositor-up/down are handled by the dedicated toggle button below, not
 // listed among the generic one-shot action buttons.
 const COMPOSITOR_ACTION_IDS = new Set(['compositor-up', 'compositor-down']);
-const AUDIO_ACTION_IDS = new Set(['audio-headset', 'audio-external']);
+const AUDIO_ACTION_IDS = new Set(['audio-headset', 'audio-external', 'audio-both']);
 
 async function loadActions() {
   try {
@@ -407,13 +492,80 @@ function updateCompositorToggle(running) {
   btn.textContent = running ? '● compositor ON -- click to stop' : '○ compositor off -- click to start';
   btn.onclick = () => runAction(running ? 'compositor-down' : 'compositor-up', btn);
 }
-function updateAudioToggle(route) {
-  const btn = document.getElementById('audio-toggle');
-  btn.disabled = false;
-  const onHeadset = route === 'headset';
-  btn.className = onHeadset ? 'on' : 'off';
-  btn.textContent = onHeadset ? '🎧 audio: headset -- click for external' : '🔊 audio: external -- click for headset';
-  btn.onclick = () => runAction(onHeadset ? 'audio-external' : 'audio-headset', btn);
+let audioDragging = false;   // a per-device volume slider is being dragged right now
+document.addEventListener('mouseup', () => audioDragging = false);
+
+async function applyAudioOutputs() {
+  const checked = [...document.querySelectorAll('#audio-devices input[type=checkbox][data-name]')]
+    .filter(c => c.checked).map(c => c.dataset.name);
+  const msg = document.getElementById('action-msg');
+  if (checked.length === 0) { msg.textContent = 'dejá al menos una salida activa'; return; }
+  msg.textContent = 'salidas -> ' + checked.length + ' ...';
+  try {
+    const r = await fetch('/api/audio-outputs?names=' + encodeURIComponent(checked.join(',')), {method:'POST'});
+    const d = await r.json();
+    msg.textContent = d.ok ? ('audio: ' + d.message) : ('FALLO: ' + d.message);
+  } catch(e) { msg.textContent = 'audio falló: ' + e; }
+}
+async function setSinkVolume(name, pct) {
+  try {
+    await fetch('/api/sink-volume?name=' + encodeURIComponent(name) + '&pct=' + encodeURIComponent(pct), {method:'POST'});
+  } catch(e) {}
+}
+async function toggleMic(muted) {
+  const msg = document.getElementById('action-msg');
+  try {
+    const r = await fetch('/api/mic?on=' + (muted ? '1' : '0'), {method:'POST'});
+    const d = await r.json();
+    msg.textContent = d.ok ? ('mic ' + (muted ? 'ON' : 'OFF (mute)')) : ('mic FALLO: ' + d.message);
+  } catch(e) { msg.textContent = 'mic falló: ' + e; }
+}
+function renderAudioDevices(audio) {
+  const el = document.getElementById('audio-devices');
+  const devs = (audio && audio.devices) || [];
+  // Rebuild only when the device SET changes; otherwise update values in place so we don't
+  // yank a checkbox/slider the operator is touching.
+  const sig = devs.map(d => d.name).join('|') + '|mic';
+  if (el.dataset.sig !== sig) {
+    el.dataset.sig = sig; el.innerHTML = '';
+    // Mic row first (default OFF/muted).
+    const micRow = document.createElement('div'); micRow.className = 'adev';
+    micRow.innerHTML = '<input type="checkbox" id="mic-cb"><span class="aname off">🎙️ Micrófono</span>' +
+                       '<span class="aval" id="mic-state">off</span>';
+    micRow.querySelector('#mic-cb').onchange = e => toggleMic(e.target.checked);
+    el.appendChild(micRow);
+    for (const d of devs) {
+      const row = document.createElement('div'); row.className = 'adev';
+      const cb = document.createElement('input'); cb.type='checkbox'; cb.dataset.name=d.name; cb.checked=d.active;
+      cb.onchange = applyAudioOutputs;
+      const nm = document.createElement('span'); nm.className='aname ' + (d.active?'on':'off'); nm.textContent=d.desc; nm.dataset.name=d.name;
+      const sl = document.createElement('input'); sl.type='range'; sl.min=0; sl.max=130; sl.step=5;
+      sl.value=d.volume_pct==null?100:d.volume_pct; sl.dataset.name=d.name;
+      const vv = document.createElement('span'); vv.className='aval'; vv.textContent=(sl.value)+'%';
+      sl.addEventListener('mousedown', () => audioDragging = true);
+      sl.oninput = () => vv.textContent = sl.value + '%';
+      sl.onchange = () => { setSinkVolume(d.name, sl.value); audioDragging=false; };
+      row.appendChild(cb); row.appendChild(nm); row.appendChild(sl); row.appendChild(vv);
+      el.appendChild(row);
+    }
+  } else {
+    // in-place value refresh, skipping anything focused/being dragged
+    if (audio && audio.mic) {
+      const mcb=document.getElementById('mic-cb'), mst=document.getElementById('mic-state');
+      if (mcb && document.activeElement!==mcb) mcb.checked = !audio.mic.muted;
+      if (mst) mst.textContent = audio.mic.muted ? 'off' : 'ON';
+    }
+    for (const d of devs) {
+      const cb = el.querySelector('input[type=checkbox][data-name="'+CSS.escape(d.name)+'"]');
+      const nm = el.querySelector('.aname[data-name="'+CSS.escape(d.name)+'"]');
+      const sl = el.querySelector('input[type=range][data-name="'+CSS.escape(d.name)+'"]');
+      if (cb && document.activeElement!==cb) cb.checked = d.active;
+      if (nm) nm.className = 'aname ' + (d.active?'on':'off');
+      if (sl && !audioDragging && document.activeElement!==sl && d.volume_pct!=null) {
+        sl.value = d.volume_pct; if (sl.nextSibling) sl.nextSibling.textContent = d.volume_pct + '%';
+      }
+    }
+  }
 }
 async function loadDemos() {
   try {
@@ -440,6 +592,18 @@ async function loadDemos() {
 }
 loadActions();
 loadDemos();
+// Headset preview: reload the JPEG every ~2s. A 204 (no window) hides the image and shows the
+// hint; a real frame swaps in only once it's fully decoded (no flof a half-loaded image).
+function refreshScreen() {
+  const img = document.getElementById('screen');
+  const empty = document.getElementById('screen-empty');
+  const probe = new Image();
+  probe.onload = () => { img.src = probe.src; img.style.display = 'block'; empty.style.display = 'none'; };
+  probe.onerror = () => { img.style.display = 'none'; empty.style.display = 'block'; };
+  probe.src = '/api/screen.jpg?t=' + Date.now();
+}
+setInterval(refreshScreen, 2000);
+refreshScreen();
 function gpuPowerHtml(p) {
   if (!p) return '<div class="pwr-wrap"><span class="dim">power data unavailable</span></div>';
   const pct = Math.max(0, Math.min(100, (p.draw_w / p.max_limit_w) * 100));
@@ -481,7 +645,7 @@ async function tick() {
     // when a session IS supposed to be active (monado running).
     const sessionActive = d.monado.running;
     updateCompositorToggle(sessionActive);
-    updateAudioToggle(d.audio ? d.audio.route : 'external');
+    renderAudioDevices(d.audio);
     const usbRows = Object.entries(d.usb.devices).map(([id, v]) =>
       `<div class="row"><span>${v.label}</span><span class="${v.present?'ok':'bad'}">${v.present?'OK':'MISSING'} (${id})</span></div>`
     ).join('');
@@ -571,6 +735,18 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+        elif self.path.startswith("/api/screen.jpg"):
+            img = capture_jpeg()
+            if img is None:
+                self.send_response(204)  # no window to preview right now
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(img)))
+            self.end_headers()
+            self.wfile.write(img)
         elif self.path.startswith("/api/status"):
             body = json.dumps(get_status()).encode()
             self.send_response(200)
@@ -586,8 +762,52 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
 
+    def _json_post(self, ok, msg):
+        body = json.dumps({"ok": ok, "message": msg}).encode()
+        self.send_response(200 if ok else 400)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_POST(self):
-        if self.path.startswith("/api/action/"):
+        from urllib.parse import urlparse, parse_qs
+        if self.path.startswith("/api/sink-volume"):
+            q = parse_qs(urlparse(self.path).query)
+            try:
+                name = q.get("name", [""])[0]
+                pct = max(0, min(150, int(q.get("pct", ["100"])[0])))
+                assert name
+                ok = subprocess.run([f"{HOME}/vr/hmd-audio.sh", "setsink", name, str(pct)],
+                                    capture_output=True, text=True).returncode == 0
+                self._json_post(ok, f"{name} -> {pct}%")
+            except Exception as e:
+                self._json_post(False, str(e))
+        elif self.path.startswith("/api/mic"):
+            q = parse_qs(urlparse(self.path).query)
+            on = q.get("on", ["0"])[0] == "1"
+            ok = subprocess.run([f"{HOME}/vr/hmd-audio.sh", "mic", "on" if on else "off"],
+                                capture_output=True, text=True).returncode == 0
+            self._json_post(ok, "mic " + ("on" if on else "off"))
+        elif self.path.startswith("/api/audio-outputs"):
+            q = parse_qs(urlparse(self.path).query)
+            names = [n for n in q.get("names", [""])[0].split(",") if n]
+            if not names:
+                self._json_post(False, "at least one output must stay checked")
+                return
+            ok = subprocess.run([f"{HOME}/vr/hmd-audio.sh", "outputs", *names],
+                                capture_output=True, text=True).returncode == 0
+            self._json_post(ok, "outputs: " + ", ".join(names))
+        elif self.path.startswith("/api/volume"):
+            q = parse_qs(urlparse(self.path).query)
+            try:
+                pct = max(0, min(150, int(q.get("pct", ["100"])[0])))
+                ok = subprocess.run([f"{HOME}/vr/hmd-audio.sh", "set", str(pct)],
+                                    capture_output=True, text=True).returncode == 0
+                self._json_post(ok, f"set to {pct}%")
+            except Exception as e:
+                self._json_post(False, str(e))
+        elif self.path.startswith("/api/action/"):
             action_id = self.path.split("/api/action/", 1)[1].strip("/")
             ok, msg = run_action(action_id)
             body = json.dumps({"ok": ok, "message": msg}).encode()
@@ -624,6 +844,11 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    # Mic defaults OFF (muted) on startup -- a demo booth should never come up hot-mic'd.
+    try:
+        subprocess.run([f"{HOME}/vr/hmd-audio.sh", "mic", "off"], capture_output=True, timeout=5)
+    except Exception:
+        pass
     srv = ThreadingHTTPServer(("127.0.0.1", 8765), Handler)
     print("serving on http://127.0.0.1:8765")
     srv.serve_forever()
