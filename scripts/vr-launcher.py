@@ -98,6 +98,9 @@ GAMES = [
     ("VRChat", "438100"),
     ("Propagation VR", "1363430"),
     ("Aircar", "1073390"),
+    # Added 2026-08-26: confirmed working worn by the user same day ("andaba bien"),
+    # but with zero recorded fps/pacing/duration data -- see docs/75.
+    ("Dreams of Dali", "591360"),
     ("Google Earth VR", "348250"),
     ("Dead Herring VR", "1498490"),
     ("Tank Mechanic Simulator VR", "1463010"),
@@ -138,11 +141,19 @@ TITLE_PROFILES = {
     # OpenVR Benchmark: a pure GPU/pacing loop, no hands, used as an instrument --
     # constellation would only add CPU noise to the number being measured.
     "955610": {"WMR_CONSTELLATION_CONTROLLERS": "0"},
+    # Dreams of Dali: worn-confirmed 2026-08-26 -- headset-only (gaze/head look),
+    # no gamepad, no motion controllers at all. (An earlier guess here from static
+    # binary evidence -- OVRGamepad.dll in the install -- wrongly called this
+    # gamepad-class; the user's own live playthrough overrides that.) Run with 6dof
+    # head tracking per the user's own direction.
+    "591360": {"WMR_CONSTELLATION_CONTROLLERS": "0"},
 }
 PROFILE_DEFAULT = {"WMR_CONSTELLATION_CONTROLLERS": "1"}
 # Titles whose verdict in docs/23 does not depend on hands at all (gamepad class): the
 # controller-registration check below stays informational for them instead of loud.
-NO_HANDS_TITLES = {"1073390", "797200", "955610"}
+# 591360 (Dreams of Dali) is here on the same unconfirmed static evidence as its
+# TITLE_PROFILES entry above -- see the comment there.
+NO_HANDS_TITLES = {"1073390", "797200", "955610", "591360"}
 
 
 JACKIN_OUT_LOG = LOG_DIR / "jack-in-launcher.log"

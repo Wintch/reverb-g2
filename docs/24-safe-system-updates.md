@@ -10,6 +10,12 @@ back. This chapter is the procedure, plus two scripts (`scripts/pre-update-check
 options" submenu) was checked against this exact install. Never tried on another
 distro/release — don't assume it transfers as-is.
 
+**This procedure did not originally check for silent on-disk drift** — files dpkg still
+believes it owns but that no longer exist, invisible to `apt`/`dkms status`/`dpkg --audit`
+alike. `docs/73-nvidia-symlink-drift.md` found four such missing NVIDIA symlinks (GLX,
+NVDEC, VDPAU, CUDA) with zero warning from any of those. `pre-update-check.sh` now runs
+`dpkg -V` as a standard section to catch this before it's mistaken for update fallout.
+
 ## Why this needs its own procedure at all
 
 Almost everything on this machine is safe to update anytime — desktop apps, codecs,

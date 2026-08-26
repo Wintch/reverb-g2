@@ -557,6 +557,17 @@ password field, because `plasmashell`/`kwin` lose their graphics context in a lo
 confirmed at least once: KDE had `DP-0` (the headset) saved as a desktop monitor at 90Hz.
 Detail, fix, and what remains unexplained in **`docs/20-desktop-plasma-crash.md`**.
 
+## Four NVIDIA symlinks were silently deleted from disk, invisible to apt/dpkg --audit (2026-08-25)
+
+Not a headset bug — Plasma X11 wouldn't render (`plasmashell` coredumping) because Xorg
+couldn't load `glxserver_nvidia`. Root cause was a missing symlink dpkg still believed it
+owned; `dpkg -V` (not `dpkg --audit`, which stayed clean throughout) found three more of the
+same class — NVDEC (`libnvcuvid.so`/`.so.1`), VDPAU (`libvdpau_nvidia.so.1`), and CUDA
+(`libcuda.so`) were all silently broken too, with no trace in any of the checks this project
+already runs. Full detail, the fix (`apt-get install --reinstall` on the actual owning
+package, found with `dpkg -S`, not assumed from the package name), and the drift check now
+built into `pre-update-check.sh`: **`docs/73-nvidia-symlink-drift.md`**.
+
 ## Known broken hardware
 
 - 16GB RAM (upgrade to 32 planned); zram configured at 100% with zstd.

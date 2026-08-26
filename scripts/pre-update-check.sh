@@ -42,6 +42,25 @@ else
 fi
 
 echo
+echo "=== package integrity (dpkg -V), non-conffile drift only ==="
+# Catches files dpkg believes are installed but that are missing/corrupted on disk --
+# this is NOT the same class of problem apt upgrade solves; it's silent drift that apt
+# never notices because dpkg's own bookkeeping still says everything is fine. Found for
+# real on 2026-08-25 (docs/73-nvidia-symlink-drift.md): four NVIDIA-owned symlinks
+# (libglxserver_nvidia.so, libnvcuvid.so[.1], libcuda.so, libvdpau_nvidia.so.1) had been
+# deleted from disk while dpkg still listed them as present -- Xorg's GLX and NVDEC/VDPAU
+# decode were both broken with zero trace in apt/dpkg's own state until this ran.
+DRIFT=$(dpkg -V 2>&1 | grep -v '^..5?????? c ' | grep -v '^????????? c ')
+if [ -z "$DRIFT" ]; then
+    echo "  OK: no non-conffile drift found."
+else
+    echo "$DRIFT" | sed 's/^/  /'
+    echo "  !! Files above are owned by a package per dpkg but missing/corrupted on disk."
+    echo "     'missing' entries: find the owner with 'dpkg -S <path>' and"
+    echo "     'apt-get install --reinstall <pkg>'. See docs/73-nvidia-symlink-drift.md."
+fi
+
+echo
 echo "=== rollback kernel readiness ==="
 CURRENT=$(uname -r)
 OTHER=$(dpkg -l 'linux-image-6.*-amd64' 2>/dev/null | awk '/^ii/{print $2}' | sed 's/linux-image-//' | grep -v "^$CURRENT\$")
