@@ -694,7 +694,18 @@ and the residual growth in G′/I (+600 / +232 MB/h) comes from `vio_marg_lost_l
 on the backend side (landmarks live longer and keep accumulating observations), not from
 recall. +232 MB/h is fine for a demo session (30 min ≈ +115 MB), not for an all-day booth
 without a restart between sessions.
-| G3 (marg-lost off only, no recall) | | | | | | | | *queued* |
+| G3 (marg-lost off only, no recall) | 89 / 49 | 0.09 | 7 | 5.46 m | 3.00 m | 6.6 ms | +9 (flat) | SAFE — 5× the landmarks for +3 ms; drift = base |
+| L (keyframe threshold 0.9) | | | | | | | | *running* |
+| M (I without recall: marg-lost off + 2 cm + 12 kfs) | | | | | | | | *queued after I2* |
+
+**G3 says most of the landmark gain is just not deleting them.** `vio_marg_lost_landmarks:
+false` alone: landmarks 89 / 49 (base 16 / 7; more than G′'s 64 / 37 *with* recall), 0.09 % of
+frames under 5, frontend p50 31 ms (base 28), RSS flat — and drift unchanged (7 trips, span
+5.5 m). So at rest recall adds nothing that marg-lost-off doesn't already give, and neither
+fixes the walk; I's fix needs the 2 cm gate + 12 keyframes on top. That makes **M = I minus
+recall** the cheap candidate to test: if M matches I at rest, recall's whole CPU cost (patch
+building, 0015 or not) is only justified by what it does under *yaw* — sweep-and-return —
+which the offline replay of the wearer's recording will measure, not a stationary soak.
 
 **G′ (recall + marg-lost off, with 0014), full 20 min — three separate verdicts:**
 
