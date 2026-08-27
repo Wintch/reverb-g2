@@ -665,7 +665,7 @@ inherit H's 2 cm gate and are deprioritised; I still runs once for the record.
 | base | 16 / 7 | 4.4 | 7 | 4.75 m | 3.00 m | 2.7 ms | +11 | reference |
 | H | 24 / 6 | 5.1 | 46 | 7.50 m | 4.90 m | 7.0 ms | +3 | UNSAFE |
 | G′ (G + 0014) | 64 / 37 | 1.3 | 30 | 5.73 m | 3.00 m | 5.6 ms | +602 | UNSAFE |
-| K (G′ + 12 kfs) | *lost* | *lost* | 1 | 3.01 m | 2.94 m | — | ~+200 | partial: better than base, far from I; rerun queued |
+| K (G′ + 12 kfs; rerun on 0015) | 108 / 66 | 0.00 | 1 | 3.01 m | 2.94 m | 10.0 ms | flat (−200) | better than base (trips 7→1), not the fix (span 3 m); frontend p50 36.5 / p99 97 |
 | **I (G′ + H: recall + marg-lost off + 2 cm + 12 kfs)** | **145 / 81** | **0.02** | **0** | **0.41 m** | **0.32 m** | 13.6 ms | +232 | **stable at rest; CPU over budget** |
 
 **I is the first config that fixes rest** — an order of magnitude on every drift metric (span

@@ -31,9 +31,21 @@
 > reproduces the live regime (same landmark counts) but not bit-exactly (~2× span) — so **record
 > the yaw session as PNG and replay `base` twice** to know the noise floor before ranking.
 >
-> **Unattended soak results** (base, G, H, I, J; 20 min each, headset on, nobody wearing it):
-> see `~/vr/logs/soak/*.json` and the table appended to docs/80 — a FAIL there means "do not
-> offer that variant to the wearer".
+> **Unattended soak results so far** (20 min each, headset on, nobody wearing it; full table +
+> analysis in docs/80, raw in `~/vr/logs/soak/`, `scripts/soak-grade.py` re-grades relative to
+> base): the **base config itself starves at rest** — landmarks hit 0, the raw position
+> random-walks metres (span 4.75 m, 7 divergence trips in 20 min, headset lying still). Of the
+> backend variants: H (2 cm triangulation alone) and L (keyframe threshold 0.9) are refuted
+> (46 / 96 trips); G3 (`vio_marg_lost_landmarks: false` alone) gives 5× the landmarks for +3 ms
+> and RSS flat but the same drift; G′ (+ recall) 4× landmarks, 30 trips; K (G′ + 12 keyframes)
+> 1 trip, span 3.0 m; **I (recall + marg-lost off + 2 cm + 12 keyframes) is the first config
+> that fixes rest: span 0.41 m, 0 trips, 145 / 81 landmarks** — at a CPU cost (frontend p50
+> 49 ms vs 28, budget 33) that three Basalt patches attack: 0014 (recall's patch map was an
+> unbounded 18 GB/3 min leak — bounded), 0015 (parallel patch building, ~4 ms), 0016 (the
+> once-a-second prune sweep was every p99 spike — amortized). Still running when this was
+> written: I2 (I on 0015), M (I without recall — if it matches I at rest, recall's cost is only
+> justified by yaw), I3 (30-frame grace), I4 (I on 0016). Whatever wins at rest is still only
+> the *rest* half; the yaw half is decided by the offline replay of the wearer's recording (R).
 >
 > **When the user is back — 15 min of headset**:
 > 1. Button **F** (A + spread 25): the wearer's own ask. Verdict vs A → if ≥ A, spread 25 stays.
