@@ -338,6 +338,42 @@ for _name, _appid, _tracking, _status, _note in DEMO_LAUNCHES:
         "demo": {"title": _name, "tracking": _tracking, "status": _status, "note": _note},
     }
 
+# Aircar 6dof head-tracking VARIANTS (2026-08-27 night, docs/80's closing sections): one button
+# per candidate so the wearer can A/B several approaches back to back without an agent editing
+# TITLE_PROFILES between runs. Each sets ONLY the env vars that differ from the gold profile;
+# vr-launcher.py lets ambient env override its own profile by design ("an operator exporting the
+# var explicitly is doing an experiment and the picker must not fight them"), so everything else
+# stays exactly the profile. All record via demo-recorder.py with the variant in the comment --
+# the recordings ARE the A/B log. VIT_COLLAPSE_LOG=1 on all: free keypoint-count diagnostic.
+AIRCAR_VARIANTS = [
+    ("A", "horizonte 50ms + clamp 1.5 m/s",
+     {"SLAM_PRED_POSITION_HORIZON_MS": "50", "SLAM_PRED_POSITION_MAX_SPEED_CM_S": "150"},
+     "CANDIDATO PRINCIPAL (patch 0100 completo). El 1er test del horizonte SIN clamp mando al wearer 1-3 m fuera de la cabina: la velocidad cruda del SLAM tiene 0.2% de picos de re-localizacion de hasta 127 m/s (= 6 m en UN frame de 50 ms). El clamp al techo fisico de una cabeza sentada (1.5 m/s) mata esos picos y deja pasar todo el movimiento real (p99 = 1.66 m/s). Esperado: el 'menos delay' de antes SIN el 'mas desfasaje'."),
+    ("B", "horizonte 25ms + clamp 1.5 m/s",
+     {"SLAM_PRED_POSITION_HORIZON_MS": "25", "SLAM_PRED_POSITION_MAX_SPEED_CM_S": "150"},
+     "Igual que A con la mitad de horizonte. Si A todavia se pasa en giros rapidos, esto devuelve algo del delay a cambio de menos deriva."),
+    ("C", "sin horizonte (freeze puro 0097) -- CONTROL",
+     {"SLAM_PRED_POSITION_HORIZON_MS": "0"},
+     "CONTROL: la config de esta misma noche que el wearer aprobo ('viene muy bien, responde mas agil') = SLAM_THREADS=6 + optical-flow mas laxo, SIN horizonte de posicion. Comparar A/B/D/E contra ESTO, no contra la memoria."),
+    ("D", "horizonte 50ms + clamp 1.0 m/s",
+     {"SLAM_PRED_POSITION_HORIZON_MS": "50", "SLAM_PRED_POSITION_MAX_SPEED_CM_S": "100"},
+     "A con clamp mas apretado (1.0 m/s). Para si A se siente bien en general pero todavia 'salta' en los giros MAS rapidos."),
+    ("E", "sin horizonte + spread 25ms",
+     {"SLAM_PRED_POSITION_HORIZON_MS": "0", "SLAM_CORRECTION_SPREAD_MS": "25"},
+     "Palanca DISTINTA (investigacion docs/80): reduce a la mitad la ventana de decaimiento del correction-spread, asi un re-anclaje en movimiento rapido 'se acomoda' el doble de rapido. Riesgo: volver al jitter/snap duro de T202. Freeze puro en lo demas, aisla esta sola variable."),
+]
+for _tag, _label, _env, _note in AIRCAR_VARIANTS:
+    ACTIONS[f"variant-1073390-{_tag}"] = {
+        "label": f"Aircar · 6dof · variante {_tag}",
+        "cmd": ["python3", f"{HOME}/vr/vr-launcher.py", "1", "6dof"],
+        "cwd": f"{HOME}/vr",
+        "env": {"VR_LAUNCH_APPID": "1073390", "U_PACING_APP_LOG": "debug", "VIT_COLLAPSE_LOG": "1",
+                "VR_DEMO_RECORD": "1", "VR_DEMO_COMMENT": f"Aircar 6dof variante {_tag}: {_label}",
+                **_env},
+        "demo": {"title": f"Aircar variante {_tag} ({_label})", "tracking": "6dof",
+                 "status": "testing", "note": _note},
+    }
+
 
 def run_action(action_id):
     action = ACTIONS.get(action_id)

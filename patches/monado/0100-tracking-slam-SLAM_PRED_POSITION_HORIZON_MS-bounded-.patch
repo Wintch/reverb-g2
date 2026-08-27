@@ -1,0 +1,174 @@
+From 2b1c3368499705c82797cd6df3fd87029f84e6f5 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Thu, 27 Aug 2026 10:24:04 -0300
+Subject: [PATCH] tracking/slam: SLAM_PRED_POSITION_HORIZON_MS -- bounded
+ position extrapolation (opt-in)
+
+SLAM_PRED_FREEZE_POSITION (0097) holds position flat for the WHOLE anchor-age gap
+(~90-190ms) to avoid the ~50cm overshoot from extrapolating velocity across it --
+but that means genuine head TRANSLATION during the gap goes fully uncompensated,
+which the neck-arm model (also 0097) only partially covers since it's a fixed
+rotational-arc approximation, not a model of real per-wearer neck translation.
+
+Adds a bounded middle ground: extrapolate the SLAM tracker's own real linear
+velocity, but only for up to SLAM_PRED_POSITION_HORIZON_MS milliseconds, then hold
+flat for the rest of the gap -- trading a little real-translation drift for much
+less of the anchor-age's translation latency. Default 0 (off), a true no-op
+identical to today's behavior; requires SLAM_PRED_FREEZE_POSITION also on.
+
+Computed manually in predict_pose() rather than by shortening m_predict_relation's
+shared delta_s, since that single delta_s also drives do_orientation() -- gyro
+integration should still predict orientation over the FULL anchor-age gap (it's
+clean over that whole window per 0097's own rationale), only position gets the
+capped horizon. Stacks additively with SLAM_PRED_NECK_ARM_MM, independent
+corrections to the same position field.
+
+SLAM_PRED_POSITION_MAX_SPEED_CM_S (default 150 = 1.5 m/s, 0 = no clamp): physical
+speed clamp on the extrapolated velocity, added after the FIRST wearer test of the
+horizon alone (50ms, 2026-08-27) regressed hard: "1-2-3 metros fuera de la cabina"
+after a few fast turns, "menos delay, mas desfasaje". That session's own
+tracking.csv (28k anchors, 15 min) explained it: raw SLAM anchor-to-anchor speed
+is p50 0.04 m/s, p99 1.66 m/s (plausible), but p99.9 = 81 m/s, max = 127 m/s --
+~0.2% of anchors are re-localization jumps, not motion, and 127 m/s x 50 ms is
+6.4 m in ONE frame. Full FREEZE never saw this because zeroing the velocity also
+silently discarded the spikes; the horizon let them straight through. A seated
+head does not exceed ~1-1.5 m/s, so a magnitude clamp there (direction preserved)
+passes essentially all real motion and kills the tails. NaN-safe negated
+comparison, same reasoning as the 0099 guards.
+
+Named as a "possible future refinement (untested)" in docs/80's original
+FREEZE_POSITION writeup; implemented after a live wearer session reconfirmed the
+documented residual precisely. A coordinate-frame-mismatch hypothesis for the
+neck-arm vector was investigated first and adversarially RULED OUT (two
+independent derivations disagreed; the tie-break confirmed the existing neck-arm
+math is already correct).
+
+Independent verification of the horizon logic (pre-clamp): a fresh reviewer agent
+tried to break capture timing, dt-cap sign/ordering, double-counting with the
+neck-arm block, the default-off no-op guarantee, and unit conversion -- all held.
+Builds clean (aux_tracking, monado-service). The clamp itself is NOT YET
+HARDWARE-VALIDATED -- pending the next wearer A/B.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ src/xrt/auxiliary/tracking/t_tracker_slam.cpp | 76 +++++++++++++++++++
+ 1 file changed, 76 insertions(+)
+
+diff --git a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+index 6792a7754..f7f75eccd 100644
+--- a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
++++ b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+@@ -89,6 +89,13 @@ DEBUG_GET_ONCE_NUM_OPTION(slam_openvr_groundtruth_device, "SLAM_OPENVR_GROUNDTRU
+ DEBUG_GET_ONCE_NUM_OPTION(slam_prediction_type, "SLAM_PREDICTION_TYPE", long(SLAM_PRED_DEAD_RECKONING))
+ DEBUG_GET_ONCE_BOOL_OPTION(slam_pred_freeze_position, "SLAM_PRED_FREEZE_POSITION", false)
+ DEBUG_GET_ONCE_NUM_OPTION(slam_pred_neck_arm_mm, "SLAM_PRED_NECK_ARM_MM", 0)
++//! Bounded position-extrapolation horizon in ms, on top of pred_freeze_position (0 = today's
++//! full freeze, unchanged default). See predict_pose()'s SLAM_PRED_POSITION_HORIZON_MS block.
++DEBUG_GET_ONCE_NUM_OPTION(slam_pred_position_horizon_ms, "SLAM_PRED_POSITION_HORIZON_MS", 0)
++//! Physical speed clamp (cm/s, integer env var like the others here) on the velocity the
++//! horizon above extrapolates. 0 = no clamp. Default 150 (1.5 m/s, a seated head's ceiling) --
++//! see predict_pose()'s SLAM_PRED_POSITION_MAX_SPEED_CM_S block for the live incident.
++DEBUG_GET_ONCE_NUM_OPTION(slam_pred_position_max_speed_cm_s, "SLAM_PRED_POSITION_MAX_SPEED_CM_S", 150)
+ DEBUG_GET_ONCE_BOOL_OPTION(slam_write_csvs, "SLAM_WRITE_CSVS", false)
+ DEBUG_GET_ONCE_BOOL_OPTION(slam_features_enable, "SLAM_FEATURES_ENABLE", false)
+ DEBUG_GET_ONCE_BOOL_OPTION(slam_config_pipeline_only, "SLAM_CONFIG_PIPELINE_ONLY", false)
+@@ -444,6 +451,14 @@ struct TrackerSlam
+ 	//! pred_freeze_position, swings the frozen eye position along the neck-pivot arc as
+ 	//! orientation is predicted forward, fixing the orientation/position timestamp split.
+ 	long pred_neck_arm_mm = 0;
++	//! Bounded position-extrapolation horizon, in seconds (SLAM_PRED_POSITION_HORIZON_MS / 1000,
++	//! 0 = off). With pred_freeze_position, extrapolates REAL linear velocity for up to this
++	//! many seconds instead of holding position flat for the whole anchor-age gap -- see
++	//! predict_pose() for the full rationale (docs/80's "possible future refinement").
++	double pred_position_horizon_s = 0.0;
++	//! Physical speed clamp on the horizon's extrapolated velocity, in m/s
++	//! (SLAM_PRED_POSITION_MAX_SPEED_CM_S / 100, 0 = no clamp). See predict_pose().
++	double pred_position_max_speed_m_s = 0.0;
+ 	u_var_combo pred_combo;         //!< UI combo box to select @ref pred_type
+ 	RelationHistory slam_rels{};    //!< A history of relations produced purely from external SLAM tracker data
+ 	int dbg_pred_every = 1;         //!< Skip X SLAM poses so that you get tracked mostly by the prediction algo
+@@ -1612,6 +1627,12 @@ predict_pose(TrackerSlam &t, timepoint_ns when_ns, struct xrt_space_relation *ou
+ 	// do_position() hold pose.position while do_orientation() still applies angular_velocity,
+ 	// giving SLAM_PRED_NONE's rock-solid position with SLAM_PRED_GYRO's head-turn
+ 	// responsiveness. The lost real arc translation is a few cm; the removed drift is ~50 cm.
++	// Saved BEFORE freezing, for SLAM_PRED_POSITION_HORIZON_MS below -- rel.linear_velocity
++	// still holds Basalt's own raw SLAM-reported velocity at this point (SLAM_PRED_GYRO does
++	// not touch it; only SLAM_PRED_ACCEL_GYRO's block above does, and that ran already if
++	// applicable), which is exactly the real signal a bounded extrapolation needs.
++	xrt_vec3 pre_freeze_linear_velocity = rel.linear_velocity;
++
+ 	if (t.pred_freeze_position) {
+ 		rel.linear_velocity = xrt_vec3{0, 0, 0};
+ 		rel.relation_flags = (enum xrt_space_relation_flags)(rel.relation_flags &
+@@ -1623,6 +1644,53 @@ predict_pose(TrackerSlam &t, timepoint_ns when_ns, struct xrt_space_relation *ou
+ 	xrt_space_relation predicted_relation{};
+ 	m_predict_relation(&rel, slam_to_now_dt, &predicted_relation);
+ 
++	// SLAM_PRED_POSITION_HORIZON_MS (default 0, off -- unchanged behavior): a bounded middle
++	// ground between full FREEZE (0 translation over the whole ~120-190ms anchor-age gap,
++	// today's default) and no freeze at all (velocity*dt over the FULL gap, the ~50cm overshoot
++	// FREEZE was built to remove). Extrapolates the real SLAM-reported linear velocity, but only
++	// for up to this many seconds; the remainder of the gap (if slam_to_now_dt exceeds the
++	// horizon) stays flat, same as full freeze. Computed manually here rather than by passing a
++	// shorter delta_s into m_predict_relation() above, because that call's ONE delta_s also
++	// drives do_orientation() -- orientation must still predict over the FULL slam_to_now_dt
++	// (the gyro is clean over that whole window, per FREEZE_POSITION's own rationale above), only
++	// position gets the shorter horizon. Stacks additively with SLAM_PRED_NECK_ARM_MM below (one
++	// compensates real head TRANSLATION during the gap, the other compensates the neck-pivot
++	// ROTATIONAL arc) -- independent corrections to the same position field, no interaction.
++	// docs/80's own "possible future refinement (untested)" note named this exact idea.
++	//
++	// SLAM_PRED_POSITION_MAX_SPEED_CM_S: physical speed clamp on that extrapolated velocity.
++	// Found live 2026-08-27 on the first wearer test of this horizon (50ms): "1-2-3 metros
++	// fuera de la cabina" after a few fast turns. The session's own tracking.csv showed why --
++	// raw SLAM anchor-to-anchor speed is p50 0.04 m/s, p99 1.66 m/s (plausible), but
++	// p99.9 = 81 m/s and max = 127 m/s, i.e. ~0.2% of anchors are re-localization jumps, not
++	// motion. 127 m/s x 50 ms = 6.4 m in ONE frame. Full FREEZE (0097) never saw this because
++	// zeroing the velocity also silently discarded the spikes; this horizon let them through.
++	// A seated head does not exceed ~1-1.5 m/s, so a clamp at that level passes essentially
++	// all real motion (p99 already sits at the boundary) and kills the tails. Clamps the
++	// MAGNITUDE (direction preserved), so a real fast motion still points the right way, just
++	// bounded. 0 = no clamp (the original, tail-vulnerable behavior, kept only for A/B).
++	if (t.pred_freeze_position && t.pred_position_horizon_s > 0.0) {
++		double capped_dt = slam_to_now_dt < t.pred_position_horizon_s ? slam_to_now_dt
++		                                                              : t.pred_position_horizon_s;
++		xrt_vec3 v = pre_freeze_linear_velocity;
++		if (t.pred_position_max_speed_m_s > 0.0) {
++			double speed = sqrt((double)v.x * v.x + (double)v.y * v.y + (double)v.z * v.z);
++			// NaN-safe negated form (same reasoning as the 0099 guards in this file): a
++			// non-finite speed must clamp to zero, not slip through a `speed > max` test.
++			if (!(speed <= t.pred_position_max_speed_m_s)) {
++				float s = (speed > 0.0 && std::isfinite(speed))
++				              ? (float)(t.pred_position_max_speed_m_s / speed)
++				              : 0.0f;
++				v.x *= s;
++				v.y *= s;
++				v.z *= s;
++			}
++		}
++		predicted_relation.pose.position.x += v.x * (float)capped_dt;
++		predicted_relation.pose.position.y += v.y * (float)capped_dt;
++		predicted_relation.pose.position.z += v.z * (float)capped_dt;
++	}
++
+ 	// SLAM_PRED_NECK_ARM_MM: neck-model kinematic compensation for the orientation/position
+ 	// timestamp split (2026-08-26, docs/80). do_orientation() above predicted orientation
+ 	// forward to display time while position stayed at the (stale) anchor -- freezing removed
+@@ -2506,6 +2574,14 @@ t_slam_create(struct xrt_frame_context *xfctx,
+ 	t.pred_type = config->prediction;
+ 	t.pred_freeze_position = debug_get_bool_option_slam_pred_freeze_position();
+ 	t.pred_neck_arm_mm = debug_get_num_option_slam_pred_neck_arm_mm();
++	t.pred_position_horizon_s = (double)debug_get_num_option_slam_pred_position_horizon_ms() / 1000.0;
++	t.pred_position_max_speed_m_s = (double)debug_get_num_option_slam_pred_position_max_speed_cm_s() / 100.0;
++	if (t.pred_freeze_position && t.pred_position_horizon_s > 0.0) {
++		SLAM_INFO("Bounded position horizon on: extrapolating SLAM linear velocity for up to %.0f ms "
++		          "(SLAM_PRED_POSITION_HORIZON_MS), clamped to %.2f m/s (SLAM_PRED_POSITION_MAX_SPEED_CM_S, "
++		          "0 = no clamp). NOT YET HARDWARE-VALIDATED.",
++		          t.pred_position_horizon_s * 1000.0, t.pred_position_max_speed_m_s);
++	}
+ 
+ 	// The three output filters below are off by default upstream and only reachable from the
+ 	// debug GUI, so the pose handed to the application is raw SLAM output. Measured on a
+-- 
+2.47.3
+

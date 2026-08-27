@@ -602,3 +602,43 @@ Independent origin, reimplemented against this codebase's actual current machine
 the same community fork's (`Faulto/reverb-g2-linux`) independently-arrived-at anchor-radius and
 quaternion-sanity checks on a different Monado fork base. Reasoned addition, NOT a live-incident
 fix — **NOT YET HARDWARE-VALIDATED**, both default off pending a wearer A/B.
+
+## 0100 — `SLAM_PRED_POSITION_HORIZON_MS` (opt-in, default off)
+
+`SLAM_PRED_FREEZE_POSITION` (0097) holds position flat for the WHOLE anchor-age gap
+(~90-190 ms) to avoid the ~50 cm velocity-extrapolation overshoot — but that means genuine head
+TRANSLATION during the gap goes fully uncompensated; the neck-arm model (also 0097) only covers
+the ROTATIONAL arc, not real per-wearer translation. Adds a bounded middle ground: extrapolates
+the SLAM tracker's own real linear velocity, but only for up to `SLAM_PRED_POSITION_HORIZON_MS`
+milliseconds, then holds flat for the rest of the gap — trading a little real-translation drift
+for much less of the anchor-age's translation latency. Computed manually in `predict_pose()`
+(not by shortening `m_predict_relation`'s shared `delta_s`, which also drives orientation's gyro
+integration — that should still run over the full gap). Stacks additively with
+`SLAM_PRED_NECK_ARM_MM`, independent corrections to the same position field. Named as a
+"possible future refinement (untested)" in docs/80's original `FREEZE_POSITION` writeup;
+implemented after a live wearer session (2026-08-27) reconfirmed that exact residual precisely
+(position displaces opposite the turn direction, smoothly, then settles). A coordinate-frame-
+mismatch hypothesis for the *existing* neck-arm vector was investigated first and adversarially
+**ruled out** the same session — two independent derivations of the Basalt↔WMR axis math
+disagreed, and the tie-break (direct numeric verification) confirmed the current neck-arm code
+is already correct; that dead end is what motivated this genuinely new lever instead. A fresh
+reviewer agent tried to break capture timing, dt-cap ordering, double-counting with the neck-arm
+block, the default-off no-op guarantee, and unit conversion — all held up.
+
+**Same night, first wearer test of the horizon alone (50 ms, no clamp) REGRESSED hard**:
+"1-2-3 metros fuera de la cabina" after a few fast turns, "menos delay, más desfasaje". That
+session's own `tracking.csv` (28k anchors, 15 min) explained it: raw SLAM anchor-to-anchor speed
+is p50 0.04 m/s and p99 1.66 m/s (plausible), but **p99.9 = 81 m/s, max = 127 m/s** — ~0.2 % of
+anchors are re-localization jumps, not motion, and 127 m/s × 50 ms is 6.4 m in ONE frame. Full
+FREEZE never saw this because zeroing the velocity also silently discarded the spikes; the horizon
+let them straight through. Added **`SLAM_PRED_POSITION_MAX_SPEED_CM_S`** (default 150 = 1.5 m/s,
+a seated head's physical ceiling; 0 = no clamp): a magnitude clamp on the extrapolated velocity,
+direction preserved, NaN-safe negated comparison like the 0099 guards. Passes essentially all real
+motion (p99 sits at the boundary) and kills the tails. Also surfaced and root-caused the
+long-standing "cmake regen broken" note from docs/80: a `git commit` in the monado tree changes
+`.git/refs`, which CMake tracks for `u_git_tag.c`, forcing a reconfigure — and that reconfigure
+fails on this box because `PYTHONPATH=:/opt/resolve/...` (DaVinci Resolve's install, leading
+colon = empty element) is rejected by a `$<SHELL_PATH:...>` generator expression in
+`steamvr_bindings/CMakeLists.txt`. Build with `env PYTHONPATH=/opt/resolve/Developer/Scripting/Modules/
+ninja -C ~/vr/monado/build aux_tracking monado-service` after any commit there. **The clamp is
+NOT YET HARDWARE-VALIDATED** — a 5-variant A/B (dashboard buttons A–E, docs/80) is the next test.

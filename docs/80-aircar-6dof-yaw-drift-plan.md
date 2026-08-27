@@ -397,3 +397,91 @@ set for that one session as a free diagnostic. Watch/report: (1) does fast-turn 
 different, (2) does fps/pacing hold (SLAM_THREADS=6's real risk), (3) any `Tracker diverged` log
 spam (0099's radius), (4) keypoint dips at fast-turn timestamps in the log (answers whether
 `optical_flow_levels=4` and/or a `SLAM_CORRECTION_SPREAD_MS` A/B are worth a follow-up round).
+
+## 2026-08-27 (night) — combined test ran; a new lever (0100) built, regressed, root-caused, fixed; a 5-variant A/B plan
+
+**The combined test (SLAM_THREADS=6 + looser optical-flow, 0098 removed) — positive, wearer's
+words: "viene muy bien, por ahí responde un poco más ágil."** Then a precise description of what
+remains, better than any prior session had: *"cuando giro hacia un costado, me desplazo unos cm
+hacia el lado opuesto. Miro arriba y baja la cámara un poco suavemente, luego se acomoda de nuevo.
+Lo mismo yaw y pitch, roll bien. No es entrecortado, es un poco de delay + un movimiento que ni
+está ahí."* Smooth, not jerky; yaw+pitch, roll clean; opposite-direction displacement that settles.
+
+**Hypothesis 1, investigated and RULED OUT: a coordinate-frame bug in 0097's neck-arm vector.**
+The arm `{0, 0.6, -0.8}` (authored in OpenXR convention) is rotated by Basalt-native-frame
+quaternions, and the Basalt→WMR axis correction (`wmr_hmd_correct_pose_from_basalt`, a +90°
+X-rotation then y/z negation) only runs afterwards, once, on the summed position. Looked exactly
+like a frame mismatch. Two independent derivations (`wf_4356c640-f2b`) **disagreed** — one said
+bug (fix: `{0, 0.8, 0.6}`), one said correct. Tie-break by direct numeric verification: because
+the correction is a *linear* map applied to the whole sum, `M(R_pred·arm − R_anchor·arm) =
+(M·R_pred)·arm − (M·R_anchor)·arm` — i.e. the raw-frame arithmetic is exactly equivalent to doing
+it in the corrected frame with the literal OpenXR-convention arm. Verified on two different test
+rotations to full precision; the "fixed" vector would have *introduced* a bug. **Existing code is
+correct; not touched.** The symptom is instead the documented residual: FREEZE zeroes real head
+translation over the whole anchor-age gap, and the neck-arm model (fixed pivot, fixed direction)
+only approximates it — whatever real translation the wearer's actual neck produces during the
+gap goes uncompensated until the next SLAM sample, then "se acomoda."
+
+**Lever 2, built: patch 0100 `SLAM_PRED_POSITION_HORIZON_MS`** — the "possible future refinement
+(untested)" this doc named on 2026-08-26. Extrapolates the SLAM tracker's real linear velocity
+for up to N ms (instead of 0 under full freeze, or the full 90-190 ms gap without freeze), then
+holds flat. Position only; orientation still integrates gyro over the full gap. Independently
+verified (capture point, dt cap, no double-count with the neck-arm block, default-off no-op,
+units) and built clean. Wired at 50 ms.
+
+**Its first wearer test REGRESSED hard**: *"apenas unos pocos movimientos rápidos y me voy 1-2-3
+metros fuera de la cabina. Creo que está peor en este sentido, pero a lo mejor sí responde un poco
+más rápido. Menos delay, más desfasaje."* The "less delay" is the lever working as designed; the
+"more displacement" was the data, not the logic — that session's own `tracking.csv`
+(`/mnt/vrtmp/slam-20260827-102554`, 28,011 anchors at 30.0 Hz over 935 s):
+
+| raw SLAM anchor-to-anchor speed | value |
+|---|---|
+| p50 | 0.042 m/s |
+| p90 | 0.535 m/s |
+| p99 | 1.656 m/s |
+| **p99.9** | **81.0 m/s** |
+| **max** | **127.3 m/s** |
+| anchors > 1.5 m/s | 353 / 28,010 (1.26 %) |
+| anchors > 3.0 m/s | 61 (0.22 %) |
+
+~0.2 % of anchors are re-localization jumps, physically impossible for a seated head; 127 m/s ×
+50 ms = **6.4 m in a single frame**. Full FREEZE had been immune by accident — zeroing the
+velocity discarded the spikes along with the signal. **Fix, same patch: `SLAM_PRED_POSITION_MAX_
+SPEED_CM_S`** (default 150 = 1.5 m/s, 0 = off), a magnitude clamp on the extrapolated velocity,
+direction preserved, NaN-safe. Passes essentially all real motion (p99 sits at the boundary),
+kills the tails. **Not yet worn.**
+
+**Side find, root-caused**: this doc's own "cmake regen broken" note. A `git commit` in
+`~/vr/monado` changes `.git/refs`, which CMake tracks for `u_git_tag.c`, forcing a reconfigure —
+which fails on this box because `PYTHONPATH=:/opt/resolve/...` (DaVinci Resolve, leading colon =
+empty element) is rejected by a `$<SHELL_PATH:>` generator expression in
+`steamvr_bindings/CMakeLists.txt`. `env PYTHONPATH=/opt/resolve/Developer/Scripting/Modules/
+ninja -C ~/vr/monado/build aux_tracking monado-service` builds clean. Detail in
+`patches/monado/README.md` (0100).
+
+### The plan: 5 variants as dashboard buttons, wearer A/Bs them back to back
+
+Every variant sets only the env vars that differ; `vr-launcher.py` lets ambient env override the
+profile by design, so the rest is exactly the gold Aircar 6dof profile (0097 + 0099 +
+SLAM_THREADS=6 + the looser optical-flow threshold). All auto-record with the variant name in the
+comment — the recordings are the A/B log. `VIT_COLLAPSE_LOG=1` on all (free keypoint diagnostic).
+
+| variant | horizon | clamp | other | what it answers |
+|---|---|---|---|---|
+| **A** | 50 ms | 1.5 m/s | — | **the main candidate** — does the clamp keep A's "less delay" and remove the "more displacement"? |
+| B | 25 ms | 1.5 m/s | — | if A still overshoots on the fastest turns |
+| **C** | 0 | — | — | **CONTROL** — the earlier-tonight config the wearer approved; compare against THIS, not memory |
+| D | 50 ms | 1.0 m/s | — | if A is right in general but still "jumps" on the fastest turns |
+| E | 0 | — | `SLAM_CORRECTION_SPREAD_MS=25` | the other held-back lever, isolated; risk: T202's hard-snap returns |
+
+**Decision rule**: whichever of A/B/D beats C on the fast-turn displacement *without* new
+jitter, stays and becomes the profile default (promote to `TITLE_PROFILES`, keep the clamp). If
+none beats C, the horizon lever is refuted as shipped and C stays — the residual then genuinely
+needs real per-wearer neck extrinsics or a shorter anchor age (SLAM_THREADS was the last cheap
+lever for that), not more prediction tuning. E is judged on its own: keep only if it helps the
+"se acomoda" tail with no snap.
+
+**Still parked from the research pass**: `optical_flow_levels=4` (read the `VIT_COLLAPSE_LOG`
+keypoint counts from tonight's variant runs first — if they don't crater at fast turns, it's
+refuted for free) and the IMU-camera timing residual (no code path to even apply one).

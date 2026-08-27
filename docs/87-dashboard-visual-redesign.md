@@ -106,11 +106,16 @@ Two places were still flat, undifferentiated lists after the tiering pass above:
 Same verification method as the main pass: `ast.literal_eval` → `node --check` → live restart →
 headless Chrome dump/screenshot, confirmed both groups populate with the right members (2
 approved: Aircar·3dof, Dreams of Dalí·6dof; 5 other: Aircar·6dof, Cyberpilot, Hellblade, The Night
-Café, Anne Frank House). One process-management note for next time: `kill $(pgrep -f
-"status-dashboard.py")` unbracketed can match the *shell wrapper's own* command line (which
-contains that literal string as text) and kill the calling shell itself (exit 144) — start the new
-process first via `nohup ... & disown`, or capture the PID with `$!` right after backgrounding,
-rather than re-deriving it via a plain `pgrep -f` after the fact.
+Café, Anne Frank House). One process-management note for next time — **bitten twice the same
+night, second time with the "fix" from the first**: `kill $(pgrep -f "status-dashboard.py")` can
+match the *calling shell wrapper's own* command line (which contains that literal string as text)
+and kill the shell itself (exit 144). The bracket trick (`[s]tatus-dashboard`) is **not enough**
+when the same chained command also contains the plain string elsewhere (e.g. the `nohup python3
+status-dashboard.py` that restarts it) — the wrapper still self-matches on that. The robust rule:
+**anchor the pattern at the start of the command line, `pgrep -f "^python3 status-dashboard.py"`**
+— the wrapper's cmdline begins with `/bin/bash -c`, so it can never match, regardless of what
+else the same command contains. Verified live: the anchored form returned exactly the one real
+PID (or none) both times it was used afterwards.
 
 ## Not done / open
 

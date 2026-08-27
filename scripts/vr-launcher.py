@@ -191,6 +191,16 @@ TITLE_PROFILES = {
         # Real risk: CPU contention with Aircar's own render/game threads on this 6C/12T box --
         # must be checked against fps/pacing, not assumed safe just because Aircar is GPU-bound.
         "SLAM_THREADS": "6",
+        # 2026-08-27 (same evening): patch 0100, SLAM_PRED_POSITION_HORIZON_MS -- first wearer
+        # test. NOT YET HARDWARE-VALIDATED. Extrapolates real SLAM linear velocity for up to
+        # 50ms (instead of 0ms under full FREEZE) before holding flat -- a bounded middle ground
+        # meant to compensate the genuine head TRANSLATION during the anchor-age gap that
+        # FREEZE_POSITION+NECK_ARM_MM don't cover (they only model rotation). Directly targets
+        # tonight's wearer report: "giro y me desplazo unos cm al lado opuesto... miro arriba y
+        # baja la camara, se acomoda" -- smooth, not jerky, on yaw+pitch, roll clean. Watch for:
+        # does the displacement shrink, stay the same, or (if 50ms is too long) get WORSE/jerkier
+        # -- if worse, this specific lever is refuted, try a shorter horizon (25ms) or drop it.
+        "SLAM_PRED_POSITION_HORIZON_MS": "50",
     },
     # ISS Tour VR: Aircar-class (does not render hands, docs/23) and the heaviest
     # content measured in the whole sweep (8K, monado-service at 519% CPU on T243

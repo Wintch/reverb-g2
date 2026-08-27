@@ -1,5 +1,47 @@
 # Next step
 
+> ## START HERE (2026-08-27 night — combined test approved by the wearer; new patch 0100 built,
+> regressed on first wear, root-caused in the data, fixed with a speed clamp; a 5-variant A/B is
+> loaded as dashboard buttons and is THE next thing to run)
+>
+> Full account: docs/80's last two sections + `patches/monado/README.md` 0100. The short version:
+>
+> **The combined test worked**: SLAM_THREADS=6 + the looser optical-flow threshold, 0098 removed —
+> wearer: "viene muy bien, por ahí responde un poco más ágil." Then the best description yet of the
+> residual: turning displaces the view a few cm to the OPPOSITE side, looking up dips the camera
+> smoothly then it settles; yaw+pitch, roll clean; "un poco de delay + un movimiento que ni está
+> ahí." **A neck-arm coordinate-frame bug was suspected, investigated with two independent
+> derivations that DISAGREED, and ruled out by direct numeric tie-break — the existing 0097 math is
+> correct.** The symptom is the documented residual (real translation zeroed by FREEZE over the
+> anchor-age gap).
+>
+> **Patch 0100 `SLAM_PRED_POSITION_HORIZON_MS` built** (bounded real-velocity extrapolation, the
+> refinement docs/80 had named on 2026-08-26). Independently verified, built clean, wired at
+> 50 ms. **First wear regressed hard**: "1-2-3 metros fuera de la cabina... menos delay, más
+> desfasaje." Root cause in that session's own `tracking.csv`: raw SLAM velocity is sane to p99
+> (1.66 m/s) but **p99.9 = 81 m/s, max = 127 m/s** — 0.2 % re-localization spikes, 6.4 m in one
+> 50 ms frame. FREEZE had been immune by accident (zeroing velocity also zeroed the spikes).
+> **Fixed in the same patch: `SLAM_PRED_POSITION_MAX_SPEED_CM_S`** (default 150 = 1.5 m/s
+> magnitude clamp, direction kept, NaN-safe). Not yet worn.
+>
+> **NEXT — run the 5 variants, back to back, from the dashboard's "En prueba" group** (buttons
+> "Aircar · 6dof · variante A…E"; each overrides only its own env vars, auto-records with the
+> variant in the comment): **A** = 50 ms + clamp 1.5 (main candidate), B = 25 ms + clamp 1.5,
+> **C = no horizon = CONTROL** (the config the wearer just approved — compare against C, not
+> memory), D = 50 ms + clamp 1.0, E = no horizon + `SLAM_CORRECTION_SPREAD_MS=25` (the other
+> held-back lever, isolated). Decision rule in docs/80: whichever of A/B/D beats C on fast-turn
+> displacement without new jitter becomes the profile default; if none does, the horizon lever is
+> refuted as shipped and C stays.
+>
+> **Two footguns root-caused tonight, both now documented**: (1) `~/vr/vr-launcher.py` and
+> `~/vr/basalt-g2-config.json` are NOT symlinks to the repo — independent copies that had drifted;
+> diff before trusting a launch reflects an edit. (2) "cmake regen broken" = a `git commit` in
+> `~/vr/monado` forces a reconfigure (`u_git_tag.c` tracks `.git/refs`) that fails on this box's
+> `PYTHONPATH=:/opt/resolve/...` (leading colon). Build with `env PYTHONPATH=/opt/resolve/
+> Developer/Scripting/Modules/ ninja -C ~/vr/monado/build aux_tracking monado-service`.
+>
+> ---
+
 > ## START HERE (2026-08-27 even later — a 4-candidate research pass on Aircar's fast-motion
 > drift residual; two new levers applied (SLAM_THREADS=6 for Aircar, a looser Basalt
 > feature-recovery threshold), two held back as real A/Bs; 0098 removed)
