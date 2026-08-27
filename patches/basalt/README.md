@@ -112,4 +112,16 @@ const pyramid, writes its own storage), so they are now built first with `tbb::p
 over the detections, then the original sequential bookkeeping runs (id assignment,
 `addKeypoint`, map insertion — cheap). Same patches, same ids, same order; Basalt's own quirk
 of sampling pyramid 0 for every camera is untouched. No effect when recall is off. The
-measurement of what it buys is the I2 soak (I on 0015) in docs/80.
+measurement of what it buys is the I2 soak (I on 0015) in docs/80: ~4 ms at the median
+(42 → 38), less than hoped — the p99 was somewhere else (0016).
+
+## 0016 — amortize `prunePatches()`' sweep (2026-08-27)
+
+0014 erased the whole recall patch map (200–400k entries) once every 30 frames, in one frame.
+Measured live (K soak on 0015): **63 of 63 frontend frames over 80 ms sat exactly on
+`frame_counter % 30 == 0`** — p50 88 ms on the sweep frames vs 37.7 ms on every other. Now the
+sweep frame only snapshots the key set (a flat copy of ids, ~1 ms) and each following frame
+checks-and-erases 1/29th of the snapshot, so the erasures spread evenly across the second; keys
+inserted after a snapshot are looked at next second. `patch_last_seen`'s patch-less entries age
+out on a separate phase (`frame % 30 == 15`). Same bound, same grace, no full-map pass in a
+single frame. No effect when recall is off. Measured by the I4 soak (I on 0016) in docs/80.

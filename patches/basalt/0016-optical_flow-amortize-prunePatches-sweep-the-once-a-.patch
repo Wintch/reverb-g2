@@ -1,0 +1,85 @@
+From 65d2e322318d3fb24b362017d733cf178d9c2b48 Mon Sep 17 00:00:00 2001
+From: iam <iam@iashur.internal>
+Date: Thu, 27 Aug 2026 14:48:48 -0300
+Subject: [PATCH] optical_flow: amortize prunePatches' sweep -- the
+ once-a-second full erase was every recall-on p99 spike
+
+0014 erased the whole recall patch map (200-400k entries) once every 30 frames. Measured live
+on a Reverb G2 (reverb-g2, 2026-08-27, K soak on 0015): 63 of 63 frontend frames over 80 ms
+sat exactly on frame_counter % 30 == 0 -- p50 88 ms on those frames vs 37.7 ms on every
+other. Now: on the sweep frame only snapshot the key set (a flat copy of ids, ~1 ms), then
+check-and-erase 1/29th of the snapshot on each following frame, so the erasures spread
+evenly across the second. Keys inserted after a snapshot are looked at next second. The
+patch_last_seen map ages out its patch-less entries on a separate phase (frame % 30 == 15).
+Same bound, same grace, no full-map pass in a single frame.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ .../frame_to_frame_optical_flow.h             | 42 ++++++++++++++-----
+ 1 file changed, 32 insertions(+), 10 deletions(-)
+
+diff --git a/include/basalt/optical_flow/frame_to_frame_optical_flow.h b/include/basalt/optical_flow/frame_to_frame_optical_flow.h
+index 3559dd5..5534219 100644
+--- a/include/basalt/optical_flow/frame_to_frame_optical_flow.h
++++ b/include/basalt/optical_flow/frame_to_frame_optical_flow.h
+@@ -691,18 +691,37 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
+       for (const auto& kv : kps) patch_last_seen[kv.first] = now;
+     if (latest_lm_bundle != nullptr)
+       for (const auto& id : latest_lm_bundle->lmids) patch_last_seen[id] = now;
+-    if (now % 30 != 0) return;
+-    for (auto it = patches.begin(); it != patches.end();) {
+-      auto seen = patch_last_seen.find(it->first);
+-      if (seen == patch_last_seen.end() || now - seen->second > grace) {
+-        if (seen != patch_last_seen.end()) patch_last_seen.erase(seen);
+-        it = patches.erase(it);
+-      } else {
+-        ++it;
++
++    // reverb-g2 0016: amortize the sweep. The first version erased the whole map once every 30
++    // frames; measured live (K soak on 0015), every one of those frames cost ~88 ms against
++    // ~38 ms for the others -- 63/63 frontend spikes >80 ms landed exactly on the sweep frame.
++    // Now: once every 30 frames snapshot the key set (a flat copy of ~200-400k ids, ~1 ms),
++    // then check-and-erase 1/29th of that snapshot on each following frame, so the erasures
++    // spread evenly. A key inserted after the snapshot is simply looked at next second.
++    if (now % 30 == 0) {
++      sweep_keys.clear();
++      sweep_keys.reserve(patches.size());
++      for (const auto& kv : patches) sweep_keys.push_back(kv.first);
++      sweep_pos = 0;
++    }
++    if (sweep_pos < sweep_keys.size()) {
++      const size_t per_frame = sweep_keys.size() / 29 + 1;
++      const size_t end = std::min(sweep_keys.size(), sweep_pos + per_frame);
++      for (; sweep_pos < end; ++sweep_pos) {
++        const KeypointId id = sweep_keys[sweep_pos];
++        auto seen = patch_last_seen.find(id);
++        if (seen == patch_last_seen.end() || now - seen->second > grace) {
++          if (seen != patch_last_seen.end()) patch_last_seen.erase(seen);
++          patches.erase(id);
++        }
+       }
+     }
+-    for (auto it = patch_last_seen.begin(); it != patch_last_seen.end();) {
+-      if (now - it->second > grace) it = patch_last_seen.erase(it); else ++it;
++    // patch_last_seen entries without a patch (bundle ids from before a reset, etc.) age out
++    // the same way, a slice per frame: bounded by the same grace, no separate full scan.
++    if (now % 30 == 15) {
++      for (auto it = patch_last_seen.begin(); it != patch_last_seen.end();) {
++        if (now - it->second > grace && patches.count(it->first) == 0) it = patch_last_seen.erase(it); else ++it;
++      }
+     }
+   }
+ 
+@@ -907,6 +926,9 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
+   //! reverb-g2 0014: frame_counter at which each patch id was last tracked or in the landmark
+   //! bundle -- what prunePatches() sweeps against. Same key space as `patches`.
+   std::unordered_map<KeypointId, int64_t> patch_last_seen;
++  //! reverb-g2 0016: snapshot of `patches` keys taken once a second and swept a slice per frame.
++  std::vector<KeypointId> sweep_keys;
++  size_t sweep_pos = 0;
+   Eigen::aligned_vector<Eigen::MatrixXi> cells;  // Number of features in each gridcell
+   std::vector<Keypoints> recalls;
+   const Vector3d accel_cov;
+-- 
+2.47.3
+
