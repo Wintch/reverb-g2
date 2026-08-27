@@ -1,5 +1,87 @@
 # Next step
 
+> ## START HERE (2026-08-27 — three days of backlog caught up: demo-day line-up, Aircar tuning,
+> Faulto patches wired for their first wearer test, dashboard fully redesigned)
+>
+> **This file had gone stale** — nothing here had been touched since 2026-08-25 despite three full
+> sessions of real work (2026-08-26, 2026-08-27 morning, 2026-08-27 this session). Read docs/80-87
+> in order for full detail; this block is the catch-up index.
+>
+> **Demo-day status (docs/79-81)**: line-up approved is **Aircar 3dof + Dreams of Dalí 6dof** —
+> only these two are "approved" (go to guests); everything else in `DEMO_LAUNCHES`
+> (`scripts/status-dashboard.py`) is gold/testing/untested/broken and stays off the guest menu on
+> purpose. **Hellblade retested 2026-08-27 → still broken**: UE4 render-thread crash on start
+> (`RenderingThread.cpp:933`), gamepad-played not motion-controller. Worked once before the
+> 2026-08-21 reinstall; the old working prefix still exists but Steam bypasses it now (moved to
+> `/mnt/win5`). Dedicated retest pending (docs/67 §4 B5): reuse the Aug-21 prefix / drop
+> `SCALE=100` / try another Proton. Third demo slot still undecided (docs/81).
+>
+> **Aircar graphics tuning done (docs/84)**: measured-optimal config is **in-game HIGH quality +
+> Pixel Density 1.1 + `XRT_COMPOSITOR_SCALE_PERCENTAGE=100`** (steady 89-90fps, GPU 70% headroom).
+> Corrected an earlier wrong read: quality AND supersampling both cost GPU, not just SS. Brightness
+> slider (xrizer patch 0007) is confirmed WORKING in-headset — an earlier "broken" verdict came
+> from measuring the wrong layer (pre-compositor mirror capture, not the post-compositor
+> color-scale output). Per-game settings persistence is still unsolved: Aircar ignores its own
+> `GameUserSettings.ini` entirely, mechanism unknown. Full calibration-knob catalog (every
+> Monado/xrizer/WMR/launcher env var, plus a "have but don't use" shortlist) is in docs/83.
+>
+> **Faulto fork patch review done, and — new this session — WIRED IN for the first real wearer
+> test** (docs/85 + `patches/monado/README.md`): reviewed 7 patches from a community fork, applied
+> two as new opt-in/default-off Monado patches — **0098 `WMR_FORWARD_ANGULAR_VELOCITY`** (stops
+> always reporting zero head angular velocity to SteamVR) and **0099
+> `SLAM_SESSION_ANCHOR_RADIUS_CM` + `SLAM_QUAT_NORM_CHECK`** (two more divergence guards next to
+> 0023-a's speed-based one). Two independent adversarial reviews caught a real NaN-comparison bug
+> in 0099's first draft before it shipped. **Neither had ever run on the actual headset until this
+> session wired them into `scripts/vr-launcher.py`'s `TITLE_PROFILES`** for Aircar (`1073390`) and
+> Cyberpilot (`1056970`), both 6dof: `WMR_FORWARD_ANGULAR_VELOCITY=1`, `SLAM_QUAT_NORM_CHECK=1`,
+> `SLAM_SESSION_ANCHOR_RADIUS_CM=300` (300cm, a generous first-pass radius for seated cockpit
+> movement). **Open risk to watch on the next wearer session**: 0098 may double-count against
+> those same profiles' existing 0097 prediction (`SLAM_PRED_FREEZE_POSITION`) — if the head feels
+> like it overshoots turns, suspect this first. If Monado's log spams `Tracker diverged` from the
+> session-anchor guard, the 300cm radius is too tight for that title's real movement — raise it,
+> don't just disable.
+>
+> **`scripts/status-dashboard.py` (the :8765 booth console) fully redesigned, twice this session**
+> (docs/87). First pass: installed the `frontend-design` plugin, ran an independent 3-direction
+> design-panel workflow (instrument/field-kit/control-room angles, each adversarially critiqued
+> against the three well-known AI-generic looks) and built the winner, "Night Panel" — two visual
+> registers (an always-visible **operator tray**: session state relocated up top, headset preview
+> as the hero element, a 4-dot SESSION/AUDIO/HARDWARE/HUB status strip in the header; a collapsed
+> **access panel** at the bottom for USB/DRM/monado/GPU/repo/specs, opened rarely, with a fault-dot
+> on its closed summary), the demo grid restyled as **switch-plates** (only `status=approved`
+> reads lit-green via CSS `:has()`, everything else stays visibly held-back but still clickable),
+> all fonts real system stacks (Liberation Sans Narrow / Cantarell / DejaVu Sans Mono) since the
+> venue may have zero internet. **Second pass same session, from user feedback ("faltan grupos más
+> prolijos")**: the action row split into labeled **System** / **Voice cues** clusters
+> (`id.startsWith('voz-')`, not a hardcoded list), and the demo grid split into literal **Approved
+> for guests** / **In testing** sections instead of relying on color alone. Verified hard both
+> passes — `ast.literal_eval` (not a source-text regex, learned from 86's own escaping bug) →
+> `node --check` on the extracted `<script>` → live process restart → headless Chrome
+> `--dump-dom`/`--screenshot` against the real backend, confirming zero console errors and no
+> stuck `"loading..."` placeholders. Responsive checked down to 420px. **Not yet used live with a
+> real guest/operator** — worth a look next booth session. Zero changes to any Python backend
+> function/route in either pass (diff scoped entirely to the `PAGE` template).
+>
+> **Process-management footgun hit and documented (docs/87)**: `kill $(pgrep -f
+> "status-dashboard.py")` unbracketed can match the *calling shell wrapper's own* command line
+> (which contains that literal string as text) and kill the shell itself (bash exit 144). Start the
+> new process first via `nohup ... & disown`, or capture the PID with `$!` right after
+> backgrounding, rather than re-deriving it via a bare `pgrep -f` afterward.
+>
+> **Pending-test list, synthesized this session from docs/67 §2 + the current `DEMO_LAUNCHES`
+> table** (nothing new here, just gathered in one place since this file hadn't been): Aircar 6dof
+> stays "gold" not "approved" — blocker is a felt ~100-200ms turn latency (SLAM anchor-age floor),
+> worth re-checking against 0098 above. Cyberpilot "testing" — 60fps ceiling still needs minimize
+> window / lift the 70% GPU cap / lower render scale before it's guest-ready. The Night Café
+> "untested" — its earlier "broken" verdict was a false negative (missing launch options), needs a
+> real retest. Anne Frank House parked (engine gives up after one capability probe, not clearly
+> fixable). Controller 6DoF positional presence: 50-60% today vs ≥90% target. Tracking volume
+> cliff: 50-75cm today vs ≥80cm target. The "better than Windows" one honest number still needs
+> OpenVR Benchmark pass-1 and docs/30's CPU baseline (never run) to compare against Windows'
+> 26.02/20.39/19.70.
+>
+> ---
+
 > ## START HERE (2026-08-25 cont. — pulse-train leading byte resolved (sequence counter),
 > byte-alignment hypothesis tested and refuted, duration confirmed NOT a timestamp)
 >

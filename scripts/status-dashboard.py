@@ -561,103 +561,230 @@ def get_status():
 PAGE = """<!doctype html>
 <html><head><meta charset="utf-8"><title>iashur status</title>
 <style>
-  :root { color-scheme: dark; }
-  body { background:#0b0e14; color:#e6e6e6; font-family: 'JetBrains Mono', 'Consolas', monospace;
-         margin:0; padding:24px; font-size:16px; }
-  h1 { font-size:22px; margin:0 0 20px; color:#7fdbca; }
-  .grid { display:grid; grid-template-columns: 1fr 1fr; gap:16px; }
-  .card { background:#141821; border:1px solid #2a3040; border-radius:10px; padding:16px; }
-  .card h2 { margin:0 0 10px; font-size:14px; text-transform:uppercase; letter-spacing:.06em; color:#8b93a7; }
-  .ok { color:#4fd67a; } .bad { color:#ff6b6b; } .warn { color:#ffb454; } .dim { color:#6b7488; }
-  .row { display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px dashed #232838; font-size:14px; }
-  pre { white-space:pre-wrap; font-size:12px; color:#a9b1c3; margin:6px 0 0; }
-  .ts { color:#5b6377; font-size:12px; margin-top:20px; }
-  .badge { padding:2px 8px; border-radius:6px; font-size:12px; font-weight:600; }
-  .badge.ok { background:#123321; }
-  .badge.bad { background:#3a1414; }
-  #attn { display:none; background:#4a1414; border:2px solid #ff6b6b; color:#ffdcdc;
-          padding:14px 18px; border-radius:10px; margin-bottom:16px; font-size:16px;
-          animation: pulse 1.6s infinite; }
-  #attn b { color:#ff9d9d; }
-  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.55; } }
-  #actions { display:flex; flex-wrap:wrap; gap:8px; }
-  #actions button, #compositor-toggle { background:#1b2130; color:#dfe4ee; border:1px solid #333c50;
-                     border-radius:8px; padding:8px 14px; font-size:13px; cursor:pointer;
-                     font-family:inherit; }
-  #actions button:hover, #compositor-toggle:hover { background:#242c40; }
-  #actions button:disabled, #compositor-toggle:disabled { opacity:.5; cursor:default; }
-  #compositor-toggle { font-weight:600; border-width:2px; }
-  #compositor-toggle.on { border-color:#4fd67a; color:#4fd67a; }
-  #compositor-toggle.off { border-color:#6b7488; color:#dfe4ee; }
-  #audio-toggle.on { border-color:#4fd67a; color:#4fd67a; }
-  #audio-toggle.off { border-color:#ffb454; color:#ffb454; }
-  #vol-wrap { display:flex; align-items:center; gap:8px; }
-  #vol { width:150px; accent-color:#7fdbca; }
-  #vol-val { font-size:13px; color:#8b93a7; min-width:42px; }
-  #action-msg { font-size:13px; color:#8b93a7; min-height:18px; margin-bottom:16px; }
+  /* ---- Night Panel: iashur's own visual system (2026-08-27) -------------------
+     Grounded in the rig's actual constraints, not a generic dark-dashboard skin:
+     the booth room is kept dim on purpose (bright light degrades the G2's own
+     tracking cameras), the page must render correctly with zero internet access
+     (no web fonts -- every stack below is a real font already installed on this
+     Debian/GNOME box), and the ok/bad/warn/dim colors are load-bearing safety
+     semantics carried over unchanged, not a decorative palette. Two visual
+     registers: the always-visible OPERATOR TRAY above (generous, glanceable,
+     read every ~30s) and the collapsed ACCESS PANEL at the bottom (dense, mono,
+     read rarely -- only when something is actually wrong). */
+  :root {
+    color-scheme: dark;
+    --bg:#17181a; --surface:#212327; --surface-2:#262a30; --line:#34363b;
+    --ink:#eae5d8; --ink-dim:#a3a7ac; --ink-inactive:#6b6d72;
+    --accent:#7c93a6;
+    --ok:#5fae6b; --ok-bg:#1c2c1f; --ok-glow:rgba(95,174,107,.5);
+    --bad:#d6483f; --bad-bg:#3a1614; --bad-glow:rgba(214,72,63,.55);
+    --warn:#d19a3d; --warn-bg:#332510;
+    --font-display:"Liberation Sans Narrow","Arial Narrow","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --font-body:Cantarell,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --font-mono:"DejaVu Sans Mono","Liberation Mono","Noto Sans Mono","Ubuntu Mono",Consolas,"SF Mono",monospace;
+    --radius:7px;
+  }
+  * { box-sizing:border-box; }
+  body { background:var(--bg); color:var(--ink); font-family:var(--font-body);
+         margin:0; padding:20px; font-size:14px; line-height:1.45; }
+  a { color:var(--accent); }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  h1.wordmark { font-family:var(--font-display); text-transform:uppercase; letter-spacing:.08em;
+                font-weight:700; font-size:18px; color:var(--ink); margin:0; }
+  h1.wordmark small { display:block; font-family:var(--font-body); text-transform:none;
+                       letter-spacing:normal; font-weight:400; font-size:12px; color:var(--ink-dim);
+                       margin-top:2px; }
+  .card { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:14px 16px; }
+  .card h2 { margin:0 0 10px; font-family:var(--font-display); font-size:16px; font-weight:700;
+             text-transform:uppercase; letter-spacing:.05em; color:var(--ink); }
+  .card h2 .sub { display:block; font-family:var(--font-body); text-transform:none; letter-spacing:normal;
+                  font-weight:400; font-size:12px; color:var(--ink-dim); margin-top:3px; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); } .warn { color:var(--warn); } .dim { color:var(--ink-inactive); }
+  .row { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:5px 0;
+         border-bottom:1px solid var(--line); font-size:13px; }
+  .row:last-child { border-bottom:none; }
+  pre { white-space:pre-wrap; font-family:var(--font-mono); font-size:12px; color:var(--ink-dim); margin:6px 0 0; }
+  .ts { font-family:var(--font-mono); color:var(--ink-inactive); font-size:11px; margin-top:18px; text-align:right; }
+
+  #attn { display:none; background:var(--bad); border:none; color:var(--ink);
+          padding:14px 18px; border-radius:var(--radius); margin-bottom:14px;
+          font-family:var(--font-display); font-weight:800; font-size:18px; text-transform:uppercase;
+          letter-spacing:.04em; }
+  #attn b { text-decoration:underline; text-underline-offset:3px; }
+  @media (prefers-reduced-motion:no-preference) { #attn.pulsing { animation:pulse 1.8s infinite; } }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.7; } }
+
+  .tray-header { display:flex; flex-wrap:wrap; align-items:center; gap:14px; margin-bottom:14px; }
+  .status-strip { display:flex; flex-wrap:wrap; gap:6px 16px; align-items:center; margin-left:auto;
+                  font-family:var(--font-mono); font-size:12px; }
+  .status-dot { display:inline-flex; align-items:center; gap:6px; }
+  .status-dot::before { content:""; width:8px; height:8px; border-radius:50%; background:var(--ink-inactive);
+                         display:inline-block; flex:0 0 auto; }
+  .status-dot.ok::before { background:var(--ok); box-shadow:0 0 6px var(--ok-glow); }
+  .status-dot.warn::before { background:var(--warn); }
+  .status-dot.bad::before { background:var(--bad); box-shadow:0 0 6px var(--bad-glow); }
+
+  #actions-row { display:flex; flex-wrap:wrap; gap:18px; align-items:center; margin-bottom:10px; }
+  .action-group { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding-left:14px; border-left:1px solid var(--line); }
+  .ag-label { font-family:var(--font-display); text-transform:uppercase; letter-spacing:.07em;
+              font-size:10.5px; color:var(--ink-inactive); margin-right:2px; }
+  .ag-buttons { display:flex; flex-wrap:wrap; gap:8px; }
+  .ag-buttons button, #compositor-toggle { background:var(--surface-2); color:var(--ink); border:1px solid var(--line);
+                     border-radius:6px; padding:9px 14px; font-size:13px; cursor:pointer;
+                     font-family:var(--font-body); font-weight:500; }
+  .ag-buttons button:hover, #compositor-toggle:hover { border-color:var(--accent); }
+  .ag-buttons button:disabled, #compositor-toggle:disabled { opacity:.5; cursor:default; }
+  .ag-buttons button.btn-caution { border-color:var(--bad); color:var(--bad); }
+  .ag-buttons button.btn-caution:hover { background:var(--bad-bg); }
+  #compositor-toggle { font-weight:700; border-width:2px; text-transform:uppercase; letter-spacing:.03em; font-size:12px; }
+  #compositor-toggle.on { border-color:var(--ok); color:var(--ok); }
+  #compositor-toggle.off { border-color:var(--line); color:var(--ink-dim); }
+  #action-msg { font-family:var(--font-mono); font-size:12px; color:var(--ink-dim); min-height:16px; margin-bottom:14px; }
+
+  .glance-grid { display:grid; grid-template-columns: 1.3fr 1fr; gap:14px; margin-bottom:14px; align-items:start; }
+  .glance-grid .stack { display:flex; flex-direction:column; gap:14px; }
+  @media (max-width:960px) { .glance-grid { grid-template-columns:1fr; } }
+  .session-card .row span:first-child { color:var(--ink-dim); }
+
   .pwr-wrap { margin-bottom:10px; }
-  .pwr-nums { display:flex; justify-content:space-between; font-size:13px; margin-bottom:4px; }
-  .pwr-track { height:10px; border-radius:5px; background:#1c2230; overflow:hidden; position:relative; }
-  .pwr-fill { height:100%; border-radius:5px; transition:width .4s ease, background .4s ease; }
-  .pwr-limit-marker { position:absolute; top:0; bottom:0; width:2px; background:#ffffff55; }
-  .demo { display:flex; align-items:flex-start; gap:12px; padding:8px 0; border-bottom:1px dashed #232838; }
-  .demo button { flex:0 0 auto; min-width:190px; text-align:left; }
-  .demo .note { font-size:13px; color:#a9b1c3; }
-  .demo .st { font-size:11px; font-weight:700; padding:1px 7px; border-radius:5px; margin-right:6px; }
-  .st.approved { background:#123321; color:#4fd67a; }
-  .st.gold { background:#3a2a0f; color:#ffb454; }
-  .st.untested { background:#2a2f3d; color:#8b93a7; }
-  .st.broken { background:#3a1414; color:#ff6b6b; }
-  .guide li { font-size:13px; color:#c7cdd9; margin:4px 0 4px 16px; }
-  .guide b { color:#7fdbca; }
-  .adev { display:flex; align-items:center; gap:10px; padding:7px 0; border-bottom:1px dashed #232838; }
-  .adev input[type=checkbox] { width:18px; height:18px; accent-color:#4fd67a; flex:0 0 auto; }
+  .pwr-nums { display:flex; justify-content:space-between; font-family:var(--font-mono); font-size:12px; margin-bottom:5px; }
+  .pwr-track { height:8px; border-radius:4px; background:var(--surface-2); overflow:hidden; position:relative; }
+  .pwr-fill { height:100%; border-radius:4px; transition:width .4s ease, background .4s ease; }
+  .pwr-limit-marker { position:absolute; top:0; bottom:0; width:2px; background:var(--ink-inactive); opacity:.6; }
+
+  /* Demo launch grid: switch-plates. A title is always fully clickable, but only
+     APPROVED reads as lit/go -- gold/untested/broken stay visibly held-back, per
+     the brief's safety rule (only "approved" is a real demo option). */
+  .demo-group-label { font-family:var(--font-display); text-transform:uppercase; letter-spacing:.07em;
+                       font-size:11px; color:var(--ink-inactive); margin:14px 0 8px; }
+  .demo-group-label:first-of-type { margin-top:0; }
+  .demo-group-label:has(+ .demo-group:empty) { display:none; }
+  .demo-group { display:grid; grid-template-columns:repeat(auto-fill, minmax(230px,1fr)); gap:10px; }
+  .demo-group:empty { display:none; }
+  .demo { display:flex; flex-direction:column; gap:8px; padding:12px; border-radius:var(--radius);
+          border:1px solid var(--line); background:var(--surface-2); }
+  .demo button { font-family:var(--font-body); font-weight:600; font-size:13px; text-align:left;
+                 background:transparent; border:none; color:var(--ink); padding:0; cursor:pointer; width:100%; }
+  .demo .note { font-family:var(--font-mono); font-size:11.5px; color:var(--ink-dim); line-height:1.4; }
+  .demo .st { font-family:var(--font-mono); font-size:10.5px; font-weight:700; letter-spacing:.03em;
+              padding:2px 6px; border-radius:4px; margin-right:6px; text-transform:uppercase; }
+  .st.approved { background:var(--ok-bg); color:var(--ok); }
+  .st.gold, .st.testing { background:var(--warn-bg); color:var(--warn); }
+  .st.untested { background:var(--surface); color:var(--ink-inactive); }
+  .st.broken { background:var(--bad-bg); color:var(--bad); }
+  .demo:has(.st.approved) { border-color:var(--ok); background:linear-gradient(180deg,#1e2c22,var(--surface-2)); }
+  .demo:has(.st.approved) button { font-weight:700; }
+  .demo:has(.st.broken) { opacity:.75; }
+
+  .guide { background:var(--surface-2); border:1px dashed var(--line); border-radius:var(--radius);
+           padding:12px 16px; margin-top:14px; }
+  .guide li { font-size:12.5px; color:var(--ink-dim); margin:5px 0 5px 16px; }
+  .guide b { color:var(--ink); }
+
+  .adev { display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--line); }
+  .adev:last-child { border-bottom:none; }
+  .adev input[type=checkbox] { width:17px; height:17px; accent-color:var(--ok); flex:0 0 auto; }
   .adev .aname { flex:1 1 auto; font-size:13px; }
-  .adev .aname.on { color:#4fd67a; }
-  .adev .aname.off { color:#8b93a7; }
-  .adev input[type=range] { width:120px; accent-color:#7fdbca; }
-  .adev .aval { font-size:12px; color:#8b93a7; min-width:40px; text-align:right; }
+  .adev .aname.on { color:var(--ink); font-weight:600; }
+  .adev .aname.off { color:var(--ink-dim); }
+  .adev input[type=range] { width:120px; accent-color:var(--accent); }
+  .adev .aval { font-family:var(--font-mono); font-size:11.5px; color:var(--ink-dim); min-width:38px; text-align:right; }
+
+  /* Access panel: the "rarely opened" tier -- everything here is diagnostic, not
+     operational, so it stays closed and visually quiet by default; the fault dot
+     on the summary is the only thing allowed to interrupt that quiet. */
+  details.access-panel { margin-top:16px; border-top:1px solid var(--line); padding-top:10px; }
+  details.access-panel > summary { cursor:pointer; list-style:none; display:flex; align-items:center; gap:8px;
+      font-family:var(--font-display); text-transform:uppercase; letter-spacing:.07em; font-size:12px;
+      font-weight:700; color:var(--ink-dim); padding:6px 0; }
+  details.access-panel > summary::-webkit-details-marker { display:none; }
+  details.access-panel > summary::before { content:"▸"; display:inline-block; transition:transform .15s ease; }
+  details.access-panel[open] > summary::before { transform:rotate(90deg); }
+  details.access-panel > summary:hover { color:var(--ink); }
+  .fault-dot { width:7px; height:7px; border-radius:50%; display:inline-block; }
+  .fault-dot.ok-hidden { background:transparent; }
+  .fault-dot.bad { background:var(--bad); box-shadow:0 0 6px var(--bad-glow); }
+  .grid { display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-top:10px; }
+  .grid .card h2 { font-size:11px; letter-spacing:.07em; color:var(--ink-dim); }
+  .grid .row { font-family:var(--font-mono); font-size:12px; }
+  @media (max-width:720px) { .grid { grid-template-columns:1fr; } }
+
+  .preview-img { max-width:100%; border-radius:6px; background:var(--bg); display:none; }
+  #screen-note { font-size:12px; }
+  #screen-empty { font-size:13px; padding:22px 0; text-align:center; }
+  #pl-msg { font-size:12px; margin-top:6px; }
 </style></head>
 <body>
-<h1 data-i18n="h1">iashur -- HP Reverb G2 lab status</h1>
 <div id="attn"></div>
-<div id="actions-row" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:16px;">
+<div class="tray-header">
+  <h1 class="wordmark"><span data-i18n="h1">iashur</span><small data-i18n="h1_sub">HP Reverb G2 lab status</small></h1>
+  <div class="status-strip" id="status-dots">
+    <span class="status-dot" id="dot-session"><span data-i18n="dot_session">SESSION</span></span>
+    <span class="status-dot" id="dot-audio"><span data-i18n="dot_audio">AUDIO</span></span>
+    <span class="status-dot" id="dot-hw"><span data-i18n="dot_hw">HARDWARE</span></span>
+    <span class="status-dot" id="dot-hub"><span data-i18n="dot_hub">HUB</span></span>
+  </div>
+</div>
+<div id="actions-row">
   <button id="compositor-toggle" disabled>compositor: --</button>
-  <div id="actions">loading actions...</div>
+  <div class="action-group">
+    <span class="ag-label" data-i18n="ag_system">System</span>
+    <div id="actions-system" class="ag-buttons">loading...</div>
+  </div>
+  <div class="action-group">
+    <span class="ag-label" data-i18n="ag_voice">Voice cues</span>
+    <div id="actions-voice" class="ag-buttons"></div>
+  </div>
 </div>
 <div id="action-msg"></div>
-<div class="card" style="margin-bottom:16px">
-  <h2><span data-i18n="preview_h2">Headset preview</span> <span id="screen-note" class="dim" style="font-size:12px"></span></h2>
-  <img id="screen" alt="no preview" style="max-width:100%; border-radius:8px; background:#0b0e14; display:none">
-  <div id="screen-empty" class="dim" style="font-size:13px" data-i18n="preview_empty">no window to preview (start a game/player)</div>
+<div class="glance-grid">
+  <div class="card">
+    <h2><span data-i18n="preview_h2">Headset preview</span><span class="sub" id="screen-note"></span></h2>
+    <img id="screen" class="preview-img" alt="no preview">
+    <div id="screen-empty" class="dim" data-i18n="preview_empty">no window to preview (start a game/player)</div>
+  </div>
+  <div class="stack">
+    <div class="card session-card">
+      <h2 data-i18n="session_h2">Session</h2>
+      <div id="session-rows">loading...</div>
+    </div>
+    <div class="card">
+      <h2 data-i18n="audio_h2">Audio outputs -- check one, another, or several (duplicate); per-device volume</h2>
+      <div id="audio-devices">loading audio devices...</div>
+    </div>
+  </div>
 </div>
-<div class="card" style="margin-bottom:16px">
-  <h2 data-i18n="audio_h2">Audio outputs -- check one, another, or several (duplicate); per-device volume</h2>
-  <div id="audio-devices">loading audio devices...</div>
-</div>
-<div class="card" style="margin-bottom:16px">
+<div class="card" style="margin-bottom:14px">
   <h2 data-i18n="cc_h2">Command centre -- headset &amp; user</h2>
   <div id="user-center">loading...</div>
 </div>
-<div class="card" style="margin-bottom:16px">
+<div class="card" style="margin-bottom:14px">
   <h2 data-i18n="playlist_h2">Demo round (playlist) -- sequence with "next title" voice cue + clean teardown between each</h2>
   <div id="pl-live"></div>
   <div id="pl-build">loading...</div>
-  <div id="pl-msg" class="dim" style="font-size:12px;margin-top:6px"></div>
+  <div id="pl-msg" class="dim"></div>
 </div>
-<div class="card" style="margin-bottom:16px">
+<div class="card">
   <h2 data-i18n="demos_h2">Demos -- one button per title + head-tracking mode (only "approved" goes to guests)</h2>
-  <div id="demos">loading demos...</div>
-  <h2 style="margin-top:14px" data-i18n="guide_h2">Operator guide (standing, every guest)</h2>
-  <ul class="guide">
-    <li data-i18n="guide_1"><b>Audio</b>: the "audio" toggle above must read <b>headset</b> before handing over (130%). If sound vanishes mid-session the stream got orphaned by a USB re-enumeration -- click "Audio -&gt; headset" again, it re-routes live.</li>
-    <li data-i18n="guide_2"><b>Window focus</b>: the game's desktop window must be <b>focused</b> or Wine drops gamepad + audio (only head tracking keeps working). If a guest says "no sound / pad dead", click the game window first, don't debug.</li>
-    <li data-i18n="guide_3"><b>Fast head turns (6dof only)</b>: yaw is the weak axis -- a quick side-to-side look drifts the seat. Tell the guest <b>"press A"</b> the moment you see it, don't wait for them to notice.</li>
-    <li data-i18n="guide_4"><b>Light</b>: no automated low-light warning exists. Dim room = tracking runaways in the first ~75 s. Check the room before each 6dof session.</li>
-    <li data-i18n="guide_5"><b>Between titles</b>: "Stop all games" then wait for the session card to read IDLE before the next demo button. Never launch a second title on top of a live one.</li>
-  </ul>
+  <div class="demo-group-label" data-i18n="demos_approved_label">Approved for guests</div>
+  <div id="demos-approved" class="demo-group">loading demos...</div>
+  <div class="demo-group-label" data-i18n="demos_other_label">In testing -- do not offer to guests</div>
+  <div id="demos-other" class="demo-group"></div>
+  <div class="guide">
+    <h2 style="margin-top:0" data-i18n="guide_h2">Operator guide (standing, every guest)</h2>
+    <ul>
+      <li data-i18n="guide_1"><b>Audio</b>: the "audio" toggle above must read <b>headset</b> before handing over (130%). If sound vanishes mid-session the stream got orphaned by a USB re-enumeration -- click "Audio -&gt; headset" again, it re-routes live.</li>
+      <li data-i18n="guide_2"><b>Window focus</b>: the game's desktop window must be <b>focused</b> or Wine drops gamepad + audio (only head tracking keeps working). If a guest says "no sound / pad dead", click the game window first, don't debug.</li>
+      <li data-i18n="guide_3"><b>Fast head turns (6dof only)</b>: yaw is the weak axis -- a quick side-to-side look drifts the seat. Tell the guest <b>"press A"</b> the moment you see it, don't wait for them to notice.</li>
+      <li data-i18n="guide_4"><b>Light</b>: no automated low-light warning exists. Dim room = tracking runaways in the first ~75 s. Check the room before each 6dof session.</li>
+      <li data-i18n="guide_5"><b>Between titles</b>: "Stop all games" then wait for the session card to read IDLE before the next demo button. Never launch a second title on top of a live one.</li>
+    </ul>
+  </div>
 </div>
-<div class="grid" id="grid">loading...</div>
+<details class="access-panel">
+  <summary><span class="fault-dot ok-hidden" id="access-fault-dot"></span><span data-i18n="access_h2">Diagnostics</span></summary>
+  <div class="grid" id="grid">loading...</div>
+</details>
 <div class="ts" id="ts"></div>
 <script>
 // ---- i18n -------------------------------------------------------------------
@@ -669,7 +796,12 @@ PAGE = """<!doctype html>
 // and renderAudioDevices() is NOT localized yet, that's a separate future pass.
 const I18N = {
   en: {
-    h1: "iashur -- HP Reverb G2 lab status",
+    h1: "iashur",
+    h1_sub: "HP Reverb G2 lab status",
+    dot_session: "SESSION", dot_audio: "AUDIO", dot_hw: "HARDWARE", dot_hub: "HUB",
+    session_h2: "Session", access_h2: "Diagnostics",
+    ag_system: "System", ag_voice: "Voice cues",
+    demos_approved_label: "Approved for guests", demos_other_label: "In testing -- do not offer to guests",
     preview_h2: "Headset preview",
     preview_empty: "no window to preview (start a game/player)",
     audio_h2: "Audio outputs -- check one, another, or several (duplicate); per-device volume",
@@ -695,7 +827,12 @@ const I18N = {
     pm_standalone: "standalone -- not attached", pm_attach_btn: "attach", pm_detach_btn: "detach now",
   },
   es: {
-    h1: "iashur -- estado del lab HP Reverb G2",
+    h1: "iashur",
+    h1_sub: "estado del lab HP Reverb G2",
+    dot_session: "SESIÓN", dot_audio: "AUDIO", dot_hw: "HARDWARE", dot_hub: "HUB",
+    session_h2: "Sesión", access_h2: "Diagnóstico",
+    ag_system: "Sistema", ag_voice: "Voz",
+    demos_approved_label: "Aprobado para invitados", demos_other_label: "En prueba -- no ofrecer a invitados",
     preview_h2: "Vista previa del casco",
     preview_empty: "no hay ventana para previsualizar (arrancá un juego/player)",
     audio_h2: "Salidas de audio -- marcá una, otra, o varias (duplicado); volumen por dispositivo",
@@ -721,7 +858,12 @@ const I18N = {
     pm_standalone: "standalone -- no conectado", pm_attach_btn: "conectar", pm_detach_btn: "desconectar ya",
   },
   ru: {
-    h1: "iashur -- статус лаборатории HP Reverb G2",
+    h1: "iashur",
+    h1_sub: "статус лаборатории HP Reverb G2",
+    dot_session: "СЕССИЯ", dot_audio: "АУДИО", dot_hw: "ЖЕЛЕЗО", dot_hub: "ХАБ",
+    session_h2: "Сессия", access_h2: "Диагностика",
+    ag_system: "Система", ag_voice: "Голосовые подсказки",
+    demos_approved_label: "Одобрено для гостей", demos_other_label: "На тестировании -- не предлагать гостям",
     preview_h2: "Предпросмотр с гарнитуры",
     preview_empty: "нет окна для предпросмотра (запустите игру/плеер)",
     audio_h2: "Аудиовыходы -- отметьте один, другой или несколько (дублирование); громкость по устройству",
@@ -786,20 +928,25 @@ const COMPOSITOR_ACTION_IDS = new Set(['compositor-up', 'compositor-down']);
 const AUDIO_ACTION_IDS = new Set(['audio-headset', 'audio-external', 'audio-both']);
 
 async function loadActions() {
+  const sysEl = document.getElementById('actions-system');
+  const voiceEl = document.getElementById('actions-voice');
   try {
     const r = await fetch('/api/actions');
     const actions = await r.json();
-    const el = document.getElementById('actions');
-    el.innerHTML = '';
+    sysEl.innerHTML = ''; voiceEl.innerHTML = '';
     for (const [id, label] of Object.entries(actions)) {
       if (COMPOSITOR_ACTION_IDS.has(id) || AUDIO_ACTION_IDS.has(id)) continue;
       const btn = document.createElement('button');
       btn.textContent = label;
+      if (id === 'stop-games') btn.classList.add('btn-caution');
       btn.onclick = () => runAction(id, btn);
-      el.appendChild(btn);
+      // Anything id-prefixed "voz-" (the spoken booth cues) groups separately
+      // from the system/hardware actions -- generic on the id, not a hardcoded
+      // list, so a future voice cue groups correctly with no code change here.
+      (id.startsWith('voz-') ? voiceEl : sysEl).appendChild(btn);
     }
   } catch(e) {
-    document.getElementById('actions').textContent = 'failed to load actions: ' + e;
+    sysEl.textContent = 'failed to load actions: ' + e;
   }
 }
 async function runAction(id, btn) {
@@ -910,11 +1057,12 @@ function renderAudioDevices(audio) {
   }
 }
 async function loadDemos() {
+  const approvedEl = document.getElementById('demos-approved');
+  const otherEl = document.getElementById('demos-other');
   try {
     const r = await fetch('/api/demos');
     const demos = await r.json();
-    const el = document.getElementById('demos');
-    el.innerHTML = '';
+    approvedEl.innerHTML = ''; otherEl.innerHTML = '';
     for (const [id, d] of Object.entries(demos)) {
       const row = document.createElement('div');
       row.className = 'demo';
@@ -926,10 +1074,12 @@ async function loadDemos() {
       info.innerHTML = `<span class="st ${d.status}">${d.status.toUpperCase()}</span>${d.note}`;
       row.appendChild(btn);
       row.appendChild(info);
-      el.appendChild(row);
+      // "approved" is the only status a guest should ever see offered -- kept as
+      // its own visually separate group instead of blended into one grid.
+      (d.status === 'approved' ? approvedEl : otherEl).appendChild(row);
     }
   } catch(e) {
-    document.getElementById('demos').textContent = 'failed to load demos: ' + e;
+    approvedEl.textContent = 'failed to load demos: ' + e;
   }
 }
 loadActions();
@@ -955,7 +1105,7 @@ function gpuPowerHtml(p) {
   // signal worth flagging (this card is Gigabyte 240W default / 250W max,
   // see docs/22's GPU-identity section).
   const ratio = p.draw_w / p.default_limit_w;
-  const color = ratio > 0.95 ? '#ff6b6b' : (ratio > 0.7 ? '#ffb454' : '#4fd67a');
+  const color = ratio > 0.95 ? '#d6483f' : (ratio > 0.7 ? '#d19a3d' : '#5fae6b');
   return `
     <div class="pwr-wrap">
       <div class="pwr-nums">
@@ -975,10 +1125,12 @@ async function tick() {
     const attn = document.getElementById('attn');
     if (d.attention && d.attention.active) {
       attn.style.display = 'block';
+      attn.classList.add('pulsing');
       attn.innerHTML = `<b>NEEDS HUMAN ASSISTANCE</b> -- ${d.attention.message || '(sin mensaje)'}` +
         (d.attention.since ? ` <span style="opacity:.7">(desde ${d.attention.since})</span>` : '');
     } else {
       attn.style.display = 'none';
+      attn.classList.remove('pulsing');
     }
     // A DP connector reading "disconnected" and monado not running are the
     // NORMAL resting state -- the G2 never raises DP hotplug until
@@ -1034,15 +1186,30 @@ async function tick() {
       <button onclick="pmToggle(${!!pm.attached})" style="margin-left:8px;padding:2px 8px;font-size:12px">${pmBtnLabel}</button></span></div>`;
     const specs = d.specs || {};
     const cpu = specs.cpu || {}, gpuSpec = specs.gpu || {};
+    // ---- Operator-tray tier: session state (always visible, the "2-second glance") ----
+    document.getElementById('session-rows').innerHTML = `
+      <div class="row"><span>state</span><span class="${sessionActive?'ok':'dim'}">${sessionActive?'ACTIVE -- compositor running':'IDLE -- no game/compositor session right now, this is normal at rest'}</span></div>
+      <div class="row"><span>power mode</span>${powerRow}</div>
+      ${trackingRow}
+      ${audioRow}
+      ${pmRow}
+    `;
+    // Master status-strip dots (header row): the true at-a-glance read, one level
+    // above even the session card -- SESSION mirrors the state row above; AUDIO
+    // mirrors audioCls; HARDWARE folds USB/display/coredump faults into one dot so
+    // a real problem is visible without opening the access panel; HUB mirrors the
+    // pmadminka attach state (worth a glance before every demo, per docs/86).
+    const usbFault = d.usb.present_count < d.usb.total;
+    const drmFault = Object.entries(d.drm).some(([, s]) => s === 'disconnected' && sessionActive);
+    const hwFault = usbFault || drmFault || d.coredumps.count > 0;
+    document.getElementById('dot-session').className = 'status-dot ' + (sessionActive ? 'ok' : 'dim');
+    document.getElementById('dot-audio').className = 'status-dot ' + audioCls;
+    document.getElementById('dot-hw').className = 'status-dot ' + (hwFault ? 'bad' : 'ok');
+    document.getElementById('dot-hub').className = 'status-dot ' + (pm.attached ? 'warn' : 'dim');
+    const faultDot = document.getElementById('access-fault-dot');
+    if (faultDot) faultDot.className = 'fault-dot ' + (hwFault ? 'bad' : 'ok-hidden');
+    // ---- Access-panel tier: diagnostics, read rarely, collapsed by default ----
     document.getElementById('grid').innerHTML = `
-      <div class="card" style="grid-column:1/-1">
-        <h2>Session</h2>
-        <div class="row"><span>state</span><span class="${sessionActive?'ok':'dim'}">${sessionActive?'ACTIVE -- compositor running':'IDLE -- no game/compositor session right now, this is normal at rest'}</span></div>
-        <div class="row"><span>power mode</span>${powerRow}</div>
-        ${trackingRow}
-        ${audioRow}
-        ${pmRow}
-      </div>
       <div class="card"><h2>USB (${d.usb.present_count}/${d.usb.total})</h2>${usbRows}</div>
       <div class="card"><h2>Display connectors</h2>${drmRows}</div>
       <div class="card"><h2>monado-service</h2>

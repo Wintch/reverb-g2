@@ -165,6 +165,20 @@ TITLE_PROFILES = {
         # 3dof approved run (re-confirm on next demo). Candidate global default; likely the
         # Cyberpilot 60fps fix too.
         "XRT_COMPOSITOR_SCALE_PERCENTAGE": "100",
+        # 2026-08-27: patches 0098/0099 (docs/85, Faulto fork review), first wearer test.
+        # Both NOT YET HARDWARE-VALIDATED as of this write -- this launch is that test.
+        # WMR_FORWARD_ANGULAR_VELOCITY: stops always reporting zero head angular velocity to
+        # SteamVR's photon-time extrapolation. OPEN RISK, unmeasured: may double-count against
+        # this same profile's own SLAM_PRED_FREEZE_POSITION/NECK_ARM_MM (0097) prediction --
+        # if the head feels like it overshoots turns, that's the first thing to suspect.
+        # SLAM_QUAT_NORM_CHECK / SLAM_SESSION_ANCHOR_RADIUS_CM: two more divergence guards
+        # next to the existing speed-based one. 300cm anchor radius chosen generously for
+        # seated cockpit head movement -- watch Monado's log for "Tracker diverged" spam,
+        # which would mean the radius is too tight for this title (raise it) rather than a
+        # real runaway.
+        "WMR_FORWARD_ANGULAR_VELOCITY": "1",
+        "SLAM_QUAT_NORM_CHECK": "1",
+        "SLAM_SESSION_ANCHOR_RADIUS_CM": "300",
     },
     # ISS Tour VR: Aircar-class (does not render hands, docs/23) and the heaviest
     # content measured in the whole sweep (8K, monado-service at 519% CPU on T243
@@ -193,6 +207,12 @@ TITLE_PROFILES = {
         "SLAM_PRED_FREEZE_POSITION": "1",
         "SLAM_PRED_NECK_ARM_MM": "150",
         "SLAM_CORRECTION_SPREAD_MS": "50",
+        # 2026-08-27: same 0098/0099 first wearer test as the Aircar profile above -- see
+        # its comment for the double-counting risk against SLAM_PRED_FREEZE_POSITION and
+        # what to watch for in the log.
+        "WMR_FORWARD_ANGULAR_VELOCITY": "1",
+        "SLAM_QUAT_NORM_CHECK": "1",
+        "SLAM_SESSION_ANCHOR_RADIUS_CM": "300",
     },
 }
 PROFILE_DEFAULT = {"WMR_CONSTELLATION_CONTROLLERS": "1"}

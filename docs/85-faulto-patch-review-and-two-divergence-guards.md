@@ -48,3 +48,17 @@ idiom for a NaN-motivated check is a natural, easy-to-miss mistake.
 Neither 0098 nor 0099 has been run on the actual headset. Both ship default-off specifically
 because of this — flip them on for a real session before trusting either beyond "it compiles
 and the logic is sound on paper."
+
+## Follow-up, same day: wired into the launcher for the first real wearer test
+
+`scripts/vr-launcher.py`'s `TITLE_PROFILES` for Aircar (`1073390`) and Cyberpilot (`1056970`),
+both 6dof, now set `WMR_FORWARD_ANGULAR_VELOCITY=1`, `SLAM_QUAT_NORM_CHECK=1`, and
+`SLAM_SESSION_ANCHOR_RADIUS_CM=300` (300cm — a generous first-pass radius for seated cockpit
+head movement, chosen to avoid false-triggering on normal play while still catching a real
+runaway like the "tens of metres" ones seen in dim-room sessions, T245). Both titles already carry
+0097's own prediction recipe (`SLAM_PRED_FREEZE_POSITION`/`SLAM_PRED_NECK_ARM_MM`), so this is the
+first time 0098 runs alongside that — the double-counting risk named above is now live and
+untested, not just theoretical. Build unchanged (already compiled per the section above); this
+was purely env-var wiring, no rebuild needed. First wearer session with these on is the actual
+test — watch for overshoot on fast turns (0098×0097 interaction) and for `Tracker diverged`
+log spam (0099's radius too tight for the title's real movement).
