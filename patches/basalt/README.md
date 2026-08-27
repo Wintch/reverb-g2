@@ -59,3 +59,24 @@ Seen twice on 2026-08-12 with two different triggers, killing `monado-service` b
 can also end a real game session. Two candidate fixes, neither attempted: drop the
 offending frame instead of aborting (Basalt side), or stabilise `cam_hw2mono` under load
 (Monado side). See `docs/pruebas.jsonl` T162.
+
+## 0013 — `VIT_DUMP_CALIB=<path>`: dump the live calibration as a Basalt JSON (2026-08-27)
+
+The calibration Basalt actually runs with (cameras + IMU, pushed by Monado's WMR driver
+through `add_camera_calibration`/`add_imu_calibration` from the headset's own config) only
+ever crossed the VIT interface at runtime — nothing exported it, so `basalt_vio` could not
+replay a recorded `EUROC_RECORD=1` dataset with the numbers the live tracker used. In
+`Tracker::Implementation::initialize()`, once both calibrations are applied and asserted
+present, serialize `calib` with the same `cereal::JSONOutputArchive` `print_calibration()`
+already uses, to the given file. Env-gated, default off, no other effect.
+
+Why: Aircar 6dof drifts metres on fast yaw, and per-frame data (docs/80, 2026-08-27 night)
+shows the backend landmark count collapsing under yaw (p10 = 0 above 90 °/s) while the
+frontend keeps ~2600 keypoints. Testing backend configs live costs a wearer session each;
+with this dump plus one recorded session, `scripts/replay-basalt-variants.py` replays every
+config offline against the identical input. The offline runner itself (`basalt_vio`,
+`src/vio.cpp`) is built in a **separate** `~/vr/basalt/build-tools` dir with
+`BASALT_BUILD_SHARED_LIBRARY_ONLY=OFF` — it needs Pangolin unconditionally (`vio.cpp`
+includes its headers; `BASALT_BUILD_VISUALIZATION=OFF` does not remove that) but never opens
+a window with `--show-gui 0`. The production `libbasalt.so` in `build/` stays Pangolin-free
+(re-checked after this patch: `nm -D | grep -c pangolin` = 0).

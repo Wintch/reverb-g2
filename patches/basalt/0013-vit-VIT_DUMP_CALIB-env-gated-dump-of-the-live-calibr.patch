@@ -1,0 +1,68 @@
+From 2b3518c29fce42b29389aaa7133f0b939c16017b Mon Sep 17 00:00:00 2001
+From: iam <iam@iashur.internal>
+Date: Thu, 27 Aug 2026 11:35:41 -0300
+Subject: [PATCH] vit: VIT_DUMP_CALIB -- env-gated dump of the live calibration
+ as a Basalt JSON (for offline replay)
+
+The calibration Basalt actually runs with (cameras + IMU, as pushed by the host through
+add_camera_calibration/add_imu_calibration -- on this project, Monado's WMR driver from the
+headset's own config) only ever crossed the VIT interface at runtime; no export existed, so
+basalt_vio could not replay a recorded EUROC_RECORD dataset with the same numbers.
+
+VIT_DUMP_CALIB=<path>: in Tracker::Implementation::initialize(), once both calibrations have
+been applied and asserted present, serialize `calib` with the same cereal JSONOutputArchive
+print_calibration() already uses, to that file. Default off, no other effect.
+
+Motivation (reverb-g2, 2026-08-27): Aircar 6dof drifts metres on fast yaw; per-frame data
+shows Basalt's backend landmark count collapsing under yaw (p10 = 0 above 90 deg/s) while the
+frontend keeps ~2600 keypoints. Testing backend configs (recall, marg_lost_landmarks,
+min_triangulation_dist, max_kfs) live costs a wearer session per config; with this dump plus
+one EUROC_RECORD session, every config replays offline against the identical input.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ src/vit/vit_tracker.cpp | 21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/src/vit/vit_tracker.cpp b/src/vit/vit_tracker.cpp
+index 6dbfc55..eea4e99 100644
+--- a/src/vit/vit_tracker.cpp
++++ b/src/vit/vit_tracker.cpp
+@@ -57,6 +57,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ #include <cstdio>
+ #include <cstdlib>
+ #include <chrono>
++#include <fstream>
+ #include <memory>
+ #include <string>
+ #include <thread>
+@@ -397,6 +398,26 @@ struct Tracker::Implementation {
+       ASSERT(calib_data_ready.cam.at(i), "Missing cam%zu calibration", i);
+     }
+ 
++    // VIT_DUMP_CALIB=<path> (reverb-g2 patch 0013, 2026-08-27): write the exact calibration this
++    // tracker is about to run with -- cameras + IMU, already overwritten by whatever the host
++    // (Monado's WMR driver) pushed through add_*_calibration above -- as a Basalt calibration
++    // JSON, so `basalt_vio --cam-calib <path>` can replay an EUROC_RECORD dataset OFFLINE with
++    // the same numbers the live tracker used. No such export existed: the calibration only ever
++    // crossed the VIT interface at runtime. Same cereal archive print_calibration() uses;
++    // env-gated, default off, no other effect on the tracker.
++    if (const char *dump_path = std::getenv("VIT_DUMP_CALIB"); dump_path != nullptr && dump_path[0] != '\0') {
++      std::ofstream os(dump_path);
++      if (os) {
++        {
++          cereal::JSONOutputArchive ar(os);
++          ar(calib);
++        }  // archive destructor closes the JSON before the stream closes
++        cout << "VIT_DUMP_CALIB: wrote calibration to " << dump_path << "\n";
++      } else {
++        cout << "VIT_DUMP_CALIB: could not open " << dump_path << " for writing\n";
++      }
++    }
++
+     // NOTE: This factory also starts the optical flow
+     opt_flow_ptr = OpticalFlowFactory::getOpticalFlow(vio_config, calib);
+     opt_flow_ptr->start();
+-- 
+2.47.3
+

@@ -361,6 +361,32 @@ AIRCAR_VARIANTS = [
     ("E", "sin horizonte + spread 25ms",
      {"SLAM_PRED_POSITION_HORIZON_MS": "0", "SLAM_CORRECTION_SPREAD_MS": "25"},
      "Palanca DISTINTA (investigacion docs/80): reduce a la mitad la ventana de decaimiento del correction-spread, asi un re-anclaje en movimiento rapido 'se acomoda' el doble de rapido. Riesgo: volver al jitter/snap duro de T202. Freeze puro en lo demas, aisla esta sola variable."),
+    # ---- round 2 (2026-08-27 night, docs/80): A won on latency; E was smoother but slower.
+    # F = the wearer's own ask (A + E's spread). G-J attack where the METERS of yaw drift
+    # actually live -- Basalt's backend landmark collapse under yaw (p10 = 0 landmarks above
+    # 90 deg/s while the frontend still tracks ~2600 keypoints) -- via per-variant Basalt
+    # configs in ~/vr/basalt-variants/ (SLAM_CONFIG=<toml> is passed straight through by
+    # jack-in-wayland.sh). All carry F's Monado-side env so only the backend differs.
+    ("F", "A + spread 25ms (menos delay + mas suave)",
+     {"SLAM_PRED_POSITION_HORIZON_MS": "50", "SLAM_PRED_POSITION_MAX_SPEED_CM_S": "150",
+      "SLAM_CORRECTION_SPREAD_MS": "25"},
+     "Lo que pediste: la baja demora de A + la suavidad de E. Solo cambia el spread respecto de A. Si es >= A, spread 25 pasa a ser el default."),
+    ("G", "F + Basalt recall de landmarks",
+     {"SLAM_PRED_POSITION_HORIZON_MS": "50", "SLAM_PRED_POSITION_MAX_SPEED_CM_S": "150",
+      "SLAM_CORRECTION_SPREAD_MS": "25", "SLAM_CONFIG": f"{HOME}/vr/basalt-variants/G.toml"},
+     "BACKEND. recall_enable=true + vio_marg_lost_landmarks=false: hoy un landmark que sale del encuadre en un giro se BORRA en la siguiente marginalizacion (casi cada frame), y el recall solo re-encuentra los que siguen vivos -- sin apagar el borrado, el recall no tiene que recuperar. Objetivo: que los landmarks sobrevivan al barrido y vuelvan al volver la cabeza."),
+    ("H", "F + triangulacion 2cm + 12 keyframes",
+     {"SLAM_PRED_POSITION_HORIZON_MS": "50", "SLAM_PRED_POSITION_MAX_SPEED_CM_S": "150",
+      "SLAM_CORRECTION_SPREAD_MS": "25", "SLAM_CONFIG": f"{HOME}/vr/basalt-variants/H.toml"},
+     "BACKEND. vio_min_triangulation_dist 0.05->0.02 m (un yaw sentado tiene ~0 de baseline: los keyframes que se crean durante el giro no agregan NINGUN landmark porque el umbral de 5 cm los rechaza) + vio_max_kfs 7->12 (los keyframes viejos se marginalizan con sus landmarks; mas ventana = sobreviven mas tiempo). Sin recall."),
+    ("I", "F + recall + triangulacion (G+H)",
+     {"SLAM_PRED_POSITION_HORIZON_MS": "50", "SLAM_PRED_POSITION_MAX_SPEED_CM_S": "150",
+      "SLAM_CORRECTION_SPREAD_MS": "25", "SLAM_CONFIG": f"{HOME}/vr/basalt-variants/I.toml"},
+     "BACKEND. La combinacion de G y H: los dos mecanismos juntos. Candidato principal del backend si G y H ayudan cada uno por su lado."),
+    ("J", "I + recall mas permisivo",
+     {"SLAM_PRED_POSITION_HORIZON_MS": "50", "SLAM_PRED_POSITION_MAX_SPEED_CM_S": "150",
+      "SLAM_CORRECTION_SPREAD_MS": "25", "SLAM_CONFIG": f"{HOME}/vr/basalt-variants/J.toml"},
+     "BACKEND. I + optical_flow_recall_max_patch_norms = los defaults de C++ de Basalt (nuestro JSON usa valores 4x mas estrictos -- una discrepancia interna de Basalt). Si G/I recuperan pocos landmarks, puede ser que el umbral estricto rechace recalls validos."),
 ]
 for _tag, _label, _env, _note in AIRCAR_VARIANTS:
     ACTIONS[f"variant-1073390-{_tag}"] = {

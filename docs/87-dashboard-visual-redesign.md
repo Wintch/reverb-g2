@@ -117,6 +117,26 @@ status-dashboard.py` that restarts it) — the wrapper still self-matches on tha
 else the same command contains. Verified live: the anchored form returned exactly the one real
 PID (or none) both times it was used afterwards.
 
+## Same night, later: the deploy-drift class of bug got its own instrument
+
+Three times in one session an edit in the repo did not reach what actually runs, because
+`~/vr/` holds **copies** of `scripts/`, not symlinks: `vr-launcher.py` (a headset test ran the
+stale profile), `basalt-g2-config.json`, and — worst — `demo-recorder.py`, which had crashed on
+every launch since it was born (2026-08-26) because the modules it imports (`rig_telemetry.py`,
+`gui_env.py`, `wmr_usb_ids.py`, later `reseat_audio.py`) were never copied beside it, so a
+whole night of "auto-recorded" variant sessions never existed. A full sweep found 11 of 55
+shared scripts drifted (repo newer in every case — the 18.5 V PSU corrections, the
+English-strings rule, `vr-power-setup.sh`'s `hmd_usb_no_autosuspend()` refactor). All
+deployed after diffing each one for local-only lines (none found).
+
+**`scripts/deploy-check.py`** (new): lists shared files that differ (and which side is newer),
+modules imported by any `~/vr/*.py` that are missing there, and repo scripts with no deployed
+copy; exits 1 on drift/missing so a session script can gate on it. It deliberately does not
+deploy — a `~/vr` copy *can* carry an uncommitted local fix, and diff-then-copy is the safe
+habit. Symlinking `~/vr` to the repo would end the class of bug outright but changes a
+project-wide convention (CLAUDE.md's "sync `scripts/` with the copy in `~/vr/`") — flagged,
+not done.
+
 ## Not done / open
 
 - The heavily-dynamic per-tick telemetry strings (session state text, audio labels, etc.) are

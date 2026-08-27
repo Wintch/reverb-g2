@@ -191,16 +191,18 @@ TITLE_PROFILES = {
         # Real risk: CPU contention with Aircar's own render/game threads on this 6C/12T box --
         # must be checked against fps/pacing, not assumed safe just because Aircar is GPU-bound.
         "SLAM_THREADS": "6",
-        # 2026-08-27 (same evening): patch 0100, SLAM_PRED_POSITION_HORIZON_MS -- first wearer
-        # test. NOT YET HARDWARE-VALIDATED. Extrapolates real SLAM linear velocity for up to
-        # 50ms (instead of 0ms under full FREEZE) before holding flat -- a bounded middle ground
-        # meant to compensate the genuine head TRANSLATION during the anchor-age gap that
-        # FREEZE_POSITION+NECK_ARM_MM don't cover (they only model rotation). Directly targets
-        # tonight's wearer report: "giro y me desplazo unos cm al lado opuesto... miro arriba y
-        # baja la camara, se acomoda" -- smooth, not jerky, on yaw+pitch, roll clean. Watch for:
-        # does the displacement shrink, stay the same, or (if 50ms is too long) get WORSE/jerkier
-        # -- if worse, this specific lever is refuted, try a shorter horizon (25ms) or drop it.
+        # 2026-08-27 (night): patch 0100, SLAM_PRED_POSITION_HORIZON_MS + its speed clamp --
+        # WEARER-VALIDATED as "variant A" in the 5-way A/B (docs/80): beats the pure-freeze
+        # control on latency ("responde mas agil", "se actualiza mas seguido"); B (25ms) and
+        # D (clamp 1.0) were indistinguishable from it. Extrapolates real SLAM linear velocity
+        # for up to 50ms before holding flat, clamped to 1.5 m/s -- the clamp is load-bearing:
+        # the first (unclamped) test sent the wearer 1-3 m out of the cockpit because raw SLAM
+        # velocity has 0.2% re-localization spikes of up to 127 m/s (6 m in one 50ms frame).
+        # The remaining METERS of drift on fast yaw are NOT this layer's -- they are Basalt's
+        # backend losing every landmark under yaw (p10 = 0 above 90 deg/s); see the G-J
+        # backend variants in status-dashboard.py and docs/80's night section.
         "SLAM_PRED_POSITION_HORIZON_MS": "50",
+        "SLAM_PRED_POSITION_MAX_SPEED_CM_S": "150",  # explicit; also the code default
     },
     # ISS Tour VR: Aircar-class (does not render hands, docs/23) and the heaviest
     # content measured in the whole sweep (8K, monado-service at 519% CPU on T243

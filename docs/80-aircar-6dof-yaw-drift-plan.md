@@ -485,3 +485,106 @@ lever for that), not more prediction tuning. E is judged on its own: keep only i
 **Still parked from the research pass**: `optical_flow_levels=4` (read the `VIT_COLLAPSE_LOG`
 keypoint counts from tonight's variant runs first — if they don't crater at fast turns, it's
 refuted for free) and the IMU-camera timing residual (no code path to even apply one).
+
+## 2026-08-27 (late night) — the A–E verdicts, and the real mechanism: Basalt's landmarks collapse under yaw
+
+### Wearer verdicts, C → A → D → B → E, same fast-turn protocol each time
+
+| variant | wearer's words | read |
+|---|---|---|
+| **C** control (no horizon) | "no se acomoda, tengo el panorama" | the known residual, reference |
+| **A** 50 ms + clamp 1.5 | "mejor la demora, se actualiza más seguido; la posición aún se va al girar rápido pero no tanto; en resumen está mejor" | **beats C** on latency; drift still there |
+| **D** 50 ms + clamp 1.0 | "parecido; aún se va bastante al mover la cabeza; igual de poco delay" | ≈ A — the clamp level is not what sets the residual drift |
+| **B** 25 ms + clamp 1.5 | "más o menos lo mismo; moviendo rápido me voy unos metros, especialmente yaw" | ≈ A — the horizon length is not what sets it either |
+| **E** no horizon + spread 25 | "más demora para actualizar mi posición (no los giros), pero es más suave" | E's smoothness is the spread; its delay is the missing horizon |
+
+**A is promoted to `TITLE_PROFILES["1073390"]`** (`SLAM_PRED_POSITION_HORIZON_MS=50` +
+`SLAM_PRED_POSITION_MAX_SPEED_CM_S=150`). The wearer's synthesis — "estaría bueno esa suavidad
+pero sin demora" — is variant **F = A + `SLAM_CORRECTION_SPREAD_MS=25`**, untested, queued.
+
+### Why no prediction knob moved the metres: the drift is in the raw VIO
+
+Offline pass over every variant's raw tracker output (`/mnt/vrtmp/slam-20260827-*/tracking.csv`
+= Basalt's pose stream *before* any Monado prediction, so horizon/clamp/spread cannot touch it):
+
+| variant | dur s | yaw>90 s | max \|v\| m/s | 1 s windows >1 m | max 1 s disp | span m |
+|---|---|---|---|---|---|---|
+| C | 268 | 10.5 | 92.7 | 11 | 3.07 | 4.81 |
+| A | 231 | 20.6 | 94.5 | 12 | 3.01 | 5.56 |
+| D | 311 | 19.1 | 125.4 | 31 | 3.41 | 5.44 |
+| B | 585 | 29.6 | 151.9 | 8 | 3.10 | 6.33 |
+| E | 414 | 14.0 | 91.5 | 2 | 2.83 | 3.07 |
+| unclamped 50 ms | 1148 | 18.2 | 127.3 | 101 | 3.75 | 5.83 |
+
+Every run, control included, has 3 m raw excursions and 90–150 m/s velocity spikes. (Exposure
+differs — B had 3× C's fast-yaw seconds — so the counts aren't comparable across rows; the
+point is the *presence* in all of them.) Also visible in B's log: the 0099 session-anchor guard
+fired **6 times** (3 resets, each at exactly 3.0 m) — the first time it has ever tripped, and
+precisely on the wearer's "me voy unos metros"; it measures the runaway correctly and, as its
+own disclosed limitation says, does not undo it.
+
+### The mechanism, per frame: keypoints hold, landmarks vanish — and yaw is special
+
+Variant B's `VIT_COLLAPSE_LOG=1` stream (17,372 frames) paired to `tracking.csv` by the exact
+`vit_collapse IN … t_ns` frame timestamp (16,616 matched), binned by the instantaneous yaw rate
+derived from consecutive quaternions (Basalt world +Z up):
+
+| yaw rate °/s | n | frontend keypoints p50 / p10 | **backend landmarks p50 / p10** |
+|---|---|---|---|
+| 0–30 | 14,387 | 2944 / 2735 | 52 / 23 |
+| 30–90 | 1,376 | 2817 / 2686 | 42 / 10 |
+| 90–180 | 372 | 2713 / 2586 | **15 / 1** |
+| 180–360 | 410 | 2652 / 2566 | **6 / 0** |
+| >360 | 71 | 2614 / 2521 | **5 / 0** |
+
+Control axis — pitch/roll rate with yaw < 30 °/s: 90–180 °/s keeps landmarks **37 / 9**,
+180–360 keeps **27 / 10**. So: the frontend never loses features (H3 refuted — `optical_flow_
+levels=4` is off the table, free), the backend's landmark set (`lmdb.numLandmarks()`,
+`sqrt_keypoint_vio.cpp:1676`) collapses to zero specifically under yaw, and with zero landmarks
+the VIO has no visual constraint on translation — position becomes pure IMU double-integration,
+which is the metres. Source-verified causes (Basalt tree, read this session):
+
+1. `vio_marg_lost_landmarks: true` (ours) marks every landmark not observed *this frame* as lost
+   (`sqrt_keypoint_vio.cpp:563-572`) and deletes it at the next marginalization
+   (`:1122-1123`), which in steady state fires nearly every frame. A landmark swept out of view
+   is gone before the head comes back. Basalt's **landmark recall** (`optical_flow_recall_enable`,
+   off in ours; `frame_to_frame_optical_flow.h:560-655`) can only re-find landmarks still in
+   `lmdb` — so it is useless for sweep-and-return unless marg-lost is off. Basalt's own TODO at
+   `sqrt_keypoint_vio.cpp:776-783` names exactly this tension.
+2. `vio_min_triangulation_dist: 0.05` is a metric baseline gate (`:532-536`). A seated yaw has
+   ~0 baseline, so the many keyframes taken during a sweep (`vio_new_kf_keypoints_thresh`
+   trips as connected-ratio drops) add **no** new landmarks; keyframe marginalization then
+   deletes their hosted landmarks unconditionally (`landmark_database.cpp:66-87`).
+3. Yaw vs pitch/roll: a level yaw sweeps the whole scene out horizontally; pitch keeps floor/
+   ceiling structure partially in view. Plus H4 (no gravity anchor for yaw): whatever error
+   accrues rides uncorrected.
+
+Also low even at rest: p50 = 52 landmarks for 2900 tracked keypoints — a 7-keyframe window
+with a 5 cm triangulation gate is starving the backend. Backend cost is nowhere near the limit:
+`opt_ms` p99 6.9 ms, `marg_ms` p99 1.5 ms per 33 ms frame.
+
+### Two instruments that were silently broken (fixed)
+
+- **`demo-recorder.py` never ran.** Every launch since 2026-08-26 died on import
+  (`ModuleNotFoundError: rig_telemetry`): `rig_telemetry.py`, `gui_env.py`, `wmr_usb_ids.py`
+  (and `reseat_audio.py`) lived only in repo `scripts/`, never in `~/vr/`. None of tonight's
+  "auto-recorded" variant sessions exist; the per-variant SLAM CSVs above come from the tracker's
+  own `SLAM_WRITE_CSVS`, which is why the offline pass was possible at all. Third instance in one
+  night of `~/vr` ↔ repo drift (after `vr-launcher.py` and `basalt-g2-config.json`); **11 of 55
+  shared scripts** had drifted too (repo newer in all — 18.5 V corrections, English strings,
+  the `hmd_usb_no_autosuspend()` refactor). All deployed; new **`scripts/deploy-check.py`** lists
+  drift + missing modules and exits non-zero — run it before trusting any launch.
+- The "static" EuRoC recording from 2026-08-12 is empty (0 frames): there was no dataset.
+
+### The next lever is the backend — and it can be A/B'd offline
+
+Plan of record (`~/.claude/plans/reflective-herding-codd.md`, approved): patch
+`patches/basalt/0013` (`VIT_DUMP_CALIB`) exports the live calibration; `basalt_vio` (built in
+`~/vr/basalt/build-tools`) replays an `EUROC_RECORD=1` session; `scripts/replay-basalt-variants.py`
+runs N Basalt configs against the same recording and ranks them by drift + landmarks-per-yaw-band;
+`scripts/soak-variant.py` runs unattended headset-on stationary soaks for safety (crash,
+divergence, CPU, the documented unbounded recall `patches` map). Variant matrix in
+`scripts/basalt-variants/` and as dashboard buttons **G** (recall + marg-lost off), **H**
+(triangulation 2 cm + 12 keyframes), **I** (G+H), **J** (I + Basalt's looser C++ recall norms —
+our JSON's norms are 4× stricter, a discrepancy inside Basalt itself). F–J all ride on A's
+Monado-side config with spread 25. Results of the soaks and the replay go below as they land.
