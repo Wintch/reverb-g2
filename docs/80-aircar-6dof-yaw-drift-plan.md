@@ -689,3 +689,33 @@ inherit H's 2 cm gate and are deprioritised; I still runs once for the record.
   the width ≈ 19 px; the JSON's strict `max_patch_norms` were supposed to gate this) or the
   stale observations `vio_marg_lost_landmarks: false` keeps in the optimizer. G2 and G3 split
   exactly those two halves; K adds the wider keyframe window on top of G′.
+
+### Two checks on the interpretation (base soak + variant B, offline)
+
+**The yaw collapse is real, not a reset artifact.** Every divergence reset zeroes `lmdb`, so a
+"0 landmarks" frame could just be a post-reset transient. Recomputing B's table excluding the
+3 s after each of its 6 resets (497 frames dropped) changes nothing: 90–180 °/s stays 15 / 1,
+180–360 stays 6 / 0, >360 stays 4 / 0 (p50 / p10). The collapse under yaw stands as measured.
+
+**At rest the metre jumps are NOT starvation — they are churn on a frozen keyframe set.** In
+the base soak, aligning each 1-second raw displacement with the landmark count in that second:
+seconds with ≥ 5 landmarks throughout have p90 4 cm; the 3 m jumps all sit in seconds whose
+minimum is 0 — but the 0 is the *reset's* doing, not the cause. Frame by frame around the
+t = 255 s jump (1.2 m at 255.0 s, 2.8 m at 256.4 s, reset at 256.5 s): landmarks are 39 → 174
+→ 70 → 53 → 82 → 64 → 120 → 78 → 176 → 76 … — **flapping by ~100 every frame** for the ~2 s
+before the jump, with the camera static. That flapping is an *onset signature*, not the steady
+state: over the whole 20 min the frame-to-frame landmark change is p50 0 / p90 5. Meanwhile
+`frame_poses` = 7 and `marg_H` = 57 never move outside the resets: **after the first minute at
+rest no keyframe is ever taken again** for the entire run (a static view never drops the
+connected ratio below `vio_new_kf_keypoints_thresh` 0.7; the only keyframe changes in the
+per-minute count sit exactly at the reset minutes). So the backend spends 20 minutes on a
+keyframe set frozen from minute 1 — the textbook stationary-VIO failure: with no fresh keyframes
+the IMU bias estimate drifts until preintegration and vision disagree, the optimizer starts
+rejecting landmarks (`vio_outlier_threshold` 3.0 — the churn), and a bad step walks the position
+metres. `vio_marg_lost_landmarks: true` makes the churn worse (G3 tests turning it off alone), but
+the cheaper, more direct remedy for *rest* is to keep taking keyframes when the view is static:
+**variant L = `vio_new_kf_keypoints_thresh` 0.7 → 0.9** (new detections each frame keep the
+connected ratio a little under 1.0, so 0.9 should trigger keyframes periodically; `vio_min_frames_
+after_kf` 5 still floors the rate). Queued after G3. It also says the at-rest and the under-yaw
+failures are different: yaw genuinely runs out of landmarks; rest has plenty and lets the IMU
+side drift.
