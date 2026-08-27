@@ -57,13 +57,22 @@ def analyze(tag):
            "recall_ms_p99": r.get("recall_ms_p99"), "frontend_p99": r.get("frontend_total_ms_p99"),
            "opt_p99": r.get("opt_ms_p99"), "patches_max": r.get("patches_max"), "kp_p50": r.get("keypoints_p50")}
     if log.exists():
-        lm, trips = [], 0
+        lm, trips, patches = [], 0, []
         for line in open(log, errors="replace"):
+            if line.count("vit_") > 1:  # thread-interleaved line, e.g. "patches=3502" + "1033.1446"
+                continue
             m = re.match(r"vit_vio .*landmarks=(\d+)", line)
             if m:
                 lm.append(int(m.group(1)))
             elif "Tracker diverged" in line:
                 trips += 1
+            elif line.startswith("vit_of"):
+                m = re.search(r"patches=(\d+)", line)
+                if m:
+                    patches.append(int(m.group(1)))
+        if patches:
+            patches.sort()
+            out["patches_max"] = patches[min(len(patches) - 1, int(len(patches) * 0.999))]  # p99.9, glitch-proof
         if lm:
             s = sorted(lm)
             out.update({"frames": len(lm), "lm_p50": s[len(s) // 2], "lm_p10": s[len(s) // 10], "lm_min": s[0],

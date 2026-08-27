@@ -710,6 +710,7 @@ without a restart between sessions.
 | L (keyframe threshold 0.9) | 17 / 4 | — | **96** | — | — | — | +34 | **worst of the night — refuted** |
 | M (I without recall: marg-lost off + 2 cm + 12 kfs) | 109 / 67 | 0.38 | **21** | 5.95 m | 3.00 m | 10.7 ms | +16 | unstable without recall; frontend p50 28.6 (= base) |
 | I3 (I config, recall grace 30 frames, on 0015) | 94 / 40 | 1.9 | **50** (2–5 every minute) | 5.93 m | 3.02 m | 10.4 ms | +360 | CPU fixed (p50 30.6 / p99 58, patches 190k) — tracking much worse, steadily |
+| I4 (I config, grace 90, on 0016) | 161 / 93 | 0.12 | 2 | 3.39 m | 2.94 m | 18.0 ms | +125 (1.54 → 1.69 GB) | frontend p50 39 / **p99 65** (was 117 on 0014, 93 on 0015): the amortized sweep works; patches p50 249k / p99.9 385k, bounded |
 
 **I3: the grace is not a memory knob.** A 30-frame grace brought the frontend under budget
 (p50 30.6 ms, p99 58, patch map 190k) — and produced 50 trips. A patch is the recall's memory

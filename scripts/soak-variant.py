@@ -106,6 +106,8 @@ def parse_vit(path):
             except ValueError:
                 pass
     for line in open(path, errors="replace"):
+        if line.count("vit_") > 1:  # two threads' lines fused ("patches=3502" + "1033.1446"): skip
+            continue
         if line.startswith("vit_of"):
             for lst, pat in ((kp, r"keypoints=(\d+)"), (recall, r"recall_ms=([0-9.eE+-]+)"),
                              (total, r"total_ms=([0-9.eE+-]+)"), (patches, r"patches=(\d+)")):
