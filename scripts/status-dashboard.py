@@ -387,6 +387,10 @@ AIRCAR_VARIANTS = [
      {"SLAM_PRED_POSITION_HORIZON_MS": "50", "SLAM_PRED_POSITION_MAX_SPEED_CM_S": "150",
       "SLAM_CORRECTION_SPREAD_MS": "25", "SLAM_CONFIG": f"{HOME}/vr/basalt-variants/J.toml"},
      "BACKEND. I + optical_flow_recall_max_patch_norms = los defaults de C++ de Basalt (nuestro JSON usa valores 4x mas estrictos -- una discrepancia interna de Basalt). Si G/I recuperan pocos landmarks, puede ser que el umbral estricto rechace recalls validos."),
+    ("K", "F + recall + 12 keyframes (G + kfs, sin tocar triangulacion)",
+     {"SLAM_PRED_POSITION_HORIZON_MS": "50", "SLAM_PRED_POSITION_MAX_SPEED_CM_S": "150",
+      "SLAM_CORRECTION_SPREAD_MS": "25", "SLAM_CONFIG": f"{HOME}/vr/basalt-variants/K.toml"},
+     "BACKEND. Agregada tras los soaks: H (triangulacion 2 cm) DESESTABILIZA en reposo (21 disparos en 4 min vs 7 en 20 min de la base) -- profundidades mal condicionadas. K se queda con lo que si sirve: recall (G, ~6x landmarks) + ventana de 12 keyframes para que los landmarks sobrevivan mas tiempo, con la baseline de 5 cm intacta. Requiere patch 0014 (recall acotado en memoria)."),
     # R = the ONE wearer session the offline pipeline needs: F's config + EUROC_RECORD (PNG,
     # lossless -- JPG changes the features) + the live calibration dump. ~3 min following
     # yaw-protocol-voice.py's spoken script. Afterwards replay-basalt-variants.py replays the

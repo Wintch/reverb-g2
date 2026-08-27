@@ -1,0 +1,7 @@
+show-gui=0
+config-path="/home/iam/vr/basalt-variants/G3.json"
+marg-data=""
+print-queue=0
+use-double=0
+deterministic=0
+num-threads=6

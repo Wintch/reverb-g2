@@ -648,3 +648,44 @@ latest bundle, erase the rest after a grace of 90 frames (the bundle arrives asy
 few frames behind), sweep once a second; `patches.at()` → `find()` so a pruned id means "can't
 recall this one", not `std::out_of_range` on the frontend thread. `BASALT_RECALL_PATCH_GRACE_
 FRAMES=0` restores the old behaviour for an A/B. Re-run G/I/J on it below.
+
+**H (`vio_min_triangulation_dist` 0.05 → 0.02 + `vio_max_kfs` 7 → 12, no recall) — refuted at
+rest.** Full 20 min: landmarks p50 24 / p10 6 (barely above base's 16 / 7), but **46 divergence
+trips** (base 7), span **7.5 m** (base 4.75), max 4.9 m from the start, 5.1 % of frames under 5
+landmarks (base 4.4 %). Backend cost of the wider window: `opt_ms` p99 7.0 ms vs 2.7 — still far
+from the 33 ms frame, so the *keyframe* half of H is affordable; it is the 2 cm baseline gate
+that hurts: near-zero-baseline pairs triangulate to badly conditioned depths, and those garbage
+landmarks are what jump the position. The two H knobs are therefore split: the triangulation
+gate stays at 5 cm; the 12-keyframe window moves into a new variant **K = G + `vio_max_kfs` 12**
+(recall + no marg-lost + wider window, triangulation untouched). I and J as originally defined
+inherit H's 2 cm gate and are deprioritised; I still runs once for the record.
+
+| variant (20 min, headset still) | lm p50 / p10 | % frames lm < 5 | trips | span | max from start | opt p99 | RSS MB/h | grade |
+|---|---|---|---|---|---|---|---|---|
+| base | 16 / 7 | 4.4 | 7 | 4.75 m | 3.00 m | 2.7 ms | 39.5 | reference |
+| H | 24 / 6 | 5.1 | 46 | 7.50 m | 4.90 m | 7.0 ms | 38.1 | UNSAFE |
+| G′ (G + 0014) | 64 / 37 | 1.3 | 30 | 5.73 m | 3.00 m | 5.6 ms | ~500 (after min 3) | UNSAFE |
+| K (G′ + 12 kfs) | | | | | | | | *running* |
+| I (G′ + H) | | | | | | | | *queued* |
+| G2 (recall only, marg-lost stays on) | | | | | | | | *queued* |
+| G3 (marg-lost off only, no recall) | | | | | | | | *queued* |
+
+**G′ (recall + marg-lost off, with 0014), full 20 min — three separate verdicts:**
+
+- *Memory*: 0014 cut the leak by >95 % (18 GB in 3 min → RSS 1.13 → 1.73 GB over 20 min).
+  `patches` oscillated 228k–388k — bounded with a slow creep, not linear; the RSS slope after
+  minute 3 is ~500 MB/h. Liveable for a demo session, not for a day; the 90-frame grace can drop
+  to 30 (~60k patches) once the direction is settled.
+- *CPU*: recall itself is cheap (1.0 ms p99) — the cost is **building 4 pyramid patches for
+  each of the ~2,000 keypoints detected per frame** in `addPointsForCamera()`, a sequential
+  loop: frontend `total_ms` p50 **28 → 42 ms** (p99 40 → 101). That is over the 33 ms frame
+  budget at the median. The loop is embarrassingly parallel (`tbb::parallel_for`, patch 0015 if
+  recall wins); a lazier alternative — only build patches for keypoints that become landmarks —
+  needs the detection frame's pyramid later, which the frontend no longer holds.
+- *Drift at rest*: **not better** — 30 trips (base 7), span 5.73 m (base 4.75), max 3.0 m from
+  the start, despite **4× the landmarks** (p10 37 vs 7, and only 1.3 % of frames under 5). A
+  static camera with 37 good landmarks does not walk 3 m; so the extra landmarks are bad ones —
+  either recalls re-attached at the wrong image position (`recall_max_patch_dist` allows 3 % of
+  the width ≈ 19 px; the JSON's strict `max_patch_norms` were supposed to gate this) or the
+  stale observations `vio_marg_lost_landmarks: false` keeps in the optimizer. G2 and G3 split
+  exactly those two halves; K adds the wider keyframe window on top of G′.
