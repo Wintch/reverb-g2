@@ -44,8 +44,16 @@ def analyze(tag):
         return None
     r = json.load(open(js))
     log = SOAK / f"{tag}-jack-in.log"
+    # RSS slope over the steady state only (t >= 600 s): the driver's first-to-last slope is
+    # dominated by the start-up ramp (recall fills its patch map in the first 2-3 minutes) and
+    # made G2 read +1.1 GB/h next to I's +145 -- the same mechanism, two numbers.
+    steady = [(s["t_s"], s["rss_mb"]) for s in r.get("samples", []) if s.get("rss_mb") and s["t_s"] >= 600]
+    rss_steady = None
+    if len(steady) >= 3 and steady[-1][0] > steady[0][0]:
+        rss_steady = round((steady[-1][1] - steady[0][1]) / (steady[-1][0] - steady[0][0]) * 3600, 1)
     out = {"tag": tag, "verdict_driver": r.get("verdict"), "minutes": r.get("minutes"),
-           "cores": r.get("coredumps_new"), "rss_mb_per_h": r.get("rss_growth_mb_per_h"),
+           "cores": r.get("coredumps_new"), "rss_mb_per_h": rss_steady if rss_steady is not None else r.get("rss_growth_mb_per_h"),
+           "rss_first_to_last_mb_per_h": r.get("rss_growth_mb_per_h"),
            "recall_ms_p99": r.get("recall_ms_p99"), "frontend_p99": r.get("frontend_total_ms_p99"),
            "opt_p99": r.get("opt_ms_p99"), "patches_max": r.get("patches_max"), "kp_p50": r.get("keypoints_p50")}
     if log.exists():

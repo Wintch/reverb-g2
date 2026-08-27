@@ -660,13 +660,13 @@ gate stays at 5 cm; the 12-keyframe window moves into a new variant **K = G + `v
 (recall + no marg-lost + wider window, triangulation untouched). I and J as originally defined
 inherit H's 2 cm gate and are deprioritised; I still runs once for the record.
 
-| variant (20 min, headset still) | lm p50 / p10 | % frames lm < 5 | trips | span | max from start | opt p99 | RSS MB/h | grade |
+| variant (20 min, headset still) | lm p50 / p10 | % frames lm < 5 | trips | span | max from start | opt p99 | RSS MB/h (steady, min 10→20) | grade |
 |---|---|---|---|---|---|---|---|---|
-| base | 16 / 7 | 4.4 | 7 | 4.75 m | 3.00 m | 2.7 ms | 39.5 | reference |
-| H | 24 / 6 | 5.1 | 46 | 7.50 m | 4.90 m | 7.0 ms | 38.1 | UNSAFE |
-| G′ (G + 0014) | 64 / 37 | 1.3 | 30 | 5.73 m | 3.00 m | 5.6 ms | ~500 (after min 3) | UNSAFE |
-| K (G′ + 12 kfs) | *lost* | *lost* | 1 | 3.01 m | 2.94 m | — | ~200 (1.46→1.72 GB) | partial: better than base, far from I; rerun queued |
-| **I (G′ + H: recall + marg-lost off + 2 cm + 12 kfs)** | **145 / 81** | **0.02** | **0** | **0.41 m** | **0.32 m** | 13.6 ms | 145 | **stable at rest; CPU over budget** |
+| base | 16 / 7 | 4.4 | 7 | 4.75 m | 3.00 m | 2.7 ms | +11 | reference |
+| H | 24 / 6 | 5.1 | 46 | 7.50 m | 4.90 m | 7.0 ms | +3 | UNSAFE |
+| G′ (G + 0014) | 64 / 37 | 1.3 | 30 | 5.73 m | 3.00 m | 5.6 ms | +602 | UNSAFE |
+| K (G′ + 12 kfs) | *lost* | *lost* | 1 | 3.01 m | 2.94 m | — | ~+200 | partial: better than base, far from I; rerun queued |
+| **I (G′ + H: recall + marg-lost off + 2 cm + 12 kfs)** | **145 / 81** | **0.02** | **0** | **0.41 m** | **0.32 m** | 13.6 ms | +232 | **stable at rest; CPU over budget** |
 
 **I is the first config that fixes rest** — an order of magnitude on every drift metric (span
 0.41 m vs 4.75, max 1-s step 0.20 m vs 3.29, zero trips vs 7) with 145 / 81 landmarks and only
@@ -685,7 +685,15 @@ and cheap; same patches, same ids, same order) — compile-checked in `build-too
 rebuild + an **I2 = I on 0015** soak queued after L. Driver bug that ate K's log (a thread-
 interleaved value like `0.93003432.9358`) fixed: the raw log is now copied *before* parsing and
 the parser skips unparsable values; K reruns after L.
-| G2 (recall only, marg-lost stays on) | | | | | | | | *queued* |
+| G2 (recall only, marg-lost stays on) | 15 / 8 | 0.8 | 5 | 4.85 m | 2.99 m | 3.2 ms | −9 (flat) | = base on every drift metric, plus recall's CPU cost (frontend p99 108) — exactly as the source read predicted |
+
+RSS column note: the driver's first-to-last slope is dominated by the start-up ramp (recall
+fills its patch map in the first 2–3 minutes), so `soak-grade.py` now reports the slope over
+minutes 10→20 only. Read that way, **G2 is flat** — patch 0014's bound on the patch map holds —
+and the residual growth in G′/I (+600 / +232 MB/h) comes from `vio_marg_lost_landmarks: false`
+on the backend side (landmarks live longer and keep accumulating observations), not from
+recall. +232 MB/h is fine for a demo session (30 min ≈ +115 MB), not for an all-day booth
+without a restart between sessions.
 | G3 (marg-lost off only, no recall) | | | | | | | | *queued* |
 
 **G′ (recall + marg-lost off, with 0014), full 20 min — three separate verdicts:**
