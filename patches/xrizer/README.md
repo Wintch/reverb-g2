@@ -93,3 +93,19 @@ hammer `GetFrameTiming` every frame — a real contention shape, though T219 pro
 was NOT that night's freeze (the second-run wedge reproduces on the stub build too;
 that bug is the XR-session-re-cycle suspect, separate). Bring 0005 back with
 atomics/seqlock or out-of-frame-path ring writes. Commits `d467454` + revert `782e72b`.
+
+## 0007 — digital brightness gain (2026-08-27)
+
+The G2 panel backlight cannot be set from any host — no HID command exists, Windows
+included (re-verified three ways: Monado's WMR command set, the Oasis driver disassembly,
+the headset calibration blob — see the repo's brightness investigation and `docs/09`/`docs/12`).
+Instead, multiply the game's own composited RGB via Monado's
+`XR_KHR_composition_layer_color_scale_bias`, attached to the **projection** layer (Monado
+implements it there — `oxr_session_frame_end.c` — and xrizer already negotiates the
+extension; it just only used it for overlay alpha before). Same raw-pointer next-chain
+splice as `overlay.rs::set_alpha`. Applied after the game renders, before scanout, so it
+works for any closed-source Steam title. Gain is read from a dashboard-controlled file
+(`$HOME/vr/logs/xrizer-brightness`, or `$XRIZER_BRIGHTNESS_FILE`), re-read every ~30 frames
+to stay off the per-frame hot path, clamped `[0,4]`; `1.0` disables the layer entirely. The
+status dashboard's per-user command centre writes that file (brightness slider). Build with
+the same `--features static-openxr` as the rest of the lab tree. Commit `05afead`.

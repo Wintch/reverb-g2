@@ -158,6 +158,13 @@ TITLE_PROFILES = {
         "SLAM_PRED_FREEZE_POSITION": "1",
         "SLAM_PRED_NECK_ARM_MM": "150",
         "SLAM_CORRECTION_SPREAD_MS": "50",
+        # 2026-08-27: Monado supersamples 140% by DEFAULT (3024^2/eye) -> GPU-bound in 6dof,
+        # fps floor dived to 41-71 on heavy scenes and reprojected (the felt jitter/drift).
+        # 100% (2160^2/eye) gave headroom: floor rose to ~79, "muy fluido, muy parejo"
+        # (wearer) -> real gold. Trades a little sharpness; holding 90 wins. Also hits the
+        # 3dof approved run (re-confirm on next demo). Candidate global default; likely the
+        # Cyberpilot 60fps fix too.
+        "XRT_COMPOSITOR_SCALE_PERCENTAGE": "100",
     },
     # ISS Tour VR: Aircar-class (does not render hands, docs/23) and the heaviest
     # content measured in the whole sweep (8K, monado-service at 519% CPU on T243

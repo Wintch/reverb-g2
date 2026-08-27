@@ -293,7 +293,7 @@ ACTIONS = {
 # Only "approved" is a demo option.
 DEMO_LAUNCHES = [
     ("Aircar", "1073390", "3dof", "approved", "Xbox pad. Recentre: A button."),
-    ("Aircar", "1073390", "6dof", "gold", "2026-08-26 fix (patch 0097): gyro-pred + freeze + 150mm neck-arc + 50ms spread, auto-applied by the launcher. Wearer: 'super similar a windows', smooth, no bad redraws. Residual: positioning latency on FAST motion (~1m bounded, A recentres). Needs a 30-min soak to certify -> approved."),
+    ("Aircar", "1073390", "6dof", "gold", "2026-08-26 fix (patch 0097): gyro-pred + freeze + 150mm neck-arc + 50ms spread, auto-applied by the launcher. 2026-08-27 SOAK (several min worn): held 90 (0 pacer stalls), 0 USB/companion drops, 0 SLAM loss -- stability certified. Wearer: still/gamepad-only = very good; STAYS GOLD, not approved. The gold->perfect blocker is a felt ~100-200ms positioning-latency (SLAM anchor-age floor) on FAST full-axis head motion -- A recentres, tolerable but 'rompe todo' when moving fast. NOTE: any fps counter you see is the DESKTOP MIRROR (mutter 60Hz vsync); no in-headset counter works (xrizer overlay whitelist)."),
     ("Dreams of Dali", "591360", "6dof", "approved", "Headset-only gaze-dwell, no controllers. 46-67 fps measured, experience still good."),
     ("Wolfenstein: Cyberpilot", "1056970", "6dof", "testing", "2026-08-27: WORKS in-headset (native Bethesda idTech, motion controllers). Launcher auto-applies the Aircar 6dof head recipe (patch 0097 knobs) WITH constellation ON (the game needs 6dof hands). Wearer: hands ~ok, less drift than before, playable; ~2m drift on FAST head turns (bounded). RESET = RIGHT SHIFT held 3s. Perceived ~60fps ('Fake pacer fell behind' spam) -- for 90: minimize the game window (mutter vsyncs any visible window to the 60Hz desktop), lift the GPU 70% power cap, lower graphics/render-scale (docs/23). NOT guest-ready until the 60->90 residual is settled."),
     ("Hellblade", "747350", "6dof", "untested", "Proton prefix still on NTFS (docs/70 bug) -- will not launch until relocated. Motion-controller title."),
@@ -414,6 +414,73 @@ def playlist_status():
     return st
 
 
+# ---- Per-user command centre: fixed headset props + adjustable per-user settings ----
+USER_PROFILES_FILE = f"{HOME}/vr/logs/user-profiles.json"
+BRIGHTNESS_FILE = f"{HOME}/vr/logs/xrizer-brightness"
+
+# What CANNOT be changed on this headset -- read-only reference for the operator, so the
+# distinction between "fixed" and "adjustable" is explicit (the user's own framing).
+HEADSET_FIXED = {
+    "model": "HP Reverb G2 (VR3000 / TPC-Q077-VH)",
+    "panel": "2160x2160 per eye, LCD",
+    "refresh": "90 / 60 Hz (mode-selectable, not per-user)",
+    "panel backlight": "FIXED -- no host brightness command exists (Windows included)",
+    "lenses / FOV": "fixed optics, no FOV-crop lever on this stack",
+    "IPD": "hardware slider on the headset (60-68 mm) -- physical, not host-settable",
+}
+
+# Per-user ADJUSTABLE settings. brightness is the xrizer color-scale gain (1.0 = passthrough).
+DEFAULT_USERS = {
+    "active": "default",
+    "users": {
+        "default": {"height_m": 1.70, "dof": "3dof", "brightness": 1.0,
+                    "mapping": "Xbox pad; A recentre", "notes": ""},
+    },
+}
+
+
+def load_users():
+    try:
+        d = json.load(open(USER_PROFILES_FILE))
+        assert isinstance(d.get("users"), dict) and d.get("active")
+        return d
+    except Exception:
+        return json.loads(json.dumps(DEFAULT_USERS))
+
+
+def save_users(d):
+    os.makedirs(f"{HOME}/vr/logs", exist_ok=True)
+    tmp = USER_PROFILES_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(d, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, USER_PROFILES_FILE)
+
+
+def set_brightness_gain(gain):
+    """Write the xrizer brightness gain file the patched compositor.rs polls (~every 30 frames)."""
+    try:
+        g = max(0.0, min(4.0, float(gain)))
+    except (TypeError, ValueError):
+        return False, "gain must be a number in [0, 4]"
+    os.makedirs(f"{HOME}/vr/logs", exist_ok=True)
+    with open(BRIGHTNESS_FILE, "w") as f:
+        f.write(f"{g:.3f}\n")
+    return True, f"brillo -> {g:.2f}x (live si hay juego con el xrizer nuevo)"
+
+
+def user_center():
+    d = load_users()
+    active = d["active"]
+    cur = d["users"].get(active, {})
+    gain = cur.get("brightness", 1.0)
+    try:
+        gain = float(open(BRIGHTNESS_FILE).read().strip())
+    except Exception:
+        pass
+    return {"fixed": HEADSET_FIXED, "active": active,
+            "users": d["users"], "brightness_live": gain}
+
+
 def build_status():
     monado = monado_running()
     specs = rig_telemetry.machine_specs()
@@ -530,6 +597,10 @@ PAGE = """<!doctype html>
 <div class="card" style="margin-bottom:16px">
   <h2>Audio outputs -- check one, another, or several (duplicate); per-device volume</h2>
   <div id="audio-devices">loading audio devices...</div>
+</div>
+<div class="card" style="margin-bottom:16px">
+  <h2>Centro de comando -- casco &amp; usuario</h2>
+  <div id="user-center">loading...</div>
 </div>
 <div class="card" style="margin-bottom:16px">
   <h2>Ronda de demo (playlist) -- secuencia con voz "próximo título" + teardown limpio entre cada uno</h2>
@@ -899,6 +970,57 @@ async function tickPlaylist() {
 setInterval(tickPlaylist, 2000);
 refreshPlaylistBuild();
 tickPlaylist();
+// ---- Command centre: per-user settings + fixed headset props ----------------
+async function refreshUserCenter() {
+  try {
+    const d = await (await fetch('/api/users', {cache:'no-store'})).json();
+    const el = document.getElementById('user-center');
+    const names = Object.keys(d.users || {});
+    const opts = names.map(n => `<option value="${n}" ${n===d.active?'selected':''}>${n}</option>`).join('');
+    const u = (d.users||{})[d.active] || {};
+    const gain = (+(d.brightness_live!=null?d.brightness_live:(u.brightness!=null?u.brightness:1))).toFixed(2);
+    const esc = s => (s||'').replace(/"/g,'&quot;');
+    const fixedRows = Object.entries(d.fixed||{}).map(([k,v]) =>
+      `<div class="row"><span>${k}</span><span class="dim">${v}</span></div>`).join('');
+    el.innerHTML = `
+      <div class="row" style="gap:8px"><span><b>Usuario activo</b></span>
+        <select id="uc-user" onchange="userSelect(this.value)">${opts}</select>
+        <input id="uc-new" placeholder="nuevo usuario" style="width:130px">
+        <button onclick="userAdd()">+ agregar</button></div>
+      <div style="margin-top:10px"><b>Ajustable (por usuario)</b></div>
+      <div class="row"><span>brillo</span>
+        <input type="range" min="0.5" max="2.5" step="0.05" value="${gain}" id="uc-bri"
+               oninput="document.getElementById('uc-bri-v').textContent=(+this.value).toFixed(2)+'x'"
+               onchange="setBrightness(this.value)" style="width:220px">
+        <span id="uc-bri-v" class="ok">${gain}x</span></div>
+      <div class="row"><span>altura (m)</span>
+        <input id="uc-height" type="number" step="0.01" min="1.0" max="2.2" value="${u.height_m||1.7}" style="width:80px"></div>
+      <div class="row"><span>DoF preferido</span>
+        <select id="uc-dof"><option ${u.dof==='3dof'?'selected':''}>3dof</option><option ${u.dof==='6dof'?'selected':''}>6dof</option></select></div>
+      <div class="row"><span>mapeo de controles</span><input id="uc-map" value="${esc(u.mapping)}" style="width:260px"></div>
+      <div class="row"><span>notas</span><input id="uc-notes" value="${esc(u.notes)}" style="width:260px"></div>
+      <div style="margin-top:6px"><button onclick="userSave()">Guardar usuario</button>
+        <span id="uc-msg" class="dim" style="font-size:12px"></span></div>
+      <div style="margin-top:12px"><b>Fijo (no modificable en este casco)</b></div>${fixedRows}`;
+  } catch(e) { document.getElementById('user-center').textContent = 'error: '+e; }
+}
+async function userSelect(name) { await fetch('/api/user/select?name='+encodeURIComponent(name), {method:'POST'}); refreshUserCenter(); }
+function userAdd() {
+  const n = (document.getElementById('uc-new').value||'').trim(); if (!n) return;
+  fetch('/api/user/save', {method:'POST', body: JSON.stringify({name:n, height_m:1.7, dof:'3dof', brightness:1.0, mapping:'', notes:'', make_active:true})}).then(()=>refreshUserCenter());
+}
+async function setBrightness(g) { await fetch('/api/brightness?gain='+encodeURIComponent(g), {method:'POST'}); }
+async function userSave() {
+  const name = document.getElementById('uc-user').value;
+  const body = JSON.stringify({ name: name,
+    height_m: parseFloat(document.getElementById('uc-height').value)||1.7,
+    dof: document.getElementById('uc-dof').value,
+    brightness: parseFloat(document.getElementById('uc-bri').value)||1.0,
+    mapping: document.getElementById('uc-map').value, notes: document.getElementById('uc-notes').value });
+  const d = await (await fetch('/api/user/save', {method:'POST', body})).json();
+  document.getElementById('uc-msg').textContent = (d.ok?'guardado ':'FALLO ')+d.message;
+}
+refreshUserCenter();
 tick();
 </script>
 </body></html>"""
@@ -945,6 +1067,13 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
         elif self.path.startswith("/api/playlist/status"):
             body = json.dumps(playlist_status()).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif self.path.startswith("/api/users"):
+            body = json.dumps(user_center()).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -1030,6 +1159,48 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 ok, msg = False, str(e)
             self._json_post(ok, msg)
+        elif self.path.startswith("/api/brightness"):
+            q = parse_qs(urlparse(self.path).query)
+            ok, msg = set_brightness_gain(q.get("gain", ["1.0"])[0])
+            if ok:  # also remember it on the active user's profile
+                try:
+                    d = load_users()
+                    d["users"].setdefault(d["active"], {})["brightness"] = round(
+                        max(0.0, min(4.0, float(q.get("gain", ["1.0"])[0]))), 3)
+                    save_users(d)
+                except Exception:
+                    pass
+            self._json_post(ok, msg)
+        elif self.path.startswith("/api/user/select"):
+            q = parse_qs(urlparse(self.path).query)
+            name = q.get("name", [""])[0]
+            d = load_users()
+            if name in d["users"]:
+                d["active"] = name
+                save_users(d)
+                set_brightness_gain(d["users"][name].get("brightness", 1.0))
+                self._json_post(True, f"usuario activo: {name}")
+            else:
+                self._json_post(False, f"no existe el usuario '{name}'")
+        elif self.path.startswith("/api/user/save"):
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length) if length else b"{}"
+            try:
+                p = json.loads(raw)
+                name = (p.get("name") or "").strip()
+                assert name
+                d = load_users()
+                u = d["users"].get(name, {})
+                for k in ("height_m", "dof", "brightness", "mapping", "notes"):
+                    if k in p:
+                        u[k] = p[k]
+                d["users"][name] = u
+                if p.get("make_active"):
+                    d["active"] = name
+                save_users(d)
+                self._json_post(True, f"usuario '{name}' guardado")
+            except Exception as e:
+                self._json_post(False, str(e))
         elif self.path.startswith("/api/action/"):
             action_id = self.path.split("/api/action/", 1)[1].strip("/")
             ok, msg = run_action(action_id)

@@ -1,0 +1,102 @@
+From 05afead216b638c237d12887d9181299869bc728 Mon Sep 17 00:00:00 2001
+From: iam <iam@iashur.internal>
+Date: Thu, 27 Aug 2026 02:04:34 -0300
+Subject: [PATCH] compositor: optional digital brightness gain via
+ color-scale-bias on the projection layer
+
+The G2 panel backlight cannot be set from any host (no HID command exists, Windows
+included). Multiply the game's own composited RGB instead, via Monado's already-enabled
+XR_KHR_composition_layer_color_scale_bias, attached to the projection layer (same
+raw-pointer next-chain splice overlay.rs uses for alpha) -- after the game renders,
+before scanout, so it works for any closed-source Steam title. Gain is read from a
+dashboard-controlled file ($HOME/vr/logs/xrizer-brightness or $XRIZER_BRIGHTNESS_FILE),
+re-read every ~30 frames, clamped to [0,4]; 1.0 disables the layer entirely.
+---
+ src/compositor.rs | 62 +++++++++++++++++++++++++++++++++++++++++++----
+ 1 file changed, 57 insertions(+), 5 deletions(-)
+
+diff --git a/src/compositor.rs b/src/compositor.rs
+index 8b3f7fb..8d3f60d 100644
+--- a/src/compositor.rs
++++ b/src/compositor.rs
+@@ -1604,13 +1604,36 @@ impl<G: GraphicsBackend> FrameController<G> {
+         }
+ 
+         let mut proj_layer = None;
++        // Keeps the brightness color-scale payload alive until self.stream.end() below: it is
++        // spliced into proj_layer's `next` chain by raw pointer, so it must not drop early.
++        let mut _brightness_payload: Option<Box<xr::sys::CompositionLayerColorScaleBiasKHR>> = None;
+         if !proj_layer_views.is_empty() {
+             trace!("projection layer present");
+-            proj_layer = Some(
+-                xr::CompositionLayerProjection::new()
+-                    .space(session_data.tracking_space())
+-                    .views(&proj_layer_views),
+-            );
++            let layer = xr::CompositionLayerProjection::new()
++                .space(session_data.tracking_space())
++                .views(&proj_layer_views);
++            let gain = current_brightness_gain();
++            if gain != 1.0 {
++                // Attach XR_KHR_composition_layer_color_scale_bias to brighten the game's
++                // own pixels (same raw-pointer next-chain splice overlay.rs uses for alpha).
++                let mut raw = layer.into_raw();
++                let mut payload = Box::new(xr::sys::CompositionLayerColorScaleBiasKHR {
++                    ty: xr::StructureType::COMPOSITION_LAYER_COLOR_SCALE_BIAS_KHR,
++                    next: raw.next,
++                    color_bias: Default::default(),
++                    color_scale: xr::Color4f {
++                        r: gain,
++                        g: gain,
++                        b: gain,
++                        a: 1.0,
++                    },
++                });
++                raw.next = payload.as_mut() as *mut _ as *const std::ffi::c_void;
++                _brightness_payload = Some(payload);
++                proj_layer = Some(unsafe { xr::CompositionLayerProjection::from_raw(raw) });
++            } else {
++                proj_layer = Some(layer);
++            }
+         }
+ 
+         let mut layers: Vec<&xr::CompositionLayerBase<_>> = Vec::new();
+@@ -1631,6 +1654,35 @@ impl<G: GraphicsBackend> FrameController<G> {
+     }
+ }
+ 
++/// Digital brightness gain applied to the game's projected pixels, read from a
++/// dashboard-controlled file (default 1.0 = passthrough). The real panel backlight cannot
++/// be set on the G2 from any host (no HID command exists, Windows included -- see the repo's
++/// brightness investigation); this multiplies the composited RGB via Monado's
++/// XR_KHR_composition_layer_color_scale_bias, after the game renders and before scanout, so
++/// it works for any closed-source Steam title. Re-read from disk only every ~30 frames to
++/// stay out of the per-frame hot path. Clamped to [0.0, 4.0]; 1.0 disables the layer entirely.
++fn current_brightness_gain() -> f32 {
++    use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
++    static FRAME: AtomicU64 = AtomicU64::new(0);
++    static GAIN_BITS: AtomicU32 = AtomicU32::new(0x3f80_0000); // 1.0_f32
++    let n = FRAME.fetch_add(1, Ordering::Relaxed);
++    if n % 30 == 0 {
++        let path = std::env::var("XRIZER_BRIGHTNESS_FILE").unwrap_or_else(|_| {
++            format!(
++                "{}/vr/logs/xrizer-brightness",
++                std::env::var("HOME").unwrap_or_default()
++            )
++        });
++        let gain = std::fs::read_to_string(&path)
++            .ok()
++            .and_then(|s| s.trim().parse::<f32>().ok())
++            .filter(|g| g.is_finite() && *g >= 0.0 && *g <= 4.0)
++            .unwrap_or(1.0);
++        GAIN_BITS.store(gain.to_bits(), Ordering::Relaxed);
++    }
++    f32::from_bits(GAIN_BITS.load(Ordering::Relaxed))
++}
++
+ pub fn is_usable_swapchain<G: xr::Graphics>(
+     current: &xr::SwapchainCreateInfo<G>,
+     creation_format: G::Format,
+-- 
+2.47.3
+
