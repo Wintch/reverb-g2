@@ -721,6 +721,22 @@ I 13:19, I2 15:05, I3 15:49) and the room's light changed across the afternoon; 
 whatever the resting headset sees. `base2` (a base replicate at ~16:40) is the control for that
 confound, and no at-rest ranking is trusted until it lands.
 
+**The confound is visible in the data.** Frontend keypoints per frame (p50 over each 20-min
+run) is a proxy for how much texture the resting cameras had to work with; beside the trips:
+
+| run (start) | base 11:46 | H 12:11 | G′ 12:34 | I 13:17 | G2 13:39 | G3 14:00 | L 14:22 | K 14:44 | I2 15:05 | M 15:26 | I3 15:48 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| keypoints p50 | 2641 | **2397** | 2628 | **3248** | 3017 | 3032 | 2746 | 2983 | 2864 | 2744 | **2398** |
+| trips | 7 | **46** | 30 | **0** | 5 | 7 | 96 | 1 | 4 | 21 | **50** |
+
+The two worst runs (H, I3) are the two with the fewest keypoints; the best (I) had the most.
+It is not simply "light fades in the afternoon" (G3 at 14:00 had 3032) — it is whatever the
+headset happened to be looking at plus the ambient light at that moment, and it moves between
+runs by ±15 %. Config still matters inside that (M vs base at similar keypoints: 21 vs 7 trips;
+K at 2983: 1), but **no single-run at-rest comparison across different hours is clean**, and
+I's 0-trip run coincided with the best-textured 20 minutes of the day. The honest protocol for
+the next round is interleaving: base → candidate → base → candidate, back to back.
+
 **M answers the recall question at rest: recall is load-bearing, not decorative.** Same
 config as I minus recall → 21 trips (base 7). Lining up every run by whether it has recall +
 marg-lost-off: *with* — K 1, I 0, I2 4 trips (all under the base's 7, three runs); *without* —
