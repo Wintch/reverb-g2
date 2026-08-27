@@ -208,8 +208,11 @@ def capture_jpeg(max_w=PREVIEW_MAX_W, quality=PREVIEW_QUALITY):
 
 
 def git_head():
-    out, _ = run(["git", "-C", "/home/iam/Documents/reverb-g2", "log", "-1", "--format=%h %s"])
-    dirty, _ = run(["git", "-C", "/home/iam/Documents/reverb-g2", "status", "--short"])
+    # --no-optional-locks: a plain `git status` refreshes the index and holds .git/index.lock for
+    # an instant; polled every few seconds it races a real `git commit` in the same repo (hit
+    # 2026-08-27: "Unable to create .git/index.lock: File exists" with no git process alive).
+    out, _ = run(["git", "-C", "/home/iam/Documents/reverb-g2", "--no-optional-locks", "log", "-1", "--format=%h %s"])
+    dirty, _ = run(["git", "-C", "/home/iam/Documents/reverb-g2", "--no-optional-locks", "status", "--short"])
     return {"head": out, "dirty": bool(dirty)}
 
 
