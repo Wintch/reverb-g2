@@ -165,20 +165,32 @@ TITLE_PROFILES = {
         # little supersampling sharpness; holding 90 wins for this project. NOTE: also applies
         # to the 3dof approved run (slightly less sharp) -- re-confirm 3dof on the next demo.
         "XRT_COMPOSITOR_SCALE_PERCENTAGE": "100",
-        # 2026-08-27: patches 0098/0099 (docs/85, Faulto fork review), first wearer test.
-        # Both NOT YET HARDWARE-VALIDATED as of this write -- this launch is that test.
-        # WMR_FORWARD_ANGULAR_VELOCITY: stops always reporting zero head angular velocity to
-        # SteamVR's photon-time extrapolation. OPEN RISK, unmeasured: may double-count against
-        # this same profile's own SLAM_PRED_FREEZE_POSITION/NECK_ARM_MM (0097) prediction --
-        # if the head feels like it overshoots turns, that's the first thing to suspect.
-        # SLAM_QUAT_NORM_CHECK / SLAM_SESSION_ANCHOR_RADIUS_CM: two more divergence guards
-        # next to the existing speed-based one. 300cm anchor radius chosen generously for
-        # seated cockpit head movement -- watch Monado's log for "Tracker diverged" spam,
-        # which would mean the radius is too tight for this title (raise it) rather than a
-        # real runaway.
-        "WMR_FORWARD_ANGULAR_VELOCITY": "1",
+        # 2026-08-27: patch 0099 (docs/85, Faulto fork review), first wearer test result: guards
+        # clean, 0 false triggers over ~12 min including real fast-turn motion. Kept on.
+        # SLAM_QUAT_NORM_CHECK / SLAM_SESSION_ANCHOR_RADIUS_CM: two more divergence guards next
+        # to the existing speed-based one. 300cm anchor radius chosen generously for seated
+        # cockpit head movement -- watch Monado's log for "Tracker diverged" spam, which would
+        # mean the radius is too tight for this title (raise it) rather than a real runaway.
         "SLAM_QUAT_NORM_CHECK": "1",
         "SLAM_SESSION_ANCHOR_RADIUS_CM": "300",
+        # 2026-08-27: patch 0098 (WMR_FORWARD_ANGULAR_VELOCITY) REMOVED after its first wearer
+        # test -- confirmed no perceptible effect on the fast-turn drift ("no parece cambiar
+        # nada", docs/85's closing section), a real negative. Pulled out to cut a variable
+        # before the next attempt at the actual blocker, not because it caused harm.
+        #
+        # 2026-08-27 (later): candidates from docs/80's fast-motion research pass
+        # (wf_c99cb54e-e54), ready for the next combined wearer test. SLAM_THREADS=6 is new and
+        # genuinely untested in this exact condition -- every past SLAM_THREADS rejection had
+        # WMR constellation controller-tracking competing for the same camera/CPU budget; this
+        # profile runs with constellation OFF, and last night's own timing.csv
+        # (/mnt/vrtmp/slam-20260826-042947) shows the TRACKING sub-stage (tbb-parallelized,
+        # confirmed) dominating frontend cost 2x over detection (the confirmed-single-threaded,
+        # confirmed-unfixable-by-threads stage that killed every prior SLAM_THREADS attempt).
+        # Estimated ~10ms anchor-age reduction (106ms -> ~95-96ms) if the extrapolation from the
+        # one closest real measurement (T235: 24.6->13.4ms tracking at 4->8 threads) holds.
+        # Real risk: CPU contention with Aircar's own render/game threads on this 6C/12T box --
+        # must be checked against fps/pacing, not assumed safe just because Aircar is GPU-bound.
+        "SLAM_THREADS": "6",
     },
     # ISS Tour VR: Aircar-class (does not render hands, docs/23) and the heaviest
     # content measured in the whole sweep (8K, monado-service at 519% CPU on T243

@@ -320,3 +320,80 @@ do_position's dt to ~40-50ms) to trade a little drift for less translation laten
 **Still to do before flipping the demo default from 3dof to 6dof**: a 30-minute worn soak to
 confirm it holds and does not fatigue over time (per `docs/75`'s own acceptance bar). Data for
 every config in `/home/iam/vr/logs/yaw-drift-study/` (WINNER-FINAL-* is this recipe).
+
+## 2026-08-27 — last night's residual reconfirmed live; 0098 ruled out; a 4-way research pass for what's next
+
+A real wearer session (docs/85's closing section) reconfirmed the "FAST motion" residual named
+above is still exactly what it was: "seguia desviando bastante al girar rapido, pero se acomodaba"
+— matches this doc's own prior description almost word for word. Patch 0098
+(`WMR_FORWARD_ANGULAR_VELOCITY`) was on for that session and made no perceptible difference — a
+real negative, not surprising in hindsight: 0098 only feeds SteamVR's own late-stage
+extrapolation, a stage downstream of where this residual actually lives (the ~120-190ms SLAM
+anchor age itself). **Removed from Aircar's profile** to cut a variable.
+
+Ran a 4-candidate research pass (`wf_c99cb54e-e54`, each agent grounded in this doc + the live
+source tree, not re-deriving from scratch) on what could still move the needle. Full results in
+the workflow journal; summary and what got applied:
+
+- **SLAM_THREADS, re-isolated for Aircar's own constellation-off condition — genuinely new,
+  applied.** Every past SLAM_THREADS rejection (docs/67 A-head-3, NEXT-STEP's 2026-08-25 sanity
+  check) had WMR constellation controller-tracking competing for the same camera/CPU budget.
+  Aircar's own profile runs with constellation OFF, and last night's own `timing.csv`
+  (`/mnt/vrtmp/slam-20260826-042947`, recomputed fresh by the research agent, not assumed) shows
+  the TRACKING sub-stage — confirmed `tbb::parallel_for`'d in `frame_to_frame_optical_flow.h`,
+  unlike detection which is a confirmed plain sequential loop in `keypoints.cpp` — costing 23.2ms
+  of the 41.9ms frontend total, more than DOUBLE detection's 12.2ms. That's the opposite weighting
+  from "detection is the bottleneck, threads can't help," which is what killed every prior
+  attempt. Extrapolating from the one closest real measurement (T235: tracking 24.6→13.4ms at
+  4→8 threads) suggests ~10ms off the anchor age. **Set `SLAM_THREADS=6` on Aircar's profile only**
+  (not the global default) in `vr-launcher.py`. Real risk, not yet measured: CPU contention with
+  Aircar's own render/game threads on this 6C/12T box — must be checked against fps/pacing on the
+  next session, not assumed safe just because Aircar is currently GPU-bound.
+- **`optical_flow_max_recovered_dist2` 0.04→0.08 — zero CPU cost, applied.** A pure
+  forward-backward-consistency acceptance threshold on an already-computed result, not more
+  compute. Loosens how much per-frame feature displacement (i.e. fast rotation sweeping features
+  across the image) is still accepted as a valid track instead of being dropped. Set directly in
+  `~/vr/basalt-g2-config.json` (also **not per-title** — this is Basalt's one shared config file,
+  so the change applies to every title's SLAM, not just Aircar; flagged since no other title was
+  checked against it). **Second habit-check caught here too**: this file is ALSO not a symlink
+  into the repo (`scripts/basalt-g2-config.json`) — synced both copies, same drift class as
+  `vr-launcher.py` found earlier tonight (docs/NEXT-STEP.md's 2026-08-27 entry).
+- **`optical_flow_levels` 3→4 — held back, conditional.** The other half of H3's mitigation
+  (docs/80's own original Experiment 6) genuinely costs CPU on an already-tight frontend budget
+  (~42ms against a 33ms nominal per-frame budget on Aircar's own profile). The research agent's
+  recommendation: measure first, don't spend the margin blind. **Free, zero-code probe for the
+  next session**: launch with `VIT_COLLAPSE_LOG=1` and grep `~/vr/jack-in-wayland.log` for
+  `vit_of ... keypoints=` dips timestamp-matched to the wearer's own fast-turn moments (the log
+  descriptor is in `docs/41-diagnostic-toolkit.md`). If keypoints visibly crater at the fast
+  bursts and not elsewhere, H3 is real and `optical_flow_levels=4` is the next thing to try; if
+  they don't, this specific lever is refuted and not worth the CPU.
+- **`SLAM_CORRECTION_SPREAD_MS` (currently 50ms) — held back, real risk in BOTH directions.**
+  The decay is a pure exponential (`decay_correction_locked()`), so a bigger fast-motion jump
+  only adds `ln(size ratio)` to settle time, not a proportional amount — meaning a fixed 50ms
+  window plausibly feels proportionally slower to "forget" a big jump than a small one, which
+  fits "se acomodaba." But this project's own prior A/B history already tested the OTHER
+  direction: 100-120ms was rejected for adding a distinct, perceived "re-adjustment/fill-in
+  layer" (`docs/45`, T206) — the *same failure signature* as last night's complaint, produced by
+  a longer spread. Shortening to ~25ms is the historically-consistent direction to try, but risks
+  turning the biggest jumps into a percussive snap instead of a glide (reintroducing T202's
+  original "jittering de casco" complaint this feature exists to prevent). **Not applied** —
+  needs a live wearer A/B specifically comparing 25ms against 50ms on BOTH fast motion (does it
+  help) and quiet/slow play (does the already-gold feel survive), not a default change on paper
+  reasoning alone.
+- **IMU-camera timing residual (H1) — not actionable this round.** No code path exists to even
+  apply a nonzero camera-IMU time offset today: `cam_time_offset_ns` has no slot anywhere in the
+  structs that actually cross the Monado/Basalt process boundary (`vit_camera_calibration_t`),
+  so the "commented-out correction" docs/80 originally flagged (`sqrt_keypoint_vio.cpp:260-261`)
+  would do nothing even uncommented. The existing 0053 clockskew diagnostic
+  (`log_cam_clockskew`) measures a different, coarser quantity (host-arrival jitter between two
+  independent streams, 1 sample per ~10s, no rotation-rate field) and cannot answer whether a
+  real hardware sync residual grows with rotation rate. Would need a small new instrumentation
+  patch before this is even measurable, let alone fixable — parked, not chased further today.
+
+**For the next combined wearer test** (what "probamos todo junto" means concretely): Aircar 6dof
+now carries 0097 (unchanged) + 0099 (guards, confirmed clean) + `SLAM_THREADS=6` (new) +
+Basalt's looser `optical_flow_max_recovered_dist2` (new, global). Launch with `VIT_COLLAPSE_LOG=1`
+set for that one session as a free diagnostic. Watch/report: (1) does fast-turn drift feel any
+different, (2) does fps/pacing hold (SLAM_THREADS=6's real risk), (3) any `Tracker diverged` log
+spam (0099's radius), (4) keypoint dips at fast-turn timestamps in the log (answers whether
+`optical_flow_levels=4` and/or a `SLAM_CORRECTION_SPREAD_MS` A/B are worth a follow-up round).

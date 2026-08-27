@@ -1,5 +1,41 @@
 # Next step
 
+> ## START HERE (2026-08-27 even later — a 4-candidate research pass on Aircar's fast-motion
+> drift residual; two new levers applied (SLAM_THREADS=6 for Aircar, a looser Basalt
+> feature-recovery threshold), two held back as real A/Bs; 0098 removed)
+>
+> Follow-up to the block below (0098's real-negative result). Full account in docs/80's new
+> closing section — this is the pointer. Ran a grounded 4-way research pass
+> (`wf_c99cb54e-e54`) on what else could move Aircar 6dof's known "~1m bounded drift on fast
+> motion" residual (itself already documented as the accepted floor of the 0097 approach, not a
+> new problem).
+>
+> **Applied now, ready for the next combined wearer test**: `SLAM_THREADS=6` on Aircar's profile
+> only (genuinely untested condition — every past rejection had constellation contention that
+> Aircar's own profile doesn't have; last night's own `timing.csv` shows tracking, not detection,
+> dominates frontend cost here, and tracking parallelizes) + `optical_flow_max_recovered_dist2`
+> 0.04→0.08 in `~/vr/basalt-g2-config.json` (zero CPU cost, but **not per-title** — this is
+> Basalt's one shared config, affects every title's SLAM). **0098 removed** from Aircar's profile
+> (confirmed no effect, cutting a variable). **Caught the exact same class of bug as the block
+> below, again**: `basalt-g2-config.json` also has an unsynced repo copy
+> (`scripts/basalt-g2-config.json`, not a symlink) — synced both. Worth checking whether any
+> OTHER file in `~/vr/` shares this pattern before it bites a third time.
+>
+> **Held back, real A/Bs needed, not applied on paper reasoning alone**: `optical_flow_levels`
+> 3→4 (costs real CPU on an already-tight frontend budget — measure first via a free
+> `VIT_COLLAPSE_LOG=1` capture next session, correlate keypoint-count dips against fast-turn
+> timestamps); `SLAM_CORRECTION_SPREAD_MS` 50→25 (the math favors shorter for fast motion, but
+> this project's own prior history rejected the OTHER direction for producing the *same failure
+> signature* the current complaint describes — real risk of reintroducing the original
+> "jittering de casco" complaint this feature exists to prevent).
+>
+> **Not actionable this round**: the IMU-camera timing-residual hypothesis (H1) has no live code
+> path at all — `cam_time_offset_ns` isn't wired into the structs that actually cross the
+> Monado/Basalt process boundary, so even uncommenting the "dead" correction line does nothing.
+> Would need new instrumentation before it's even measurable, let alone fixable. Parked.
+>
+> ---
+
 > ## START HERE (2026-08-27 later same day — 0098/0099's first wearer result: guards clean, 0098
 > does NOT fix Aircar's gold→approved blocker; a real GameUserSettings.ini write-on-exit
 > correction; and a real deploy bug caught: `~/vr/vr-launcher.py` was a stale unsynced copy)
