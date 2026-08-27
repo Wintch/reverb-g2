@@ -695,8 +695,18 @@ on the backend side (landmarks live longer and keep accumulating observations), 
 recall. +232 MB/h is fine for a demo session (30 min ≈ +115 MB), not for an all-day booth
 without a restart between sessions.
 | G3 (marg-lost off only, no recall) | 89 / 49 | 0.09 | 7 | 5.46 m | 3.00 m | 6.6 ms | +9 (flat) | SAFE — 5× the landmarks for +3 ms; drift = base |
-| L (keyframe threshold 0.9) | | | | | | | | *running* |
+| L (keyframe threshold 0.9) | 17 / 4 | — | **96** | — | — | — | +34 | **worst of the night — refuted** |
 | M (I without recall: marg-lost off + 2 cm + 12 kfs) | | | | | | | | *queued after I2* |
+
+**L refuted, precisely.** The 0.9 threshold never engaged at rest — keyframe-set changes per
+minute `[7, 0, 0, 0, 0, 0, 0, 8, 24, 16, 0, 0, 18, 0, 8, 8, 24, 18, 162, 237, 236]`: nothing
+in minutes 1–6 (a static view keeps the connected ratio above 0.9 too), the mid-run changes are
+the resets re-initialising, and minutes 18–20 are a reset storm (96 trips total, span 6.4 m).
+So "no keyframes at rest" is not fixable from this knob, and together with H it makes a
+pattern: adding keyframes/landmarks at zero baseline while `vio_marg_lost_landmarks: true`
+keeps churning the set is destabilising; I works because marg-lost-off keeps a consistent set
+*and* the gate/window let it grow. The IMU-bias reading of the base's at-rest walk stays a
+hypothesis, not a result.
 
 **G3 says most of the landmark gain is just not deleting them.** `vio_marg_lost_landmarks:
 false` alone: landmarks 89 / 49 (base 16 / 7; more than G′'s 64 / 37 *with* recall), 0.09 % of
