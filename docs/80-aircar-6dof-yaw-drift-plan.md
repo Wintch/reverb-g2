@@ -621,3 +621,30 @@ the yaw dataset**: record it as PNG (drop `EUROC_RECORDER_USE_JPG`, ~3 GB in tmp
 fine), and replay `base` twice to measure run-to-run variance before ranking anything — a
 variant has to beat the base by more than the base beats itself. Wall time: 135 s per replay
 of a 3-min recording, so a 6-config matrix is ~15 min, no headset.
+
+### Unattended soaks: the base starves at rest too; recall is the lever — and it leaked 18 GB
+
+**base (20 min, headset lying still)**: landmarks p50 16 / p10 7, **min 0 in every 5-minute
+bucket** for 2,700 tracked keypoints; the raw position random-walked to **1.97 m from the start
+at minute 10, span 4.75 m**, and the 0099 session-anchor guard tripped **7 times at rest** (first
+at 256 s, then a cluster at 631–879 s). So the soak's "0 trips at rest" pass rule was wrong on
+arrival: the same landmark starvation yaw accelerates is already there when nothing moves, just
+slower — which also makes the stationary 20-minute soak a real A/B instrument for the backend
+(same view for every variant): span at 20 min, % of frames with < 5 landmarks, trips. All
+grading is now relative to base (`scripts/soak-grade.py`).
+
+**G (recall on + `vio_marg_lost_landmarks: false`) — the lever works, then eats the machine.**
+Over the same first 3,868 frames the base had landmarks p50 12 / p10 5; G had **p50 70 / p10
+55** — ~6× more, with recall costing 0.07 ms p50 / 0.20 ms p99. But `monado-service` RSS hit
+**19 GB at 2 minutes** (`patches=7,556,239`, +1,953/frame): `addPointsForCamera()` saves a
+pyramid patch for *every* newly detected keypoint when recall is on, and nothing ever erases
+them (Basalt's own "TODO: Patches are never getting deleted", `frame_to_frame_optical_flow.h:675`).
+Killed at 3 min before it took the 32 GB box down (the tmpfs alone holds 20 GB); the sequence
+loop was stopped before I and J (same recall) could start; H (no recall) ran on.
+
+**Patch 0014 (`prunePatches()`)**: a patch is only ever read by `recallPointsForCamera()` for
+ids in `latest_lm_bundle`, so keep patches whose id is tracked in any camera or present in the
+latest bundle, erase the rest after a grace of 90 frames (the bundle arrives asynchronously a
+few frames behind), sweep once a second; `patches.at()` → `find()` so a pruned id means "can't
+recall this one", not `std::out_of_range` on the frontend thread. `BASALT_RECALL_PATCH_GRACE_
+FRAMES=0` restores the old behaviour for an A/B. Re-run G/I/J on it below.

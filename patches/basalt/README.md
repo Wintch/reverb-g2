@@ -80,3 +80,24 @@ config offline against the identical input. The offline runner itself (`basalt_v
 includes its headers; `BASALT_BUILD_VISUALIZATION=OFF` does not remove that) but never opens
 a window with `--show-gui 0`. The production `libbasalt.so` in `build/` stays Pangolin-free
 (re-checked after this patch: `nm -D | grep -c pangolin` = 0).
+
+## 0014 — `prunePatches()`: bound the recall patch map (2026-08-27)
+
+`optical_flow_recall_enable` (landmark recall — re-find a landmark that left the frame and
+came back, exactly the sweep-and-return case a fast yaw produces) had an unbounded memory
+leak: `addPointsForCamera()` saves a pyramid patch for **every** newly detected keypoint and
+nothing ever erased them (Basalt's own "TODO: Patches are never getting deleted"). Measured
+live with the G2 lying still: +1,953 patches/frame, 7.5 M patches and an **18 GB RSS after three
+minutes** — killed before it OOM'd the 32 GB box. The same run showed what recall is worth: the
+backend's landmark count went from p50 12 / p10 5 to **p50 70 / p10 55** over the same frames
+(with `vio_marg_lost_landmarks: false`, which recall needs — see docs/80), at 0.2 ms p99.
+
+A patch is only ever read by `recallPointsForCamera()` for ids in `latest_lm_bundle` (the
+backend's live landmark set). `prunePatches()` runs once per frame after `filterPoints()`:
+stamps every id currently tracked in any camera or present in the latest bundle with
+`frame_counter`, and once a second erases patches unseen for more than `grace` frames. The
+bundle arrives asynchronously a few frames behind the frontend; the default grace of 90 frames
+(3 s at 30 fps) covers that lag with margin. `BASALT_RECALL_PATCH_GRACE_FRAMES` overrides it;
+`0` restores the old unbounded behaviour for an A/B. `patches.at()` → `find()` in the recall
+loop so a pruned id means "cannot recall this one", never `std::out_of_range` on the frontend
+thread. No effect at all when recall is off (the default). Soak results in docs/80.

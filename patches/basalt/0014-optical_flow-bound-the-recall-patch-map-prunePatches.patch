@@ -1,0 +1,115 @@
+From cfb90a143d20c1e2984603aff1ea0a6f18c68ada Mon Sep 17 00:00:00 2001
+From: iam <iam@iashur.internal>
+Date: Thu, 27 Aug 2026 12:16:20 -0300
+Subject: [PATCH] optical_flow: bound the recall patch map (prunePatches) --
+ recall was an 18 GB/3 min leak
+
+addPointsForCamera() saves a pyramid patch for EVERY newly detected keypoint when
+optical_flow_recall_enable is on, and nothing ever erased them ("TODO: Patches are never
+getting deleted"). Measured live on a Reverb G2 lying still (reverb-g2, 2026-08-27):
++1953 patches/frame, 7.5 M patches and an 18 GB RSS after three minutes -- an OOM in the
+making on a 32 GB box. The same run showed why recall matters: the backend's landmark count
+went from p50 12 / p10 5 (recall off) to p50 70 / p10 55 over the same frames, at 0.2 ms p99.
+
+A patch is only ever read by recallPointsForCamera(), for ids in latest_lm_bundle (the
+backend's live landmark set). prunePatches(), called once per frame after filterPoints():
+stamp every id that is currently tracked in any camera or present in the latest bundle with
+frame_counter; once a second, erase patches (and stamps) unseen for more than `grace`
+frames. The bundle arrives asynchronously a few frames behind the frontend; the default grace
+of 90 frames (3 s at 30 fps, BASALT_RECALL_PATCH_GRACE_FRAMES overrides, 0 = old unbounded
+behaviour) covers that lag with margin. recallPointsForCamera() now uses find() instead of
+at(): a pruned id means "cannot recall this one", never std::out_of_range on the frontend
+thread. No effect when recall is off (the default).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ .../frame_to_frame_optical_flow.h             | 52 ++++++++++++++++++-
+ 1 file changed, 51 insertions(+), 1 deletion(-)
+
+diff --git a/include/basalt/optical_flow/frame_to_frame_optical_flow.h b/include/basalt/optical_flow/frame_to_frame_optical_flow.h
+index 8ab5942..6d3e0d5 100644
+--- a/include/basalt/optical_flow/frame_to_frame_optical_flow.h
++++ b/include/basalt/optical_flow/frame_to_frame_optical_flow.h
+@@ -336,6 +336,7 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
+       transforms->input_images->addTime("frontend_recall_ended");
+       addPoints();
+       filterPoints();
++      if (config.optical_flow_recall_enable) prunePatches();  // reverb-g2 0014, see the method
+       transforms->input_images->addTime("frontend_filter_ended");
+     }
+ 
+@@ -625,7 +626,12 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
+       if (config.optical_flow_recall_num_points_cell)
+         if (getCellCount(proj_pos, cam_id) >= config.optical_flow_detection_num_points_cell) continue;
+ 
+-      Eigen::aligned_vector<PatchT>& lm_patch = patches.at(lm_id);
++      // reverb-g2 0014: find(), not at() -- prunePatches() may have dropped this id (a bundle
++      // landmark unseen for longer than the grace window), and a missing patch must mean
++      // "cannot recall this one", never std::out_of_range in the frontend thread.
++      auto patch_it = patches.find(lm_id);
++      if (patch_it == patches.end()) continue;
++      Eigen::aligned_vector<PatchT>& lm_patch = patch_it->second;
+       Eigen::AffineCompact2f curr_pose = proj_pose;
+       bool valid = trackPointFromPyrPatch(pyramid->at(cam_id), lm_patch, curr_pose);
+       if (!valid) continue;
+@@ -659,6 +665,47 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
+     for (size_t i = 0; i < max_cams; i++) recallPointsForCamera(i);
+   }
+ 
++  //! Bound the recall patch map (reverb-g2 patch 0014, 2026-08-27). addPointsForCamera() saves a
++  //! pyramid patch for EVERY newly detected keypoint when recall is on, and nothing ever erased
++  //! them ("TODO: Patches are never getting deleted"). Measured live on a G2 at rest:
++  //! +1953 patches/frame, 7.5 M patches and an 18 GB RSS after three minutes -- an OOM in the
++  //! making on a 32 GB box, which is what kept recall unusable here even though the same run
++  //! showed it lifting the backend's landmark count ~6x (p50 12 -> 70 at rest).
++  //!
++  //! A patch is only ever READ by recallPointsForCamera(), for ids in latest_lm_bundle (the
++  //! backend's live landmark set). So a patch is worth keeping only while its id is either still
++  //! tracked in some camera or present in the latest bundle. Everything else is erased once it
++  //! has been absent from both for `grace` frames -- the bundle arrives asynchronously from the
++  //! backend a few frames behind the frontend, and the grace covers that lag with margin. The
++  //! sweep runs once a second (every 30 frames); the per-frame cost is one map write per live id.
++  //! BASALT_RECALL_PATCH_GRACE_FRAMES overrides the grace (default 90 = 3 s at 30 fps); 0 restores
++  //! the unbounded behaviour for an A/B.
++  void prunePatches() {
++    static const int64_t grace = [] {
++      const char* e = std::getenv("BASALT_RECALL_PATCH_GRACE_FRAMES");
++      return e != nullptr ? std::atol(e) : 90L;
++    }();
++    if (grace <= 0) return;
++    const int64_t now = static_cast<int64_t>(frame_counter);
++    for (const auto& kps : transforms->keypoints)
++      for (const auto& kv : kps) patch_last_seen[kv.first] = now;
++    if (latest_lm_bundle != nullptr)
++      for (const auto& id : latest_lm_bundle->lmids) patch_last_seen[id] = now;
++    if (now % 30 != 0) return;
++    for (auto it = patches.begin(); it != patches.end();) {
++      auto seen = patch_last_seen.find(it->first);
++      if (seen == patch_last_seen.end() || now - seen->second > grace) {
++        if (seen != patch_last_seen.end()) patch_last_seen.erase(seen);
++        it = patches.erase(it);
++      } else {
++        ++it;
++      }
++    }
++    for (auto it = patch_last_seen.begin(); it != patch_last_seen.end();) {
++      if (now - it->second > grace) it = patch_last_seen.erase(it); else ++it;
++    }
++  }
++
+   Keypoints addPointsForCamera(size_t cam_id) {
+     KeypointsData kd;  // Detected new points
+     detectKeypointsWithCells(pyramid->at(cam_id).lvl(0), kd, cells.at(cam_id), config.optical_flow_detection_grid_size,
+@@ -836,6 +883,9 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
+   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+  private:
+   Eigen::aligned_unordered_map<KeypointId, Eigen::aligned_vector<PatchT>> patches;
++  //! reverb-g2 0014: frame_counter at which each patch id was last tracked or in the landmark
++  //! bundle -- what prunePatches() sweeps against. Same key space as `patches`.
++  std::unordered_map<KeypointId, int64_t> patch_last_seen;
+   Eigen::aligned_vector<Eigen::MatrixXi> cells;  // Number of features in each gridcell
+   std::vector<Keypoints> recalls;
+   const Vector3d accel_cov;
+-- 
+2.47.3
+

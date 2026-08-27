@@ -340,7 +340,12 @@ blocker.
 - **`play360.sh` had the same hardcoded path** (fixed 2026-08-04): it pointed to
   `~/Documents/linux_vr_base` and in the lab it would die with "hello_xr not built". It now
   autodetects the same way `jack-in.sh` does. If you touch one, sync `scripts/` with the
-  copy in `~/vr/`.
+  copy in `~/vr/` — and **run `python3 scripts/deploy-check.py` before trusting any launch**
+  (added 2026-08-27 after three stale-copy bites in one night: a headset test ran a stale
+  `~/vr/vr-launcher.py`, `basalt-g2-config.json` had the same split, and `demo-recorder.py`
+  had crashed on every launch since it was born because its imported modules only existed in
+  the repo — docs/87). Exit 1 = drift or a missing module. Diff, then copy; a `~/vr` copy can
+  carry an uncommitted local fix.
 - **`XRT_COMPOSITOR_DESIRED_MODE` from the environment**: until 2026-08-04 `jack-in.sh`
   overrode it with 60Hz, so the chapter 04 90Hz test was silently running at 60 and
   reporting success. It now respects the external value — but **always check the log** for
