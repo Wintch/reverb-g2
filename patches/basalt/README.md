@@ -101,3 +101,15 @@ bundle arrives asynchronously a few frames behind the frontend; the default grac
 `0` restores the old unbounded behaviour for an A/B. `patches.at()` → `find()` in the recall
 loop so a pruned id means "cannot recall this one", never `std::out_of_range` on the frontend
 thread. No effect at all when recall is off (the default). Soak results in docs/80.
+
+## 0015 — build recall patches in parallel in `addPointsForCamera()` (2026-08-27)
+
+With recall on, the frontend's new hot spot was not recall itself (~1 ms p99) but building the
+`levels+1` pyramid patches for each of the ~2,000 keypoints detected per frame, in a sequential
+loop: frontend `total_ms` p50 28 → 42–49 ms, p99 40 → 100–117 ms on the G2 — over the 33 ms
+frame budget at the median (soaks G′ and I, docs/80). Every patch is independent (reads the
+const pyramid, writes its own storage), so they are now built first with `tbb::parallel_for`
+over the detections, then the original sequential bookkeeping runs (id assignment,
+`addKeypoint`, map insertion — cheap). Same patches, same ids, same order; Basalt's own quirk
+of sampling pyramid 0 for every camera is untouched. No effect when recall is off. The
+measurement of what it buys is the I2 soak (I on 0015) in docs/80.

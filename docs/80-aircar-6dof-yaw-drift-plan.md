@@ -665,8 +665,26 @@ inherit H's 2 cm gate and are deprioritised; I still runs once for the record.
 | base | 16 / 7 | 4.4 | 7 | 4.75 m | 3.00 m | 2.7 ms | 39.5 | reference |
 | H | 24 / 6 | 5.1 | 46 | 7.50 m | 4.90 m | 7.0 ms | 38.1 | UNSAFE |
 | G′ (G + 0014) | 64 / 37 | 1.3 | 30 | 5.73 m | 3.00 m | 5.6 ms | ~500 (after min 3) | UNSAFE |
-| K (G′ + 12 kfs) | | | | | | | | *running* |
-| I (G′ + H) | | | | | | | | *queued* |
+| K (G′ + 12 kfs) | *lost* | *lost* | 1 | 3.01 m | 2.94 m | — | ~200 (1.46→1.72 GB) | partial: better than base, far from I; rerun queued |
+| **I (G′ + H: recall + marg-lost off + 2 cm + 12 kfs)** | **145 / 81** | **0.02** | **0** | **0.41 m** | **0.32 m** | 13.6 ms | 145 | **stable at rest; CPU over budget** |
+
+**I is the first config that fixes rest** — an order of magnitude on every drift metric (span
+0.41 m vs 4.75, max 1-s step 0.20 m vs 3.29, zero trips vs 7) with 145 / 81 landmarks and only
+0.02 % of frames under 5. Neither half did it alone: G′ (recall + marg-lost off) had 4× the
+landmarks and *still* tripped 30 times; H (2 cm + 12 kfs) was the worst run of the night. The
+combination works because each half supplies what the other lacks — recall/marg-lost-off keep
+landmarks alive, the 2 cm gate lets a static (zero-baseline) view keep *creating* them, and the
+12-keyframe window holds them long enough — and K (I minus the 2 cm gate; result partly lost to a
+driver bug, drift metrics recovered from its tmpfs CSV: span 3.0 m, 1 trip) confirms the 2 cm
+gate is the ingredient that separates I from "somewhat better". **Costs**: frontend `total_ms`
+p50 **49 ms** (base 28; budget 33) and p99 117, `opt_ms` p99 13.6 (base 2.7), RSS +145 MB/h.
+The frontend cost is the blocker for a real session and it is known: building 4 pyramid
+patches for each of ~2,000 detections per frame, sequentially. **Patch 0015** parallelizes that
+loop (`tbb::parallel_for` over the detections; ids, `addKeypoint`, map insertion stay sequential
+and cheap; same patches, same ids, same order) — compile-checked in `build-tools`, production
+rebuild + an **I2 = I on 0015** soak queued after L. Driver bug that ate K's log (a thread-
+interleaved value like `0.93003432.9358`) fixed: the raw log is now copied *before* parsing and
+the parser skips unparsable values; K reruns after L.
 | G2 (recall only, marg-lost stays on) | | | | | | | | *queued* |
 | G3 (marg-lost off only, no recall) | | | | | | | | *queued* |
 

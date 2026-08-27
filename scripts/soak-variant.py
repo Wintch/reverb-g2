@@ -96,18 +96,23 @@ def pct(v, p):
 
 def parse_vit(path):
     kp, lm, recall, total, opt, marg, patches = [], [], [], [], [], [], []
+    # Log lines from Basalt's threads interleave: a value can read '0.93003432.9358'. Skip
+    # those instead of dying -- the K soak (2026-08-27) lost its whole result to one such line.
+    def grab(lst, pat, line):
+        m = re.search(pat, line)
+        if m:
+            try:
+                lst.append(float(m.group(1)))
+            except ValueError:
+                pass
     for line in open(path, errors="replace"):
         if line.startswith("vit_of"):
             for lst, pat in ((kp, r"keypoints=(\d+)"), (recall, r"recall_ms=([0-9.eE+-]+)"),
                              (total, r"total_ms=([0-9.eE+-]+)"), (patches, r"patches=(\d+)")):
-                m = re.search(pat, line)
-                if m:
-                    lst.append(float(m.group(1)))
+                grab(lst, pat, line)
         elif line.startswith("vit_vio"):
             for lst, pat in ((lm, r"landmarks=(\d+)"), (opt, r"opt_ms=([0-9.eE+-]+)"), (marg, r"marg_ms=([0-9.eE+-]+)")):
-                m = re.search(pat, line)
-                if m:
-                    lst.append(float(m.group(1)))
+                grab(lst, pat, line)
     return {
         "frames": len(lm),
         "landmarks_p50": pct(lm, .5), "landmarks_p10": pct(lm, .1), "landmarks_min": min(lm) if lm else None,
@@ -224,6 +229,9 @@ def main():
     player_log.close()
 
     # ---- metrics ----
+    # Save the raw evidence FIRST: the next launch overwrites ~/vr/jack-in-wayland.log, and a
+    # parse error below must never cost the log (it did once, for K).
+    shutil.copy(MONADO_LOG, OUT_DIR / f"{args.tag}-jack-in.log")
     result["samples"] = samples
     rss = [s["rss_mb"] for s in samples if s["rss_mb"]]
     if len(rss) >= 2 and samples[-1]["t_s"] > 0:

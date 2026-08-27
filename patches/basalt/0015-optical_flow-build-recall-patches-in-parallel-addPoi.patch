@@ -1,0 +1,79 @@
+From 9b38acb636c3189ab11b2a6f6b0400922d7088c8 Mon Sep 17 00:00:00 2001
+From: iam <iam@iashur.internal>
+Date: Thu, 27 Aug 2026 13:43:15 -0300
+Subject: [PATCH] optical_flow: build recall patches in parallel
+ (addPointsForCamera) -- the recall-on frontend hot spot
+
+With optical_flow_recall_enable on, addPointsForCamera() built the (levels+1) pyramid patches
+for each of the ~2000 keypoints detected per frame in a sequential loop. Measured live on a
+Reverb G2 (reverb-g2, 2026-08-27): frontend total_ms p50 28 -> 42-49 ms, p99 40 -> 100-117 ms,
+i.e. over the 33 ms frame budget at the median -- while recall itself cost ~1 ms p99. Every
+patch is independent (reads the const pyramid, writes its own storage), so build them first
+with tbb::parallel_for over the detections, then run the original sequential bookkeeping
+(id assignment, addKeypoint, map insertion), which is cheap. Same patches, same ids, same
+order; the original quirk of sampling pyramid 0 for every camera is kept as is. No effect
+when recall is off.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ .../frame_to_frame_optical_flow.h             | 41 ++++++++++++++-----
+ 1 file changed, 31 insertions(+), 10 deletions(-)
+
+diff --git a/include/basalt/optical_flow/frame_to_frame_optical_flow.h b/include/basalt/optical_flow/frame_to_frame_optical_flow.h
+index 6d3e0d5..3559dd5 100644
+--- a/include/basalt/optical_flow/frame_to_frame_optical_flow.h
++++ b/include/basalt/optical_flow/frame_to_frame_optical_flow.h
+@@ -714,19 +714,40 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
+                              transforms->input_images->masks.at(cam_id));
+ 
+     Keypoints new_kpts;
+-    for (size_t i = 0; i < kd.corners.size(); i++) {  // Set new points as keypoints
++    const size_t n_new = kd.corners.size();
++
++    // reverb-g2 0015 (2026-08-27): with recall on, building the (levels+1) pyramid patches for
++    // each of the ~2,000 keypoints detected per frame was the frontend's hot spot -- total_ms
++    // p50 28 -> 42-49 ms measured live on a G2, over the 33 ms frame budget -- and the loop was
++    // sequential although every patch is independent (each PatchT reads the const pyramid and
++    // writes only its own storage). Build them in parallel first, then run the original
++    // sequential bookkeeping (id assignment, addKeypoint, map insertion), which is cheap. Same
++    // patches, same ids, same order. Keeps the original quirk of sampling pyramid 0 for every
++    // camera untouched.
++    Eigen::aligned_vector<Eigen::aligned_vector<PatchT>> built;
++    if (config.optical_flow_recall_enable && n_new > 0) {
++      built.resize(n_new);
++      const int levels = config.optical_flow_levels;
++      const auto& pyr0 = pyramid->at(0);
++      tbb::parallel_for(tbb::blocked_range<size_t>(0, n_new), [&](const tbb::blocked_range<size_t>& r) {
++        for (size_t i = r.begin(); i != r.end(); ++i) {
++          const Vector2 pos = kd.corners[i].template cast<Scalar>();
++          Eigen::aligned_vector<PatchT>& p = built[i];
++          p.reserve(levels + 1);
++          for (int l = 0; l <= levels; l++) {
++            const Scalar scale = 1 << l;
++            p.emplace_back(pyr0.lvl(l), pos / scale);
++          }
++        }
++      });
++    }
++
++    for (size_t i = 0; i < n_new; i++) {  // Set new points as keypoints
+       const Eigen::Vector2d& corner = kd.corners[i];
+       const float response = kd.corner_responses[i];
+ 
+-      if (config.optical_flow_recall_enable) {  // Save patch
+-        // TODO: Patches are never getting deleted
+-        Eigen::aligned_vector<PatchT>& p = patches[last_keypoint_id];
+-        Vector2 pos = corner.cast<Scalar>();
+-        for (int l = 0; l <= config.optical_flow_levels; l++) {
+-          Scalar scale = 1 << l;
+-          Vector2 pos_scaled = pos / scale;
+-          p.emplace_back(pyramid->at(0).lvl(l), pos_scaled);
+-        }
++      if (config.optical_flow_recall_enable) {  // Save patch (bounded by prunePatches, 0014)
++        patches[last_keypoint_id] = std::move(built[i]);
+       }
+ 
+       auto transform = Eigen::AffineCompact2f::Identity();
+-- 
+2.47.3
+
