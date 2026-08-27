@@ -387,6 +387,16 @@ AIRCAR_VARIANTS = [
      {"SLAM_PRED_POSITION_HORIZON_MS": "50", "SLAM_PRED_POSITION_MAX_SPEED_CM_S": "150",
       "SLAM_CORRECTION_SPREAD_MS": "25", "SLAM_CONFIG": f"{HOME}/vr/basalt-variants/J.toml"},
      "BACKEND. I + optical_flow_recall_max_patch_norms = los defaults de C++ de Basalt (nuestro JSON usa valores 4x mas estrictos -- una discrepancia interna de Basalt). Si G/I recuperan pocos landmarks, puede ser que el umbral estricto rechace recalls validos."),
+    # R = the ONE wearer session the offline pipeline needs: F's config + EUROC_RECORD (PNG,
+    # lossless -- JPG changes the features) + the live calibration dump. ~3 min following
+    # yaw-protocol-voice.py's spoken script. Afterwards replay-basalt-variants.py replays the
+    # recording through base x2 + G/H/I/J in ~15 min with no headset. EUROC_RECORD_PATH is a
+    # PREFIX (the recorder appends _datetime, t_euroc_recorder.cpp:408-414).
+    ("R", "GRABAR protocolo yaw (F + EuRoC 3 min)",
+     {"SLAM_PRED_POSITION_HORIZON_MS": "50", "SLAM_PRED_POSITION_MAX_SPEED_CM_S": "150",
+      "SLAM_CORRECTION_SPREAD_MS": "25", "EUROC_RECORD": "1",
+      "EUROC_RECORD_PATH": "/mnt/vrtmp/euroc-yaw", "VIT_DUMP_CALIB": f"{HOME}/vr/logs/calib-g2-yaw.json"},
+     "LA GRABACION. Config F (A + spread 25) + grabacion EuRoC en PNG a /mnt/vrtmp/euroc-yaw_<fecha> + volcado de calibracion. Ponete el casco, arranca Aircar, y segui la voz de yaw-protocol-voice.py (30 s quieto, 10 giros rapidos izq-der, 10 arriba-abajo, 10 inclinaciones, 60 s de juego libre). Despues el agente replayea la grabacion contra todas las configs de backend sin casco. ~3 GB en tmpfs; cerrar el juego al terminar."),
 ]
 for _tag, _label, _env, _note in AIRCAR_VARIANTS:
     ACTIONS[f"variant-1073390-{_tag}"] = {

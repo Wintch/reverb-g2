@@ -1,5 +1,54 @@
 # Next step
 
+> ## START HERE (2026-08-27, small hours — the 5 variants were worn; the metres of yaw drift are
+> Basalt's backend losing every landmark under yaw, not prediction; an offline replay pipeline
+> now exists; unattended soaks of the backend variants ran while the user was away; THE next
+> wearer step is ONE 3-minute recorded session, button "R")
+>
+> Full record: docs/80's three late-night sections (verdicts A–E, the landmark tables, the
+> pipeline validation) and the approved plan at `~/.claude/plans/reflective-herding-codd.md`.
+>
+> **What the wearer found**: A (patch 0100: 50 ms horizon + 1.5 m/s clamp) beats the control on
+> latency and is now Aircar's profile default; B/D ≈ A; E (spread 25) smoother but slower. Every
+> variant still drifts metres on fast yaw — and the raw VIO output shows those excursions in the
+> control too, so no prediction knob can fix it. Per-frame data: Basalt's backend landmark count
+> collapses to **p10 = 0 above 90 °/s of yaw** while the frontend keeps ~2600 keypoints;
+> pitch/roll at matched rates keeps 2–4× more. Two source-verified causes: `vio_marg_lost_
+> landmarks=true` deletes swept-out landmarks before the head returns (so Basalt's recall, off in
+> ours, would have nothing to recall), and the 5 cm triangulation gate rejects every keyframe
+> taken during a zero-baseline seated yaw.
+>
+> **What now exists (all committed)**: `patches/basalt/0013` VIT_DUMP_CALIB (exports the live
+> calibration — verified, 4 cams + IMU); `basalt_vio` in `~/vr/basalt/build-tools` (offline
+> replay, headless with `--show-gui 0`); `scripts/replay-basalt-variants.py` (N configs vs one
+> `EUROC_RECORD` dataset → ranked by drift + landmarks-per-yaw-band from the dataset's own
+> gyro); `scripts/soak-variant.py` (unattended headset-on stationary safety soak, pass/fail
+> JSON in `~/vr/logs/soak/`); backend variants `scripts/basalt-variants/{G,H,I,J}` (G recall +
+> marg-lost off, H triangulation 2 cm + 12 kfs, I = G+H, J = I + Basalt's looser C++ recall
+> norms) as dashboard buttons riding on F's Monado config; `scripts/deploy-check.py` (the
+> `~/vr` ↔ repo drift instrument — `demo-recorder.py` had crashed on every launch since 08-26,
+> 11/55 scripts had drifted; all fixed). Pipeline validated on a stationary recording: offline
+> reproduces the live regime (same landmark counts) but not bit-exactly (~2× span) — so **record
+> the yaw session as PNG and replay `base` twice** to know the noise floor before ranking.
+>
+> **Unattended soak results** (base, G, H, I, J; 20 min each, headset on, nobody wearing it):
+> see `~/vr/logs/soak/*.json` and the table appended to docs/80 — a FAIL there means "do not
+> offer that variant to the wearer".
+>
+> **When the user is back — 15 min of headset**:
+> 1. Button **F** (A + spread 25): the wearer's own ask. Verdict vs A → if ≥ A, spread 25 stays.
+> 2. Button **R** ("GRABAR protocolo yaw"): Aircar on F's config + `EUROC_RECORD` (PNG) + calib
+>    dump. Run `scripts/yaw-protocol-voice.py` alongside so the head-motion script is spoken:
+>    30 s still → 10 fast yaw L/R → 10 fast pitch → 10 roll → 60 s free play. Close the game.
+> 3. Agent: `replay-basalt-variants.py --dataset /mnt/vrtmp/euroc-yaw_<date> --calib
+>    ~/vr/logs/calib-g2-yaw.json --config base=… --config base2=… --config G=… H I J` (~15 min,
+>    no headset). The ranking + the soak safety column pick the winner.
+> 4. Wearer tries only the winner (and I if it isn't I). Decision rule in docs/80: keeps
+>    landmarks p10 > 0 through the bursts and cuts >1 m windows without new jitter → becomes
+>    `basalt-g2-config.json` (global — re-check Dalí 6dof once).
+>
+> ---
+
 > ## START HERE (2026-08-27 night — combined test approved by the wearer; new patch 0100 built,
 > regressed on first wear, root-caused in the data, fixed with a speed clamp; a 5-variant A/B is
 > loaded as dashboard buttons and is THE next thing to run)

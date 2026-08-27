@@ -588,3 +588,36 @@ divergence, CPU, the documented unbounded recall `patches` map). Variant matrix 
 (triangulation 2 cm + 12 keyframes), **I** (G+H), **J** (I + Basalt's looser C++ recall norms —
 our JSON's norms are 4× stricter, a discrepancy inside Basalt itself). F–J all ride on A's
 Monado-side config with spread 25. Results of the soaks and the replay go below as they land.
+
+### Pipeline validated end to end on a stationary recording (unattended, headset on, nobody wearing it)
+
+`soak-variant.py --tag record --minutes 2 --dump-calib … --euroc-record …` — the first
+unattended headset-on run: PASS (0 coredumps, 0 divergence trips, clean teardown). Three things
+learned, all now in the tools:
+
+- **`EUROC_RECORD_PATH` is a prefix.** `euroc_recorder_start()` (`t_euroc_recorder.cpp:408-414`)
+  always appends `_YYYYMMDDHHmmss` — which is also why the 2026-08-12 "static" dataset looked
+  empty: the real one was next to it. Recording works: 5,378 frames × 4 cams, 44.5 k IMU rows,
+  1.7 GB as JPG for ~3 min.
+- **Patch 0013 works live**: `~/vr/logs/calib-g2.json` (6 KB, 4 × `pinhole-radtan8` 640×480,
+  IMU at 250 Hz, `T_imu_cam`, `cam_time_offset_ns=0`) — `basalt_vio --cam-calib` loads it.
+- **`vit_collapse IN … t_ns` does not exist offline** (it is VIT-glue instrumentation); the
+  harness keys frames by sequence index into `mav0/cam0/data.csv` instead, exact because the
+  offline loader feeds every frame and drops none.
+
+Live vs offline on the *same* stationary recording (182 s):
+
+| | max 1 s disp | span | end − start | landmarks p50 |
+|---|---|---|---|---|
+| live raw SLAM (`tracking.csv`) | 0.087 m | 0.39 m | 0.48 m | 15 |
+| offline `basalt_vio` replay, base config | 0.19 m | 0.86 m | 0.42 m | ~20 |
+
+Same regime, not a bit-exact twin: the live tracker itself wanders ~0.4 m at rest on this
+view (15 landmarks — the cameras were pointing at whatever the headset lay on), and the
+offline run differs by ~2× in span. Known differences: offline runs 1.35× faster than real time
+with 6 worker threads (non-deterministic scheduling), the frames were JPG-compressed, and the
+Monado-side VIT-glue patches (0007-0010, queue behavior) don't apply offline. **Two rules for
+the yaw dataset**: record it as PNG (drop `EUROC_RECORDER_USE_JPG`, ~3 GB in tmpfs for 3 min,
+fine), and replay `base` twice to measure run-to-run variance before ranking anything — a
+variant has to beat the base by more than the base beats itself. Wall time: 135 s per replay
+of a 3-min recording, so a 6-config matrix is ~15 min, no headset.

@@ -89,19 +89,24 @@ def yaw_at(imu, t_ns, _cache={}):
     return max((r[1] for r in seg), default=0.0)
 
 
-def parse_vit_log(path):
-    """Pair each frame's t_ns (vit_collapse IN) with its keypoints/recall_ms (vit_of) and
-    landmarks/opt/marg (vit_vio). Tolerates interleaved/mangled lines."""
+def parse_vit_log(path, cam0_timestamps):
+    """Per-frame keypoints/recall_ms (vit_of) and landmarks/opt/marg (vit_vio), keyed by the
+    frame's camera timestamp. The live tracker's `vit_collapse IN ... t_ns=` line comes from the
+    VIT glue (vit_tracker.cpp) and does NOT exist in basalt_vio's output -- offline, frames are
+    keyed by SEQUENCE INDEX into the dataset's own mav0/cam0/data.csv timestamps instead, which
+    is exact: the offline loader feeds every recorded frame in order and drops nothing
+    (outq_dropped=0). Tolerates interleaved/mangled lines."""
     frames = {}
+    idx = -1
     cur = None
     with open(path, errors="replace") as f:
         for line in f:
-            if line.startswith("vit_collapse IN"):
-                m = re.search(r"t_ns=(\d+)", line)
-                cur = int(m.group(1)) if m else None
-                if cur:
-                    frames[cur] = {}
-            elif cur and line.startswith("vit_of"):
+            if line.startswith("vit_of"):
+                idx += 1
+                cur = cam0_timestamps[idx] if idx < len(cam0_timestamps) else None
+                if cur is None:
+                    continue
+                frames[cur] = {}
                 for key, pat in (("kp", r"keypoints=(\d+)"), ("recall_ms", r"recall_ms=([0-9.eE+-]+)"),
                                  ("total_ms", r"total_ms=([0-9.eE+-]+)"), ("patches", r"patches=(\d+)")):
                     m = re.search(pat, line)
@@ -114,6 +119,18 @@ def parse_vit_log(path):
                     if m:
                         frames[cur][key] = float(m.group(1))
     return frames
+
+
+def load_cam0_timestamps(dataset):
+    ts = []
+    with open(dataset / "mav0" / "cam0" / "data.csv") as f:
+        for r in csv.reader(f):
+            if r and not r[0].startswith("#"):
+                try:
+                    ts.append(int(r[0]))
+                except ValueError:
+                    pass
+    return ts
 
 
 def load_trajectory(path):
@@ -181,7 +198,7 @@ def run_variant(tag, config, args, imu):
             rec["result"] = json.load(open(res))
         except Exception:
             rec["result"] = "unparsed"
-    frames = parse_vit_log(log)
+    frames = parse_vit_log(log, args.cam0_ts)
     rec["frames"] = len(frames)
     bands = {}
     for lo, hi in YAW_BANDS:
@@ -215,7 +232,8 @@ def main():
         if not p.exists():
             sys.exit(f"missing: {p}")
     imu = load_imu_yaw_rate(args.dataset)
-    print(f"dataset: {args.dataset}  imu samples: {len(imu)}  "
+    args.cam0_ts = load_cam0_timestamps(args.dataset)
+    print(f"dataset: {args.dataset}  imu samples: {len(imu)}  cam0 frames: {len(args.cam0_ts)}  "
           f"yaw>90deg/s: {sum(1 for r in imu if r[1] > 90) / 250:.1f}s (at ~250 Hz)")
     results = []
     for spec in args.config:
