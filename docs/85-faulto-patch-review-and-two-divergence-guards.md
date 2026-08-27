@@ -62,3 +62,28 @@ untested, not just theoretical. Build unchanged (already compiled per the sectio
 was purely env-var wiring, no rebuild needed. First wearer session with these on is the actual
 test — watch for overshoot on fast turns (0098×0097 interaction) and for `Tracker diverged`
 log spam (0099's radius too tight for the title's real movement).
+
+## First wearer result, same day (2026-08-27): guards clean, 0098 does not fix the known issue
+
+Caught a real, if brief and unplanned, wearer session on Aircar 6dof (launched for an unattended
+soak, the wearer put the headset on mid-soak). Two separate results, worth keeping apart:
+
+- **Divergence guards (0099): clean.** ~12 minutes total runtime, `grep -c "Tracker diverged"` = 0
+  the entire session, including the worn portion with real head motion. No false-positive resets.
+  Session ended cleanly (`client_disconnected` → `END_SESSION`, no coredump, no SIGSEGV) when the
+  wearer closed the game. Not a full validation (a false-positive is a rate question, not a
+  binary one 12 minutes can fully settle), but a real, clean first data point in the right
+  direction.
+- **0098 (`WMR_FORWARD_ANGULAR_VELOCITY`): no perceived effect.** Wearer's own words: "seguía
+  desviando bastante al girar rápido, pero se acomodaba. No parece cambiar nada" — the known
+  fast-turn drift-then-settle behavior (the exact gold→approved blocker named in `DEMO_LAUNCHES`:
+  a felt ~100-200ms positioning-latency on fast full-axis head motion) is unchanged with 0098 on.
+  Reads as a real negative, not an inconclusive one: the double-counting risk against 0097 flagged
+  above never got a chance to matter, because the intended benefit (smoother SteamVR-side
+  reprojection from real angular velocity instead of zero) doesn't show up in the felt symptom at
+  all. Plausible reading: the bottleneck this title's blocker traces to (SLAM anchor-age /
+  prediction latency, Monado-side) sits upstream of where 0098 acts (SteamVR's own photon-time
+  extrapolation) — forwarding a better velocity number to a stage that isn't where the delay
+  lives wouldn't be expected to help. Not chased further this session -- worth deciding explicitly
+  whether 0098 stays on (harmless, no observed downside either) or gets reverted to reduce
+  variables, before the next real attempt at the gold→approved blocker itself.

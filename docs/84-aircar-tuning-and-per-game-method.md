@@ -85,18 +85,34 @@ color-scale struct without gating on the extension actually being enabled. That'
 robustness improvement (add an enabled-extensions check + `warn_once`), not a functional
 fix — the knob works today because the extension is in fact enabled.
 
-## 9. Per-game config persistence — unsolved
+## 9. Per-game config persistence — unsolved, and one prior conclusion corrected
 
 Goal: make Aircar launch pre-tuned to §4's config instead of the wearer setting it by hand.
 Tried: pre-write the optimal values into Aircar's UE `GameUserSettings.ini` and mark it
 read-only. Result: the read-only file survived intact on disk (verified after launch), but
 **Aircar still started at its default in-game settings**. Conclusion: Aircar's graphics menu
 does not read `GameUserSettings.ini` — its settings live somewhere else (a custom save file,
-or runtime CVars set via `-execcmds`/`r.ScreenPercentage`-style launch args). Separately
-confirmed: Aircar also does **not** write menu changes back to the ini on exit, which is why
-settings "reset" between sessions today. Per-game config persistence is an open problem,
-mechanism unknown, and will need its own investigation per title/engine — do not assume the
-ini trick generalizes even within Aircar.
+or runtime CVars set via `-execcmds`/`r.ScreenPercentage`-style launch args). Per-game config
+persistence is an open problem, mechanism unknown, and will need its own investigation per
+title/engine — do not assume the ini trick generalizes even within Aircar.
+
+**CORRECTION, 2026-08-27 later same day**: the second half of that claim -- "Aircar also does
+**not** write menu changes back to the ini on exit" -- is **wrong**, caught live. During an
+unrelated session the wearer changed in-game quality to minimum via Aircar's own menu, played
+briefly, then closed the game normally. `GameUserSettings.ini`'s mtime and content both changed
+on exit, and the diff is exactly what changing to a low-quality preset would produce
+(`sg.ShadowQuality` 1→0, `sg.PostProcessQuality` 3→0, `sg.TextureQuality` 3→0, the rest already
+0). The file was writable (not read-only) at the time -- this session never re-armed the
+read-only flag from the earlier failed experiment. **So the write path works fine; only the read
+path (or a read-only-specific read path) was ever shown to fail.** The original test conflated
+the two by testing them together (read-only + pre-written values in one shot) and by never
+re-testing the write side without the read-only flag in place.
+
+This reopens the north star in §10 with a more precise next experiment: pre-write §4's optimal
+values into a **writable** (not read-only) `GameUserSettings.ini`, launch, and check the file
+immediately (before any menu interaction) -- if the values survive unchanged, the game likely
+read them at startup; if they get overwritten to some other default, the read side is still
+confirmed broken independent of the read-only flag. Not run yet this session.
 
 ## 10. The method, per title, and the north star
 

@@ -158,12 +158,12 @@ TITLE_PROFILES = {
         "SLAM_PRED_FREEZE_POSITION": "1",
         "SLAM_PRED_NECK_ARM_MM": "150",
         "SLAM_CORRECTION_SPREAD_MS": "50",
-        # 2026-08-27: Monado supersamples 140% by DEFAULT (3024^2/eye) -> GPU-bound in 6dof,
-        # fps floor dived to 41-71 on heavy scenes and reprojected (the felt jitter/drift).
-        # 100% (2160^2/eye) gave headroom: floor rose to ~79, "muy fluido, muy parejo"
-        # (wearer) -> real gold. Trades a little sharpness; holding 90 wins. Also hits the
-        # 3dof approved run (re-confirm on next demo). Candidate global default; likely the
-        # Cyberpilot 60fps fix too.
+        # 2026-08-27: Monado supersamples 140% by DEFAULT (3024^2/eye) which left this title
+        # GPU-bound in 6dof -- fps dived to a 41-71 floor on heavy scenes and reprojected
+        # (the felt jitter/drift). 100% (2160^2/eye, native) gave GPU headroom: floor rose to
+        # ~79, "muy fluido, muy parejo" (wearer) -> 6dof finally reads as real gold. Trades a
+        # little supersampling sharpness; holding 90 wins for this project. NOTE: also applies
+        # to the 3dof approved run (slightly less sharp) -- re-confirm 3dof on the next demo.
         "XRT_COMPOSITOR_SCALE_PERCENTAGE": "100",
         # 2026-08-27: patches 0098/0099 (docs/85, Faulto fork review), first wearer test.
         # Both NOT YET HARDWARE-VALIDATED as of this write -- this launch is that test.

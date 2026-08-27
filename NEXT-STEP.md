@@ -1,5 +1,44 @@
 # Next step
 
+> ## START HERE (2026-08-27 later same day — 0098/0099's first wearer result: guards clean, 0098
+> does NOT fix Aircar's gold→approved blocker; a real GameUserSettings.ini write-on-exit
+> correction; and a real deploy bug caught: `~/vr/vr-launcher.py` was a stale unsynced copy)
+>
+> Real headset time happened opportunistically the same day the block below was written (docs/85's
+> new closing section has the full account). Three things worth knowing before touching any of
+> this again:
+>
+> **1. Caught and fixed: `~/vr/vr-launcher.py` (what actually runs) was NOT synced with
+> `scripts/vr-launcher.py` (what gets edited)** — no symlink, an independent stale copy. The first
+> Aircar 6dof launch this session silently ran the OLD profile with none of 0098/0099 active; a
+> quick glance at it ("vi aircar bien, como siempre") looked reassuring but proved nothing. Fixed
+> by copying the deployed (slightly more polished-comment) version back over the repo copy — both
+> are byte-identical again as of this commit. **If you ever edit `scripts/vr-launcher.py` again,
+> diff it against `~/vr/vr-launcher.py` before trusting a launch to reflect your edit** — this
+> project's own CLAUDE.md already warned about this exact class of drift for `jack-in.sh`/
+> `play360.sh` and it bit here too, just for a file not on that list.
+>
+> **2. First real wearer data on 0098/0099 (Aircar 6dof, ~12 min session)**: the divergence guards
+> (0099) never false-fired — clean. But **0098 (`WMR_FORWARD_ANGULAR_VELOCITY`) did not fix the
+> known gold→approved blocker** — wearer's own words: "seguía desviando bastante al girar rápido,
+> pero se acomodaba. No parece cambiar nada." A real negative, not inconclusive: reads as the
+> bottleneck living upstream of where 0098 acts (SteamVR's photon-time extrapolation), not fixable
+> from that stage. **Aircar 6dof stays gold, not approved** — this specific lever is spent, don't
+> re-try it expecting a different result without a new hypothesis for the actual mechanism.
+> Decide explicitly whether to keep 0098 on (harmless so far, just ineffective here) or revert it
+> to cut a variable before the next real attempt at this blocker.
+>
+> **3. A real correction to docs/84 §9**: that section's claim "Aircar does not write menu changes
+> back to the ini on exit" was **wrong** — caught live this session (full diff in docs/84's new
+> correction). The write path works fine; only the earlier read-only+pre-write combo was ever
+> shown to fail, and it was never disentangled into "read-only broke it" vs "the read side is
+> broken regardless." **Next concrete experiment, not yet run**: pre-write §4's optimal values
+> into a plain writable (not read-only) `GameUserSettings.ini`, launch, and check immediately
+> (before any menu touch) whether the values survived — that's the real test of whether Aircar
+> reads this file at startup at all.
+>
+> ---
+
 > ## START HERE (2026-08-27 — three days of backlog caught up: demo-day line-up, Aircar tuning,
 > Faulto patches wired for their first wearer test, dashboard fully redesigned)
 >
