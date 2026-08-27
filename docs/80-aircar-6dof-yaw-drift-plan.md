@@ -708,7 +708,16 @@ recall. +232 MB/h is fine for a demo session (30 min ≈ +115 MB), not for an al
 without a restart between sessions.
 | G3 (marg-lost off only, no recall) | 89 / 49 | 0.09 | 7 | 5.46 m | 3.00 m | 6.6 ms | +9 (flat) | SAFE — 5× the landmarks for +3 ms; drift = base |
 | L (keyframe threshold 0.9) | 17 / 4 | — | **96** | — | — | — | +34 | **worst of the night — refuted** |
-| M (I without recall: marg-lost off + 2 cm + 12 kfs) | | | | | | | | *queued after I2* |
+| M (I without recall: marg-lost off + 2 cm + 12 kfs) | 109 / 67 | 0.38 | **21** | 5.95 m | 3.00 m | 10.7 ms | +16 | unstable without recall; frontend p50 28.6 (= base) |
+
+**M answers the recall question at rest: recall is load-bearing, not decorative.** Same
+config as I minus recall → 21 trips (base 7). Lining up every run by whether it has recall +
+marg-lost-off: *with* — K 1, I 0, I2 4 trips (all under the base's 7, three runs); *without* —
+base 7, G3 7, M 21, H 46, L 96. The 2 cm gate makes the no-recall configs *worse* (H, M) and
+the recall configs better (I/I2 vs K) — plausibly because zero-baseline landmarks are only
+sound when the frame-to-frame tracker's dropouts get re-attached to the same landmark instead
+of re-triangulated as new ones. Span is where the run-to-run variance lives (K 3.0, I 0.41,
+I2 4.5 m); trips are the more consistent signal so far.
 
 **L refuted, precisely.** The 0.9 threshold never engaged at rest — keyframe-set changes per
 minute `[7, 0, 0, 0, 0, 0, 0, 8, 24, 16, 0, 0, 18, 0, 8, 8, 24, 18, 162, 237, 236]`: nothing
