@@ -157,7 +157,10 @@ TITLE_PROFILES = {
         "SLAM_PREDICTION_TYPE": "2",
         "SLAM_PRED_FREEZE_POSITION": "1",
         "SLAM_PRED_NECK_ARM_MM": "150",
-        "SLAM_CORRECTION_SPREAD_MS": "50",
+        # 2026-08-27 (evening): 50 -> 25. Variant F (A + spread 25) worn: "bastante solido",
+        # smoother settle, latency still low -- the wearer's own ask (E's smoothness without
+        # E's delay), confirmed in-headset. Aircar only; Cyberpilot keeps 50 (not re-tested).
+        "SLAM_CORRECTION_SPREAD_MS": "25",
         # 2026-08-27: Monado supersamples 140% by DEFAULT (3024^2/eye) which left this title
         # GPU-bound in 6dof -- fps dived to a 41-71 floor on heavy scenes and reprojected
         # (the felt jitter/drift). 100% (2160^2/eye, native) gave GPU headroom: floor rose to

@@ -711,6 +711,35 @@ without a restart between sessions.
 | M (I without recall: marg-lost off + 2 cm + 12 kfs) | 109 / 67 | 0.38 | **21** | 5.95 m | 3.00 m | 10.7 ms | +16 | unstable without recall; frontend p50 28.6 (= base) |
 | I3 (I config, recall grace 30 frames, on 0015) | 94 / 40 | 1.9 | **50** (2–5 every minute) | 5.93 m | 3.02 m | 10.4 ms | +360 | CPU fixed (p50 30.6 / p99 58, patches 190k) — tracking much worse, steadily |
 | I4 (I config, grace 90, on 0016) | 161 / 93 | 0.12 | 2 | 3.39 m | 2.94 m | 18.0 ms | +125 (1.54 → 1.69 GB) | frontend p50 39 / **p99 65** (was 117 on 0014, 93 on 0015): the amortized sweep works; patches p50 249k / p99.9 385k, bounded |
+| base2 (base config, headset moved to a new resting spot at 16:30, controller on) | 64 / 7 | — | **36** | — | — | — | — | **the control that settles it**: same config as base (7 trips), 5× the trips from a different view — placement/texture dominates at-rest stability; interleave or don't compare |
+
+The interleaved pair (base3 → K3) was cut so the wearer session could start; it is the right
+next unattended experiment (any night, `soak-variant.py`, back to back at one placement).
+
+### 2026-08-27 17:00 — the wearer's return: F approved, the yaw recording made
+
+**F (A + `SLAM_CORRECTION_SPREAD_MS=25`), worn, same fast-turn protocol**: *"bastante sólido.
+Al acercarme al panel volvió un leve jitter, pero hay poca latencia para movimientos, aunque no
+ideal aún. Movimientos rápidos siguen con delay, pero no me voy tanto del asiento — uno o dos
+metros si lo hago seguido y rápido. Tira hacia atrás generalmente. Antes tiraba a un costado
+derecho, antes de eso al izquierdo."* → F ≥ A: **spread 25 is now Aircar's profile default**
+(`TITLE_PROFILES["1073390"]`, both copies; Cyberpilot keeps 50, not re-tested). Two observations
+worth keeping: the jitter near the panel is the close-range/few-landmarks regime (expected); and
+the drift *direction* changes between sessions (left → right → back), which rules out a fixed
+extrinsic/lever-arm error (that would push the same way every time) and points at the
+optimizer's per-session state — consistent with the landmark story, not with calibration.
+
+**The recording (button R)**: Aircar on F's config + `EUROC_RECORD=1` (PNG) + `VIT_DUMP_CALIB`.
+`yaw-protocol-voice.py` spoke the script into the headset at 17:10:39; the wearer followed it
+(30 s still → 10 fast yaw → 10 pitch → 10 roll → 60 s free). The recorder wrote from launch to
+teardown — 14 GB in 10 min at ~31 fps × 4 cams, with 2.4 GB of tmpfs left when it was stopped
+(**lesson: the recorder does not stop with the protocol; stop the session right after, or the
+20 GB tmpfs fills in ~4 more minutes**). Trimmed to the protocol window ± 20 s by matching the
+phase log's wall clock to PNG mtimes (±1 s): `/mnt/vrtmp/euroc-yaw_20260827170436`, 6,852
+frames/cam, 56,709 IMU rows, 4.9 GB, with `phases.json` carrying each phase's `t_ns` boundary;
+archived with its calibration and phase log under `~/vr/logs/euroc/`. The dataset's own gyro
+holds **18.7 s above 90 °/s of yaw** — enough to band by rotation regime. Replay matrix
+launched: base ×2 (noise floor), G3, K, I, J, M, H.
 
 **I3: the grace is not a memory knob.** A 30-frame grace brought the frontend under budget
 (p50 30.6 ms, p99 58, patch map 190k) — and produced 50 trips. A patch is the recall's memory
