@@ -127,6 +127,12 @@ GAMES = [
     # docs/23: its FAIL verdict (T161) was measured with launch options missing
     # PRESSURE_VESSEL_FILESYSTEMS_RW -- recipe complete since, never retested.
     ("NVIDIA VR Funhouse", "468700"),
+    # 2026-08-26: native idTech (non-Unity, lower flat-fallback risk); prefix relocated off
+    # NTFS (docs/70). Motion-controller title -> default profile (constellation ON).
+    ("DOOM VFR", "650000"),
+    # 2026-08-26: Source 2, Valve's own, excellent Proton VR support; prefix pre-created on
+    # ext4. Standing/long/heavy (69GB, 8GB-VRAM marathon risk). Motion controllers.
+    ("Half-Life: Alyx", "546560"),
 ]
 DEFAULT_GAME = "Aircar"
 
@@ -166,6 +172,21 @@ TITLE_PROFILES = {
     # gamepad-class; the user's own live playthrough overrides that.) Run with 6dof
     # head tracking per the user's own direction.
     "591360": {"WMR_CONSTELLATION_CONTROLLERS": "0"},
+    # Wolfenstein: Cyberpilot (1056970) -- seated mech cockpit; motion controllers
+    # are REQUIRED, so constellation stays ON (unlike Aircar/Dali, which drop it).
+    # 2026-08-27: user confirmed it renders in-headset but with a pronounced head
+    # redraw + controller "saltitos"; Monado's log showed the SLAM frontend dropping
+    # camera frames (vit: input_img_queue dropped ...). Apply Aircar's seated-6dof
+    # head-prediction recipe (patch 0097: gyro-pred + freeze position + 150mm
+    # neck-arc + 50ms correction spread) to smooth the head redraw -- WITHOUT the
+    # constellation-off knob, since the game needs tracked hands.
+    "1056970": {
+        "WMR_CONSTELLATION_CONTROLLERS": "1",  # explicit: the game needs 6dof hands
+        "SLAM_PREDICTION_TYPE": "2",
+        "SLAM_PRED_FREEZE_POSITION": "1",
+        "SLAM_PRED_NECK_ARM_MM": "150",
+        "SLAM_CORRECTION_SPREAD_MS": "50",
+    },
 }
 PROFILE_DEFAULT = {"WMR_CONSTELLATION_CONTROLLERS": "1"}
 # Titles whose verdict in docs/23 does not depend on hands at all (gamepad class): the
@@ -504,7 +525,12 @@ def main():
     # Ambient env wins over the profile: an operator exporting the var explicitly
     # is doing an experiment and the picker must not fight them.
     _name, _appid = selected
-    profile = TITLE_PROFILES.get(_appid, PROFILE_DEFAULT)
+    # Merge OVER PROFILE_DEFAULT so a partial per-title profile still inherits the
+    # constellation default (ON). A listed title that omits WMR_CONSTELLATION_CONTROLLERS
+    # would otherwise fall through to jack-in-wayland's 6dof default of OFF, silently
+    # dropping positional controller tracking (the 2026-08-27 Cyberpilot regression:
+    # its profile set only the SLAM head knobs and lost 6dof hands).
+    profile = {**PROFILE_DEFAULT, **TITLE_PROFILES.get(_appid, {})}
     for k, v in profile.items():
         if k not in os.environ:
             os.environ[k] = v

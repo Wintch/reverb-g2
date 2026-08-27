@@ -252,6 +252,28 @@ ACTIONS = {
         "cmd": [f"{HOME}/vr/hmd-audio.sh", "both"],
         "cwd": f"{HOME}/vr",
     },
+    # Spoken booth cues (voice-guide.py, espeak-ng, Spanish). Play through whatever sink is
+    # active -- route audio first (headset for in-visor cues, external for "ponete el casco").
+    "voz-ponete": {
+        "label": "🔊 Ponete el casco",
+        "cmd": [f"{HOME}/vr/voice-guide.py", "cue", "ponete-casco"],
+        "cwd": f"{HOME}/vr",
+    },
+    "voz-secuencia": {
+        "label": "🔊 Secuencia guiada",
+        "cmd": [f"{HOME}/vr/voice-guide.py", "sequence"],
+        "cwd": f"{HOME}/vr",
+    },
+    "voz-listo": {
+        "label": "🔊 Listo, disfrutá",
+        "cmd": [f"{HOME}/vr/voice-guide.py", "cue", "listo"],
+        "cwd": f"{HOME}/vr",
+    },
+    "voz-recentrar": {
+        "label": "🔊 Apretá A (recentrar)",
+        "cmd": [f"{HOME}/vr/voice-guide.py", "cue", "recentrar"],
+        "cwd": f"{HOME}/vr",
+    },
 }
 
 
@@ -273,9 +295,10 @@ DEMO_LAUNCHES = [
     ("Aircar", "1073390", "3dof", "approved", "Xbox pad. Recentre: A button."),
     ("Aircar", "1073390", "6dof", "gold", "2026-08-26 fix (patch 0097): gyro-pred + freeze + 150mm neck-arc + 50ms spread, auto-applied by the launcher. Wearer: 'super similar a windows', smooth, no bad redraws. Residual: positioning latency on FAST motion (~1m bounded, A recentres). Needs a 30-min soak to certify -> approved."),
     ("Dreams of Dali", "591360", "6dof", "approved", "Headset-only gaze-dwell, no controllers. 46-67 fps measured, experience still good."),
+    ("Wolfenstein: Cyberpilot", "1056970", "6dof", "testing", "2026-08-27: WORKS in-headset (native Bethesda idTech, motion controllers). Launcher auto-applies the Aircar 6dof head recipe (patch 0097 knobs) WITH constellation ON (the game needs 6dof hands). Wearer: hands ~ok, less drift than before, playable; ~2m drift on FAST head turns (bounded). RESET = RIGHT SHIFT held 3s. Perceived ~60fps ('Fake pacer fell behind' spam) -- for 90: minimize the game window (mutter vsyncs any visible window to the 60Hz desktop), lift the GPU 70% power cap, lower graphics/render-scale (docs/23). NOT guest-ready until the 60->90 residual is settled."),
     ("Hellblade", "747350", "6dof", "untested", "Proton prefix still on NTFS (docs/70 bug) -- will not launch until relocated. Motion-controller title."),
-    ("The Night Cafe", "482390", "6dof", "broken", "2026-08-26: launches + reaches runtime but renders FLAT 2D (0 delivered frames, headset backlight only) -- old Unity title does not engage VR via xrizer. Parked."),
-    ("Anne Frank House VR", "2877690", "6dof", "untested", "Needs Steam Launch Options set first (the XR_RUNTIME_JSON... recipe). Motion-controller title (docs/77)."),
+    ("The Night Cafe", "482390", "6dof", "untested", "CORRECTED 2026-08-27: the 2026-08-26 'broken/flat-2D' verdict was WRONG -- that one launch died inside the OpenXR loader because XR_RUNTIME_JSON was unset for that process (the launch-options trap, not a Unity flat-fallback). Never actually reached the runtime. Needs launch options set + a real retest before any verdict."),
+    ("Anne Frank House VR", "2877690", "6dof", "broken", "CORRECTED 2026-08-27: DOES reach a real Monado session (BEGIN_SESSION, controllers registered) -- the earlier '0 delivered frames' framing came from the dead-grep metric trap (needs U_PACING_APP_LOG=debug), not a proven flat-fallback. Real cause: engine abandons the session after ONE capability probe and never retries -- matches Valve unity-xr-plugin #97/#111. Engine-side give-up, not a render failure. Parked."),
 ]
 for _name, _appid, _tracking, _status, _note in DEMO_LAUNCHES:
     ACTIONS[f"demo-{_appid}-{_tracking}"] = {
@@ -316,6 +339,79 @@ def read_attention():
             return json.load(f)
     except Exception as e:
         return {"active": False, "error": str(e)}
+
+
+# ---- Demo round / playlist sequencer (drives playlist-runner.py) -------------
+# The web builds a round (name + ordered entries) and fires it; the runner plays each
+# experience with a spoken "proximo titulo" cue and a clean teardown between, and can be
+# paused (don't start the next) or stopped (teardown + end the round) from here.
+PLAYLIST_RUNNER = f"{HOME}/vr/playlist-runner.py"
+PLAYLIST_CONTROL = f"{HOME}/vr/logs/playlist-control.json"
+PLAYLIST_STATUS = f"{HOME}/vr/logs/playlist-status.json"
+DAV2_DEMO_DIR = f"{HOME}/Documents/stereo3d-pack/out/dav2_demo"
+
+# The pool a round can be built from -- ONLY the best (mirror the "approved" DEMO_LAUNCHES)
+# plus the in-house sizzle video. Keep the Steam entries in sync with what is guest-ready.
+PLAYLIST_CATALOG = [
+    {"id": "video-dav2", "type": "video", "name": "Sizzle 2D→3D (dav2)",
+     "path": DAV2_DEMO_DIR, "seconds": 180, "mode": "1"},
+    {"id": "steam-aircar", "type": "steam", "name": "Aircar",
+     "appid": "1073390", "tracking": "3dof", "seconds": 240},
+    {"id": "steam-dali", "type": "steam", "name": "Dreams of Dalí",
+     "appid": "591360", "tracking": "6dof", "seconds": 240},
+]
+# The automatic "recommended round": sizzle video -> Aircar (approved 3dof) -> Dali.
+DEFAULT_PLAYLIST = {"name": "Ronda automática", "gap_seconds": 6,
+                    "entries": [dict(c) for c in PLAYLIST_CATALOG]}
+
+
+def playlist_running():
+    """Truth = is a playlist-runner.py process alive (survives a dashboard restart)."""
+    try:
+        out = subprocess.run(["pgrep", "-f", "playlist-runner[.]py"],
+                             capture_output=True, text=True, timeout=5)
+        return out.returncode == 0 and bool(out.stdout.strip())
+    except Exception:
+        return False
+
+
+def playlist_start(pl):
+    if playlist_running():
+        return False, "ya hay una ronda corriendo"
+    entries = pl.get("entries") if isinstance(pl, dict) else None
+    if not entries:
+        return False, "la ronda no tiene experiencias"
+    os.makedirs(f"{HOME}/vr/logs", exist_ok=True)
+    path = f"{HOME}/vr/logs/playlist-current.json"
+    with open(path, "w") as f:
+        json.dump(pl, f, ensure_ascii=False)
+    with open(PLAYLIST_CONTROL, "w") as f:
+        json.dump({"command": "run"}, f)
+    log = open(f"{HOME}/vr/logs/playlist-runner.log", "a")
+    subprocess.Popen(["python3", PLAYLIST_RUNNER, path], stdout=log,
+                     stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                     start_new_session=True)
+    return True, f"ronda '{pl.get('name', '?')}' lanzada ({len(entries)} experiencias)"
+
+
+def playlist_control_cmd(cmd):
+    mapped = {"resume": "run"}.get(cmd, cmd)
+    if mapped not in ("run", "pause", "stop", "skip"):
+        return False, f"comando invalido: {cmd}"
+    if not playlist_running() and mapped != "stop":
+        return False, "no hay ronda corriendo"
+    with open(PLAYLIST_CONTROL, "w") as f:
+        json.dump({"command": mapped}, f)
+    return True, f"comando: {cmd}"
+
+
+def playlist_status():
+    try:
+        st = json.load(open(PLAYLIST_STATUS))
+    except Exception:
+        st = {}
+    st["running"] = playlist_running()
+    return st
 
 
 def build_status():
@@ -434,6 +530,12 @@ PAGE = """<!doctype html>
 <div class="card" style="margin-bottom:16px">
   <h2>Audio outputs -- check one, another, or several (duplicate); per-device volume</h2>
   <div id="audio-devices">loading audio devices...</div>
+</div>
+<div class="card" style="margin-bottom:16px">
+  <h2>Ronda de demo (playlist) -- secuencia con voz "próximo título" + teardown limpio entre cada uno</h2>
+  <div id="pl-live"></div>
+  <div id="pl-build">loading...</div>
+  <div id="pl-msg" class="dim" style="font-size:12px;margin-top:6px"></div>
 </div>
 <div class="card" style="margin-bottom:16px">
   <h2>Demos -- one button per title + head-tracking mode (only "approved" goes to guests)</h2>
@@ -667,9 +769,19 @@ async function tick() {
     } else {
       powerRow = `<span class="warn">unknown -- vr-power-watchdog.service not installed</span>`;
     }
+    // DoF is a per-(player x headset) property: how many axes the current session
+    // tracks depends on both the mode Monado was started in AND which headset is
+    // connected (a different headset can change what's available). Read live from
+    // monado-service's WMR_SLAM/WMR_CAMERAS env (rig_telemetry.tracking_mode).
+    const dofMap = {
+      '6dof': '6DoF - head + controllers (SLAM)',
+      '3dof': '3DoF - head orientation only',
+      'ctrl': 'controllers only (no head position)',
+    };
+    const headset = d.vr_device ? 'HP Reverb G2' : 'headset not detected';
     const trackingRow = sessionActive
-      ? `<div class="row"><span>tracking</span><span class="ok">${d.tracking || '?'}</span></div>`
-      : `<div class="row"><span>tracking</span><span class="dim">n/a -- no session</span></div>`;
+      ? `<div class="row"><span>DoF (head tracking)</span><span class="ok">${dofMap[d.tracking] || (d.tracking || '?')} <span class="dim">&middot; ${headset}</span></span></div>`
+      : `<div class="row"><span>DoF (head tracking)</span><span class="dim">n/a -- no session (set per player &times; headset when a demo starts)</span></div>`;
     const audio = d.audio || {};
     const audioCls = audio.route === 'headset' ? 'ok' : 'warn';
     const audioLabel = `${audio.route || '?'}${audio.muted ? ' (MUTED)' : ''} -- ${audio.volume_pct != null ? audio.volume_pct + '%' : '?'}`;
@@ -711,6 +823,82 @@ async function tick() {
   }
   setTimeout(tick, 6000);
 }
+// ---- Demo round / playlist -------------------------------------------------
+async function refreshPlaylistBuild() {
+  try {
+    const r = await fetch('/api/playlist/catalog');
+    const d = await r.json();
+    const el = document.getElementById('pl-build');
+    const rows = d.catalog.map((c, i) =>
+      `<label style="display:block;margin:3px 0"><input type="checkbox" class="pl-cb" data-i="${i}" checked> ${c.name} <span class="dim">(${c.type}${c.tracking ? ', ' + c.tracking : ''}, ${c.seconds}s)</span></label>`
+    ).join('');
+    el.dataset.catalog = JSON.stringify(d.catalog);
+    el.innerHTML =
+      `<div style="margin-bottom:6px">Nombre: <input id="pl-name" value="Ronda demo" style="width:200px"></div>` +
+      rows +
+      `<div style="margin-top:8px">
+         <button onclick="plStart(false)">▶ Ronda automática (todo, recomendada)</button>
+         <button onclick="plStart(true)">▶ Disparar selección</button>
+       </div>
+       <div class="dim" style="font-size:12px;margin-top:6px">Voz "próximo título" + teardown limpio entre cada uno. Pausable / detenible una vez lanzada.</div>`;
+  } catch (e) {
+    document.getElementById('pl-build').textContent = 'catalog error: ' + e;
+  }
+}
+async function plStart(custom) {
+  let body = '';
+  if (custom) {
+    const el = document.getElementById('pl-build');
+    const catalog = JSON.parse(el.dataset.catalog || '[]');
+    const picked = Array.from(document.querySelectorAll('.pl-cb'))
+      .filter(cb => cb.checked).map(cb => catalog[parseInt(cb.dataset.i)]);
+    if (!picked.length) { document.getElementById('pl-msg').textContent = 'elegí al menos una experiencia'; return; }
+    const name = (document.getElementById('pl-name').value || 'Ronda').trim();
+    body = JSON.stringify({ name: name, gap_seconds: 6, entries: picked });
+  }
+  document.getElementById('pl-msg').textContent = 'lanzando ronda...';
+  try {
+    const r = await fetch('/api/playlist/start', { method: 'POST', body: body });
+    const d = await r.json();
+    document.getElementById('pl-msg').textContent = (d.ok ? 'OK -- ' : 'FALLO -- ') + d.message;
+  } catch (e) { document.getElementById('pl-msg').textContent = 'error: ' + e; }
+}
+async function plControl(cmd) {
+  document.getElementById('pl-msg').textContent = cmd + '...';
+  try {
+    const r = await fetch('/api/playlist/control?cmd=' + cmd, { method: 'POST' });
+    const d = await r.json();
+    document.getElementById('pl-msg').textContent = (d.ok ? '' : 'FALLO -- ') + d.message;
+  } catch (e) { document.getElementById('pl-msg').textContent = 'error: ' + e; }
+}
+async function tickPlaylist() {
+  try {
+    const s = await (await fetch('/api/playlist/status', { cache: 'no-store' })).json();
+    const live = document.getElementById('pl-live');
+    const build = document.getElementById('pl-build');
+    if (s.running) {
+      build.style.display = 'none';
+      const idx = (s.index != null && s.index >= 0) ? (s.index + 1) : '-';
+      const rem = s.remaining_s != null ? (s.remaining_s + 's') : '';
+      const paused = s.state === 'paused';
+      live.innerHTML =
+        `<div class="row"><span><b>${s.name || 'Ronda'}</b> &nbsp; ${idx}/${s.total || '?'} &nbsp; ${s.current || ''}</span>` +
+        `<span class="${paused ? 'warn' : 'ok'}">${s.state || ''} ${rem}</span></div>` +
+        `<div style="margin-top:8px">
+           <button onclick="plControl('pause')">⏸ Pausa (no arranca el próximo)</button>
+           <button onclick="plControl('resume')">▶ Reanudar</button>
+           <button onclick="plControl('skip')">⏭ Saltear</button>
+           <button onclick="plControl('stop')">⏹ Detener y limpiar la ronda</button>
+         </div>`;
+    } else {
+      live.innerHTML = '';
+      if (build.style.display === 'none') build.style.display = '';
+    }
+  } catch (e) { /* transient */ }
+}
+setInterval(tickPlaylist, 2000);
+refreshPlaylistBuild();
+tickPlaylist();
 tick();
 </script>
 </body></html>"""
@@ -747,6 +935,21 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(img)))
             self.end_headers()
             self.wfile.write(img)
+        elif self.path.startswith("/api/playlist/catalog"):
+            body = json.dumps({"catalog": PLAYLIST_CATALOG,
+                               "default": DEFAULT_PLAYLIST}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif self.path.startswith("/api/playlist/status"):
+            body = json.dumps(playlist_status()).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
         elif self.path.startswith("/api/status"):
             body = json.dumps(get_status()).encode()
             self.send_response(200)
@@ -807,6 +1010,26 @@ class Handler(BaseHTTPRequestHandler):
                 self._json_post(ok, f"set to {pct}%")
             except Exception as e:
                 self._json_post(False, str(e))
+        elif self.path.startswith("/api/playlist/start"):
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length) if length else b""
+            try:
+                pl = json.loads(raw) if raw.strip() else DEFAULT_PLAYLIST
+            except Exception:
+                pl = DEFAULT_PLAYLIST
+            try:
+                ok, msg = playlist_start(pl)
+            except Exception as e:
+                ok, msg = False, str(e)
+            self._json_post(ok, msg)
+        elif self.path.startswith("/api/playlist/control"):
+            q = parse_qs(urlparse(self.path).query)
+            cmd = q.get("cmd", [""])[0]
+            try:
+                ok, msg = playlist_control_cmd(cmd)
+            except Exception as e:
+                ok, msg = False, str(e)
+            self._json_post(ok, msg)
         elif self.path.startswith("/api/action/"):
             action_id = self.path.split("/api/action/", 1)[1].strip("/")
             ok, msg = run_action(action_id)
