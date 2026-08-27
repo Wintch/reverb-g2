@@ -38,9 +38,11 @@
 > backend variants: H (2 cm triangulation alone) and L (keyframe threshold 0.9) are refuted
 > (46 / 96 trips); G3 (`vio_marg_lost_landmarks: false` alone) gives 5× the landmarks for +3 ms
 > and RSS flat but the same drift; G′ (+ recall) 4× landmarks, 30 trips; K (G′ + 12 keyframes)
-> 1 trip, span 3.0 m; **I (recall + marg-lost off + 2 cm + 12 keyframes) is the first config
-> that fixes rest: span 0.41 m, 0 trips, 145 / 81 landmarks** — at a CPU cost (frontend p50
-> 49 ms vs 28, budget 33) that three Basalt patches attack: 0014 (recall's patch map was an
+> 1 trip, span 3.0 m; **I (recall + marg-lost off + 2 cm + 12 keyframes) had one exceptional
+> run — span 0.41 m, 0 trips, 145 / 81 landmarks — that its replicate I2 did NOT reproduce
+> (span 4.52 m, 4 trips)**: run-to-run variance is large and nothing about rest is decided
+> until the I3/I4 replicates land. I's CPU cost (frontend p50 49 ms vs 28, budget 33) is what
+> three Basalt patches attack: 0014 (recall's patch map was an
 > unbounded 18 GB/3 min leak — bounded), 0015 (parallel patch building, ~4 ms), 0016 (the
 > once-a-second prune sweep was every p99 spike — amortized). Still running when this was
 > written: I2 (I on 0015), M (I without recall — if it matches I at rest, recall's cost is only

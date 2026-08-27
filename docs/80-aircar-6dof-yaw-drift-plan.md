@@ -666,7 +666,19 @@ inherit H's 2 cm gate and are deprioritised; I still runs once for the record.
 | H | 24 / 6 | 5.1 | 46 | 7.50 m | 4.90 m | 7.0 ms | +3 | UNSAFE |
 | G′ (G + 0014) | 64 / 37 | 1.3 | 30 | 5.73 m | 3.00 m | 5.6 ms | +602 | UNSAFE |
 | K (G′ + 12 kfs; rerun on 0015) | 108 / 66 | 0.00 | 1 | 3.01 m | 2.94 m | 10.0 ms | flat (−200) | better than base (trips 7→1), not the fix (span 3 m); frontend p50 36.5 / p99 97 |
-| **I (G′ + H: recall + marg-lost off + 2 cm + 12 kfs)** | **145 / 81** | **0.02** | **0** | **0.41 m** | **0.32 m** | 13.6 ms | +232 | **stable at rest; CPU over budget** |
+| **I (G′ + H: recall + marg-lost off + 2 cm + 12 kfs)** | **145 / 81** | **0.02** | **0** | **0.41 m** | **0.32 m** | 13.6 ms | +232 | **one exceptional run — see I2** |
+| I2 (same config as I, on 0015) | 97 / 53 | 0.13 | 4 | 4.52 m | 3.00 m | 10.1 ms | flat (−43) | ≈ base drift with more landmarks; frontend p50 34.8 / p99 93 |
+
+**I did not replicate.** I2 is byte-for-byte I's Basalt config (the only difference is the
+`libbasalt.so` underneath: 0015's parallel patch build, which computes the same patches), and it
+drifted like the base: span 4.52 m, trips at 413 / 749 / 1004 / 1028 s. Either I's 20 minutes
+were a lucky draw of a high-variance process, or the faster frontend (p50 49 → 35 ms) changed
+which frames get through and that changed the outcome — with n = 1 per arm the two can't be
+told apart. **So "I fixes rest" is withdrawn to "one run of I was exceptional."** I3 and I4 are
+I's config again (different prune grace / sweep — no effect on the tracking math), so by their
+end there are four runs of the I family to estimate run-to-run variance from; nothing about
+rest is decided before that. The landmark-count gains (G3, K, I, I2 all 5–9× base) are
+consistent across runs; the drift outcome is not.
 
 **I is the first config that fixes rest** — an order of magnitude on every drift metric (span
 0.41 m vs 4.75, max 1-s step 0.20 m vs 3.29, zero trips vs 7) with 145 / 81 landmarks and only
