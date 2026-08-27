@@ -709,6 +709,17 @@ without a restart between sessions.
 | G3 (marg-lost off only, no recall) | 89 / 49 | 0.09 | 7 | 5.46 m | 3.00 m | 6.6 ms | +9 (flat) | SAFE — 5× the landmarks for +3 ms; drift = base |
 | L (keyframe threshold 0.9) | 17 / 4 | — | **96** | — | — | — | +34 | **worst of the night — refuted** |
 | M (I without recall: marg-lost off + 2 cm + 12 kfs) | 109 / 67 | 0.38 | **21** | 5.95 m | 3.00 m | 10.7 ms | +16 | unstable without recall; frontend p50 28.6 (= base) |
+| I3 (I config, recall grace 30 frames, on 0015) | 94 / 40 | 1.9 | **50** (2–5 every minute) | 5.93 m | 3.02 m | 10.4 ms | +360 | CPU fixed (p50 30.6 / p99 58, patches 190k) — tracking much worse, steadily |
+
+**I3: the grace is not a memory knob.** A 30-frame grace brought the frontend under budget
+(p50 30.6 ms, p99 58, patch map 190k) — and produced 50 trips. A patch is the recall's memory
+of a landmark that left view; one second is too short for it to come back, so the landmark is
+re-detected as a *new* one instead — the churn again. Grace stays at 90 (or longer). Note also
+what this does to the I family's at-rest record: **0 / 4 / 50 trips for the same tracking
+config.** That is no longer "variance" — the runs were made at different hours (base 11:46,
+I 13:19, I2 15:05, I3 15:49) and the room's light changed across the afternoon; every soak sees
+whatever the resting headset sees. `base2` (a base replicate at ~16:40) is the control for that
+confound, and no at-rest ranking is trusted until it lands.
 
 **M answers the recall question at rest: recall is load-bearing, not decorative.** Same
 config as I minus recall → 21 trips (base 7). Lining up every run by whether it has recall +
