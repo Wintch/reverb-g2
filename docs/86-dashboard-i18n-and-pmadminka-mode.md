@@ -44,3 +44,37 @@ correctly (the real agent was active/enabled at the time). Did not toggle the li
 as part of this test — it's the actual production rental agent, and this box may have a real
 renter attached; toggling it for real is a one-click action now, exercised for real the next time
 it's actually needed rather than as a test.
+
+## Correction, same day: the i18n change above shipped with the whole page broken
+
+The `PAGE` HTML/JS template is a plain (non-raw) Python triple-quoted string. Several of the i18n
+strings added above (`playlist_h2`, `demos_h2`, `pl_hint`, `guide_1`/`guide_2`/`guide_3`/`guide_5`,
+EN+ES only — RU used «guillemets» instead of `"` and was unaffected) contain an embedded quote
+mark, written as `\"` so the rendered JS would have a validly-escaped string. Python's own string
+literal parser consumes that backslash on load — `\"` inside a non-raw `"""..."""` evaluates to a
+bare `"`, not `\"` — so the JS actually served had unescaped quotes inside double-quoted string
+literals. That's a JS syntax error, and a syntax error anywhere in a single inline `<script>` block
+aborts the *entire* script: nothing after it runs, including every `tick()`/`loadActions()`/
+`refreshUserCenter()` call at the bottom. Symptom: the static HTML shell rendered fine, every
+dynamic panel stayed on "loading...", and it did not clear on reload — reported live by the user
+("todo dice loading. recargo y hace lo mismo").
+
+**Root cause of missing this in first-pass testing**: verification only checked `curl` status codes
+and JSON payload shape (all fine — those never touch the JS content), and a syntax check that
+extracted the JS from the raw `.py` *source text* with a regex, which faithfully preserved the
+`\"` exactly as typed and therefore didn't reproduce Python's own escape processing — the check
+validated code that was never actually going to be served. Re-diagnosed by running the real page
+script (with `document`/`fetch`/`Image` stubs) against the live backend in Node, which surfaced a
+`Cannot set properties of null` false lead first (a harness gap, not a real bug — fixed the stub),
+and by diffing the *live-fetched* `<script>` content against the local source, which showed the
+quotes silently missing. Fix: `\"` → `\\"` (32 occurrences, all confined to this i18n block) so the
+backslash survives Python's own parse and reaches the JS as a real escape. Confirmed this time by
+extracting `PAGE`'s value via `ast.literal_eval` on the actual Python AST (not a source-text regex)
+and by re-fetching the live-served page after redeploying — both now pass `node --check`.
+
+**Lesson**: a "syntax check" against the raw template source text is not equivalent to a syntax
+check against what Python actually evaluates that string to, whenever the template contains
+backslash sequences. Anywhere `PAGE`-style templates need a literal backslash to survive into the
+rendered output, either double the backslash in the Python source or make the string `r"""`
+(not usable here since existing `\n` styling isn't needed but would need auditing) — and validate
+by fetching what the server actually returns, never by reading the `.py` source text back out.
