@@ -569,3 +569,36 @@ neck-pivot arc as orientation is predicted forward (`pos += (R_pred - R_anchor)�
 the orientation/position timestamp split; 150 mm measured best. The recommended seated recipe
 also enables the existing `SLAM_CORRECTION_SPREAD_MS=50` (not new code) to stop the periodic
 re-anchor snap. Auto-applied to Aircar by `scripts/vr-launcher.py`'s TITLE_PROFILES.
+
+## 0098 — `WMR_FORWARD_ANGULAR_VELOCITY` (opt-in, default off)
+
+`wmr_hmd_get_slam_tracked_pose()` always cleared `ANGULAR_VELOCITY_VALID_BIT` before returning,
+so SteamVR's own photon-time extrapolation/reprojection always saw zero head angular velocity
+regardless of real motion. Forwards the SLAM tracker's own already-predicted angular velocity
+(not the 3dof path's stale `fusion.last_angular_velocity`), axis-corrected the same way position
+already is. Independent origin, reimplemented fresh against this codebase: inspired by a gap the
+same community fork this project has been reviewing (`Faulto/reverb-g2-linux`, see
+`handoff-20260827-faulto-patches/`) found and fixed on their own fork. **Open risk, not
+resolved**: whether this double-counts against 0097's own prediction when both are active —
+not measured, flagged for whoever runs the wearer A/B.
+
+## 0099 — `SLAM_SESSION_ANCHOR_RADIUS_CM` + `SLAM_QUAT_NORM_CHECK` (opt-in, both default off)
+
+Two more divergence guards alongside 0023-a's speed-based one, for failure modes it cannot see:
+slow accumulated drift (many small steps, none individually fast enough to trip the speed
+threshold) and a corrupted orientation quaternion riding along a plausible-looking position.
+Reuse the existing `auto_reset`→`tracker_reset()` response path verbatim, including 0057's
+frame-continuity carry. `SLAM_SESSION_ANCHOR_RADIUS_CM` requires `SLAM_RESET_OFFSET_CARRY` on
+(the default) — without it, logs a warning and stays off rather than silently no-op'ing on a
+meaningless comparison. **Real, disclosed limitation**: because `reset_offset` re-anchors the
+output pose onto wherever drift already carried it, a slow-drift trip is not self-healing the
+way a speed-spike trip is — it can keep re-firing (rate-limited to the ~2s quiet window) until
+real motion or the tracker's own loop closure brings position back under the radius; may be more
+useful as a diagnostic signal than a recovery mechanism as shipped. Both checks compare via a
+NaN-safe negated range rather than this file's usual direct-threshold form — two independent
+adversarial reviews caught that a direct `x < lo || x > hi` form lets a NaN pass through
+completely undetected, exactly the corrupted-pose case `SLAM_QUAT_NORM_CHECK` exists to catch.
+Independent origin, reimplemented against this codebase's actual current machinery: inspired by
+the same community fork's (`Faulto/reverb-g2-linux`) independently-arrived-at anchor-radius and
+quaternion-sanity checks on a different Monado fork base. Reasoned addition, NOT a live-incident
+fix — **NOT YET HARDWARE-VALIDATED**, both default off pending a wearer A/B.
