@@ -128,6 +128,32 @@ def audio_status():
     }
 
 
+# ---- pmadminka rental-hub attach/detach (2026-08-27) ----
+# pmadminka-agent.py (see project_machine_reservation_system) is what actually makes this
+# box remotely rentable -- it runs as its own systemd --user service, independent of this
+# dashboard. This just surfaces + toggles that service's state so the operator always knows
+# at a glance whether the rig is "standalone" (this dashboard's own read-only status only) or
+# "attached" (a remote renter via the hub could queue/kill Steam titles on it too), and can
+# detach it in one click. No sudo needed -- it's a --user unit. Matters most right before a
+# live demo: the hub is very likely unreachable from the venue network anyway, so standalone
+# must be the safe, fully-functional default, not a degraded fallback.
+PMADMINKA_SERVICE = "pmadminka-agent.service"
+
+
+def pmadminka_status():
+    out, _ = run(["systemctl", "--user", "is-active", PMADMINKA_SERVICE])
+    state = out.strip() or "unknown"
+    return {"attached": state == "active", "state": state}
+
+
+def pmadminka_set_attached(attached):
+    action = "start" if attached else "stop"
+    out, rc = run(["systemctl", "--user", action, PMADMINKA_SERVICE], timeout=10)
+    if rc != 0:
+        return False, f"systemctl --user {action} {PMADMINKA_SERVICE} failed: {out}"
+    return True, f"pmadminka {'attached' if attached else 'detached'}"
+
+
 # ---- Headset/screen preview (2026-08-26) ----
 # The command-center's embedded headset image. Same PROVEN capture mechanism as
 # pmadminka-agent.py (which already pushes these to a remote server from this exact box):
@@ -430,19 +456,29 @@ HEADSET_FIXED = {
 }
 
 # Per-user ADJUSTABLE settings. brightness is the xrizer color-scale gain (1.0 = passthrough).
+# "lang" (en/es/ru) picks which STRINGS locale the page's static chrome renders in for that
+# user -- default "es" here to match this dashboard's actual daily-use language up to now
+# (2026-08-27), not "en", so switching to per-user i18n doesn't silently change what today's
+# real operator sees.
 DEFAULT_USERS = {
     "active": "default",
     "users": {
         "default": {"height_m": 1.70, "dof": "3dof", "brightness": 1.0,
-                    "mapping": "Xbox pad; A recentre", "notes": ""},
+                    "mapping": "Xbox pad; A recentre", "notes": "", "lang": "es"},
     },
 }
+
+SUPPORTED_LANGS = ("en", "es", "ru")
 
 
 def load_users():
     try:
         d = json.load(open(USER_PROFILES_FILE))
         assert isinstance(d.get("users"), dict) and d.get("active")
+        # Migration: profiles saved before "lang" existed default to "es", same reasoning
+        # as DEFAULT_USERS above -- don't silently change an existing operator's language.
+        for u in d["users"].values():
+            u.setdefault("lang", "es")
         return d
     except Exception:
         return json.loads(json.dumps(DEFAULT_USERS))
@@ -496,6 +532,7 @@ def build_status():
         "gpu_power": gpu_power(),
         "power_mode": rig_telemetry.power_mode(),
         "audio": audio_status(),
+        "pmadminka": pmadminka_status(),
         # Everything below this line mirrors pmadminka-agent.py's heartbeat body
         # (2026-08-23) -- same source functions, so the two never disagree.
         "specs": specs,
@@ -582,7 +619,7 @@ PAGE = """<!doctype html>
   .adev .aval { font-size:12px; color:#8b93a7; min-width:40px; text-align:right; }
 </style></head>
 <body>
-<h1>iashur -- HP Reverb G2 lab status</h1>
+<h1 data-i18n="h1">iashur -- HP Reverb G2 lab status</h1>
 <div id="attn"></div>
 <div id="actions-row" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:16px;">
   <button id="compositor-toggle" disabled>compositor: --</button>
@@ -590,39 +627,159 @@ PAGE = """<!doctype html>
 </div>
 <div id="action-msg"></div>
 <div class="card" style="margin-bottom:16px">
-  <h2>Headset preview <span id="screen-note" class="dim" style="font-size:12px"></span></h2>
+  <h2><span data-i18n="preview_h2">Headset preview</span> <span id="screen-note" class="dim" style="font-size:12px"></span></h2>
   <img id="screen" alt="no preview" style="max-width:100%; border-radius:8px; background:#0b0e14; display:none">
-  <div id="screen-empty" class="dim" style="font-size:13px">no hay ventana para previsualizar (arrancá un juego/player)</div>
+  <div id="screen-empty" class="dim" style="font-size:13px" data-i18n="preview_empty">no window to preview (start a game/player)</div>
 </div>
 <div class="card" style="margin-bottom:16px">
-  <h2>Audio outputs -- check one, another, or several (duplicate); per-device volume</h2>
+  <h2 data-i18n="audio_h2">Audio outputs -- check one, another, or several (duplicate); per-device volume</h2>
   <div id="audio-devices">loading audio devices...</div>
 </div>
 <div class="card" style="margin-bottom:16px">
-  <h2>Centro de comando -- casco &amp; usuario</h2>
+  <h2 data-i18n="cc_h2">Command centre -- headset &amp; user</h2>
   <div id="user-center">loading...</div>
 </div>
 <div class="card" style="margin-bottom:16px">
-  <h2>Ronda de demo (playlist) -- secuencia con voz "próximo título" + teardown limpio entre cada uno</h2>
+  <h2 data-i18n="playlist_h2">Demo round (playlist) -- sequence with "next title" voice cue + clean teardown between each</h2>
   <div id="pl-live"></div>
   <div id="pl-build">loading...</div>
   <div id="pl-msg" class="dim" style="font-size:12px;margin-top:6px"></div>
 </div>
 <div class="card" style="margin-bottom:16px">
-  <h2>Demos -- one button per title + head-tracking mode (only "approved" goes to guests)</h2>
+  <h2 data-i18n="demos_h2">Demos -- one button per title + head-tracking mode (only "approved" goes to guests)</h2>
   <div id="demos">loading demos...</div>
-  <h2 style="margin-top:14px">Operator guide (standing, every guest)</h2>
+  <h2 style="margin-top:14px" data-i18n="guide_h2">Operator guide (standing, every guest)</h2>
   <ul class="guide">
-    <li><b>Audio</b>: the "audio" toggle above must read <b>headset</b> before handing over (130%). If sound vanishes mid-session the stream got orphaned by a USB re-enumeration -- click "Audio -&gt; headset" again, it re-routes live.</li>
-    <li><b>Window focus</b>: the game's desktop window must be <b>focused</b> or Wine drops gamepad + audio (only head tracking keeps working). If a guest says "no sound / pad dead", click the game window first, don't debug.</li>
-    <li><b>Fast head turns (6dof only)</b>: yaw is the weak axis -- a quick side-to-side look drifts the seat. Tell the guest <b>"press A"</b> the moment you see it, don't wait for them to notice.</li>
-    <li><b>Light</b>: no automated low-light warning exists. Dim room = tracking runaways in the first ~75 s. Check the room before each 6dof session.</li>
-    <li><b>Between titles</b>: "Stop all games" then wait for the session card to read IDLE before the next demo button. Never launch a second title on top of a live one.</li>
+    <li data-i18n="guide_1"><b>Audio</b>: the "audio" toggle above must read <b>headset</b> before handing over (130%). If sound vanishes mid-session the stream got orphaned by a USB re-enumeration -- click "Audio -&gt; headset" again, it re-routes live.</li>
+    <li data-i18n="guide_2"><b>Window focus</b>: the game's desktop window must be <b>focused</b> or Wine drops gamepad + audio (only head tracking keeps working). If a guest says "no sound / pad dead", click the game window first, don't debug.</li>
+    <li data-i18n="guide_3"><b>Fast head turns (6dof only)</b>: yaw is the weak axis -- a quick side-to-side look drifts the seat. Tell the guest <b>"press A"</b> the moment you see it, don't wait for them to notice.</li>
+    <li data-i18n="guide_4"><b>Light</b>: no automated low-light warning exists. Dim room = tracking runaways in the first ~75 s. Check the room before each 6dof session.</li>
+    <li data-i18n="guide_5"><b>Between titles</b>: "Stop all games" then wait for the session card to read IDLE before the next demo button. Never launch a second title on top of a live one.</li>
   </ul>
 </div>
 <div class="grid" id="grid">loading...</div>
 <div class="ts" id="ts"></div>
 <script>
+// ---- i18n -------------------------------------------------------------------
+// Pattern from tools/docs/GUIA_SITIOS.md's site toolkit: an I18N object keyed by
+// lang, data-i18n attributes on static elements, a t() helper for JS-built
+// strings, localStorage for per-browser persistence, no page reload on switch.
+// Scope, deliberately: this covers static chrome (headers, guide, command-centre
+// and playlist labels) -- the heavily dynamic per-tick telemetry text in tick()
+// and renderAudioDevices() is NOT localized yet, that's a separate future pass.
+const I18N = {
+  en: {
+    h1: "iashur -- HP Reverb G2 lab status",
+    preview_h2: "Headset preview",
+    preview_empty: "no window to preview (start a game/player)",
+    audio_h2: "Audio outputs -- check one, another, or several (duplicate); per-device volume",
+    cc_h2: "Command centre -- headset & user",
+    playlist_h2: "Demo round (playlist) -- sequence with \"next title\" voice cue + clean teardown between each",
+    demos_h2: "Demos -- one button per title + head-tracking mode (only \"approved\" goes to guests)",
+    guide_h2: "Operator guide (standing, every guest)",
+    guide_1: "<b>Audio</b>: the \"audio\" toggle above must read <b>headset</b> before handing over (130%). If sound vanishes mid-session the stream got orphaned by a USB re-enumeration -- click \"Audio -&gt; headset\" again, it re-routes live.",
+    guide_2: "<b>Window focus</b>: the game's desktop window must be <b>focused</b> or Wine drops gamepad + audio (only head tracking keeps working). If a guest says \"no sound / pad dead\", click the game window first, don't debug.",
+    guide_3: "<b>Fast head turns (6dof only)</b>: yaw is the weak axis -- a quick side-to-side look drifts the seat. Tell the guest <b>\"press A\"</b> the moment you see it, don't wait for them to notice.",
+    guide_4: "<b>Light</b>: no automated low-light warning exists. Dim room = tracking runaways in the first ~75 s. Check the room before each 6dof session.",
+    guide_5: "<b>Between titles</b>: \"Stop all games\" then wait for the session card to read IDLE before the next demo button. Never launch a second title on top of a live one.",
+    cc_active_user: "Active user", cc_new_user_ph: "new user", cc_add_btn: "+ add",
+    cc_adjustable: "Adjustable (per user)", cc_brightness: "brightness", cc_height: "height (m)",
+    cc_dof: "preferred DoF", cc_mapping: "controller mapping", cc_notes: "notes",
+    cc_save_btn: "Save user", cc_fixed: "Fixed (not changeable on this headset)", cc_lang: "language",
+    pl_name_label: "Name:", pl_name_default: "Demo round",
+    pl_auto_btn: "▶ Auto round (all, recommended)", pl_custom_btn: "▶ Fire selection",
+    pl_hint: "\"Next title\" voice cue + clean teardown between each. Pausable / stoppable once launched.",
+    pl_pause: "⏸ Pause (won't start the next one)", pl_resume: "▶ Resume",
+    pl_skip: "⏭ Skip", pl_stop: "⏹ Stop and clear the round",
+    pm_row_label: "pmadminka (rental hub)", pm_attached: "ATTACHED -- remotely rentable",
+    pm_standalone: "standalone -- not attached", pm_attach_btn: "attach", pm_detach_btn: "detach now",
+  },
+  es: {
+    h1: "iashur -- estado del lab HP Reverb G2",
+    preview_h2: "Vista previa del casco",
+    preview_empty: "no hay ventana para previsualizar (arrancá un juego/player)",
+    audio_h2: "Salidas de audio -- marcá una, otra, o varias (duplicado); volumen por dispositivo",
+    cc_h2: "Centro de comando -- casco & usuario",
+    playlist_h2: "Ronda de demo (playlist) -- secuencia con voz \"próximo título\" + teardown limpio entre cada uno",
+    demos_h2: "Demos -- un botón por título + modo de head-tracking (solo \"approved\" se muestra a invitados)",
+    guide_h2: "Guía del operador (permanente, para cada invitado)",
+    guide_1: "<b>Audio</b>: el toggle de \"audio\" de arriba tiene que decir <b>headset</b> antes de entregar el casco (130%). Si el sonido desaparece a mitad de sesión, el stream quedó huérfano por una re-enumeración de USB -- hacé clic en \"Audio -&gt; headset\" de nuevo, re-rutea en vivo.",
+    guide_2: "<b>Foco de ventana</b>: la ventana de escritorio del juego tiene que estar <b>enfocada</b> o Wine deja de mandar el gamepad + audio (solo el head tracking sigue andando). Si un invitado dice \"no hay sonido / el pad no anda\", hacé clic en la ventana del juego primero, no debuguees.",
+    guide_3: "<b>Giros rápidos de cabeza (solo 6dof)</b>: el yaw es el eje débil -- un giro rápido de lado a lado hace driftear el asiento. Decile al invitado <b>\"apretá A\"</b> apenas lo veas, no esperes a que se dé cuenta.",
+    guide_4: "<b>Luz</b>: no existe una alerta automática de poca luz. Sala oscura = descontroles de tracking en los primeros ~75 s. Revisá la sala antes de cada sesión 6dof.",
+    guide_5: "<b>Entre títulos</b>: \"Stop all games\" y después esperá a que la tarjeta de sesión diga IDLE antes del próximo botón de demo. Nunca lances un segundo título encima de uno en vivo.",
+    cc_active_user: "Usuario activo", cc_new_user_ph: "nuevo usuario", cc_add_btn: "+ agregar",
+    cc_adjustable: "Ajustable (por usuario)", cc_brightness: "brillo", cc_height: "altura (m)",
+    cc_dof: "DoF preferido", cc_mapping: "mapeo de controles", cc_notes: "notas",
+    cc_save_btn: "Guardar usuario", cc_fixed: "Fijo (no modificable en este casco)", cc_lang: "idioma",
+    pl_name_label: "Nombre:", pl_name_default: "Ronda demo",
+    pl_auto_btn: "▶ Ronda automática (todo, recomendada)", pl_custom_btn: "▶ Disparar selección",
+    pl_hint: "Voz \"próximo título\" + teardown limpio entre cada uno. Pausable / detenible una vez lanzada.",
+    pl_pause: "⏸ Pausa (no arranca el próximo)", pl_resume: "▶ Reanudar",
+    pl_skip: "⏭ Saltear", pl_stop: "⏹ Detener y limpiar la ronda",
+    pm_row_label: "pmadminka (hub de alquiler)", pm_attached: "CONECTADO -- alquilable remotamente",
+    pm_standalone: "standalone -- no conectado", pm_attach_btn: "conectar", pm_detach_btn: "desconectar ya",
+  },
+  ru: {
+    h1: "iashur -- статус лаборатории HP Reverb G2",
+    preview_h2: "Предпросмотр с гарнитуры",
+    preview_empty: "нет окна для предпросмотра (запустите игру/плеер)",
+    audio_h2: "Аудиовыходы -- отметьте один, другой или несколько (дублирование); громкость по устройству",
+    cc_h2: "Панель управления -- гарнитура и пользователь",
+    playlist_h2: "Демо-раунд (плейлист) -- последовательность с голосовым объявлением «следующий тайтл» + чистое завершение между показами",
+    demos_h2: "Демо -- одна кнопка на тайтл + режим head-tracking (гостям показываются только «approved»)",
+    guide_h2: "Руководство оператора (постоянное, для каждого гостя)",
+    guide_1: "<b>Звук</b>: переключатель «audio» вверху должен показывать <b>headset</b> перед передачей гарнитуры (130%). Если звук пропал посреди сессии -- поток осиротел из-за пере-энумерации USB, нажмите «Audio -&gt; headset» ещё раз, маршрут перестроится на лету.",
+    guide_2: "<b>Фокус окна</b>: окно игры на рабочем столе должно быть <b>в фокусе</b>, иначе Wine перестаёт передавать геймпад и звук (продолжает работать только head tracking). Если гость говорит «нет звука / пад не работает» -- сначала кликните по окну игры, не отлаживайте.",
+    guide_3: "<b>Быстрые повороты головы (только 6dof)</b>: yaw -- слабая ось, быстрый взгляд из стороны в сторону сдвигает «сиденье». Скажите гостю <b>«нажми A»</b> в момент, когда это заметите, не ждите, пока заметит он.",
+    guide_4: "<b>Освещение</b>: автоматического предупреждения о слабом освещении нет. Тёмная комната = сбои трекинга в первые ~75 с. Проверяйте освещение перед каждой 6dof-сессией.",
+    guide_5: "<b>Между тайтлами</b>: нажмите «Stop all games» и дождитесь статуса IDLE в карточке сессии перед следующей кнопкой демо. Никогда не запускайте второй тайтл поверх работающего.",
+    cc_active_user: "Активный пользователь", cc_new_user_ph: "новый пользователь", cc_add_btn: "+ добавить",
+    cc_adjustable: "Настраиваемое (по пользователю)", cc_brightness: "яркость", cc_height: "рост (м)",
+    cc_dof: "предпочитаемый DoF", cc_mapping: "раскладка контроллеров", cc_notes: "заметки",
+    cc_save_btn: "Сохранить пользователя", cc_fixed: "Фиксировано (нельзя изменить на этой гарнитуре)", cc_lang: "язык",
+    pl_name_label: "Название:", pl_name_default: "Демо-раунд",
+    pl_auto_btn: "▶ Автораунд (всё, рекомендуется)", pl_custom_btn: "▶ Запустить выбранное",
+    pl_hint: "Голосовое объявление «следующий тайтл» + чистое завершение между показами. Можно приостановить / остановить после запуска.",
+    pl_pause: "⏸ Пауза (следующий не запустится)", pl_resume: "▶ Продолжить",
+    pl_skip: "⏭ Пропустить", pl_stop: "⏹ Остановить и очистить раунд",
+    pm_row_label: "pmadminka (хаб аренды)", pm_attached: "ПОДКЛЮЧЕНО -- доступен для удалённой аренды",
+    pm_standalone: "автономно -- не подключено", pm_attach_btn: "подключить", pm_detach_btn: "отключить сейчас",
+  },
+};
+let currentLang = 'en';
+function t(key) { return (I18N[currentLang] && I18N[currentLang][key]) || I18N.en[key] || key; }
+function applyLang(lang, opts) {
+  opts = opts || {};
+  if (!I18N[lang]) lang = 'en';
+  currentLang = lang;
+  document.documentElement.lang = lang;
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.getAttribute('data-i18n');
+    const val = I18N[lang][key];
+    if (val != null) el.innerHTML = val;
+  });
+  try { localStorage.setItem('iashur-dashboard-lang', lang); } catch(e) {}
+  const sel = document.getElementById('cc-lang');
+  if (sel) sel.value = lang;
+  // Re-render the dynamically-built sections so they pick up the new language
+  // immediately instead of waiting for their own next poll.
+  if (typeof refreshUserCenter === 'function') refreshUserCenter();
+  if (typeof refreshPlaylistBuild === 'function' && !opts.skipPlaylist) refreshPlaylistBuild();
+  if (typeof tickPlaylist === 'function') tickPlaylist();
+}
+async function applyLangAndSave(lang) {
+  applyLang(lang);
+  try {
+    const d = await (await fetch('/api/users', {cache:'no-store'})).json();
+    const active = d.active;
+    const u = (d.users || {})[active] || {};
+    await fetch('/api/user/save', {method:'POST', body: JSON.stringify({
+      name: active, height_m: u.height_m, dof: u.dof, brightness: u.brightness,
+      mapping: u.mapping, notes: u.notes, lang: lang,
+    })});
+  } catch(e) {}
+}
 // compositor-up/down are handled by the dedicated toggle button below, not
 // listed among the generic one-shot action buttons.
 const COMPOSITOR_ACTION_IDS = new Set(['compositor-up', 'compositor-down']);
@@ -657,6 +814,18 @@ async function runAction(id, btn) {
     msg.textContent = 'request failed: ' + e;
   }
   btn.disabled = false;
+}
+async function pmToggle(currentlyAttached) {
+  const msg = document.getElementById('action-msg');
+  msg.textContent = currentlyAttached ? 'pmadminka: detaching...' : 'pmadminka: attaching...';
+  try {
+    const r = await fetch(currentlyAttached ? '/api/pmadminka/detach' : '/api/pmadminka/attach', {method: 'POST'});
+    const d = await r.json();
+    msg.textContent = (d.ok ? 'OK -- ' : 'FAILED -- ') + d.message;
+  } catch(e) {
+    msg.textContent = 'pmadminka toggle failed: ' + e;
+  }
+  tick();
 }
 function updateCompositorToggle(running) {
   const btn = document.getElementById('compositor-toggle');
@@ -857,6 +1026,12 @@ async function tick() {
     const audioCls = audio.route === 'headset' ? 'ok' : 'warn';
     const audioLabel = `${audio.route || '?'}${audio.muted ? ' (MUTED)' : ''} -- ${audio.volume_pct != null ? audio.volume_pct + '%' : '?'}`;
     const audioRow = `<div class="row"><span>audio output</span><span class="${audioCls}">${audioLabel}</span></div>`;
+    const pm = d.pmadminka || {};
+    const pmCls = pm.attached ? 'warn' : 'dim';
+    const pmLabel = pm.attached ? t('pm_attached') : t('pm_standalone');
+    const pmBtnLabel = pm.attached ? t('pm_detach_btn') : t('pm_attach_btn');
+    const pmRow = `<div class="row"><span>${t('pm_row_label')}</span><span class="${pmCls}">${pmLabel}
+      <button onclick="pmToggle(${!!pm.attached})" style="margin-left:8px;padding:2px 8px;font-size:12px">${pmBtnLabel}</button></span></div>`;
     const specs = d.specs || {};
     const cpu = specs.cpu || {}, gpuSpec = specs.gpu || {};
     document.getElementById('grid').innerHTML = `
@@ -866,6 +1041,7 @@ async function tick() {
         <div class="row"><span>power mode</span>${powerRow}</div>
         ${trackingRow}
         ${audioRow}
+        ${pmRow}
       </div>
       <div class="card"><h2>USB (${d.usb.present_count}/${d.usb.total})</h2>${usbRows}</div>
       <div class="card"><h2>Display connectors</h2>${drmRows}</div>
@@ -905,13 +1081,13 @@ async function refreshPlaylistBuild() {
     ).join('');
     el.dataset.catalog = JSON.stringify(d.catalog);
     el.innerHTML =
-      `<div style="margin-bottom:6px">Nombre: <input id="pl-name" value="Ronda demo" style="width:200px"></div>` +
+      `<div style="margin-bottom:6px">${t('pl_name_label')} <input id="pl-name" value="${t('pl_name_default')}" style="width:200px"></div>` +
       rows +
       `<div style="margin-top:8px">
-         <button onclick="plStart(false)">▶ Ronda automática (todo, recomendada)</button>
-         <button onclick="plStart(true)">▶ Disparar selección</button>
+         <button onclick="plStart(false)">${t('pl_auto_btn')}</button>
+         <button onclick="plStart(true)">${t('pl_custom_btn')}</button>
        </div>
-       <div class="dim" style="font-size:12px;margin-top:6px">Voz "próximo título" + teardown limpio entre cada uno. Pausable / detenible una vez lanzada.</div>`;
+       <div class="dim" style="font-size:12px;margin-top:6px">${t('pl_hint')}</div>`;
   } catch (e) {
     document.getElementById('pl-build').textContent = 'catalog error: ' + e;
   }
@@ -956,10 +1132,10 @@ async function tickPlaylist() {
         `<div class="row"><span><b>${s.name || 'Ronda'}</b> &nbsp; ${idx}/${s.total || '?'} &nbsp; ${s.current || ''}</span>` +
         `<span class="${paused ? 'warn' : 'ok'}">${s.state || ''} ${rem}</span></div>` +
         `<div style="margin-top:8px">
-           <button onclick="plControl('pause')">⏸ Pausa (no arranca el próximo)</button>
-           <button onclick="plControl('resume')">▶ Reanudar</button>
-           <button onclick="plControl('skip')">⏭ Saltear</button>
-           <button onclick="plControl('stop')">⏹ Detener y limpiar la ronda</button>
+           <button onclick="plControl('pause')">${t('pl_pause')}</button>
+           <button onclick="plControl('resume')">${t('pl_resume')}</button>
+           <button onclick="plControl('skip')">${t('pl_skip')}</button>
+           <button onclick="plControl('stop')">${t('pl_stop')}</button>
          </div>`;
     } else {
       live.innerHTML = '';
@@ -974,40 +1150,49 @@ tickPlaylist();
 async function refreshUserCenter() {
   try {
     const d = await (await fetch('/api/users', {cache:'no-store'})).json();
+    const u = (d.users||{})[d.active] || {};
+    // Per-user language PRESET: switching active user (or a fresh load) applies
+    // that user's saved "lang" automatically. Guard against the loop this would
+    // otherwise cause (applyLang() itself calls refreshUserCenter()): only
+    // re-apply and bail out when it actually differs from what's showing now.
+    const wantLang = u.lang || currentLang;
+    if (wantLang !== currentLang) { applyLang(wantLang); return; }
     const el = document.getElementById('user-center');
     const names = Object.keys(d.users || {});
     const opts = names.map(n => `<option value="${n}" ${n===d.active?'selected':''}>${n}</option>`).join('');
-    const u = (d.users||{})[d.active] || {};
     const gain = (+(d.brightness_live!=null?d.brightness_live:(u.brightness!=null?u.brightness:1))).toFixed(2);
     const esc = s => (s||'').replace(/"/g,'&quot;');
     const fixedRows = Object.entries(d.fixed||{}).map(([k,v]) =>
       `<div class="row"><span>${k}</span><span class="dim">${v}</span></div>`).join('');
+    const langOpts = ['en','es','ru'].map(l => `<option value="${l}" ${l===currentLang?'selected':''}>${l.toUpperCase()}</option>`).join('');
     el.innerHTML = `
-      <div class="row" style="gap:8px"><span><b>Usuario activo</b></span>
+      <div class="row" style="gap:8px"><span><b>${t('cc_active_user')}</b></span>
         <select id="uc-user" onchange="userSelect(this.value)">${opts}</select>
-        <input id="uc-new" placeholder="nuevo usuario" style="width:130px">
-        <button onclick="userAdd()">+ agregar</button></div>
-      <div style="margin-top:10px"><b>Ajustable (por usuario)</b></div>
-      <div class="row"><span>brillo</span>
+        <input id="uc-new" placeholder="${t('cc_new_user_ph')}" style="width:130px">
+        <button onclick="userAdd()">${t('cc_add_btn')}</button>
+        <span style="margin-left:auto">${t('cc_lang')}</span>
+        <select id="cc-lang" onchange="applyLangAndSave(this.value)">${langOpts}</select></div>
+      <div style="margin-top:10px"><b>${t('cc_adjustable')}</b></div>
+      <div class="row"><span>${t('cc_brightness')}</span>
         <input type="range" min="0.5" max="2.5" step="0.05" value="${gain}" id="uc-bri"
                oninput="document.getElementById('uc-bri-v').textContent=(+this.value).toFixed(2)+'x'"
                onchange="setBrightness(this.value)" style="width:220px">
         <span id="uc-bri-v" class="ok">${gain}x</span></div>
-      <div class="row"><span>altura (m)</span>
+      <div class="row"><span>${t('cc_height')}</span>
         <input id="uc-height" type="number" step="0.01" min="1.0" max="2.2" value="${u.height_m||1.7}" style="width:80px"></div>
-      <div class="row"><span>DoF preferido</span>
+      <div class="row"><span>${t('cc_dof')}</span>
         <select id="uc-dof"><option ${u.dof==='3dof'?'selected':''}>3dof</option><option ${u.dof==='6dof'?'selected':''}>6dof</option></select></div>
-      <div class="row"><span>mapeo de controles</span><input id="uc-map" value="${esc(u.mapping)}" style="width:260px"></div>
-      <div class="row"><span>notas</span><input id="uc-notes" value="${esc(u.notes)}" style="width:260px"></div>
-      <div style="margin-top:6px"><button onclick="userSave()">Guardar usuario</button>
+      <div class="row"><span>${t('cc_mapping')}</span><input id="uc-map" value="${esc(u.mapping)}" style="width:260px"></div>
+      <div class="row"><span>${t('cc_notes')}</span><input id="uc-notes" value="${esc(u.notes)}" style="width:260px"></div>
+      <div style="margin-top:6px"><button onclick="userSave()">${t('cc_save_btn')}</button>
         <span id="uc-msg" class="dim" style="font-size:12px"></span></div>
-      <div style="margin-top:12px"><b>Fijo (no modificable en este casco)</b></div>${fixedRows}`;
+      <div style="margin-top:12px"><b>${t('cc_fixed')}</b></div>${fixedRows}`;
   } catch(e) { document.getElementById('user-center').textContent = 'error: '+e; }
 }
 async function userSelect(name) { await fetch('/api/user/select?name='+encodeURIComponent(name), {method:'POST'}); refreshUserCenter(); }
 function userAdd() {
   const n = (document.getElementById('uc-new').value||'').trim(); if (!n) return;
-  fetch('/api/user/save', {method:'POST', body: JSON.stringify({name:n, height_m:1.7, dof:'3dof', brightness:1.0, mapping:'', notes:'', make_active:true})}).then(()=>refreshUserCenter());
+  fetch('/api/user/save', {method:'POST', body: JSON.stringify({name:n, height_m:1.7, dof:'3dof', brightness:1.0, mapping:'', notes:'', lang:currentLang, make_active:true})}).then(()=>refreshUserCenter());
 }
 async function setBrightness(g) { await fetch('/api/brightness?gain='+encodeURIComponent(g), {method:'POST'}); }
 async function userSave() {
@@ -1016,10 +1201,16 @@ async function userSave() {
     height_m: parseFloat(document.getElementById('uc-height').value)||1.7,
     dof: document.getElementById('uc-dof').value,
     brightness: parseFloat(document.getElementById('uc-bri').value)||1.0,
-    mapping: document.getElementById('uc-map').value, notes: document.getElementById('uc-notes').value });
+    mapping: document.getElementById('uc-map').value, notes: document.getElementById('uc-notes').value,
+    lang: currentLang });
   const d = await (await fetch('/api/user/save', {method:'POST', body})).json();
   document.getElementById('uc-msg').textContent = (d.ok?'guardado ':'FALLO ')+d.message;
 }
+(function() {
+  let initial = 'en';
+  try { initial = localStorage.getItem('iashur-dashboard-lang') || (navigator.language||'en').slice(0,2); } catch(e) {}
+  applyLang(initial, {skipPlaylist: true});
+})();
 refreshUserCenter();
 tick();
 </script>
@@ -1191,7 +1382,7 @@ class Handler(BaseHTTPRequestHandler):
                 assert name
                 d = load_users()
                 u = d["users"].get(name, {})
-                for k in ("height_m", "dof", "brightness", "mapping", "notes"):
+                for k in ("height_m", "dof", "brightness", "mapping", "notes", "lang"):
                     if k in p:
                         u[k] = p[k]
                 d["users"][name] = u
@@ -1201,6 +1392,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._json_post(True, f"usuario '{name}' guardado")
             except Exception as e:
                 self._json_post(False, str(e))
+        elif self.path.startswith("/api/pmadminka/attach"):
+            ok, msg = pmadminka_set_attached(True)
+            self._json_post(ok, msg)
+        elif self.path.startswith("/api/pmadminka/detach"):
+            ok, msg = pmadminka_set_attached(False)
+            self._json_post(ok, msg)
         elif self.path.startswith("/api/action/"):
             action_id = self.path.split("/api/action/", 1)[1].strip("/")
             ok, msg = run_action(action_id)
