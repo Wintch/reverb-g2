@@ -708,6 +708,16 @@ keeps churning the set is destabilising; I works because marg-lost-off keeps a c
 *and* the gate/window let it grow. The IMU-bias reading of the base's at-rest walk stays a
 hypothesis, not a result.
 
+**Where the recall-on frontend cost actually is (K rerun on 0015, live).** Parallel patch
+building (0015) bought ~4 ms at the median (p50 42 → 38), not the ~14 hoped. The p99 (~99 ms)
+is something else, and it is exact: **63 of 63 frames over 80 ms sit on `frame_counter % 30 ==
+0`** — 0014's prune sweep, which erased the whole 200–400k-entry map in one frame: p50 88 ms on
+those frames vs 37.7 ms on every other. **Patch 0016** amortizes it: snapshot the key set once a
+second (a flat copy, ~1 ms) and check-and-erase 1/29th per frame. The remaining +10 ms at the
+median (37.7 vs base 28) is the per-frame recall bookkeeping on a large map — I3 (`BASALT_
+RECALL_PATCH_GRACE_FRAMES=30`, env only, queued after M) tests whether a 3× smaller map
+recovers most of it. Note the hot spot is confined to recall; M (no recall) pays none of it.
+
 **G3 says most of the landmark gain is just not deleting them.** `vio_marg_lost_landmarks:
 false` alone: landmarks 89 / 49 (base 16 / 7; more than G′'s 64 / 37 *with* recall), 0.09 % of
 frames under 5, frontend p50 31 ms (base 28), RSS flat — and drift unchanged (7 trips, span
