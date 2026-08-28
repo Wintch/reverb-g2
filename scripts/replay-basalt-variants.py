@@ -244,11 +244,14 @@ def main():
         rec = run_variant(tag, Path(cfg), args, imu)
         results.append(rec)
         print(json.dumps({k: v for k, v in rec.items() if k != "result"}, indent=None, default=str), flush=True)
-    # ranked table: fewer >1m windows, then smaller max displacement, then more landmarks at >90 deg/s
+    # ranked table: fewer >1m windows, then smaller whole-recording span, then more landmarks at
+    # >90 deg/s. (max 1 s displacement was the second key until 2026-08-27: it is dominated by the
+    # wearer's real motion -- 0.67 m for all eight configs of the yaw recording -- and ranked the
+    # best config, J, last. Per-phase drift is the real instrument: replay-phase-slice.py.)
     def key(r):
         d = r.get("drift", {})
         lm = r.get("landmarks_by_yaw_band", {}).get("90-180", {}).get("lm_p10", 0)
-        return (r["rc"] != 0, d.get("win_over_1m", 1e9), d.get("max_1s_disp_m", 1e9), -lm)
+        return (r["rc"] != 0, d.get("win_over_1m", 1e9), d.get("span_m", 1e9), -lm)
     print("\nRANKED (best first):")
     print(f"{'tag':<8}{'rc':>3}{'>1m wins':>10}{'max 1s m':>10}{'span m':>8}{'lm p10 @90-180':>16}{'lm p10 @180-360':>17}{'recall p99 ms':>14}{'wall s':>8}")
     for r in sorted(results, key=key):

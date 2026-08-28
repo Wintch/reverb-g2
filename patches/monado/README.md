@@ -642,3 +642,58 @@ colon = empty element) is rejected by a `$<SHELL_PATH:...>` generator expression
 `steamvr_bindings/CMakeLists.txt`. Build with `env PYTHONPATH=/opt/resolve/Developer/Scripting/Modules/
 ninja -C ~/vr/monado/build aux_tracking monado-service` after any commit there. **The clamp is
 NOT YET HARDWARE-VALIDATED** — a 5-variant A/B (dashboard buttons A–E, docs/80) is the next test.
+*(2026-08-27 evening: validated — A (horizon 50 + clamp 150) beat the control on latency and
+is Aircar's profile default; the metres of drift turned out to be Basalt's backend, docs/80.)*
+
+## 0101 — `WMR_CAM_TS_MID_EXPOSURE`: stamp SLAM camera frames at mid-exposure (2026-08-27)
+
+`wmr_camera.c` stamped every frame at `frame_start_ts + (end_ts − start_ts) / 2`, but the
+footer's `end_ts − start_ts` is the 90 Hz *slot* period (~11.1 ms, the driver's own comment),
+not the exposure — so the stamp sits 5.55 ms after the exposure start while the real exposure
+(pixel header, microseconds, auto 60–9000 on SLAM frames) is centred at `start + exposure / 2`,
+i.e. 0.03–4.5 ms. The frame therefore reached Basalt 1–5.5 ms late relative to the IMU. An
+offline sweep of the wearer's yaw recording (docs/80) showed that lateness is the single
+biggest position-drift lever on fast head turns (camera stamps −7 ms: drift over ten 400–600
+°/s turns 0.96 → 0.24 m on config I; +10 ms: 4.2 m). With the env var set, SLAM frames
+(`frametype 0`) are re-stamped at `start + exposure_us × 1000 / 2`, following the auto-exposure
+frame by frame instead of a fixed shift (Basalt patch 0017 `VIT_CAM_TIME_OFFSET_NS` is the
+fixed-shift instrument this replaces); a `WMR_CAM_TRACE` line prints both stamps. Controller-
+tracking frames keep the mid-slot stamp: the constellation tracker consumes the stamp the same
+way but has no drift measurement to calibrate against yet and its own exposure/gain experiments
+in flight. Default off, no behaviour change. What it cannot cover: the offline optimum (−5…−10
+ms) exceeds what this arithmetic predicts, so `start_ts` itself probably lags the exposure
+start; measurable by recording once more with this on and replaying at 0 vs −5 ms.
+
+## 0102 — `SLAM_POSE_AGE_LOG`: the pose age nobody measured (2026-08-27)
+
+*(0102 and 0103 touch the same file and ship as one patch file,
+`0102-0103-tracking-slam-SLAM_POSE_AGE_LOG-SLAM_CORRECTION_AVG_N.patch`.)*
+
+Under the deployed `SLAM_PREDICTION_TYPE=2` (gyro) the only anchor-age log in `predict_pose`
+sits in the dead-reckoning branch and never runs, and `t.timing` measures Basalt's internal
+capture→pop latency, not the display-side gap. With `SLAM_POSE_AGE_LOG=N`, every
+`t_slam_get_tracked_pose` samples `when_ns − rel_ts` (the age of the SLAM anchor the prediction
+bridges, in ms) into a 1024-slot ring and logs `pose age ms: p50 / p90 / max` every N calls.
+Under `correction.mutex`: the function is called from the compositor and, with
+`WMR_CONSTELLATION_CONTROLLERS=1`, from the constellation tracker's thread — the adversarial
+review caught the first draft assuming one caller. The dashboard's Aircar variants set 512. This is the
+number behind the wearer's "demora": with config J's 46 ms frontend + the 33 ms camera period
+the age should sit around 60–100 ms, above 0100's 50 ms horizon — which is a position
+*freeze* for the remainder, not a delay (docs/80). Default 0 = off.
+
+## 0103 — `SLAM_CORRECTION_AVG_N`: average the correction step's input (2026-08-27)
+
+`SLAM_CORRECTION_SPREAD_MS` folds each anchor's arrival jump (delivered-pose minus new anchor,
+position + yaw) into a decaying offset. With the head nearly still, that per-anchor delta is
+the raw frame-to-frame VIO position noise (mm), and a 25 ms decay against a 33 ms anchor period
+never settles before the next, uncorrelated delta lands — the mechanism built to hide one step
+instead replays the VIO noise at camera rate, the wearer's "jitter al mirar lento". With
+`SLAM_CORRECTION_AVG_N=N` (2–8) the accumulator receives the mean of the last N deltas (a
+small ring under the existing `correction.mutex`, cleared on the reset-anchor path where a
+delta across two tracker frames means nothing). Real sustained motion shows up consistently
+across anchors and averages to itself, so the cost is a moving average's group delay —
+(N − 1) / 2 anchor periods, one period (~33 ms) at N = 3, up to 3.5 at the cap of 8 — on the
+*correction* only, not on the predicted motion — unlike raising the spread, which delays
+everything. Default 1 = current behaviour. (Reviewer nit: the first draft said "~1 anchor" for
+any N.) `filter_pose`'s filters are NOT the alternative:
+`SLAM_FILTER` is unset in every deployed profile, so that whole block is inert.

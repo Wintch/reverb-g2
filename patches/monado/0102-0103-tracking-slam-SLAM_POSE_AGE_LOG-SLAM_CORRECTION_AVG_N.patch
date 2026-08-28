@@ -1,0 +1,150 @@
+From 4cbbd6e8184ce4d5132f27e6751ea13b588b0cf4 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Thu, 27 Aug 2026 20:46:07 -0300
+Subject: [PATCH] tracking/slam: SLAM_POSE_AGE_LOG (anchor age p50/p90/max) +
+ SLAM_CORRECTION_AVG_N (mean of the last N anchor deltas into the correction
+ spread)
+
+---
+ src/xrt/auxiliary/tracking/t_tracker_slam.cpp | 81 +++++++++++++++++++
+ 1 file changed, 81 insertions(+)
+
+diff --git a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+index f7f75eccd..e69007687 100644
+--- a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
++++ b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+@@ -49,6 +49,7 @@
+ #include <mutex>
+ #include <string>
+ #include <vector>
++#include <algorithm>
+ 
+ 
+ //! @todo Get preferred system from systems found at build time
+@@ -110,6 +111,12 @@ DEBUG_GET_ONCE_OPTION(slam_filter, "SLAM_FILTER", nullptr)
+ DEBUG_GET_ONCE_NUM_OPTION(slam_auto_reset_max_speed, "SLAM_AUTO_RESET_MAX_SPEED", 10)
+ DEBUG_GET_ONCE_BOOL_OPTION(slam_reset_offset_carry, "SLAM_RESET_OFFSET_CARRY", true)
+ DEBUG_GET_ONCE_NUM_OPTION(slam_correction_spread_ms, "SLAM_CORRECTION_SPREAD_MS", 0)
++//! reverb-g2 0103: average the correction step's INPUT (the per-anchor pos/yaw delta) over the
++//! last N anchors before accumulating it. 1 (default) = current behaviour.
++DEBUG_GET_ONCE_NUM_OPTION(slam_correction_avg_n, "SLAM_CORRECTION_AVG_N", 1)
++//! reverb-g2 0102: every N get_tracked_pose calls, log the age of the SLAM anchor the pose was
++//! predicted from (when_ns - rel_ts): p50 / p90 / max over those N calls. 0 (default) = off.
++DEBUG_GET_ONCE_NUM_OPTION(slam_pose_age_log, "SLAM_POSE_AGE_LOG", 0)
+ //! NOTE like SLAM_AUTO_RESET_MAX_SPEED above, this is DEBUG_GET_ONCE_NUM_OPTION (integers
+ //! only) -- the radius is in CENTIMETRES, not metres, so a real-world value (e.g. 450 for
+ //! 4.5 m) survives the integer parse. 0 = disabled.
+@@ -395,8 +402,32 @@ struct TrackerSlam
+ 		bool have_last_decay = false;
+ 		Mutex mutex; //!< Same cross-thread hazard as @ref filter::mutex: compositor and the
+ 		             //!< WMR constellation tracker both call get_tracked_pose.
++		//! reverb-g2 0103 (SLAM_CORRECTION_AVG_N): ring of the last deltas; the accumulator
++		//! receives their mean. Why: with the head still, each anchor's delta is the raw
++		//! frame-to-frame VIO position noise (mm), and a 25-50 ms decay against a 33 ms anchor
++		//! period never lets one correction settle before the next uncorrelated one lands --
++		//! the spread built to hide a step instead replays the noise at camera rate (the
++		//! wearer's "jitter en movimientos lentos"). Averaging the input rejects that noise at
++		//! the cost of a moving average's group delay, (N-1)/2 anchor periods (N=3: one
++		//! period, ~33 ms), on the correction only, not on the predicted motion.
++		int avg_n = 1;
++		xrt_vec3 pos_hist[8] = {};
++		float yaw_hist[8] = {};
++		int hist_len = 0;
++		int hist_pos = 0;
+ 	} correction;
+ 
++	//! reverb-g2 0102 (SLAM_POSE_AGE_LOG): the pose age nobody measured. Under the deployed
++	//! SLAM_PREDICTION_TYPE=2 the only age log in predict_pose sits in the dead-reckoning
++	//! branch and never runs; this samples (when_ns - rel_ts) at every get_tracked_pose and
++	//! logs p50 / p90 / max every N calls. Written under @ref correction::mutex (two callers).
++	struct
++	{
++		int every = 0;
++		int n = 0;
++		float ms[1024] = {};
++	} age;
++
+ 	//! Session-anchor divergence guard (SLAM_SESSION_ANCHOR_RADIUS_CM, default 0/off).
+ 	//! auto_reset above catches divergence by INSTANTANEOUS implied speed -- a single step
+ 	//! too fast to be a real head. That guard cannot see slow accumulated drift: many small
+@@ -1456,6 +1487,8 @@ flush_poses(TrackerSlam &t)
+ 					unique_lock corr_lock(t.correction.mutex);
+ 					t.correction.pos_offset = XRT_VEC3_ZERO;
+ 					t.correction.yaw_offset_rad = 0.0f;
++					t.correction.hist_len = 0; // 0103: deltas across a reset mean nothing
++					t.correction.hist_pos = 0;
+ 				} else {
+ 					// "What would still be delivered from the OLD anchor, dead
+ 					// reckoned up to THIS anchor's own timestamp" -- i.e. exactly
+@@ -1486,6 +1519,24 @@ flush_poses(TrackerSlam &t)
+ 
+ 						unique_lock corr_lock(t.correction.mutex);
+ 						decay_correction_locked(t);
++						if (t.correction.avg_n > 1) {
++							// 0103: accumulate the mean of the last avg_n deltas
++							auto &c = t.correction;
++							c.pos_hist[c.hist_pos] = pos_delta;
++							c.yaw_hist[c.hist_pos] = yaw_delta_rad;
++							c.hist_pos = (c.hist_pos + 1) % c.avg_n;
++							if (c.hist_len < c.avg_n) {
++								c.hist_len++;
++							}
++							xrt_vec3 pos_mean = XRT_VEC3_ZERO;
++							float yaw_mean = 0.0f;
++							for (int i = 0; i < c.hist_len; i++) {
++								pos_mean += c.pos_hist[i];
++								yaw_mean += c.yaw_hist[i];
++							}
++							pos_delta = pos_mean * (1.0f / (float)c.hist_len);
++							yaw_delta_rad = yaw_mean / (float)c.hist_len;
++						}
+ 						t.correction.pos_offset += pos_delta;
+ 						t.correction.yaw_offset_rad += yaw_delta_rad;
+ 					}
+@@ -2127,6 +2178,27 @@ t_slam_get_tracked_pose(struct xrt_tracked_slam *xts, timepoint_ns when_ns, stru
+ 
+ 	flush_poses(t);
+ 
++	// reverb-g2 0102: sample the anchor age this prediction is about to bridge. Under
++	// correction.mutex: this function is called from the compositor AND, with
++	// WMR_CONSTELLATION_CONTROLLERS=1, from the constellation tracker's own thread (see the
++	// mutex's comment) -- the first version of this block assumed one thread and raced.
++	if (t.age.every > 0) {
++		int64_t rel_ts = 0;
++		xrt_space_relation rel{};
++		unique_lock age_lock(t.correction.mutex);
++		if (t.slam_rels.get_latest(&rel_ts, &rel)) {
++			t.age.ms[t.age.n % 1024] = (float)(when_ns - rel_ts) / 1e6f;
++			t.age.n++;
++			if (t.age.n % t.age.every == 0) {
++				int cnt = t.age.n < 1024 ? t.age.n : 1024;
++				std::vector<float> v(t.age.ms, t.age.ms + cnt);
++				std::sort(v.begin(), v.end());
++				SLAM_INFO("pose age ms: p50 %.1f p90 %.1f max %.1f over %d predictions", v[cnt / 2],
++				          v[(cnt * 9) / 10], v[cnt - 1], cnt);
++			}
++		}
++	}
++
+ 	predict_pose(t, when_ns, out_relation);
+ 	t.pred_traj_writer->push({when_ns, out_relation->pose});
+ 
+@@ -2629,6 +2701,15 @@ t_slam_create(struct xrt_frame_context *xfctx,
+ 		          "(SLAM_CORRECTION_SPREAD_MS=0 disables)",
+ 		          correction_spread_ms);
+ 	}
++	long correction_avg_n = debug_get_num_option_slam_correction_avg_n();
++	t.correction.avg_n = (int)(correction_avg_n < 1 ? 1 : (correction_avg_n > 8 ? 8 : correction_avg_n));
++	if (t.correction.enabled && t.correction.avg_n > 1) {
++		SLAM_INFO("Correction input averaged over the last %d anchors (SLAM_CORRECTION_AVG_N)", t.correction.avg_n);
++	}
++	t.age.every = (int)debug_get_num_option_slam_pose_age_log();
++	if (t.age.every > 0) {
++		SLAM_INFO("Pose age log on: anchor age p50/p90/max every %d predictions (SLAM_POSE_AGE_LOG)", t.age.every);
++	}
+ 
+ 	long session_anchor_radius_cm = debug_get_num_option_slam_session_anchor_radius_cm();
+ 	t.session_anchor.enabled = session_anchor_radius_cm > 0;
+-- 
+2.47.3
+

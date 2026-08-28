@@ -854,3 +854,369 @@ connected ratio a little under 1.0, so 0.9 should trigger keyframes periodically
 after_kf` 5 still floors the rate). Queued after G3. It also says the at-rest and the under-yaw
 failures are different: yaw genuinely runs out of landmarks; rest has plenty and lets the IMU
 side drift.
+
+### The wearer's recording, replayed: K kills the landmark collapse and halves the yaw drift — but 1.6 m remain with vision alive
+
+Dataset `euroc-yaw_20260827170436` (trimmed to the protocol ± 20 s: 6,852 frames per camera,
+56,709 IMU rows, 4.9 GB; `phases.json` carries the `t_ns` of every phase boundary from
+`yaw-protocol-voice.py`; archived under `~/vr/logs/euroc/` with `calib-g2-yaw.json`). The IMU
+confirms the wearer followed the script — and it calibrates what "fast" means on this head:
+
+| phase | gyro p50 / p90 / max (°/s) | \|acc\|−g p90 / max (m/s²) |
+|---|---|---|
+| intro (30 s still) | 1.5 / 14.9 / 160.6 | 0.32 / 8.27 — one adjustment event |
+| yaw ×10 | 5.1 / **377.5 / 600.2** | 3.84 / 10.93 |
+| settle-1 | 1.1 / 1.8 / 3.0 | 0.08 / 0.14 |
+| pitch ×10 | 2.0 / 288.9 / 476.2 | 6.46 / 14.04 |
+| settle-2 | 1.2 / 2.0 / 3.2 | 0.09 / 0.19 |
+| roll ×10 | 7.2 / 274.4 / 412.3 | 1.83 / 4.68 |
+| settle-3 | 1.2 / 1.8 / 2.6 | 0.08 / 0.16 |
+| free play | 22.4 / 131.8 / 369.5 | 1.78 / 7.02 |
+
+The settle phases are genuinely still (≤ 3 °/s, ≤ 0.2 m/s²), so whatever the trajectory does
+there is the tracker. `scripts/replay-phase-slice.py` cuts each replayed trajectory by these
+boundaries; per phase: max 1 s displacement / net (start → end) / max distance from the
+phase start, all in metres. Base config vs K (`G` + `vio_max_kfs` 12), same dataset, same calib:
+
+| config | intro | **yaw** | settle-1 | pitch | settle-2 | roll | settle-3 | free | rot maxfar Σ |
+|---|---|---|---|---|---|---|---|---|---|
+| base | 0.69/0.83/0.85 | 0.61/2.55/**2.62** | 0.00/0.01/0.01 | 0.25/0.30/0.36 | 0.01/0.01/0.01 | 0.14/0.54/0.61 | 0.00/0.01/0.01 | 0.65/0.27/0.88 | **3.59** |
+| K | 0.70/0.87/0.89 | 0.53/1.27/**1.65** | 0.00/0.01/0.01 | 0.28/0.03/0.23 | 0.00/0.01/0.01 | 0.14/0.13/0.25 | 0.00/0.01/0.01 | 0.65/0.27/0.82 | **2.12** |
+
+Whole-recording: base span 3.62 m, landmarks p50 / p10 at > 360 °/s = **5 / 0** (the live
+collapse, reproduced offline); K span 2.14 m, **671 / 565** at > 360 °/s — the collapse is gone.
+Three readings:
+
+1. **The settles are 1 cm in both.** Still head + rich view = no drift; the at-rest walk of the
+   20-minute soaks needs minutes to start, not seconds, and does not confound a 3-minute test.
+2. **K halves the rotation drift everywhere** (yaw 2.62 → 1.65 m, pitch 0.36 → 0.23, roll 0.61 →
+   0.25) and the intro / free-play phases are identical between configs (0.85–0.89 / 0.82–0.88 m,
+   with the IMU showing real motion in both) — so those are the wearer, not the tracker.
+3. **But yaw still runs 1.3 m net with ~600 landmarks alive.** Landmark starvation was the
+   dominant term and is fixed; what remains is a rate-dependent error *with vision present*.
+   That is the signature of **H1 (§3): an IMU–camera time offset** — a few ms of misalignment is
+   invisible at rest and turns into translation exactly in proportion to angular rate
+   (`cam_time_offset_ns` is 0 in the dumped calibration, never calibrated, and Basalt's own
+   correction for it is commented out at `src/vi_estimator/sqrt_keypoint_vio.cpp:261` —
+   `// curr_frame->t_ns += calib.cam_time_offset_ns;` — so setting the field would do nothing;
+   the dataset shift below is exactly what that line would do, same sign). The recording makes H1 testable **offline without code**: four copies of
+   the dataset with `camN/data.csv` timestamps shifted by −10 / −5 / +5 / +10 ms (PNGs symlinked,
+   IMU untouched — `/mnt/vrtmp/euroc-yaw-shift_*`), replayed with K. If one direction cuts the
+   yaw-phase drift monotonically, the offset is real and its sign is known; the live fix is then
+   a stamp shift in `vit_tracker.cpp` (a patch, env-gated like the rest). If all four are worse
+   than K, H1 is closed for good and the residual is elsewhere (rolling shutter, blur-corrupted
+   tracks at 400–600 °/s). Queued behind the matrix; results below when in.
+
+### The full matrix on the recording: J takes the yaw drift from 2.6 m to 0.28 m (net 5 cm)
+
+All eight configs, same dataset, same calibration, per phase (max 1 s / net / max-far, m):
+
+| config | what it is | **yaw** | pitch | roll | Σ rot maxfar | worst settle | span (whole) |
+|---|---|---|---|---|---|---|---|
+| base | `basalt-g2-config.json` | 0.61/2.55/**2.62** | 0.25/0.30/0.36 | 0.14/0.54/0.61 | **3.59** | 0.014 | 3.62 |
+| base2 | same again (noise floor) | 0.61/2.70/2.76 | 0.25/0.30/0.36 | 0.13/0.51/0.56 | 3.68 | 0.019 | 3.71 |
+| G3 | marg-lost off only | 0.68/1.63/1.63 | 0.28/0.40/0.49 | 0.10/0.17/0.31 | 2.43 | **0.223** | 2.62 |
+| H | gate 2 cm + 12 kfs (no recall, marg-lost on) | 0.49/1.72/1.75 | 0.24/0.22/0.28 | 0.11/0.40/0.42 | 2.45 | 0.008 | 2.65 |
+| K | recall + marg-lost off + 12 kfs | 0.53/1.27/1.65 | 0.28/0.03/0.23 | 0.14/0.13/0.25 | 2.12 | 0.012 | 2.14 |
+| M | I without recall | 0.34/1.21/1.21 | 0.34/0.28/0.47 | 0.10/0.20/0.30 | 1.99 | 0.037 | 1.93 |
+| I | recall + marg-lost off + gate 2 cm + 12 kfs | 0.39/0.69/0.96 | 0.27/0.10/0.20 | 0.09/0.12/0.19 | 1.34 | 0.008 | 1.58 |
+| **J** | **I + Basalt's default recall norms** | **0.28/0.05/0.28** | 0.27/0.03/0.22 | 0.09/0.08/0.12 | **0.63** | 0.010 | **0.96** |
+
+Intro and free-play columns are the same for every config (0.85–0.89 / 0.80–0.88 m max-far,
+with the IMU showing real motion) and are omitted. Readings:
+
+- **Noise floor**: base vs base2 differ by 0.1 m on the Σ; every step below is well outside it.
+- **J after ten 400–600 °/s yaws ends 5 cm from where it started** (base: 2.55 m), max
+  excursion 0.28 m — which is the order of the neck-arm translation of a real seated head turn.
+  Pitch 0.22 and roll 0.12 max-far are in the same regime. The whole-recording span, 0.96 m, is
+  now mostly the wearer's own motion (intro adjustment + free play).
+- **Each lever's contribution is separable**: marg-lost off alone (G3) helps yaw but *leaks*
+  22 cm of drift into the still phase right after it — stale observations kept in the
+  optimizer; the 2 cm gate + 12 kfs (H) helps a similar amount without the leak; their union K
+  is better than either; adding the gate to K (I) is the biggest single step for yaw (1.65 →
+  0.96); removing recall from I (M) costs 0.65 m on the Σ *even though M keeps 661 landmarks p10
+  through > 360 °/s* — so recall's value is not landmark *count* (the gate and marg-lost-off do
+  that) but re-attaching the **same** landmark IDs after a sweep; and the last step, J, is only
+  the recall acceptance norms: the JSON's 4× stricter `optical_flow_recall_max_patch_norms` were
+  rejecting most valid recalls (I: recall on, but half-working).
+- Costs offline (two 4-thread streams sharing 12 cores, so absolute ms are pessimistic): J's
+  recall p99 2.8 ms, patches 325 k at the end (0014's bound), wall 360 s vs base 328 (+10 %);
+  I 407 s. Live, patch 0015's parallel patch building applies; the earlier soak measured I at 0
+  trips with acceptable frontend timing.
+
+### H1 CONFIRMED offline: the camera stamps are late vs the IMU by ≥ 5–10 ms, and it is the biggest lever of all
+
+The ±5 / ±10 ms sweep (config I, camera stamps shifted, IMU untouched), per phase:
+
+| I with cam stamps shifted | **yaw** max1s/net/maxfar | pitch | roll | Σ rot | worst settle | span |
+|---|---|---|---|---|---|---|
+| **−10 ms** | 0.29/0.10/**0.24** | 0.27/0.04/0.21 | 0.09/0.04/0.10 | **0.55** | 0.009 | 0.93 |
+| −5 ms | 0.29/0.10/0.30 | 0.27/0.04/0.21 | 0.08/0.10/0.15 | 0.66 | 0.010 | 0.94 |
+| 0 (I) | 0.39/0.69/0.96 | 0.27/0.10/0.20 | 0.09/0.12/0.19 | 1.34 | 0.008 | 1.58 |
+| +5 ms | 0.73/1.63/1.72 | 0.30/0.27/0.27 | 0.14/0.32/0.52 | 2.50 | 0.051 | 2.15 |
+| +10 ms | 2.64/4.08/**4.21** | 0.34/0.55/0.55 | 0.25/1.09/1.26 | 6.01 | 0.085 | 5.40 |
+
+Monotonic in both directions and enormous: a 20 ms difference in one number moves the yaw
+drift from 0.24 m to 4.2 m, with pitch and roll far less sensitive — exactly the H4 asymmetry
+(§3: yaw has no gravity anchor, so a timing error goes straight into translation). The
+direction says the **frame timestamps Monado hands to Basalt are later than the exposure by
+at least 5–10 ms** (moving the camera stamps *earlier* fixes it), which is what a
+transfer-latency stamp would look like. −10 ms alone beats J's config gains (Σ 0.55 vs 0.63)
+and the two are independent, so the sweep continues on J at −5/−10/−15/−20/−30 ms to find
+the minimum; the settle phases stay at 1 cm throughout, so the shift costs nothing at rest.
+
+**The value, pinned on J** (same sweep, Σ rot max-far / yaw max-far, m): J 0.63 / 0.28; **−5 ms
+0.53 / 0.21; −10 ms 0.53 / 0.22**; −15 ms 0.70 / 0.39; −20 ms 1.86 / 1.53; −30 ms 5.09 / 4.54.
+A flat plateau from −5 to −10 and a cliff on both sides; settles ≤ 1.1 cm throughout. The
+midpoint, **−7 ms**, is what the JT button carries (`VIT_CAM_TIME_OFFSET_NS=-7000000`). The
+plateau's width is the auto-exposure's doing: the true stamp error is 5.55 ms − exposure / 2
+(next paragraph), i.e. 1–5.5 ms as the exposure ranges 9 → 0.06 ms, plus whatever `start_ts`
+itself lags; a fixed offset can only sit in the middle of that, which is one more reason the
+driver-side `start + exposure / 2` fix is the right permanent one.
+
+The live lever is patch **0017** (`VIT_CAM_TIME_OFFSET_NS`, applied at `vit_tracker.cpp`'s
+`partial_frame->t_ns = s->timestamp` — the one place the frame stamp enters Basalt; the IMU
+path is untouched, `frames_original_timestamp` keeps the original). Negative values move the
+frames earlier; the offline dataset shift and the env var have the same sign. The permanent
+fix belongs upstream of that — in how Monado's WMR camera driver stamps frames — once the
+value is pinned. **Where at least half of it comes from, read in `wmr_camera.c:396-434`**: the
+frame footer carries `start_ts` and `end_ts` (100 ns ticks, same clock as the IMU), and
+`end_ts − start_ts` is "always about 111000 × 100 ns" = **11.1 ms, the 90 Hz slot period**,
+not the exposure. The driver stamps the frame at `frame_start_ts + delta / 2` = start +
+**5.55 ms**. The actual exposure is in the pixel header (`exposure`, µs — 6000 ≈ 6 ms per the
+T221 note; SLAM frames auto-expose between 60 and 9000), so mid-exposure is start +
+exposure / 2 = start + 0.03–4.5 ms: the stamp is late by 1–5.5 ms from that alone, more if
+`start_ts` marks something later than the exposure start. That explains the sign and the
+first ~5 ms; the −5…−30 ms J sweep says how much is left over. The driver-side fix is
+`xf->timestamp = frame_start_ts + exposure_ns / 2` (a Monado patch, env-gated for A/B), which
+also tracks the auto-exposure frame by frame instead of a fixed offset.
+
+**Round N — J is the config plateau.** Five refinements on top of J, same dataset (Σ rot
+max-far, m; noise floor 0.1): N1 gate 1 cm **0.67**, N2 16 keyframes **0.63**, N3 kf-threshold
+0.9 **0.73**, N4 kf every 2 frames **0.65**, N5 recall on all four cameras **0.66** — none
+beats J's 0.63, all settles ≤ 1.2 cm, and the costs go the wrong way (N5 recall p99 7.9 ms vs
+2.8; N1/N2 wall +33 %). Nothing left to win in the backend config; the residual 0.28 m of yaw
+max-far is timing (next section).
+
+**Decision**: J is the offline winner by every column and the wearer tests it next (dashboard
+button J).
+
+### 2026-08-27 ~20:30 — worn: J and JT, 5 min each
+
+- **J**: *"muy similar. Al moverme rápido, siento misma demora, pero se vuelve a acomodar más o
+  menos bien, por más que primero se vaya varios cm para un costado. Movimientos lentos aún veo
+  cabina con un poco de jitter y latencia."* — The metres are gone (F, two hours earlier: *"uno
+  o dos metros si lo hago seguido y rápido"*; now *"varios cm"*), which is what the offline
+  ranking predicted. What is left is a different layer: the same **delay** on fast motion and
+  **jitter + latency on slow motion**. 0 divergence trips in the session (B's protocol run
+  had 6); live CSV `~/vr/logs/live-J-tracking-20260827.csv`.
+- **JT** (J + −7 ms): *"muy similar, un poco más de jitter al mirar lento parece. Pero se
+  reacomoda igual al girar rápido."* — no wearer-visible gain over J; the offline gain at J's
+  level was small (Σ 0.63 → 0.53) and the wearer can't tell it apart. The −7 ms is NOT
+  promoted; 0017 stays as the A/B instrument for the driver-side fix.
+- **The number behind the delay**, from JT's live log (3,935 frames): frontend `total_ms`
+  **p50 45.8 / p90 57.9 / p99 76.8 ms** against the 33 ms camera period — the base config runs
+  p50 28. Landmarks p50 498 / p10 194 (base at rest: 52 / 7). So J's backend fix costs ~18 ms
+  per frame in the frontend, the SLAM pose arrives that much later, and at p90 the frontend is
+  1.75 frames behind — irregular pose spacing is a plausible source of the slow-motion jitter
+  and the position lag is fed straight into the 50 ms horizon clamp of 0100. Next lever is
+  **frontend cost**, not accuracy: round P (J with lighter detection: `num_points_cell` 2,
+  `grid_size` 40, both, `max_threshold` 60) runs single-stream offline to measure ms and drift
+  together; plus three code reads (frontend hot spots under recall, the pose-age/prediction
+  path in `t_tracker_slam.cpp`, the camera stamp semantics for the driver fix).
+
+### The three code reads (unattended, ~21:00) — three levers, four small patches, three buttons
+
+**Frontend (Basalt, `frame_to_frame_optical_flow.h`)**: (a) `recall_ms` in the `vit_of` line
+times only `recallPoints()` (`:333-335`); the recall-gated patch build in `addPointsForCamera`
+(`:746-762`) and `prunePatches()` (`:339`) land in the undifferentiated rest of `total_ms` — so
+"recall p99 2.8 ms" understates recall's cost by an order of magnitude; the existing
+`addTime()` stage stamps (`vit_tracker.cpp:65-92`) are the right attribution and should go
+into the log line next. (b) A straight bug of ours: 0016 amortized the sweep of `patches` but
+left `prunePatches`' *other* map, `patch_last_seen`, on a full walk every 30 frames (`:721-725`,
+~300 k entries in one frame) — the same spike shape 0016 fixed one map over. **Patch 0018**
+stamps only ids that own a patch, which makes `patch_last_seen ⊆ patches` and lets the
+amortized sweep erase both; the full scan is gone. (c) Recall *reduces* new detections (a
+successful recall fills its cell before `detectKeypointsWithCells` runs), so `num_points_cell`
+and `grid_size` are trade-off knobs, not free ones — but **`optical_flow_levels` 3 → 2** cuts
+both per-point costs (patch build and `trackPointFromPyrPatch`) by 25 % without touching the
+same-id logic: variants P5 (levels 2) and P7 (levels 2 + 2 pts/cell) queued after round P.
+(d) Two serial loops remain: `recallPointsForCamera`'s per-landmark loop (Basalt's own `TODO:
+Parallelize recall`, `:611`) and `detectKeypointsWithCells`' per-cell FAST sweep — candidates
+once the attribution says they matter.
+
+**Pose path (Monado, `t_tracker_slam.cpp`)**: (a) Under the deployed `SLAM_PREDICTION_TYPE=2`
+the only anchor-age log sits in the dead-reckoning branch and never runs; **nobody has ever
+measured the pose age**. **Patch 0102** (`SLAM_POSE_AGE_LOG=N`) samples `when_ns − rel_ts` at
+every `t_slam_get_tracked_pose` and logs p50 / p90 / max every N predictions — on for every
+dashboard variant from now (`512`). (b) 0100's horizon is a **freeze, not a delay**: orientation
+integrates over the full age, position over `min(age, 50 ms)` and then stops (`:1672-1691`);
+with J's 46 ms frontend + 33 ms period the age exceeds 50 ms on essentially every anchor, so the
+position lags by `v × (age − 50 ms)` — the wearer's "misma demora" has a mechanism. Button
+**JH** = J + horizon 100 ms (env only; the 1.5 m/s clamp still guards the spikes). (c) Slow-
+motion jitter: with the head nearly still each anchor's correction delta is raw mm-level VIO
+noise, and a 25 ms decay against a 33 ms anchor period never settles before the next
+uncorrelated delta lands — the spread replays the noise at camera rate. **Patch 0103**
+(`SLAM_CORRECTION_AVG_N`) feeds the accumulator the mean of the last N deltas (ring, reset on
+the reset-anchor path); ~1 anchor of lag on the correction only. Button **JA** = J + N=3.
+`filter_pose` is inert in every deployed profile (`SLAM_FILTER` unset) — not a suspect.
+
+**Camera stamps (Monado, `wmr_camera.c`, `wmr_source.c`)**: the hardware→monotonic offset is
+learned from IMU arrivals only (`wmr_source.c:204-278`, `hw2mono`) and applied identically to
+SLAM and controller frames — so no *relative* offset comes from there; the lateness is the
+`start + slot/2` stamp. Exposure is confirmed microseconds (`"[%d] Exposure (usec)"`,
+`wmr_camera.c:632`). **Patch 0101** (`WMR_CAM_TS_MID_EXPOSURE=1`) stamps SLAM frames at
+`start + exposure/2`, following the auto-exposure frame by frame; controller frames untouched
+(the constellation tracker uses the stamp the same way but has no measurement to calibrate
+against and its own exposure experiments in flight). Button **JM** = J + that, no fixed offset.
+What it cannot explain: the offline optimum (−5…−10 ms) exceeds the 1–5.5 ms this arithmetic
+predicts, so `start_ts` itself likely lags the exposure start — the shortfall is measurable
+by recording once more with JM and replaying at offset 0 vs −5.
+
+All four patches default off; `monado-service` and `libbasalt.so` rebuilt with them at ~20:40
+(nothing running). An adversarial review of the four diffs ran before any wearer use — and
+earned its keep: 0102's first draft wrote its ring with no lock on the claim "compositor
+thread only", while the file's own `correction.mutex` comment says the constellation tracker's
+thread calls the same function (data race, now under the mutex); 0101's trace printed an
+`int64_t` with `PRIu64`; 0103's "~1 anchor of lag" is really (N − 1) / 2 periods. Plus **0019**:
+the `vit_of` line now carries `pyr_ms track_ms detect_ms filter_ms prune_ms`, because
+`recall_ms` was measuring almost none of recall's cost.
+
+### Round P — the frontend cost has a config answer: `grid_size` 40 (J's drift at the base's cost)
+
+Single stream, 6 threads, idle box, same recording — and the offline numbers reproduce the
+live ones (base 28.2 ms p50 offline vs 28 worn; J 44.9 vs 45.8 worn), so they are real ms:
+
+| config | frontend p50 / p90 / p99 (ms) | keypoints p50 | patches p50 | Σ rot max-far (yaw) |
+|---|---|---|---|---|
+| base | 28.2 / 30.6 / 37.3 | 3239 | 0 | 3.54 (2.61) |
+| J | 44.9 / 55.5 / 68.8 | 3173 | 217 k | 0.70 (0.33) |
+| P1 = J + `num_points_cell` 2 | 34.0 / 45.2 / 57.6 | 2044 | 141 k | 0.74 (0.43) |
+| **P2 = J + `grid_size` 40** | **26.6 / 33.3 / 42.7** | 1922 | 120 k | **0.78 (0.43)** |
+| P3 = J + both | 20.1 / 25.0 / 31.7 | 1228 | 76 k | 1.07 (0.68) |
+| P4 = J + `max_threshold` 60 | 50.8 / 64.5 / 78.5 | 3286 | 228 k | 0.58 (0.27) |
+
+Fewer, larger detection cells (640 × 480 / 40² ≈ 190 per camera instead of 340) cut the
+keypoint count 40 % and with it every per-point stage — patch build, tracking, recall — and
+the drift does not move (0.78 vs 0.70, noise floor 0.1, settles 7 mm). P3 goes further on
+cost but starts paying in yaw (0.68); P4 buys a little drift for a lot of ms. **P2 is J
+without the 18 ms** and under the 33 ms camera period at p90 — buttons **JP** (P2 alone) and
+**JX** (P2 + horizon 100 + correction averaged over 3 + mid-exposure stamp, the whole night's
+stack, for after the single-lever tests). Queued offline: P5/P7 (`levels` 2 on J, J + 2 pts),
+P6/P8 (`levels` 2 and `max_threshold` 60 on P2) for the margins.
+
+**`optical_flow_levels` 3 → 2 is refuted, hard**: P5 (J + levels 2) saves 1 ms (43.7 vs 44.9
+p50) and **diverges to kilometres** — yaw 3.5 m, then pitch 1,346 m, roll 10 km, the still
+phases 6 km; P7 (levels 2 + 2 pts/cell) 35.5 ms and Σ 6.07 m (yaw 4.5). The coarsest pyramid
+level is what lets the tracker follow 400–600 °/s between two frames 33 ms apart; without it
+the frontend loses the frame-to-frame match and the VIO free-runs on the IMU. The per-point
+cost that `levels` was supposed to cut was never the dominant term (1 ms of 45); the cell
+count is. Do not retry. P6 (P2 + levels 2) did fail the same way (Σ 4.37 m, yaw 3.2), and P8
+(P2 + `max_threshold` 60) buys nothing (31.5 ms p50, Σ 0.81). **P2 stands.**
+
+**P2 on the 0018 + 0019 build, with the stage attribution the frontend read asked for**
+(`basalt_vio` rebuilt, same recording): total **25.9 / 31.6 / 41.3 ms** (p50 / p90 / p99; pre-
+0018 26.6 / 33.3 / 42.7 — 0018 is worth ~1 ms), drift unchanged (Σ 0.82 vs 0.78). Per stage,
+p50 / p99: pyramid 0.8 / 4.0, **tracking 10.4 / 18.5**, **detection + matching + patch build
+12.7 / 20.6**, filter 0.1 / 0.2, **prune 0.4 / 11.4**. So with recall on the frontend is two
+halves — frame-to-frame tracking and detection — and the one remaining spike is the sweep
+frame of `prunePatches` (1 in 30: the snapshot of ~120 k patch keys), which is the whole p99
+tail above p90. Next micro-lever if the tail ever matters: spread the snapshot too, or drop
+the grace from 90 to 60 frames to halve the map. Not needed for the wearer test.
+
+### 2026-08-28 ~00:30 — worn: JP; and the pose age, measured for the first time, is 115 ms under load
+
+**JP** (P2 config): *"Si me muevo lento, parece que apenas mejoró el jittering mirando la
+cabina. Si me muevo rápido, circular — me voy unos cuantos cm y tengo que reiniciar. Dentro de
+todo yaw no me saca tanto como en otras pruebas. Pero no es la solución aún."* Live frontend
+with the game running: **29.9 / 37.7 / 47.7 ms** (p50/p90/p99; J was 45.8 / 57.9 / 76.8 —
+tracking 13.7 + detection 12.6, prune p99 12.7 = the snapshot frame), 1 divergence trip,
+landmarks p50 657 / p10 128, CPU load 6 of 12 cores.
+
+**0102's first numbers.** Before the game loaded: pose age p50 68–71 ms, p90 88–96, max
+111–204. **With Aircar running: p50 115 ms (per-window 64–246), p90 151, max 359** — over
+155 windows of 1024 predictions. Under load the whole chain stretches: backend `opt_ms` p50
+17 / p90 32 / p99 45, output interval p50 34 / p90 46 / p99 58 ms (the camera delivers every
+33; 293 input frames dropped over the session, input queue up to 2). Against 0100's **50 ms
+horizon that is a position freeze of 65 ms at the median and 100 ms at p90** — the wearer's
+"demora" and, since the freeze ends with a jump when the next anchor lands, part of the
+"circular → unos cm → reiniciar" too. JH (horizon 100) covers the median, not p90; a 150–200
+ms rung is prepared as JH2 (the 1.5 m/s clamp is what makes a long horizon safe).
+
+**JH refuted worn** (J config + horizon 100): *"hay más jitter. Si me muevo rápido, se va,
+incluso un poco más. Pero en uno o dos segundos se acomoda nuevamente. Si me esfuerzo, aún
+puedo hacer que se vaya girando rápido en círculo. Con yaw solo difícil que pase."* Its age
+log: p50 153 / p90 181 / max 500 ms (J's heavier frontend + the game). Extrapolating a noisy
+anchor velocity twice as far doubles every velocity error — the same "menos delay, más
+desfasaje" the first 0100 test found, now with the clamp. **The horizon is not the lever; the
+age is.** JH2 not tried. JA/JM/JX moved onto P2 with horizon 50.
+
+**JA kept** (P2 + `SLAM_CORRECTION_AVG_N=3`): *"el jitter diría que es manejable, no perfecto
+pero mejoró. Hay bastante latencia para desplazarme hacia los costados, igual que siempre,
+capaz a medida que baja jitter suma un poco más todavía de esta demora. Muy molesto aún el
+tema de movimiento yaw y pitch que provocan primero un desplazamiento, también como
+veníamos."* Age p50 74 / p90 94 / max 388 (0 trips, frontend 26.6 / 38.4 / 51.7) — JP's 115
+was not the config, it was that session's CPU load; the age varies run to run. Two problems
+left, both named precisely: (1) lateral-motion latency (the age itself, now measured; 0020
+adds `age_in_ms` / `age_out_ms` on the collapse lines to split it into transport / Basalt /
+Monado — first idle numbers: exposure → tracker input **12 ms**, exposure → pose out 29 ms);
+(2) the rotation-onset displacement (yaw/pitch → the head "moves" first, then settles) —
+which is exactly what the offline timing sweep was about, so JM (mid-exposure stamp) is the
+test of it.
+
+**JM kept** (P2 + `WMR_CAM_TS_MID_EXPOSURE=1`): *"lo bueno — complicado hacer que me vaya de
+la nave, un reset cada tanto y va. Lo malo es que aún girando me mueve de silla bastante,
+luego se acomoda. Jittering poco, pero notable aún."* The excursions are the part the
+timing fixes, as offline predicted; the rotation-onset displacement is still there (2 trips).
+
+**And the age, decomposed (JM's log, 9,100 frames, game running)**: `age_in` (exposure →
+tracker input) **p50 11.4 / p90 11.9 / p99 13.3 ms** — transport is small and constant;
+`age_out` (exposure → pose out of Basalt) **p50 59 / p90 170 / p99 265 ms** with the frontend
+at 29.5 / 38.9 / 52.9 and the backend `opt` p90 ~32. Neither stage explains a 170 ms p90 —
+the **queues** do: `image_data_queue` capacity 2 and `vision_data_queue` capacity 2 (`vit_
+tracker.cpp:449,469`, both drop-oldest since 0001/0002) let the pipeline run up to 4 frames
+deep after one slow backend frame, and 4 × 33 + processing ≈ 170. Monado's display-side age
+that session: p50 105 / p90 138 / max 402. **The lever for the lateral latency is queue
+depth 1 on both** (a dropped frame costs nothing at 30 Hz with the IMU in between; the pose
+age is bounded to ~2 frames + processing) — patch 0021 next.
+
+**JX** (P2 + AVG_N 3 + mid-exposure): *"muy similar, bien, no perfecto. No le noté mucho
+cambio ahora."* — JA + JM compose without surprises. Its age: p50 155 / p90 186 / max 1159
+ms, Basalt in→out p50 102 / p90 188 / p99 257, 1 trip — worse numbers than JM's session with
+the same config, i.e. the age is dominated by the moment's CPU load, not the config; Monado
+adds ~50 ms on top of `age_out` (out-queue wait until the next `flush_poses` + the display
+time being ~2 frames ahead). **JQ** = JX + `VIT_QUEUE_DEPTH=1` (Basalt 0021) is the test of
+the queue hypothesis, with 0020's numbers as the instrument.
+
+### 2026-08-28 ~01:45 — JQ: "sólido, pero no resuelto aún" — the night's stack becomes Aircar's profile
+
+**JQ** (P2 + AVG_N 3 + mid-exposure + queue depth 1): *"se va pero se acomoda bastante bien.
+Sólido, pero no resuelto aún."* — the best verdict of the night. The instrument agrees:
+Basalt in→out **p50 43 / p90 103 / p99 153 ms** over the full session (first minute 42 / 50 /
+73; JM 59 / 170 / 265, JX 102 / 188 / 257), display-side age **p50 75 / p90 93 / max 281**
+(JX 155 / 186 / 1159), frontend 24 / 36 / 46, **383 of 18,280 frames dropped (2.1 %)** at the
+depth-1 queues, 0 divergence trips. The queue hypothesis held: the tail above p90 was
+queueing, and depth 1 halves it without a felt cost.
+
+**Seven worn A/Bs tonight, one line each**: J (metres → cm) · JT (−7 ms: no felt change) ·
+JP (P2: cost fix, same feel) · JH (horizon 100: **worse**, more jitter) · JA (AVG_N 3: jitter
+manageable, kept) · JM (mid-exposure: hard to leave the ship, kept) · JX (JA+JM: same) · JQ
+(+ queues 1: solid). **Profile** (`vr-launcher.py` Aircar): `SLAM_CONFIG=P2.toml`,
+`SLAM_CORRECTION_AVG_N=3`, `WMR_CAM_TS_MID_EXPOSURE=1`, `VIT_QUEUE_DEPTH=1`, horizon 50,
+clamp 150, spread 25.
+
+**What is left, named**: the rotation-onset displacement — yaw/pitch first "moves you off the
+seat", then it settles. Offline, the raw VIO under J-class configs does NOT do this (yaw net
+5 cm on the recording), so the live displacement is either (a) the prediction layer — the
+position freeze + `SLAM_PRED_NECK_ARM_MM` 150 model during the ~75 ms the anchor is stale (a
+wrong arm length or centre shows up exactly as "moves then settles"), or (b) the timing
+shortfall the sweep left (optimum −5…−10 ms vs the ~2.5 ms mid-exposure recovers → `start_ts`
+lags exposure start). Both are cheap to separate next session: one recording under JQ
+(button R's env + JQ's), replayed at 0 / −5 / −10 ms → if the raw trajectory is clean while the
+wearer felt the displacement, it is (a) and the A/B is `NECK_ARM_MM` 100 / 200 / 0 (env only);
+if −5 ms still wins offline, add `VIT_CAM_TIME_OFFSET_NS=-5000000` on top of the mid-exposure
+stamp and test worn. If it holds worn, `optical_flow_recall_enable: true`, `vio_marg_lost_landmarks:
+false`, `vio_min_triangulation_dist: 0.02`, `vio_max_kfs: 12` and the default recall norms go
+into `basalt-g2-config.json` (global — one Dalí 6dof check afterwards). Round N (J + one
+refinement each: gate 1 cm, 16 kfs, kf-threshold 0.9, kf every 2 frames, recall on all 4 cams)
+and the ±5/10 ms time-offset sweep are queued offline for the margins.

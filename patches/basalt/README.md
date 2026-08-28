@@ -125,3 +125,67 @@ checks-and-erases 1/29th of the snapshot, so the erasures spread evenly across t
 inserted after a snapshot are looked at next second. `patch_last_seen`'s patch-less entries age
 out on a separate phase (`frame % 30 == 15`). Same bound, same grace, no full-map pass in a
 single frame. No effect when recall is off. Measured by the I4 soak (I on 0016) in docs/80.
+
+## 0017 — `VIT_CAM_TIME_OFFSET_NS`: shift the camera frame stamps against the IMU (2026-08-27)
+
+The wearer's yaw recording (docs/80, `euroc-yaw_20260827170436`) replayed offline with the
+camera timestamps moved by −10 / −5 / +5 / +10 ms and the IMU untouched: the position drift
+over ten 400–600 °/s head turns went **0.24 / 0.30 / 0.96 (unshifted) / 1.72 / 4.21 m** —
+monotonic, huge, and yaw-specific (pitch and roll barely move), i.e. the frame stamps Monado
+hands to Basalt are *later* than the exposure by at least 5–10 ms. Basalt has a
+`calib.cam_time_offset_ns` field for exactly this but never applies it (the line in
+`sqrt_keypoint_vio.cpp` is commented out), so this patch adds the one knob that exists: an
+env-gated `int64` added to `partial_frame->t_ns` where the frame enters the tracker
+(`vit_tracker.cpp`, `push_img_sample`); the cam0/camN equality assert is adjusted to match;
+`frames_original_timestamp` and the IMU path are untouched. Negative = earlier. Default 0 = no
+effect. The dataset shift used offline and this variable have the same sign. The value is
+being pinned by the J-config sweep (−5 … −30 ms) in docs/80; the permanent fix belongs in how
+Monado's WMR camera driver stamps frames, once the number is known. *(Pinned the same night:
+−5 and −10 ms tie, −15 is worse; Monado patch 0101 `WMR_CAM_TS_MID_EXPOSURE` is the driver-side
+form. Worn, −7 ms was indistinguishable from 0 on config J.)*
+
+## 0018 — `prunePatches()`: no full scan of `patch_last_seen` (2026-08-27)
+
+0016 amortized the sweep of `patches` but left `prunePatches`' other map on a full walk every 30
+frames: `patch_last_seen` entries without a patch (bundle ids from before a reset, ids detected
+while recall was off) were aged out by iterating the whole map (~300 k entries) in one frame —
+the exact unamortized-sweep shape 0016 had just removed one map over, and a likely part of the
+p99 tail measured live on config J (frontend p99 77 ms). Now `patch_last_seen` is only stamped
+for ids that own a patch (`patches.count()` guard, ~2.5–5 k hash lookups per frame), which
+makes it a subset of `patches`' keys, so the existing amortized sweep erases an expired
+patch and its stamp together and nothing is left behind; the separate scan is gone. Same grace,
+same bound, no behaviour change when recall is off. Found by the frontend code read in docs/80.
+
+## 0019 — per-stage timing in the `vit_of` line (2026-08-27)
+
+`recall_ms` only brackets `recallPoints()`; the recall-gated patch build lives in `addPoints()`
+and `prunePatches()` runs after `filterPoints()`, so "recall p99 2.8 ms" next to a 46 ms
+frontend was attributing nothing. With `VIT_COLLAPSE_LOG=1` the line now ends with
+`pyr_ms= track_ms= detect_ms= filter_ms= prune_ms=` (steady-clock deltas: pyramid build;
+frame-to-frame tracking; `addPoints()` = FAST detection + cam0→camN matching + the patch build;
+`filterPoints()`; `prunePatches()`), appended after the existing fields so every parser that
+reads the first five keeps working. Zero cost when the env var is unset (the stamps are inside
+`if (of_log)`). The first frame prints zeros. Use it before turning any frontend knob.
+
+## 0020 — `age_in_ms` / `age_out_ms` on the collapse-log lines (2026-08-28)
+
+`vit_collapse IN` now ends with `age_in_ms` = now − frame stamp (exposure → tracker input:
+USB transfer, decode, hw2mono, input queue) and `vit_collapse OUT` with `age_out_ms` = now −
+frame stamp (exposure → pose out of the VIO). `std::chrono::steady_clock` is `CLOCK_MONOTONIC`
+on glibc, the clock Monado stamps frames with, so the subtraction is meaningful. Together with
+Monado's 0102 (`pose age ms`, display side) this splits the wearer's latency into transport /
+Basalt / Monado. First worn numbers (Aircar, config P2): transport **11.4 ms flat** (p99
+13.3), Basalt in→out **p50 59 / p90 170 / p99 265 ms** with the frontend at 29 / 39 / 53 —
+the tail is queueing, not processing (→ 0021). Only under `VIT_COLLAPSE_LOG=1`.
+
+## 0021 — `VIT_QUEUE_DEPTH`: both live queues to n (default 2) (2026-08-28)
+
+The image input queue and the optical-flow → VIO queue were each capped at 2 (0002 / the
+`BASALT_VISION_NONBLOCK` block) when the backend was saturated at ~66 ms per frame
+(2026-08-17). With config P2 the backend runs 17 ms p50 / 32 p90 — not saturated — and
+0020 showed the pose leaving Basalt up to 170–265 ms after exposure: 2 + 2 slots let the
+pipeline run four frames deep after a single slow frame. `VIT_QUEUE_DEPTH=1` bounds that to
+~2 frames + processing; a frame is dropped only on a real stall (the IMU covers 33 ms). The
+2026-08-17 negative result for drop-oldest on the vision queue (every surviving frame became a
+keyframe) needed a saturated backend and 400 ms gaps; it is re-checked, not assumed. Default 2
+= unchanged; clamped to [1, 10]; deterministic mode ignores it as before.

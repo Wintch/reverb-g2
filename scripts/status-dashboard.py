@@ -394,6 +394,70 @@ AIRCAR_VARIANTS = [
      {"SLAM_PRED_POSITION_HORIZON_MS": "50", "SLAM_PRED_POSITION_MAX_SPEED_CM_S": "150",
       "SLAM_CORRECTION_SPREAD_MS": "25", "SLAM_CONFIG": f"{HOME}/vr/basalt-variants/K.toml"},
      "BACKEND. Agregada tras los soaks: H (triangulacion 2 cm) DESESTABILIZA en reposo (21 disparos en 4 min vs 7 en 20 min de la base) -- profundidades mal condicionadas. K se queda con lo que si sirve: recall (G, ~6x landmarks) + ventana de 12 keyframes para que los landmarks sobrevivan mas tiempo, con la baseline de 5 cm intacta. Requiere patch 0014 (recall acotado en memoria)."),
+    # ---- round 3 (2026-08-27 evening, docs/80): the yaw recording replayed offline ranked J
+    # first by far (yaw drift 2.62 -> 0.28 m) and then confirmed H1: shifting the camera stamps
+    # -10 ms against the IMU cut I's yaw drift 0.96 -> 0.24 m (+10 ms: 4.2 m). Basalt patch 0017
+    # exposes that shift as VIT_CAM_TIME_OFFSET_NS. JT = J + that shift.
+    # The J sweep pinned the value: -5 and -10 ms tie (rot sum 0.53 vs J's 0.63), -15 is
+    # already worse (0.70), -20 breaks (1.86). -7 ms = the middle of the plateau; the driver
+    # arithmetic (wmr_camera.c stamps at start + 5.55 ms instead of start + exposure/2) puts
+    # the true error at 1-5.5 ms depending on auto-exposure, so the midpoint is the safe bet.
+    ("JT", "J + camaras -7 ms (offset IMU-camara)",
+     {"SLAM_PRED_POSITION_HORIZON_MS": "50", "SLAM_PRED_POSITION_MAX_SPEED_CM_S": "150",
+      "SLAM_CORRECTION_SPREAD_MS": "25", "SLAM_CONFIG": f"{HOME}/vr/basalt-variants/J.toml",
+      "VIT_CAM_TIME_OFFSET_NS": "-7000000"},
+     "TIMING. J + los timestamps de camara adelantados 7 ms respecto del IMU (patch basalt 0017). Offline, sobre tu grabacion, el desfase explica mas deriva en yaw que cualquier config: -5 y -10 ms empatan (0.53 vs 0.63 de J), -15 ya empeora, +10 rompe (4.2 m). Causa: wmr_camera.c estampa el frame en start + medio periodo (5.55 ms) en vez de start + media exposicion. Si en vivo J ya esta bien, esto deberia dejar el giro rapido casi clavado. Comparar contra J."),
+    # ---- round 4 (2026-08-27 night, docs/80): J worn = the metres are gone ("varios cm"), what
+    # is left is delay on fast motion + jitter/latency on slow motion. Three code reads named
+    # three levers, each a Monado patch or env knob on top of J (Basalt config unchanged):
+    ("JH", "J + horizonte de posicion 100 ms",
+     {"SLAM_PRED_POSITION_HORIZON_MS": "100", "SLAM_PRED_POSITION_MAX_SPEED_CM_S": "150",
+      "SLAM_CORRECTION_SPREAD_MS": "25", "SLAM_CONFIG": f"{HOME}/vr/basalt-variants/J.toml"},
+     "PREDICCION. Con J el frontend tarda ~46 ms (antes 28) y la pose SLAM llega con 60-100 ms de edad; el horizonte de 50 ms de 0100 CONGELA la posicion el resto de ese tiempo (t_tracker_slam.cpp:1672-1691), o sea un retraso fijo de posicion en cada anchor. 100 ms cubre la edad real; el clamp de 1.5 m/s sigue protegiendo de los picos. Si baja la demora en movimientos rapidos sin volver a 'irse', queda."),
+    # 0102 measured the age with Aircar running: p50 115 ms, p90 151, max 359. 100 covers the
+    # median only; 180 covers p90 with margin, the 1.5 m/s clamp bounds any single frame to
+    # 27 cm of extrapolation.
+    ("JH2", "J + horizonte 180 ms (cubre el p90 medido)",
+     {"SLAM_PRED_POSITION_HORIZON_MS": "180", "SLAM_PRED_POSITION_MAX_SPEED_CM_S": "150",
+      "SLAM_CORRECTION_SPREAD_MS": "25", "SLAM_CONFIG": f"{HOME}/vr/basalt-variants/P2.toml"},
+     "PREDICCION, escalon 2 (sobre P2). La edad de pose medida con Aircar corriendo es p50 115 ms / p90 151 / max 359: JH (100) solo cubre la mediana. 180 cubre el p90; el clamp de 1.5 m/s acota la extrapolacion a 27 cm por frame. Si JH ayudo pero sigue congelando en los giros rapidos, este es el siguiente."),
+    # (2026-08-28 00:50: JA and JM moved from J.toml to P2.toml -- JP is the new base after its
+    # wearer test, and JH (horizon 100) was refuted worn: more jitter, larger excursions.)
+    ("JA", "P2 + correccion promediada (3 anchors)",
+     {"SLAM_PRED_POSITION_HORIZON_MS": "50", "SLAM_PRED_POSITION_MAX_SPEED_CM_S": "150",
+      "SLAM_CORRECTION_SPREAD_MS": "25", "SLAM_CONFIG": f"{HOME}/vr/basalt-variants/P2.toml",
+      "SLAM_CORRECTION_AVG_N": "3"},
+     "JITTER LENTO. Patch 0103: el paso de correccion (spread 25 ms) recibe el PROMEDIO de los ultimos 3 deltas de anchor en vez de cada delta crudo. Con la cabeza casi quieta cada delta es ruido mm del VIO y un decaimiento de 25 ms contra anchors cada 33 ms nunca termina de asentarse: reproduce el ruido a 30 Hz (el 'jitter al mirar lento'). Promediar el input rechaza ese ruido con ~1 anchor de retraso solo en la correccion, no en el movimiento real. Comparar contra J cerca del panel."),
+    ("JM", "P2 + stamp a mitad de exposicion (driver)",
+     {"SLAM_PRED_POSITION_HORIZON_MS": "50", "SLAM_PRED_POSITION_MAX_SPEED_CM_S": "150",
+      "SLAM_CORRECTION_SPREAD_MS": "25", "SLAM_CONFIG": f"{HOME}/vr/basalt-variants/P2.toml",
+      "WMR_CAM_TS_MID_EXPOSURE": "1"},
+     "TIMING (arreglo de driver, patch Monado 0101). wmr_camera.c estampaba el frame en start + medio SLOT de 90 Hz (5.55 ms) en vez de start + media EXPOSICION (0.03-4.5 ms, auto): el frame llegaba 1-5.5 ms tarde respecto del IMU. Esto sigue la exposicion frame a frame en vez del -7 ms fijo de JT. Sin VIT_CAM_TIME_OFFSET_NS. Offline JT ya no se distinguia de J en el casco; esta es la version correcta para dejar por defecto si no empeora nada."),
+    # ---- round 5 (2026-08-27 ~21:00, docs/80 round P): the frontend cost has a config answer.
+    # Offline, single stream, same recording: J = 45 ms p50 (matches the 46 measured worn),
+    # J + optical_flow_detection_grid_size 30->40 ("P2") = 26.6 ms p50 / 33 p90 -- under the
+    # base's 28 and under the 33 ms camera period -- with J's drift (rot sum 0.78 vs 0.70,
+    # noise 0.1). Fewer, larger cells = ~1900 keypoints instead of ~3200; the recall keeps
+    # doing its job. JP = that config alone; JX = JP + every Monado-side lever from round 4.
+    ("JP", "J con grid 40 (frontend 27 ms en vez de 45)",
+     {"SLAM_PRED_POSITION_HORIZON_MS": "50", "SLAM_PRED_POSITION_MAX_SPEED_CM_S": "150",
+      "SLAM_CORRECTION_SPREAD_MS": "25", "SLAM_CONFIG": f"{HOME}/vr/basalt-variants/P2.toml"},
+     "COSTO. Config P2 = J + optical_flow_detection_grid_size 30->40. Offline sobre tu grabacion: misma deriva que J (0.78 vs 0.70, ruido 0.1) con el frontend en 26.6 ms p50 / 33 p90 en vez de 45 / 56 -- por debajo de la base (28) y del periodo de camara (33). O sea, J sin los 18 ms de demora extra. Si se siente como J pero con menos retraso, es la config nueva de Aircar."),
+    # (JX: horizon back to 50 after JH was refuted worn -- 100 ms = more jitter, larger excursions.)
+    ("JX", "TODO JUNTO: grid 40 + correccion promediada + stamp exposicion",
+     {"SLAM_PRED_POSITION_HORIZON_MS": "50", "SLAM_PRED_POSITION_MAX_SPEED_CM_S": "150",
+      "SLAM_CORRECTION_SPREAD_MS": "25", "SLAM_CONFIG": f"{HOME}/vr/basalt-variants/P2.toml",
+      "SLAM_CORRECTION_AVG_N": "3", "WMR_CAM_TS_MID_EXPOSURE": "1"},
+     "La pila completa de esta noche: config P2 (J barato) + JH (horizonte 100 ms) + JA (correccion promediada 3 anchors) + JM (stamp a mitad de exposicion). Para probar DESPUES de JP/JH/JA/JM por separado: si alguno empeora solo, aca se mezcla y no se sabe cual fue."),
+    # ---- round 6 (2026-08-28 ~01:30): JA kept (jitter), JM kept (excursions), JH refuted.
+    # 0020's age_in/age_out split the pose age: transport 11 ms flat, Basalt in->out p50 59 /
+    # p90 170 / p99 265 with the frontend at 29/39/53 -- the 2+2 queue slots are the tail.
+    # JQ = JX + both live queues at depth 1 (Basalt patch 0021, VIT_QUEUE_DEPTH).
+    ("JQ", "JX + colas de profundidad 1 (menos edad de pose)",
+     {"SLAM_PRED_POSITION_HORIZON_MS": "50", "SLAM_PRED_POSITION_MAX_SPEED_CM_S": "150",
+      "SLAM_CORRECTION_SPREAD_MS": "25", "SLAM_CONFIG": f"{HOME}/vr/basalt-variants/P2.toml",
+      "SLAM_CORRECTION_AVG_N": "3", "WMR_CAM_TS_MID_EXPOSURE": "1", "VIT_QUEUE_DEPTH": "1"},
+     "LATENCIA LATERAL. JX + VIT_QUEUE_DEPTH=1 (patch Basalt 0021): las dos colas vivas (imagen->frontend y frontend->backend) pasan de 2 a 1 slot. Medido en JM: transporte 11 ms fijo, pero exposicion->pose p50 59 / p90 170 / p99 265 ms con el frontend en 29/39/53 -- el resto es cola (4 frames x 33 ms tras un frame lento del backend). Con 1 slot la edad queda acotada a ~2 frames + proceso; se descarta un frame solo cuando hay un atasco real (el IMU cubre). Si baja la demora lateral sin sumar jitter, queda."),
     # R = the ONE wearer session the offline pipeline needs: F's config + EUROC_RECORD (PNG,
     # lossless -- JPG changes the features) + the live calibration dump. ~3 min following
     # yaw-protocol-voice.py's spoken script. Afterwards replay-basalt-variants.py replays the
@@ -411,6 +475,9 @@ for _tag, _label, _env, _note in AIRCAR_VARIANTS:
         "cmd": ["python3", f"{HOME}/vr/vr-launcher.py", "1", "6dof"],
         "cwd": f"{HOME}/vr",
         "env": {"VR_LAUNCH_APPID": "1073390", "U_PACING_APP_LOG": "debug", "VIT_COLLAPSE_LOG": "1",
+                # 0102: every 512 predictions log the SLAM anchor age p50/p90/max -- the
+                # wearer's "demora" as a number, for every variant from here on.
+                "SLAM_POSE_AGE_LOG": "512",
                 "VR_DEMO_RECORD": "1", "VR_DEMO_COMMENT": f"Aircar 6dof variante {_tag}: {_label}",
                 **_env},
         "demo": {"title": f"Aircar variante {_tag} ({_label})", "tracking": "6dof",

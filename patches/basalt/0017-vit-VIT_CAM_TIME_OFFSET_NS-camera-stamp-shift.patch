@@ -1,0 +1,64 @@
+From 39302665b9e0bb506f0bbd970bc1731360689f3b Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Thu, 27 Aug 2026 18:04:53 -0300
+Subject: [PATCH] vit: VIT_CAM_TIME_OFFSET_NS -- shift camera frame stamps vs
+ the IMU (offline sweep: -10 ms takes the yaw drift 0.96 -> 0.24 m)
+
+---
+ src/vit/vit_tracker.cpp | 19 +++++++++++++++++--
+ 1 file changed, 17 insertions(+), 2 deletions(-)
+
+diff --git a/src/vit/vit_tracker.cpp b/src/vit/vit_tracker.cpp
+index eea4e99..3df298a 100644
+--- a/src/vit/vit_tracker.cpp
++++ b/src/vit/vit_tracker.cpp
+@@ -101,6 +101,10 @@ using std::thread;
+ using std::vector;
+ 
+ struct Tracker::Implementation {
++  // reverb-g2 patch 0017: VIT_CAM_TIME_OFFSET_NS, added to every camera frame timestamp (IMU
++  // untouched). Negative = the exposure happened earlier than the host's stamp says.
++  int64_t cam_time_offset_ns = 0;
++
+   static constexpr vit_tracker_extension_set_t exts{
+       .has_add_camera_calibration = true,
+       .has_add_imu_calibration = true,
+@@ -398,6 +402,17 @@ struct Tracker::Implementation {
+       ASSERT(calib_data_ready.cam.at(i), "Missing cam%zu calibration", i);
+     }
+ 
++    // VIT_CAM_TIME_OFFSET_NS=<int> (reverb-g2 patch 0017, 2026-08-27): shift every camera frame
++    // timestamp by this much before it enters the optical flow / VIO (IMU samples untouched).
++    // Why: replaying a wearer's yaw recording offline with the camera stamps moved -10 ms took
++    // the drift over ten 400-600 deg/s head turns from 0.96 m to 0.24 m; +10 ms made it 4.2 m
++    // (docs/80). Basalt's own calib.cam_time_offset_ns is never applied (the line in
++    // sqrt_keypoint_vio.cpp is commented out), so this is the only knob. Env-gated, default 0.
++    if (const char *off = std::getenv("VIT_CAM_TIME_OFFSET_NS"); off != nullptr && off[0] != '\0') {
++      cam_time_offset_ns = std::strtoll(off, nullptr, 10);
++      cout << "VIT_CAM_TIME_OFFSET_NS: camera frame timestamps shifted by " << cam_time_offset_ns << " ns\n";
++    }
++
+     // VIT_DUMP_CALIB=<path> (reverb-g2 patch 0013, 2026-08-27): write the exact calibration this
+     // tracker is about to run with -- cameras + IMU, already overwritten by whatever the host
+     // (Monado's WMR driver) pushed through add_*_calibration above -- as a Basalt calibration
+@@ -534,7 +549,7 @@ struct Tracker::Implementation {
+       partial_frame = make_shared<OpticalFlowInput>(cam_count);
+       partial_frame->show_uimat = ui.get_mat_to_show();
+ 
+-      partial_frame->t_ns = s->timestamp;
++      partial_frame->t_ns = s->timestamp + cam_time_offset_ns;  // patch 0017
+ 
+       // Initialize stats
+       partial_frame->stats.enabled_exts = enabled_exts;
+@@ -548,7 +563,7 @@ struct Tracker::Implementation {
+ 
+       if (enabled_exts.has_pose_features) { partial_frame->stats.features_per_cam.resize(cam_count); }
+     } else {
+-      ASSERT(partial_frame->t_ns == s->timestamp, "cam0 and cam%d frame timestamps differ: %ld != %ld", i,
++      ASSERT(partial_frame->t_ns == s->timestamp + cam_time_offset_ns, "cam0 and cam%d frame timestamps differ: %ld != %ld", i,
+              partial_frame->t_ns, s->timestamp);
+     }
+ 
+-- 
+2.47.3
+

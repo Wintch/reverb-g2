@@ -161,6 +161,21 @@ TITLE_PROFILES = {
         # smoother settle, latency still low -- the wearer's own ask (E's smoothness without
         # E's delay), confirmed in-headset. Aircar only; Cyberpilot keeps 50 (not re-tested).
         "SLAM_CORRECTION_SPREAD_MS": "25",
+        # 2026-08-27 (night, docs/80): Basalt backend config "J" -- recall on, marg-lost off,
+        # 2 cm triangulation gate, 12 keyframes, Basalt's default recall norms. The wearer's yaw
+        # recording replayed offline: drift over ten 400-600 deg/s turns 2.62 -> 0.28 m; worn:
+        # "varios cm" where F went "uno o dos metros". Per-title on purpose (the global
+        # basalt-g2-config.json is shared with Dali/Cyberpilot -- promote after a Dali 6dof
+        # check). Costs ~18 ms/frame in the frontend (p50 46 vs 28 ms, budget 33) -- round P.
+        # 2026-08-28 ~01:45 (docs/80, seven worn A/Bs): "JQ" = the night's stack, best verdict
+        # "solido, pero no resuelto aun". P2 = J + detection grid 40 (frontend 27 ms instead
+        # of 45, same drift); AVG_N 3 (jitter, patch 0103); mid-exposure camera stamp (fewer
+        # excursions, patch 0101); queue depth 1 (Basalt 0021: pose age p90 94 ms instead of
+        # 138-186, Basalt in->out p90 50 instead of 170-188). Horizon stays 50 (100 was worse).
+        "SLAM_CONFIG": os.path.expanduser("~/vr/basalt-variants/P2.toml"),
+        "SLAM_CORRECTION_AVG_N": "3",
+        "WMR_CAM_TS_MID_EXPOSURE": "1",
+        "VIT_QUEUE_DEPTH": "1",
         # 2026-08-27: Monado supersamples 140% by DEFAULT (3024^2/eye) which left this title
         # GPU-bound in 6dof -- fps dived to a 41-71 floor on heavy scenes and reprojected
         # (the felt jitter/drift). 100% (2160^2/eye, native) gave GPU headroom: floor rose to

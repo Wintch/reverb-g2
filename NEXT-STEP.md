@@ -1,5 +1,111 @@
 # Next step
 
+> ## START HERE (2026-08-28 ~02:00 — seven worn A/Bs in one night; Aircar 6dof is now "sólido,
+> pero no resuelto aún"; the night's stack (JQ) is the profile; the residual is named and has
+> a cheap discriminating experiment)
+>
+> Full record: docs/80 from "The wearer's recording, replayed" to "JQ". Instruments that now
+> exist: `replay-phase-slice.py` (per-phase drift), Basalt 0019 (per-stage frontend ms), 0020
+> (`age_in_ms`/`age_out_ms` — transport vs Basalt), Monado 0102 (`pose age ms` — display-side
+> age; on at 512 in every dashboard variant). **Grep `pose age ms` and `age_out_ms` after every
+> session** — the wearer's "demora" is a number now.
+>
+> **Aircar profile = JQ** (`vr-launcher.py`): `SLAM_CONFIG=~/vr/basalt-variants/P2.toml` (J's
+> backend + detection grid 40: yaw drift 2.6 → 0.3 m offline at the base's frontend cost),
+> `SLAM_CORRECTION_AVG_N=3` (0103, jitter), `WMR_CAM_TS_MID_EXPOSURE=1` (0101, excursions),
+> `VIT_QUEUE_DEPTH=1` (0021: Basalt in→out p90 170 → 50–100 ms, display age p90 186 → 93),
+> horizon 50 + clamp 150 (horizon 100 was WORSE worn), spread 25. Refuted for good: `levels` 2
+> (diverges), horizon > 50, fixed −7 ms on top of J (no felt change).
+>
+> **The residual — "yaw/pitch first moves you off the seat, then it settles"**: offline the raw
+> VIO does not do it (yaw net 5 cm), so it is the prediction layer (freeze + `NECK_ARM_MM` 150
+> over a ~75 ms stale anchor) or the timing shortfall (`start_ts` lags exposure start by
+> ~5 ms). **Next session, 10 min of headset**: (1) one recording under JQ's env + button R's
+> `EUROC_RECORD` (copy the dataset back from `~/vr/logs/euroc/` if replays are needed — the
+> tmpfs was emptied 2026-08-28, 9 GB); replay at 0 / −5 / −10 ms; (2) if the raw trajectory
+> is clean → A/B `SLAM_PRED_NECK_ARM_MM` 0 / 100 / 200 as dashboard buttons (env only); if
+> −5 ms still wins → `VIT_CAM_TIME_OFFSET_NS=-5000000` on top of the mid-exposure stamp.
+> Also pending: Dalí 6dof once with P2 (the global `basalt-g2-config.json` is still the old
+> one; Aircar uses P2 per-title), the interleaved at-rest pair (base→P2 now), Cyberpilot's
+> profile (spread 50 + 0098 remnant), and the `prunePatches` snapshot frame (p99 12 ms, 1 in 30).
+
+> ## START HERE (2026-08-27 evening — the yaw recording exists and was replayed against every
+> backend config: J wins by far (yaw drift 2.62 → 0.28 m); then H1 was CONFIRMED offline — the
+> camera stamps are ≥ 5–10 ms late vs the IMU and that one number moves the yaw drift between
+> 0.24 m and 4.2 m; Basalt patch 0017 exposes the shift; dashboard buttons J and JT await the wearer)
+>
+> Full record: docs/80's three newest sections ("The wearer's recording, replayed", "The full
+> matrix", "H1 CONFIRMED offline"). Instruments: `scripts/replay-phase-slice.py` (cuts a replayed
+> trajectory by `phases.json` from `yaw-protocol-voice.py`: per-phase max-1 s / net / max-far —
+> the still "settle" phases are the sanity check, 1 cm in every good config), `replay-basalt-
+> variants.py` (ranking now by span; max-1 s was wearer-dominated). Dataset: `euroc-yaw_
+> 20260827170436` (trimmed, 4.9 GB, tmpfs + archived `~/vr/logs/euroc/`); shifted copies
+> `/mnt/vrtmp/euroc-yaw-shift_{m30,m20,m15,m10,m5,p5,p10}` (PNGs symlinked). Noise floor: base
+> replayed twice differs by 0.1 m on the rotation sum.
+>
+> **Offline ranking (Σ of yaw+pitch+roll max-far, m; base 3.59)**: G3 2.43 (leaks 22 cm into
+> the following still phase), H 2.45, K 2.12, M 1.99, I 1.34, **J 0.63** (yaw net 5 cm after ten
+> 400–600 °/s turns). Levers separated: the 2 cm gate is the biggest config step; recall's value
+> is re-attaching the SAME landmark ids (M keeps 661 landmarks p10 without it and still drifts
+> 0.65 m more); J's whole gain over I is the recall norms (the JSON's were 4× stricter than
+> Basalt's C++ defaults and rejected most valid recalls).
+>
+> **Timing (H1)**: I with camera stamps −10 / −5 / 0 / +5 / +10 ms → yaw max-far 0.24 / 0.30 /
+> 0.96 / 1.72 / 4.21 m; pitch/roll far less sensitive (the H4 asymmetry). Live lever: `patches/
+> basalt/0017` `VIT_CAM_TIME_OFFSET_NS` (built into `~/vr/basalt/build/libbasalt.so`, default 0).
+> Where the ms come from is the open question — `wmr_camera.c:433` stamps frames at
+> `frame_start_ts + delta/2`; read that block before touching it.
+>
+> **Pinned (J sweep)**: −5 and −10 ms tie (Σ 0.53 vs J's 0.63), −15 worse, −20 breaks → JT
+> carries **−7 ms**. Round N (five refinements on J) changed nothing: J is the config plateau.
+>
+> **Worn (~20:30)**: **J** — *"muy similar… primero se va varios cm para un costado"* (F went
+> "uno o dos metros"): the metres are gone; what remains is the same delay on fast motion and
+> jitter + latency on slow motion. **JT** (−7 ms) — no visible difference, slightly more jitter
+> if anything; not promoted. **J is now Aircar's profile** (`SLAM_CONFIG=~/vr/basalt-variants/
+> J.toml` in `vr-launcher.py`, per-title; the global file untouched until a Dalí 6dof check).
+>
+> **The remaining delay has a number**: JT's live log shows the Basalt frontend at **p50 45.8 /
+> p90 57.9 / p99 76.8 ms** per frame vs base's 28 and the 33 ms camera period — recall's cost.
+> The SLAM pose arrives late and irregularly → position lag (into 0100's 50 ms horizon clamp)
+> and slow-motion jitter. Next lever = frontend cost at equal drift: round P offline
+> (single-stream, J with `num_points_cell` 2 / `grid_size` 40 / both / `max_threshold` 60,
+> timing + per-phase drift) and three code reads (frontend hot spots, pose-age path, camera
+> stamp semantics → driver patch `start + exposure/2`, env-gated). Results land in docs/80.
+>
+> **The code reads landed (docs/80 "The three code reads")**: four env-gated patches, built,
+> default off — Basalt **0018** (prunePatches' leftover full-map scan, our own 0016 bug), Monado
+> **0101** `WMR_CAM_TS_MID_EXPOSURE` (driver stamp at mid-exposure), **0102** `SLAM_POSE_AGE_LOG`
+> (the pose age nobody measured; on at 512 for every dashboard variant → grep "pose age ms" in
+> the log), **0103** `SLAM_CORRECTION_AVG_N` (mean of the last N anchor deltas into the spread).
+> Also: `recall_ms` under-reports recall's real cost (patch build + prune are outside it) —
+> use the `addTime()` stage stamps for attribution before tuning further.
+>
+> **Wearer next, one lever each vs J (5 min each, grep "pose age ms" after every run)**:
+> **JH** (horizon 100 ms — the 50 ms horizon is a position FREEZE once the anchor is older than
+> 50 ms, which with J's 46 ms frontend is every anchor → "misma demora"), **JA** (correction
+> averaged over 3 anchors — the slow-motion jitter is the spread replaying mm VIO noise at 30
+> Hz), **JM** (mid-exposure driver stamp, the correct form of JT). Keep what helps; the
+> profile takes the winners as env.
+>
+> **Round P answered the cost question (docs/80 "Round P")**: offline timing reproduces the
+> live ms (base 28 = 28 worn, J 45 = 46 worn). **P2 = J + `optical_flow_detection_grid_size`
+> 30 → 40: frontend 26.6 / 33.3 / 42.7 ms (p50/p90/p99) — under the base and under the 33 ms
+> camera period — with J's drift (Σ 0.78 vs 0.70, noise 0.1).** Button **JP** = that config;
+> **JX** = P2 + JH + JA + JM together (test after the singles). If JP feels like J with less
+> delay, `~/vr/basalt-variants/P2.toml` becomes Aircar's `SLAM_CONFIG`. Refuted offline the
+> same hour: **`optical_flow_levels` 2 diverges to kilometres** (P5/P6/P7 — the coarsest
+> pyramid level is what follows 400–600 °/s between frames; never retry) and `max_threshold`
+> 60 on P2 buys nothing (P8). P2 is the config; a P2 replay on the 0018/0019 build measures
+> the p99 tail with per-stage attribution.
+>
+> **Still running offline when this was written**: round N (J + gate 1 cm / 16 kfs / kf-thresh
+> 0.9 / kf every 2 frames / recall on all 4 cams) and the J −5…−30 ms sweep (pins the offset).
+> A CPU guard SIGSTOPs `basalt_vio` while `monado-service` runs, so wearer tests are unaffected.
+> Not done: the interleaved at-rest pair base3→K3 (another night); Cyberpilot's profile still
+> carries spread 50 and `WMR_FORWARD_ANGULAR_VELOCITY` from the earlier wiring — clean up when
+> J/JT settle.
+
 > ## START HERE (2026-08-27, small hours — the 5 variants were worn; the metres of yaw drift are
 > Basalt's backend losing every landmark under yaw, not prediction; an offline replay pipeline
 > now exists; unattended soaks of the backend variants ran while the user was away; THE next
