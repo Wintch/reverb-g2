@@ -156,7 +156,15 @@ TITLE_PROFILES = {
         "WMR_CONSTELLATION_CONTROLLERS": "0",
         "SLAM_PREDICTION_TYPE": "2",
         "SLAM_PRED_FREEZE_POSITION": "1",
-        "SLAM_PRED_NECK_ARM_MM": "150",
+        # 2026-08-29 06:14-06:37 (docs/80 "The 10-minute wearer slot"): 150 -> 100. Neck-arm A/B
+        # worn in a lit room under the JQ stack, dashboard buttons JN0 / JN100 / JN200 vs the
+        # profile's 150: order 0 ~= 100 < 150 < 200 ("me mueve de lugar mucho menos" at 0,
+        # "igual parece a la vez anterior" at 100, "la deriva es claramente mayor ahora" at 200).
+        # Hypothesis (a) confirmed: less arm, less rotation-onset displacement; 150 was over.
+        # 100 rather than 0 because 0 showed near-field cockpit jitter ("un poco de jittering al
+        # mirar la cabina de cerca"). Reversible: 0 felt the same, 150/200 worse. The wearer had
+        # not chosen between 0 and 100 when this was written.
+        "SLAM_PRED_NECK_ARM_MM": "100",
         # 2026-08-27 (evening): 50 -> 25. Variant F (A + spread 25) worn: "bastante solido",
         # smoother settle, latency still low -- the wearer's own ask (E's smoothness without
         # E's delay), confirmed in-headset. Aircar only; Cyberpilot keeps 50 (not re-tested).
@@ -165,8 +173,11 @@ TITLE_PROFILES = {
         # 2 cm triangulation gate, 12 keyframes, Basalt's default recall norms. The wearer's yaw
         # recording replayed offline: drift over ten 400-600 deg/s turns 2.62 -> 0.28 m; worn:
         # "varios cm" where F went "uno o dos metros". Per-title on purpose (the global
-        # basalt-g2-config.json is shared with Dali/Cyberpilot -- promote after a Dali 6dof
-        # check). Costs ~18 ms/frame in the frontend (p50 46 vs 28 ms, budget 33) -- round P.
+        # basalt-g2-config.json is shared with Dali/Cyberpilot). The Dali 6dof check ran
+        # 2026-08-29 05:24 in a DARK room and was invalid -- base ran away just as far in the
+        # same dark and was clean once lit; P2 stays per-title, not promoted (docs/80 "the gate
+        # run was invalid"). Costs ~18 ms/frame in the frontend (p50 46 vs 28 ms, budget 33) --
+        # round P.
         # 2026-08-28 ~18:47 (docs/80, seven worn A/Bs): "JQ" = the round's stack, best verdict
         # "solido, pero no resuelto aun". P2 = J + detection grid 40 (frontend 27 ms instead
         # of 45, same drift); AVG_N 3 (jitter, patch 0103); mid-exposure camera stamp (fewer
@@ -234,7 +245,31 @@ TITLE_PROFILES = {
     # binary evidence -- OVRGamepad.dll in the install -- wrongly called this
     # gamepad-class; the user's own live playthrough overrides that.) Run with 6dof
     # head tracking per the user's own direction.
-    "591360": {"WMR_CONSTELLATION_CONTROLLERS": "0"},
+    # No head-prediction / anchor knobs on purpose: Dali is the only approved title that
+    # receives Basalt's position unclamped (no SLAM_PRED_FREEZE_POSITION, no
+    # SLAM_SESSION_ANCHOR_RADIUS_CM), and it needs a LIT room for 6dof -- 2026-08-29 05:24 in
+    # the dark it ran 161 m away under P2 and 80 m under base, and was "solido" the minute the
+    # lights came on (docs/80 "the gate run was invalid"; scripts/light-preflight.sh).
+    "591360": {
+        "WMR_CONSTELLATION_CONTROLLERS": "0",
+        # 2026-08-29 (docs/80): same rationale as Aircar's 2026-08-27 change above. The 05:24
+        # P2 worn run rendered at Monado's 140 % default (3024^2/eye, comp_swapchain_create_init
+        # in its log) with the wearer reading "60fps" and one nvidia-smi grab at 94 % / 245 W;
+        # the 05:44 control ran with this var from the env (2160^2/eye) and one grab read
+        # 73 % / 235 W -- single grabs (docs/84 s2 wants 4+ over 15 s), no fps instrument ran
+        # ('up' mode, U_PACING_APP_LOG unset), and the two runs differed in more than scale.
+        # The util drop is consistent with the 1.96x pixel ratio if the app then ran ~90 fps.
+        # Justified as the next thing to try, not validated: the 2026-08-26 worn approval was
+        # at 140 % -- re-confirm worn and get Dali's first measured fps number.
+        "XRT_COMPOSITOR_SCALE_PERCENTAGE": "100",
+        # 2026-08-29 (docs/80 "the thread finding"): the base control ran at jack-in-wayland.sh's
+        # plain default of 4 SLAM threads (nobody set an override for Dali) while P2.toml
+        # hardcodes num-threads=6. Per-stage split of the worn timing.csv: TRACKING (the one
+        # tbb-parallel frontend stage) p50 20.4 ms at 4 threads vs 12.4 ms at 6, half of each
+        # frontend budget (total p50 40.9 vs 24.2 ms); detection is sequential and did not move
+        # with threads. Aircar already carries SLAM_THREADS=6 with constellation off, same here.
+        "SLAM_THREADS": "6",
+    },
     # Wolfenstein: Cyberpilot (1056970) -- seated mech cockpit; motion controllers
     # are REQUIRED, so constellation stays ON (unlike Aircar/Dali, which drop it).
     # 2026-08-27: user confirmed it renders in-headset but with a pronounced head

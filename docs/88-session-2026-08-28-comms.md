@@ -166,7 +166,7 @@ Full detail in `NEXT-STEP.md`'s 19:45 -03 block and the commit messages of `c8db
   08-28 18:59:13 -03), so the 08-27 J/JT recordings sampled 22.5 h of that bash's environ and
   all eight stale runs finalised together when the loop died (18:59:14–18:59:32 -03: the 08-27
   J/JT pair plus today's six). Now `pgrep -n -x`, runs bound to
-  (pid, `/proc` start ticks), `DEMO_RECORDER_MAX_H` backstop (3 h — raise for a booth day),
+  (pid, `/proc` start ticks), `DEMO_RECORDER_MAX_H` backstop (3 h at the time; default raised to 8 h in the 2026-08-29 ~01:20 hardening pass, NEXT-STEP),
   `stop_reason` in `summary.json`. Open: `vr-launcher.py:324-326` still does the same `pgrep -f`
   + `kill -9`; `pmadminka-agent.py` needs a restart to pick up the new `monado_pid()`.
 
@@ -192,9 +192,10 @@ LED addendum.
 1. Matrix: decide on a (human) one-liner or silence — default silence.
 2. Wearer slot, 10 min, per §4; then the 0/−5/−10 replay of the RQ recording.
 3. !2967's retry-succeeded log; `doc/changes` fragments on the four MRs when they get close.
-4. `pmadminka-agent.py` restart; `vr-launcher.py:324-326` → `pgrep -x`; `DEMO_RECORDER_MAX_H` for the booth.
+4. `pmadminka-agent.py` restart; `vr-launcher.py:324-326` → `pgrep -x`; `DEMO_RECORDER_MAX_H` for the booth (done 2026-08-29 ~01:20: default 8 h).
 5. Dalí 6dof once with P2 before promoting P2 to the global `basalt-g2-config.json`; the
    interleaved at-rest pair base→P2 (no wearer, but it launches Monado on the rig — not
-   started remotely on purpose).
+   started remotely on purpose). *2026-08-29*: both ran, both in the dark — the Dalí run was
+   invalid (161 m under P2, 80 m under base, clean once lit), P2 stays per-title; docs/80.
 6. Tokens in play on the everyday box (Matrix, GitLab feed, GitLab `glpat-`, Sunshine): rotate
    when no longer needed.

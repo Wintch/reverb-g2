@@ -450,9 +450,21 @@ blocker.
   cmdline. Use `pgrep -f "monado[-]service"`. A PID that changes on every check is the
   tell. **This bites when killing games too**: `kill $(pgrep -f "Aircar")` from this
   agent's shell killed the shell itself (exit 144, chain aborted) on 2026-08-13 — bracket
-  the pattern (`AirCar[-]Win64`) for game processes as well, not just for monado.
+  the pattern (`AirCar[-]Win64`) for game processes as well, not just for monado. Again on
+  2026-08-29 05:42 over ssh: `for p in $(pgrep -f "DreamsOfDali|SteamLibrary/.*591360"); do
+  kill $p; done` matched the ssh shell carrying the pattern and killed it (exit 255). Every
+  `pgrep -f` pattern gets the bracket trick (`pgrep -f "Dreams[O]fDali"`), or use `pgrep -x`
+  on the exe name, or Steam's reaper line `pgrep -f "AppId=107[3]390"` (stable while the game
+  lives). Same class as the 22.5 h demo-recorder incident (docs/88).
 - **`pkill` is blocked** in the Claude Code environment (exit 144, aborts the chain).
   Use `kill` on PIDs from `pgrep`.
+- **No heavy analysis on iashur while a wearer session is live** (2026-08-29 06:24): three
+  verifier agents ran `awk` over a 609 MB Monado log (one awk at 40 % RAM, ~13 GB) plus
+  `gzip -cd` while the wearer was in Aircar — load 13 on 12 threads, *"se siente que a veces
+  tira 0 fps"*, Basalt's `d_res` starvation warnings 1 252 → 9 697 in three minutes. Analysis
+  waits for the rig to be down, and the raw multi-hundred-MB `jack-in` logs are never scanned
+  with `awk` associative arrays or Python dicts — grep the `*-jack-in-filtered.log`, or
+  `zcat … | grep -c` a single pattern, and keep it to one process.
 - **Project-VR's Monado 90Hz patch** (`nominal_frame_interval_ns = 1e9/90`) **is already
   applied** in the lab tree as of 2026-08-04. It was applied *before* the baseline on
   purpose, so the only change between the unpatched measurement and the later one is the

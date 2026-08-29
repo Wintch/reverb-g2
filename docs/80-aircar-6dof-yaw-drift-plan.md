@@ -1325,3 +1325,323 @@ NEXT-STEP already named — one Dalí 6dof worn run under P2 (the other approved
 for a booth day, a glance at RSS after the first hour. Aircar already runs P2 per-title; Cyberpilot
 would inherit it from the global file. Artifacts: `~/vr/logs/soak/{base-i2,P2-i2,base-i3,P2-i3}.*`,
 CSVs `~/vr/logs/slam-csv/slam-20260829-00{0144,2005,3730,5454}-*`.
+**Added 2026-08-29 05:24**: this pair was run in the dark (before dawn, room unlit) — see the
+next section; its trip ratio is a dark-room number, not a promotion argument.
+
+### 2026-08-29 05:24 — Dalí 6dof worn under P2 — the gate run was invalid: the room was dark
+
+The gate named above ran as soon as the wearer was back, then a control — and the pair says nothing
+about P2, because both ran in an unlit room before dawn. This section replaces a first draft (never
+committed) that read the P2 run's 161 m as P2's landmarks running away; the control run and six
+adversarial re-reads of the sources on iashur (`t_tracker_slam.cpp`, the profiles, the archived
+CSVs) corrected the mechanism. Numbers are `scripts/worn-grade.py` (new) on the archived
+`~/vr/logs/soak/dali-{P2,base}-worn-1-*` unless said otherwise.
+
+**The P2 run (05:24–05:38, `dali-P2-worn-1`).** Dreams of Dalí (591360), 6dof, its own title
+profile — constellation off and nothing else: Dalí is the only approved title whose profile carries
+no head-prediction knob and no anchor guard, so the application receives Basalt's position
+unclamped (one-euro-filtered and gyro-predicted, but `filtering.csv` peaks at 161.2 m exactly where
+`tracking.csv` does) — with `SLAM_CONFIG=~/vr/basalt-variants/P2.toml` from the environment
+(ambient env wins over the profile by design), launched detached. Room dark. 13.8 min worn.
+Wearer, verbatim: *"aparecí muy lejos de todo, aun anda bien. 60fps"*.
+
+- Raw position: within 0.09 m for the first 3 min (headset still on the desk), then 1.6 m
+  (180–210 s), **52.9 m** (210–240 s), **151.8 / 161.2 / 72.7 m** (330–420 s), 105–150 m from
+  540 s to the end; final row 2.96 m. 5 speed-guard trips.
+- Monado log 609 MB / 6.66 M lines: **5 132 012** `d_res_d_p / d_res_d_xi is not valid` and
+  **497 513** `det(Q1Jl) == 0, skipping backsubstitution`.
+- Frontend p50 24.2 / p99 47.9 ms; backend `opt` p50 12.3 / p99 106.7 ms; camera 18.6–24 Hz in
+  minutes 7–9 (frames dropped; 30 Hz otherwise).
+- Rendered at **3024×3024**/eye (`comp_swapchain_create_init`, log line 585): Monado's 140 %
+  default — Dalí's profile did not carry Aircar's `XRT_COMPOSITOR_SCALE_PERCENTAGE=100`. GPU,
+  one `nvidia-smi` grab: 94 % / 245 W of the 250 W limit.
+
+**The control (05:44–05:57, `dali-base-worn-1`).** Same title, same wearer, the global
+`basalt-g2-config.json` (base), `XRT_COMPOSITOR_SCALE_PERCENTAGE=100` from the env (rendered
+2160×2160, log line 584), the headset worn from the start. Same dark room, and base ran away
+*harder*: raw position **37.2 / 27.0 / 43.7 / 65.2 m** in the first four 30-s buckets, 80.6 m
+max at t = 373 s, **17 trips** (all before t = 477 s), `d_res` 14 701, `det` 5 240. Wearer: *"veo
+una raya de luz nada mas"*. Base ran at `SLAM_THREADS=4` (jack-in's default; nobody sets an
+override for Dalí, while `P2.toml` hardcodes `num-threads=6`) — frontend p50 40.9 / p99 47.4 ms
+all run long, camera 23–26 Hz all run long; the thread finding below.
+
+**05:52:35 — lights on** (*"hay luz"*) = `tracking.csv` row 11914 (t = 491.2 s from the first
+pose, ~505 s from launch). From that row: **0 trips and 0 new `d_res` warnings** for the rest of
+the run (`det` continues at a reduced rate and produces no trip). Per-minute peak |p|:
+37.2 / 65.2 / 7.8 / 59.2 / 42.9 / 40.3 / 80.6 / 50.6 m (minutes 0–7, dark) → 5.1 / 5.4 / 5.6 /
+5.0 / 5.0 / 0.0 m (minutes 8–13, lit). Window 1 (05:52:35–05:54:05): drift 0.97 → 4.01 m over
+90 s, recovering while the wearer looked around, 22 Hz. Window 2 (05:54:58–05:56:28): **within
+0.19 m for 75 s**, then 1.95 m in the last 15 s = the wearer taking the headset off to type.
+Wearer: *"solido, bien. Algun jitter un poco al girar."* GPU, one grab: 73 % / 235 W. No fps
+reading from the wearer for this run.
+
+**The at-rest record says the same thing, by hour.** Every at-rest soak on file
+(`~/vr/logs/soak/*.json`, all produced by `soak-variant.py` under the same env):
+
+| start (local) | tag | config | lm p50 / p10 | % frames lm<5 | trips |
+|---|---|---|---|---|---|
+| 08-27 11:40 | record | base | 15 / 6 | 4.9 | 0 |
+| 08-27 11:46 | base | base | 16 / 7 | 4.4 | 7 |
+| 08-27 12:11 → 16:10 | H G I G2 G3 L K I2 M I3 I4 | daytime variants | 15–161 / 4–93 | 0.0–12.3 | 0–96 |
+| 08-27 16:32 | base2 | base | 64 / 7 | 9.2 | 36 |
+| 08-29 00:01 | base-i2 | base | **0 / 0** | **88.4** | 142 |
+| 08-29 00:19 | P2-i2 | P2 | 22 / 10 | 3.7 | 35 |
+| 08-29 00:37 | base-i3 | base | **1 / 0** | **79.6** | 107 |
+| 08-29 00:54 | P2-i3 | P2 | 24 / 13 | 1.8 | 19 |
+
+14/14 daytime runs have lm p50 in [15, 161]; 0/4 night runs reach that range; no counter-example
+either way. So **the previous section's "P2 trips 4–5× fewer at rest" was measured in the dark**
+and is not a promotion argument — it is a dark-room number (P2 degrades less than base in the
+dark; that is all it says). Nothing points at a build regression: the raw corner count already
+collapses at night (`keypoints_p50` base daytime 2641 vs base-i2/i3 1866 / 2080 — upstream of
+anything 0021's queue depth touches), the night legs' frontend is *faster* than daytime base (p50
+21.9–23.4 vs 27.9 ms at the same 84–85 fps), `recall_ms` sits at the noise floor
+(2e-05…1.2e-04 ms) for base/P2 in every soak, and `VIT_CAM_TIME_OFFSET_NS` is unset everywhere.
+But note the gap: **no at-rest soak has ever run in daylight on the current build**
+(`libbasalt.so` rebuilt 08-28 18:46 with 0021; the last daytime soak, base2, ended 08-27 16:53),
+and the offline replay binary (`build-tools/basalt_vio`, statically linked, built 08-27 21:06)
+predates 0021 by 22 h — no replay on disk has exercised it either. One daytime base→P2 at-rest
+pair on the current build closes that. (Also: WMR auto-exposure/gain is on, but its live values
+print only at `WMR_LOG=trace`, `wmr_camera.c:872` — 0 `exposure|gain` hits in either worn log; a
+10–30 s trace capture at session start would show the trail.)
+
+**The numeric warnings, kept as an instrument — with what they measure corrected.** The first
+draft read the 5.1 M `d_res` lines as P2's landmarks pulling the state away. Re-counted across
+every run that has them:
+
+| run | worn? | room | `d_res … not valid` | `det(Q1Jl) == 0` | trips (guard) | raw \|p\| max |
+|---|---|---|---|---|---|---|
+| base-i2 / base-i3 | no | dark | 2 / 151 | 2 440 / 2 613 | 142 / 107 (anchor) | 7.3 / 14.2 m |
+| P2-i2 / P2-i3 | no | dark | 29 203 / 96 120 | 52 222 / 107 493 | 35 / 19 (anchor) | 5.2 / 3.1 m |
+| dali-base-worn-1 | yes | dark → lit | 14 701 | 5 240 | 17 (speed) | 80.6 m |
+| **dali-P2-worn-1** | yes | dark | **5 132 012** | **497 513** | 5 (speed) | **161.2 m** |
+| Aircar JQ, 08-28 18:47 | yes | lit | 0 | 3 626 | 0 | 1.03 m |
+| Aircar JP, 08-28 18:13 | yes | lit | 6 741 | n/c | 1 (anchor) | 2.99 m |
+| Aircar RQ / JN0 / JN100, 08-29 | yes | lit | 0 / 288 / 1 252 → 9 697 in 3 min of CPU contention | n/c | 0 / 0 / 0 | n/c |
+
+The reading: base's 80 m dark runaway logged 14 701, Aircar JQ's clean 1.03 m session logged 0
+(JP's 2.99 m: 6 741). The 5.1 M count scales with **darkness × P2's recall / 12-keyframe backend**
+(same dark room at rest: P2 200–600× base) and — the JN100 incident — with **frontend starvation
+from CPU contention** (three verifier agents' `awk` over this very 609 MB log at load 13 on 12
+threads: `d_res` 1 252 → 9 697 in three minutes, lit room, wearer *"se siente que a veces tira 0
+fps"*). Not with runaway magnitude. So it stays in `worn-grade.py`'s output as a real instrument
+for "the frontend is starving (light or CPU)", not as a runaway detector — `worn-grade.py`'s
+docstring corrected accordingly. And the trip counts across the two tables are not the same
+guard: the soaks run Aircar's env (`soak-variant.py` PROFILE_ENV: anchor 300 cm + quat check), so
+141 / 105 / 35 / 19 of those are 0099 session-anchor trips ("3.00–3.03 m from the session
+anchor"), + 1 / 2 / 0 / 0 speed trips, + 1 quat-norm trip per leg (that guard is marked not
+hardware-validated; the one trip per leg is unexplained — worth a glance), while Dalí's 5 / 17 are
+all the 10 m/s speed guard.
+
+**The mechanism, corrected** (sources: `t_tracker_slam.cpp`, `patches/monado/README.md`,
+`vr-launcher.py` `TITLE_PROFILES`, the worn CSVs):
+
+- *The position freeze hides nothing.* `SLAM_PRED_FREEZE_POSITION` (0097) only zeroes the
+  predicted linear velocity before `m_predict_relation` (`t_tracker_slam.cpp:1687-1690`); the
+  delivered position is the last SLAM pose — the runaway itself. The 50 ms horizon (0100) adds at
+  most 1.5 m/s × 50 ms = 7.5 cm. Aircar's profile would have delivered the same 161 m.
+- *The only clamp is 0099.* `SLAM_SESSION_ANCHOR_RADIUS_CM=300` restarts Basalt when the output
+  is >3 m from the session start — it does not move the wearer back (its own comment,
+  `:1393-1400`: the carried output "does not move back toward the session anchor by even one
+  centimetre") and with the carry on it can re-fire every ~2 s quiet window (at rest: 141 trips at
+  "3.00–3.03 m" in 15 min). It bounds by restarting; it is absent from Dalí's profile. Cyberpilot
+  (1056970) is **not** a raw consumer: its profile carries the freeze, neck arm 150, spread 50,
+  the quat-norm check and the 300 cm anchor — **only Dalí is raw**, and Cyberpilot would take a
+  promoted P2 behind the same freeze + anchor Aircar uses.
+- *JQ's "sólido" hid nothing.* The 08-28 18:47 JQ session's raw `tracking.csv`: max 1.03 m over
+  10.4 min, final 0.09 m, 0 speed trips, 0 anchor trips, 0 `d_res`. All six P2-based Aircar
+  sessions of the 28th: raw max-from-start 2.99 / 1.37 / 0.97 / 3.00 / 2.99 / 1.03 m, anchor
+  trips 1 / 0 / 0 / 2 / 1 / 0. Basalt did not run away in the lit room under P2.
+- *The speed guard.* `SLAM_AUTO_RESET_MAX_SPEED` default 10 m/s, parsed as an integer (`:108`; a
+  fractional value silently becomes 0), a consecutive-pose speed test, blind for 2 s after each
+  reset. It fired at **every** 10 m/s crossing — all 22 worn trips logged 10.00–10.10 m/s at the
+  end of a smooth ramp (the four rows before each read 9.6–9.99 m/s) — just tens of metres late:
+  first trip at |p| = **52.9 m** (P2, t = 219 s) / **37.2 m** (base, t = 22.9 s); single ramps
+  walked 21.6–149.4 m over 3.9–32.3 s before it fired. The genuinely uncaught case is P2
+  t = 480–700 s: max per-frame 5.69 m/s, 0 rows ≥ 6 m/s, |p| 1.7 → 120.4 m, **0 trips for
+  220 s**. At its default 10 m/s the speed guard bounds nothing below it. Do not lower it: real
+  heads peak 2–3 m/s and raw SLAM velocity has 0.2 % re-localization spikes to 127 m/s (0100's
+  README), so the fix is a distance/anchor bound, not a lower speed.
+- *What the wearer actually saw.* After every trip the reported position snapped back to
+  0.67–4.44 m of the origin in the next accepted row (P2: 52.855 → 0.669 m, 156.236 → 1.221,
+  72.665 → 1.717, 150.050 → 2.157, 83.759 → 2.638; base 37.198 → 0.672 … 37.520 → 4.443), while
+  the `Reset #N: carrying offset` lines logged deltas of only 0.1–4.4 m — the carry solved its
+  offset against a first post-reset pose still at the old raw position, and the fresh tracker's
+  next pose teleported home. "Flown out 23–161 m, then snapped back" × 5 (P2) / × 17 (base), the
+  post-snap offset growing 0.7 → 3.0 m (P2) / 0.7 → 4.4 m (base) across resets. That is *"aparecí
+  muy lejos … aun anda bien"*. It contradicts the carry's "stays continuous" claim (suspect: a
+  stale pose left in the VIT pose queue at `tracker_reset`; both queue depths show it) — its own
+  open item, not tonight's.
+
+**fps and GPU — what is measured and what is not.** No fps instrument ran in either Dalí run
+(both launched in `up` mode, `U_PACING_APP_LOG` unset, 0 `Delivered frame` lines; docs/76: Dalí
+had zero recorded fps metrics). "60 fps" is the wearer's reading and the first fps figure the
+title has; the base run has none. The 94 % and 73 % are one unarchived `nvidia-smi` grab each
+(docs/84 §2: a single grab is meaningless — 4+ samples over 15 s), and the wattage does not
+discriminate (245 and 235 W are both within 6 % of the cap). What holds: the util drop is
+quantitatively consistent with the 3024²/2160² = 1.96× pixel ratio *if* the app ran ~90 fps at
+100 % (60 × 1.96 at 94 % predicts 72 % at 90 × 1.0), and Monado's own pacer held 90 Hz in both
+runs (`Fake pacer fell behind` jumps 0–11/min at steady state for P2, 0–5/min for base, the bulk
+in minute 0 = loading) — so the 60 fps was app-side; docs/23's desktop-vsync 60 Hz lock is not
+excluded by tonight's data. Not a scale-only A/B either (P2 vs base, dark vs part-lit, a
+6.66 M-line log vs a 44 KB one). **Power cap, corrected**: the 250 W is deliberate — the runtime
+144 W of 08-22 was lost to one of the five 08-25 reboots (a reboot leaves the driver default
+240 W) and at **2026-08-26 04:03:47 root ran `vr-power-setup.sh --gpu-limit 100`** (journal),
+pinning the card's 250 W max, after stopping `vr-power-watchdog.service` at 04:02:33; already on
+record in docs/84 §7 and docs/82 §9. `~/vr/power.conf` says `GPU_LIMIT_PCT=70` (~175 W) and the
+watchdog is enabled-but-stopped — the next boot re-applies 175 W in sessions. Two competing
+intended caps are on record (144 W in the 08-22 session note vs 70 % in `power.conf`);
+reconciling them needs the user/root, not this session.
+
+**The thread finding (per-stage split of the worn `timing.csv`).** Base's 40.9 ms worn frontend
+(22–23 ms at rest) is the **tracking** stage — the one `tbb::parallel_for`'d stage, the one that
+scales with `SLAM_THREADS` (T235: 24.6 → 13.4 ms at 4 → 8 threads) — and base ran at 4 threads
+while P2 got 6 from `P2.toml`:
+
+| p50 / p99 ms | base worn (4 threads, 18 905 rows) | P2 worn (6 threads, 23 176 rows) |
+|---|---|---|
+| pyramid | 0.74 / 1.47 | 1.10 / 2.81 |
+| **tracking** | **20.42 / 28.53** | **12.36 / 30.16** |
+| recall | 0.05 / 0.13 | 0.14 / 1.47 |
+| detection cam0 | 2.35 / 3.33 | 1.29 / 3.05 |
+| matching | 6.36 / 8.38 | 1.63 / 5.79 |
+| detection cam_i | 10.78 / 12.35 | 7.04 / 12.24 |
+| filter | 0.15 / 0.31 | 0.62 / 11.70 |
+| frontend total | 40.90 / 47.45 | 24.24 / 47.87 |
+
+Detection is sequential (`keypoints.cpp`) and cannot grow with a thread change; its difference
+tracks grid 30 vs 40. `monado-service` CPU 537 % (P2) vs 367–373 % (base) = 1.44–1.46×, the 6:4
+thread ratio (1.5×) — pool size, not per-frame work. Base's frontend was flat 38.0–43.5 ms p50
+across all 13 minutes and unchanged by the lights (p50 41.13 before row 11914, 39.63 after), so
+low-light image processing is not the cost driver either. Consequence: the worn base-vs-P2 pair
+is not a config comparison at all (dark room + 4-vs-6 threads + 140-vs-100 % scale), and Dalí's
+profile now carries `SLAM_THREADS=6` (below). For "what does grid 40 alone buy", the clean number
+stays Round P's J → P2 (−18.3 / −22.2 / −26.1 ms p50/p90/p99, drift unchanged).
+
+**Decision: P2 is NOT promoted into the global `basalt-g2-config.json` — the gate was not
+passed, not failed.** Both configs ran away in the dark and base was clean once lit; no lit-room
+Dalí minute under P2 exists, so the data do not discriminate. And the booth does not need the
+promotion: Dalí on base + light reads *"solido"*; Aircar keeps P2 per-title (validated worn,
+including today's lit-room RQ / JN0 / JN100 / JN200 — 0 trips); the promotion would only matter
+for Cyberpilot, which is not in the lineup. A valid gate = one Dalí 6dof worn run under P2 in a
+**lit** room, ~10 min, at scale 100 — optional, whenever a wearer slot is spare.
+
+**Profile changes made (`vr-launcher.py` `TITLE_PROFILES["591360"]`)**:
+`XRT_COMPOSITOR_SCALE_PERCENTAGE=100` (same rationale as Aircar's 2026-08-27 change; the render
+targets are the hard evidence, the GPU figures one grab each; it needs a worn re-confirmation plus
+a first Dalí fps number before it counts as validated — the 2026-08-26 approval ran at 140 %) and
+`SLAM_THREADS=6` (the thread finding above; Aircar already carries it). **Not** P2. Considered,
+not applied: `SLAM_SESSION_ANCHOR_RADIUS_CM` for Dalí — it would have bounded tonight's runaway to
+3 m restarts, but the wearer would still not have seen the scene; the real fix is light.
+
+**Lighting rule for 6dof titles: the room must be lit.** `scripts/light-preflight.sh` (new,
+first run 2026-08-29 07:07, detached: verdict OK in a lit room -- landmarks p50 137 / p10 0, keypoints p50 3052, 15.2 % of frames under 5 landmarks, 5 session-anchor trips (the base config random-walks 3 m at rest even in light), 1800 frames in 60 s, clean teardown, 0 cores, attention flag cleared; the only rough edge is the player log filling with IPC errors because jack-in down kills Monado before hello_xr exits) brings Monado + the 360 player up with the headset on the desk for `SECONDS`
+(default 60), parses Basalt's per-frame landmark counts with `soak-variant.py`'s own `parse_vit()`
+under the same env as the soak baselines, and grades: **DARK** lm p50 < 5 (or no frames), **DIM**
+5–15, **OK** ≥ 15 — calibrated strictly between the dark points (0 / 1) and the daytime base
+points (16 / 64); DIM is an unmeasured buffer, not a data band. It reports
+`pct_frames_lt5_landmarks` and the trip count alongside so a human can catch what the median
+hides, and it grades the *base* config (the most starvation-sensitive one on file): OK/DIM
+describes base, DARK is a hard stop for every profile. Output
+`~/vr/logs/preflight/light-<stamp>.{log,json,done}`, last log line `light preflight end:
+status=… verdict=…`; sets/clears the dashboard attention flag. Launch (the output directory must
+exist before the redirect): `mkdir -p ~/vr/logs/preflight && cd ~/Documents/reverb-g2 && setsid
+nohup scripts/light-preflight.sh 60 > ~/vr/logs/preflight/launch.out 2>&1 < /dev/null &`. Open:
+the daytime base→P2 at-rest pair on the 0021 build (above).
+
+**Side findings from the same hours.**
+
+- The manual dashboard relaunch of 2026-08-28 23:05 (pid 683648/683653) had inherited an envfile
+  without `DISPLAY`/`WAYLAND_DISPLAY` (only DBUS) — its demo buttons' `steam -applaunch` would not
+  have reached the Steam client. Fixed 05:26: killed, `systemctl --user start
+  status-dashboard.service` (the unit was already `enabled`; the user manager's environment
+  carries `DISPLAY=:1 WAYLAND_DISPLAY=wayland-0 XAUTHORITY`); unit pid 716015 has them,
+  `/api/status` ok, and the RQ/JN buttons then launched Aircar via
+  `POST /api/action/variant-1073390-<TAG>`. `pmadminka` showed attached/active all session (the
+  08-28 heartbeat failures did not recur; not investigated).
+- 05:42, one more `pgrep -f` self-match: a cleanup line `for p in $(pgrep -f
+  "DreamsOfDali|SteamLibrary/.*591360"); do kill $p; done` matched the ssh shell carrying that
+  pattern and killed it (exit 255); nothing else harmed. Rule: bracket the pattern
+  (`pgrep -f "Dreams[O]fDali"`), or `pgrep -x`, or Steam's reaper line
+  `pgrep -f "AppId=107[3]390"` (stable while the game lives). Same class as the 22.5 h
+  demo-recorder incident (docs/88). `CLAUDE.md` updated.
+- **06:24–06:27, workflow contention while the wearer was in JN100**: three verifier agents ran
+  `awk` over the 609 MB `dali-P2-worn-1` log (one awk at 40 % RAM ≈ 13 GB) plus `gzip -cd`; load
+  13 on 12 threads; wearer: *"se siente que a veces tira 0 fps"*. Killed, workflow paused; `d_res`
+  1 252 → 9 697 inside those minutes. **Rule: no heavy analysis on iashur while a wearer session
+  is live; never scan the raw multi-hundred-MB Monado logs with `awk` associative arrays — use the
+  `*-jack-in-filtered.log` or `zcat … | grep -c`.** In `CLAUDE.md`.
+- One teardown SIGSEGV, 06:34:04, pid 731059 (the JN100 `monado-service`, on kill) — the
+  `pop_pose` family above; `coredumpctl info 731059` when someone looks. Rig left down after
+  every run; no other cores.
+
+### 2026-08-29 06:08 — The 10-minute wearer slot: RQ recorded, neck arm 0 ≈ 100 < 150 < 200
+
+Lit room throughout (the lights stayed on after 05:52), P2 backend + the JQ stack, all four runs
+from the dashboard's round-7 buttons (`POST /api/action/variant-1073390-<TAG>`), rig down between
+them. 0 speed/anchor trips in all four.
+
+**RQ (06:08–06:13)** — JQ + `EUROC_RECORD` to `/mnt/vrtmp/euroc-yaw2_20260829060819`,
+`VIT_DUMP_CALIB=~/vr/logs/calib-g2-yaw2.json`. `yaw-protocol-voice.py` started 06:09:06 on the
+headset sink; phase boundaries (s from protocol start): intro 0, yaw 35.5, settle-1 69.0, pitch
+79.2, settle-2 108.0, roll 118.2, settle-3 147.8, free 157.9, end 222.5. **0 trips, 0 `d_res`**
+for the whole session. Recording 6.8 GB (1.5 GB/min — the recorder runs as long as Monado lives,
+so `~/vr/logs/rq-finish.sh` auto-stopped the session 30 s after the voice ended), archived with
+the calib dump, the voice log, the Monado log and the SLAM CSVs to
+`/mnt/videos/euroc/euroc-yaw2_20260829060819` (root fs at 82 %, `/mnt/videos` 197 GB free; the
+tmpfs copy is the one to drop before a reboot). The wearer did not report RQ's feel separately.
+
+**`scripts/euroc-phases.py` (new)** writes the `phases.json` that `replay-phase-slice.py` reads
+(`protocol_start_t_ns` + `phases[].t_ns`) from the voice log. Default `--method clock`:
+`t_ns = unix × 1e9 − (CLOCK_REALTIME − CLOCK_MONOTONIC)` read live — same boot only (the boot_id
+is recorded and it refuses a voice log that predates the boot). Validated against the 27th's
+hand-made `phases.json`: every phase within −0.72 s, constant — the 27th's mtime method carried
+the PNG writer's lag. `--method mtime` = the 27th's method, valid only on original (uncopied)
+files. Usage: `euroc-phases.py --dataset DIR --voice ~/vr/logs/yaw-protocol-<stamp>.json
+[--out DIR/phases.json] [--check DIR/phases.json]`.
+
+**The neck-arm A/B (hypothesis a)**, the same fast yaw each time:
+
+- **JN0** (06:14–06:18, `SLAM_PRED_NECK_ARM_MM=0`): *"bien! Diría que el tema de movimiento
+  rápido me mueve de lugar mucho menos. hay un poco de jittering al mirar la cabina de cerca.
+  Pero fuera de eso bien"*. 0 trips, `d_res` 288.
+- **JN100** (06:19–06:31, 100 mm): *"igual parece a la vez anterior"* / *"muy similar, avanza"*
+  — same as JN0. 0 trips. (The contention incident of the previous section fell inside this run.)
+- **JN200** (06:32–06:37, 200 mm): *"la deriva es claramente mayor ahora"* — worse than 150.
+
+**Order: 0 ≈ 100 < 150 (JQ) < 200.** Hypothesis (a) — the neck model over the ~75 ms stale anchor
+— is confirmed in the direction "less arm, less displacement"; the 150 mm guess of 08-26 was
+over. **Profile change: `SLAM_PRED_NECK_ARM_MM` 150 → 100** in Aircar's profile
+(`vr-launcher.py` `TITLE_PROFILES["1073390"]`) and in the dashboard's `JQ_ENV` — the same feel as
+0 without the near-field cockpit jitter the wearer noted at 0; a reversible one-liner; the wearer
+had not chosen between 0 and 100 when this was written. Cyberpilot keeps 150 (not re-tested).
+
+**RQ replay (P2, `~/vr/logs/rq-replay.sh` + two reruns; phase slices in
+`~/vr/logs/replay-phase-yaw2.jsonl`, "rot-sum" = yaw + pitch + roll max-distance-from-phase-start):**
+
+| shift | rot-sum | yaw / pitch / roll | settles | max 1-s disp | note |
+|---|---|---|---|---|---|
+| 0 ms, run 1 | **1.23 m** | 0.63 / 0.39 / 0.21 | 0.02–0.03 | 0.69 m (5/607 windows > 0.5) | clean |
+| 0 ms, rerun | 1.72 m | 1.13 / 0.38 / 0.21 | 0.02–0.03 | 0.68 m (7/607) | run-to-run noise (`deterministic=0`, 6 threads) |
+| −10 ms | 4.04 m | **3.30** / 0.51 / 0.23 | 0.02–0.03 | 0.95 m (11/607) | yaw 3–5× worse |
+| −5 ms, run 1 | diverged | 4 383 / 6 517 / 10 059 | 1 680–4 165 | 1 707 m | |p| 157 m by t = 20 s, 116 km at the end |
+| −5 ms, rerun | diverged | 2 072 / 11 665 / 27 834 | 1 744–12 399 | — | clean for 40 s (max 1.1 m), then 228 m at 40–60 s, 249 km at the end |
+
+The −5 ms blow-up is **reproducible in outcome, not in onset** (t ≈ 6 s vs 40–60 s, both inside the
+still intro phase), so it is not the untrimmed-dataset artefact first suspected (the rerun ran 40 s
+clean on the same untrimmed copy) and not a timestamp coincidence (0 camera stamps equal an IMU
+stamp in any shift; nearest gap 0.4–0.9 µs in all three). What it is exactly is open — a
+first-frames/initialisation sensitivity of P2's recall backend to that particular offset is the
+best guess — but the decision does not need it: this recording already carries the mid-exposure
+camera stamp (0101 is part of JQ), so any further negative shift *overshoots*: −10 ms triples the
+yaw error and −5 ms is unstable. On the 27th's recording (no 0101) −5/−10 ms had helped; 0101
+banked that gain. **JQT (`VIT_CAM_TIME_OFFSET_NS=−5 ms` on top of 0101) is not justified — not
+run, and JQ keeps 0101 without an extra offset.** Hypothesis (b) is closed for this stack; the
+residual is hypothesis (a)'s (the neck arm, above).
+
+Two tool notes from the sweep: `replay-basalt-variants.py` died in its log parser on a fused
+`vit_` line (`'0.730290.059371'`, two threads' output interleaved) after a complete 4.5-min replay
+— it now skips the field the way `soak-variant.py`'s `parse_vit()` does; and `build-tools/basalt_vio`
+(statically linked, built 08-27 21:06) still predates Basalt 0021 — every replay above ran the
+pre-0021 frontend queue; rebuild it alongside `libbasalt.so` before the next sweep so the two
+cannot diverge silently.

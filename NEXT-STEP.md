@@ -1,5 +1,79 @@
 # Next step
 
+> ## START HERE (2026-08-29 ~07:00 -03, remote session from the everyday box — the Dalí gate ran
+> and was INVALID (dark room): P2 stays per-title, not promoted; lighting rule + light-preflight;
+> the 10-min wearer slot ran: RQ recorded, neck arm 0 ≈ 100 < 150 < 200 → Aircar neck arm 100)
+>
+> **What ran (all detached, rig down after each, one teardown core)**: 05:24 `dali-P2-worn-1`
+> (Dalí 6dof, P2 via env, 13.8 min): raw position 52.9 → **161.2 m**, 5 speed trips, 5.1 M
+> `d_res` lines, *"aparecí muy lejos de todo, aun anda bien. 60fps"*; 05:44 `dali-base-worn-1`
+> (control: base config, scale 100): **37–80 m in the same dark, 17 trips** — then **lights on
+> 05:52:35: 0 trips, 0 new `d_res`, within 0.19 m for 75 s, *"solido, bien. Algun jitter un poco
+> al girar"***. The 00:01 at-rest pair was run in the dark too (base lm p50 0/1 vs every daytime
+> run 15–161), so its "P2 trips 4–5× fewer" is a dark-room number. Full record + the corrected
+> mechanism (the freeze hides nothing; only 0099's 3 m anchor clamps, and Dalí has none; JQ's raw
+> trajectory on the 28th was clean; the 10 m/s speed guard fires at every crossing but bounds
+> nothing below it; base worn ran at `SLAM_THREADS=4`, tracking p50 20.4 vs P2's 12.4 ms):
+> docs/80 "Dalí 6dof worn under P2 — the gate run was invalid".
+>
+> **Decision on P2**: NOT promoted to the global `basalt-g2-config.json` — the gate was not
+> passed (invalid run), not failed; and the booth does not need it (Dalí on base + light is
+> "solido", Aircar keeps P2 per-title, Cyberpilot is not in the lineup). A valid gate = one Dalí
+> 6dof worn run under P2 in a LIT room, ~10 min, scale 100 — optional.
+>
+> **Lighting rule**: 6dof titles need a lit room. `scripts/light-preflight.sh` (new; first run
+> 2026-08-29 07:07 detached: verdict OK in a lit room -- landmarks p50 137 / p10 0, keypoints p50 3052, 15.2 % of frames under 5 landmarks, 5 session-anchor trips (the base config random-walks 3 m at rest even in light), 1800 frames in 60 s, clean teardown, 0 cores, attention flag cleared; the only rough edge is the player log filling with IPC errors because jack-in down kills Monado before hello_xr exits; always detached, never foreground):
+> `mkdir -p ~/vr/logs/preflight && cd ~/Documents/reverb-g2 && setsid nohup scripts/light-preflight.sh 60 > ~/vr/logs/preflight/launch.out 2>&1 < /dev/null &`
+> → `~/vr/logs/preflight/light-<stamp>.{log,json,done}`, verdict DARK (lm p50 < 5) / DIM (5–15) /
+> OK (≥ 15), base config, headset on the desk; the last log line is the verdict.
+>
+> **Profile changes (repo copies; run `deploy-check.py` before the next launch — the `~/vr/`
+> copies must match)**: Dalí `591360` + `XRT_COMPOSITOR_SCALE_PERCENTAGE=100` (the P2 run rendered
+> 3024², the control 2160²; GPU one grab each, 94 → 73 %; needs a worn re-confirm + a first Dalí
+> fps number) + `SLAM_THREADS=6` (base worn ran at jack-in's default 4). Aircar `1073390`
+> `SLAM_PRED_NECK_ARM_MM` 150 → 100 (also `JQ_ENV` in `status-dashboard.py`). No P2 in Dalí.
+>
+> **Neck-arm A/B (lit room, JQ stack, 06:14–06:37)**: JN0 *"me mueve de lugar mucho menos … un
+> poco de jittering al mirar la cabina de cerca"*, JN100 *"igual parece a la vez anterior"*, JN200
+> *"la deriva es claramente mayor ahora"* → **0 ≈ 100 < 150 < 200**; hypothesis (a) confirmed,
+> 150 was over; 100 chosen (0 had the near-field jitter), reversible one-liner; the wearer had not
+> chosen between 0 and 100. 0 trips in all three.
+>
+> **RQ**: recorded 06:08–06:13 under JQ, 0 trips / 0 `d_res`, 6.8 GB, archived at
+> `/mnt/videos/euroc/euroc-yaw2_20260829060819` (+ calib, voice log, monado log, SLAM CSVs,
+> `phases.json`). Replay sweep DONE (P2, phase slices `~/vr/logs/replay-phase-yaw2.jsonl`,
+> rot-sum = yaw+pitch+roll max-far): **0 ms 1.23 / 1.72 m** (two runs, run-to-run noise), **−10 ms
+> 4.04 m** (yaw 3.30, worse), **−5 ms diverged in 2/2 runs** (onset 6 s / 40–60 s, still phase;
+> not a trimming or stamp-coincidence artefact). The recording already carries 0101's mid-exposure
+> stamp, so extra negative shifts overshoot → **JQT is not justified and was not run; JQ keeps
+> 0101 with no extra offset** (docs/80 "RQ replay"). `replay-basalt-variants.py` parser fixed
+> (fused `vit_` line). Next sweep: rebuild `build-tools/basalt_vio` first (predates 0021).
+>
+> **Open**: (1) the daytime at-rest pair base→P2 on the 0021 build — no at-rest soak has ever run
+> in daylight on it; (2) Dalí under P2 in a lit room — optional; (3) GPU cap: the 250 W is
+> deliberate (root, 2026-08-26 04:03:47, `vr-power-setup.sh --gpu-limit 100`; docs/84 §7) vs
+> `~/vr/power.conf` 70 % (~175 W, re-applied by the watchdog on the next boot) vs the 144 W of
+> 08-22 — reconcile, needs the user/root; (4) the 06:34:04 teardown core, pid 731059 (JN100's
+> monado-service, on kill; `coredumpctl info 731059`, the `pop_pose` family); (5) why P2 at −5 ms
+> diverges on this recording (curiosity only, JQT is closed); (6) the post-trip snap-back (0.7–4.4 m from the origin in one frame)
+> contradicts the reset-offset carry's "stays continuous" — docs/80.
+>
+> **Process rules that cost us tonight**: no heavy analysis on iashur while a wearer session is
+> live (06:24 contention: three `awk`s over the 609 MB log, load 13 on 12 threads, *"a veces tira
+> 0 fps"*, `d_res` 1 252 → 9 697 in 3 min); never `awk` the raw multi-hundred-MB monado logs —
+> `*-jack-in-filtered.log` or `zcat … | grep -c`; `pgrep -f` self-match again at 05:42 (bracket:
+> `pgrep -f "Dreams[O]fDali"`, or `pgrep -x`, or `pgrep -f "AppId=107[3]390"`); the dashboard
+> must run from its systemd unit (the 23:05 manual relaunch had no DISPLAY/WAYLAND_DISPLAY, so
+> `steam -applaunch` would not have reached Steam; fixed 05:26). `CLAUDE.md` updated.
+>
+> **Tools**: `python3 scripts/worn-grade.py dali-P2-worn-1 dali-base-worn-1` (reads
+> `~/vr/logs/soak/<tag>-{tracking,timing}.csv` + `-jack-in.log(.gz)`; `-d DIR` for another
+> directory); `python3 scripts/euroc-phases.py --dataset /mnt/videos/euroc/euroc-yaw2_20260829060819 --voice ~/vr/logs/yaw-protocol-<stamp>.json [--out DIR/phases.json] [--check DIR/phases.json] [--method clock|mtime]`
+> (clock = default, same boot only; mtime = the 27th's method, original files only). Artifacts:
+> `~/vr/logs/soak/{dali-P2-worn-1,dali-base-worn-1}-*`, `dali-base-worn-1.notes`,
+> `wearer-ab-20260829.notes`, `~/vr/logs/slam-csv/slam-20260829-*-{JN0,JN100,JN200}-*.csv`,
+> `~/vr/logs/replay-yaw2-P2shift-{0,m5,m10}`, `~/vr/logs/replay-phase-yaw2.jsonl`.
+
 > ## START HERE (2026-08-29 ~01:20 -03, unattended night run from the everyday box — at-rest pair
 > base→P2 DONE: P2 trips 4–5× fewer at rest, promotion gated only on the Dalí 6dof worn check;
 > hardening landed; nothing worn)

@@ -232,7 +232,14 @@ Do all of this, in order, every time the rig physically moves — not a quick gl
 - **Aircar's 30-min soak + relocation/recenter acceptance criterion** — never run (`docs/75`
   §4).
 - **Dalí has zero recorded fps/pacing metrics** — subjectively good, worn-confirmed, but no
-  `app-fps.sh`/`frame-pacing.sh` numbers on file yet.
+  `app-fps.sh`/`frame-pacing.sh` numbers on file yet. *Update 2026-08-29*: Dalí now has
+  `scripts/worn-grade.py` numbers (two 13-min worn runs, `~/vr/logs/soak/dali-{P2,base}-worn-1-*`:
+  raw position, camera rate, frontend/backend ms, trips, Basalt warning counts — docs/80 "the gate
+  run was invalid") but still no measured fps: the wearer read "60fps" at Monado's 140 % default
+  scale, the profile now sets `XRT_COMPOSITOR_SCALE_PERCENTAGE=100` + `SLAM_THREADS=6` (re-confirm
+  worn). And a booth rule: **Dalí 6dof requires a lit room** — in the dark it ran 80–161 m away
+  under both Basalt configs and was "solido" the minute the lights came on; run
+  `scripts/light-preflight.sh` (detached; untested on hardware as of 2026-08-29) before a 6dof slot.
 - **The three cosmetic/low-risk gaps in §1** (power-setup script sync, jack-in-wayland.sh
   stale comment, vr-launcher.py stale comment) — harmless tonight, unfixed.
 - **The Aircar NTFS duplicate install** (§1, MEDIUM) — not cleaned up, just verified inert.

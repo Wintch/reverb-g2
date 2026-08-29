@@ -349,6 +349,15 @@ JQ_ENV = {
     "SLAM_PRED_POSITION_HORIZON_MS": "50", "SLAM_PRED_POSITION_MAX_SPEED_CM_S": "150",
     "SLAM_CORRECTION_SPREAD_MS": "25", "SLAM_CONFIG": f"{HOME}/vr/basalt-variants/P2.toml",
     "SLAM_CORRECTION_AVG_N": "3", "WMR_CAM_TS_MID_EXPOSURE": "1", "VIT_QUEUE_DEPTH": "1",
+    # 2026-08-29 06:14-06:37 (docs/80 "The 10-minute wearer slot"): neck arm 150 -> 100, same
+    # edit as vr-launcher.py TITLE_PROFILES["1073390"] (until tonight this dict did not carry
+    # the key and the buttons inherited the profile's 150). JN0 / JN100 / JN200 worn in a lit
+    # room: order 0 ~= 100 < 150 < 200 ("me mueve de lugar mucho menos" at 0, "igual parece a
+    # la vez anterior" at 100, "la deriva es claramente mayor ahora" at 200). Reversible: 0 felt
+    # the same, 150/200 worse; 100 keeps 0's gain without its near-field cockpit jitter. The
+    # wearer had not chosen between 0 and 100 when this was written. Keep in step with the
+    # profile: this dict IS the profile as far as the buttons are concerned.
+    "SLAM_PRED_NECK_ARM_MM": "100",
 }
 
 # Aircar 6dof head-tracking VARIANTS (2026-08-27 night, docs/80's closing sections): one button
@@ -484,19 +493,19 @@ AIRCAR_VARIANTS = [
     ("RQ", "GRABAR protocolo yaw (JQ + EuRoC 3 min)",
      {**JQ_ENV, "EUROC_RECORD": "1", "EUROC_RECORD_PATH": "/mnt/vrtmp/euroc-yaw2",
       "VIT_DUMP_CALIB": f"{HOME}/vr/logs/calib-g2-yaw2.json"},
-     "LA GRABACION 2 (bajo JQ). Mismo protocolo que R (segui la voz de yaw-protocol-voice.py: 30 s quieto, 10 giros rapidos izq-der, 10 arriba-abajo, 10 inclinaciones, 60 s de juego libre), pero grabada con el perfil JQ completo, asi los stamps de camara ya vienen a mitad de exposicion (0101) y la grabacion mide lo que el casco usa hoy. EuRoC en PNG a /mnt/vrtmp/euroc-yaw2_<fecha> + volcado de calibracion. Despues el agente la replayea a 0 / -5 / -10 ms con scripts/euroc-shift.py + replay-basalt-variants.py + replay-phase-slice.py, sin casco: si la trayectoria cruda sale limpia mientras vos sentiste el 'te saca del asiento', es la prediccion (probar JN0/JN100/JN200); si -5 ms sigue ganando, es el timing (probar JQT). ~1.4 GB/min en tmpfs (~5 GB el protocolo; 14 GB si queda 10 min, docs/80): copiar el dataset a ~/vr/logs/euroc/ ANTES de cualquier reboot; cerrar el juego al terminar."),
+     "LA GRABACION 2 (bajo JQ). Mismo protocolo que R (segui la voz de yaw-protocol-voice.py: 30 s quieto, 10 giros rapidos izq-der, 10 arriba-abajo, 10 inclinaciones, 60 s de juego libre), pero grabada con el perfil JQ completo, asi los stamps de camara ya vienen a mitad de exposicion (0101) y la grabacion mide lo que el casco usa hoy. EuRoC en PNG a /mnt/vrtmp/euroc-yaw2_<fecha> + volcado de calibracion. Despues el agente la replayea a 0 / -5 / -10 ms con scripts/euroc-shift.py + replay-basalt-variants.py + replay-phase-slice.py, sin casco: si la trayectoria cruda sale limpia mientras vos sentiste el 'te saca del asiento', es la prediccion (probar JN0/JN100/JN200); si -5 ms sigue ganando, es el timing (probar JQT). ~1.4 GB/min en tmpfs (~5 GB el protocolo; 14 GB si queda 10 min, docs/80): copiar el dataset a ~/vr/logs/euroc/ ANTES de cualquier reboot; cerrar el juego al terminar. RESULTADO 2026-08-29 06:08: GRABADA (6.8 GB, 0 trips, archivada en /mnt/videos/euroc/euroc-yaw2_20260829060819); replay a 0 ms limpio, a -5 ms divergio desde t=0 (dataset sin recortar, en diagnostico) -- ver docs/80."),
     ("JN0", "JQ + brazo de cuello 0 mm",
      {**JQ_ENV, "SLAM_PRED_NECK_ARM_MM": "0"},
-     "PREDICCION (hipotesis a). JQ con SLAM_PRED_NECK_ARM_MM=0: sin modelo de cuello, la posicion queda congelada a secas durante los ~75 ms en que el anchor esta viejo. El perfil usa 150 (= JQ, el control). Si el 'te saca del asiento y despues se acomoda' al girar desaparece o cambia claramente, el desplazamiento es del modelo de cuello y no del VIO."),
+     "PREDICCION (hipotesis a). JQ con SLAM_PRED_NECK_ARM_MM=0: sin modelo de cuello, la posicion queda congelada a secas durante los ~75 ms en que el anchor esta viejo. El perfil usaba 150 (= JQ, el control de esta ronda). Si el 'te saca del asiento y despues se acomoda' al girar desaparece o cambia claramente, el desplazamiento es del modelo de cuello y no del VIO. RESULTADO 2026-08-29 06:14: 'me mueve de lugar mucho menos', pero 'un poco de jittering al mirar la cabina de cerca'; 0 trips. Orden final 0 ~= 100 < 150 < 200; el perfil paso a 100."),
     ("JN100", "JQ + brazo de cuello 100 mm",
      {**JQ_ENV, "SLAM_PRED_NECK_ARM_MM": "100"},
-     "PREDICCION (hipotesis a). JQ con el brazo de cuello en 100 mm en vez de 150: el ojo congelado barre un arco mas corto al girar. Comparar contra JQ (150) y JN0 (0) en el mismo giro."),
+     "PREDICCION (hipotesis a). JQ con el brazo de cuello en 100 mm en vez de 150: el ojo congelado barre un arco mas corto al girar. Comparar contra JQ (150) y JN0 (0) en el mismo giro. RESULTADO 2026-08-29 06:19: 'igual parece a la vez anterior' / 'muy similar, avanza' (= JN0); 0 trips. ES EL PERFIL DESDE 2026-08-29 (SLAM_PRED_NECK_ARM_MM=100, reversible)."),
     ("JN200", "JQ + brazo de cuello 200 mm",
      {**JQ_ENV, "SLAM_PRED_NECK_ARM_MM": "200"},
-     "PREDICCION (hipotesis a). JQ con el brazo de cuello en 200 mm: arco mas largo. Si 200 se siente PEOR que 150 y 100 mejor, el arco esta sobreestimado; si al reves, subestimado; si los tres se sienten iguales, el modelo de cuello no es la causa y queda la hipotesis (b) = JQT."),
+     "PREDICCION (hipotesis a). JQ con el brazo de cuello en 200 mm: arco mas largo. Si 200 se siente PEOR que 150 y 100 mejor, el arco esta sobreestimado; si al reves, subestimado; si los tres se sienten iguales, el modelo de cuello no es la causa y queda la hipotesis (b) = JQT. RESULTADO 2026-08-29 06:32: 'la deriva es claramente mayor ahora' (peor que 150); 0 trips. Arco sobreestimado: hipotesis (a) confirmada, 150 era demasiado."),
     ("JQT", "JQ + camaras -5 ms encima del stamp mid-exposure",
      {**JQ_ENV, "VIT_CAM_TIME_OFFSET_NS": "-5000000"},
-     "TIMING (hipotesis b). JQ + VIT_CAM_TIME_OFFSET_NS=-5 ms (patch Basalt 0017) ENCIMA del stamp a mitad de exposicion (0101): el sweep offline queria -5..-10 ms y el stamp mid-exposure recupera solo ~2.5, o sea que start_ts llega tarde respecto del inicio real de la exposicion. JT era -7 fijo sobre J SIN el stamp mid-exposure y no se sintio; esto es -5 ademas del stamp. Probar solo si la grabacion RQ replayeada a -5 ms sigue ganando contra 0. Comparar contra JQ."),
+     "TIMING (hipotesis b). JQ + VIT_CAM_TIME_OFFSET_NS=-5 ms (patch Basalt 0017) ENCIMA del stamp a mitad de exposicion (0101): el sweep offline queria -5..-10 ms y el stamp mid-exposure recupera solo ~2.5, o sea que start_ts llega tarde respecto del inicio real de la exposicion. JT era -7 fijo sobre J SIN el stamp mid-exposure y no se sintio; esto es -5 ademas del stamp. Probar solo si la grabacion RQ replayeada a -5 ms sigue ganando contra 0. Comparar contra JQ. ESTADO 2026-08-29: NO se corrio -- el replay de RQ a -5 ms divergio desde t=0 (dataset sin recortar, en diagnostico); decision diferida a un replay limpio (docs/80)."),
     # R = the ONE wearer session the offline pipeline needs: F's config + EUROC_RECORD (PNG,
     # lossless -- JPG changes the features) + the live calibration dump. ~3 min following
     # yaw-protocol-voice.py's spoken script. Afterwards replay-basalt-variants.py replays the

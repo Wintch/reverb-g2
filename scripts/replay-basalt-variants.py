@@ -111,7 +111,13 @@ def parse_vit_log(path, cam0_timestamps):
                                  ("total_ms", r"total_ms=([0-9.eE+-]+)"), ("patches", r"patches=(\d+)")):
                     m = re.search(pat, line)
                     if m:
-                        frames[cur][key] = float(m.group(1))
+                        try:
+                            frames[cur][key] = float(m.group(1))
+                        except ValueError:
+                            # two vit_ lines fused by concurrent threads ("0.730290.059371"): skip
+                            # the field, the same rule as soak-variant.py parse_vit() (2026-08-29:
+                            # the -5 ms rerun died here after a complete 4.5-min replay)
+                            continue
             elif cur and line.startswith("vit_vio"):
                 for key, pat in (("lm", r"landmarks=(\d+)"), ("opt_ms", r"opt_ms=([0-9.eE+-]+)"),
                                  ("marg_ms", r"marg_ms=([0-9.eE+-]+)")):
