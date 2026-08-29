@@ -341,6 +341,29 @@ for _name, _appid, _tracking, _status, _note in DEMO_LAUNCHES:
         "demo": {"title": _name, "tracking": _tracking, "status": _status, "note": _note},
     }
 
+# 2026-08-29 (docs/80 "the gate run was invalid"): the ONE run that can still promote P2 into the
+# global basalt-g2-config.json -- Dali 6dof under the P2 backend in a LIT room (the 05:24 gate run was
+# in the dark and said nothing). Same launch as the approved Dali button plus SLAM_CONFIG from the env
+# (ambient env wins over the title profile in vr-launcher.py, so Dali's own profile -- scale 100,
+# 6 threads, constellation off, no head-prediction knobs -- stays as shipped); records like every demo
+# button so worn-grade.py has the CSVs afterwards. If in doubt about the light, run
+# scripts/light-preflight.sh first (detached).
+ACTIONS["gate-591360-P2"] = {
+    "label": "Dreams of Dali · 6dof · compuerta P2 [solo con luz]",
+    "cmd": ["python3", f"{HOME}/vr/vr-launcher.py", "1", "6dof"],
+    "cwd": f"{HOME}/vr",
+    "env": {"VR_LAUNCH_APPID": "591360", "U_PACING_APP_LOG": "debug", "VIT_COLLAPSE_LOG": "1",
+            "SLAM_CONFIG": f"{HOME}/vr/basalt-variants/P2.toml",
+            "VR_DEMO_RECORD": "1", "VR_DEMO_COMMENT": "Dali 6dof P2 gate (lit room)"},
+    "demo": {"title": "Dali compuerta P2 (con luz)", "tracking": "6dof", "status": "testing",
+             "note": "PROMOCION DE P2 AL GLOBAL, ultima compuerta (docs/80 2026-08-29): Dali 6dof con el "
+                     "backend P2 en pieza ILUMINADA, ~10 min, misma rutina que la aprobacion (mirar "
+                     "alrededor, inclinarse, giros lentos y rapidos). Si se siente como base con luz "
+                     "('solido'), P2 puede ir al basalt-g2-config.json global. Con poca luz no vale: a "
+                     "oscuras Dali se fue 161 m con P2 y 80 m con base. Ante la duda, correr "
+                     "scripts/light-preflight.sh antes (DARK = no arrancar)."},
+}
+
 # JQ_ENV = the Aircar profile as of 2026-08-28 ~18:45 -03 (docs/80 "JQ", NEXT-STEP's START
 # HERE): P2 backend + averaged correction + mid-exposure stamp + queues at depth 1, horizon 50,
 # clamp 150, spread 25. Module-level so the JQ button below and every round-7 button that
