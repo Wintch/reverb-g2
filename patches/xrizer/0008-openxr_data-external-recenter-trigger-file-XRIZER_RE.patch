@@ -1,0 +1,160 @@
+From 4090f8ef3a2f4189fa348caa8cf8939bd49c94ac Mon Sep 17 00:00:00 2001
+From: Wintch <nikolai.viktorovich@gmail.com>
+Date: Sat, 29 Aug 2026 16:03:47 -0300
+Subject: [PATCH] openxr_data: external recenter trigger file
+ (XRIZER_RECENTER_FILE), polled from WaitGetPoses
+
+A dashboard button (or any script) touches $HOME/vr/logs/xrizer-recenter
+(override: $XRIZER_RECENTER_FILE); every ~30th WaitGetPoses -- for every
+title, whether or not it ever asks for IVRInput -- looks for the file,
+removes it and recenters BOTH play-space origins on the current head pose:
+Standing keeps the floor height, Seated takes the head height, yaw only.
+Stronger than SteamVR, which never moves Standing: at a booth the STAGE
+origin is wherever the SLAM tracker happened to start the session, and the
+title universe is not known here. For headset-only titles with no button to
+hold for the held-menu shortcut (Dreams of Dali).
+
+Guards: a trigger older than 10 s is discarded unused (a touch made with no
+title running cannot recenter the next launch); a session that is not
+FOCUSED leaves the file in place (Dali tears its bootstrap session down
+~30 ms after the first frame); with XR_EXT_user_presence enabled a doffed
+headset ignores it; and reset_tracking_space now refuses to anchor on a
+head pose whose POSITION/ORIENTATION_VALID flags are unset (this also
+covers the held-menu shortcut and ResetSeatedZeroPose).
+
+Worn test 2026-08-29 (Dreams of Dali via the booth button): wearer turned
+90 degrees left, operator pressed, the scene came round to the front; the
+stale-trigger and FOCUSED paths logged as designed.
+---
+ src/compositor.rs  |  3 ++
+ src/openxr_data.rs | 83 +++++++++++++++++++++++++++++++++++++++++++---
+ 2 files changed, 81 insertions(+), 5 deletions(-)
+
+diff --git a/src/compositor.rs b/src/compositor.rs
+index 8d3f60d..b9d7492 100644
+--- a/src/compositor.rs
++++ b/src/compositor.rs
+@@ -1155,6 +1155,9 @@ impl vr::IVRCompositor029_Interface for Compositor {
+         if let Some(system) = self.system.get() {
+             system.reset_views();
+         }
++        // 0008: external recenter trigger, polled here so it works for every title (Input is
++        // only constructed once a game asks for IVRInput). No session_data guard is held here.
++        self.openxr.poll_recenter_trigger();
+         if let Some(input) = self.input.get() {
+             input.frame_start_update();
+         }
+diff --git a/src/openxr_data.rs b/src/openxr_data.rs
+index 2c2a565..6ca2012 100644
+--- a/src/openxr_data.rs
++++ b/src/openxr_data.rs
+@@ -4,7 +4,7 @@ use crate::{
+ };
+ use derive_more::Deref;
+ use glam::f32::{Quat, Vec3};
+-use log::{info, warn};
++use log::{debug, info, warn};
+ use openvr as vr;
+ use openxr as xr;
+ use std::mem::ManuallyDrop;
+@@ -296,13 +296,26 @@ impl<C: Compositor> OpenXrData<C> {
+         } = &mut **guard;
+ 
+         let reset_space = |ref_space, adjusted_space: &mut xr::Space, ty, preserve_height: bool| {
++            let location = view_space
++                .locate(ref_space, self.display_time.get())
++                .unwrap();
++            // reverb-g2 0008: never anchor an origin on a pose the runtime says is not valid
++            // (headset on the desk before SLAM initialised, tracking lost). Pre-0008 every
++            // recenter path was reached through a wearer's own action; the external trigger
++            // below is the first that an operator can fire with nobody wearing the headset.
++            if !location.location_flags.contains(
++                xr::SpaceLocationFlags::POSITION_VALID | xr::SpaceLocationFlags::ORIENTATION_VALID,
++            ) {
++                warn!(
++                    "recenter: head pose not valid ({:?}) -- {ty:?} origin left unchanged",
++                    location.location_flags
++                );
++                return;
++            }
+             let xr::Posef {
+                 mut position,
+                 orientation,
+-            } = view_space
+-                .locate(ref_space, self.display_time.get())
+-                .unwrap()
+-                .pose;
++            } = location.pose;
+ 
+             // Standing/room-scale floor height is a fixed, separately-calibrated value --
+             // recentering should only fix horizontal position and facing direction, the
+@@ -360,6 +373,66 @@ impl<C: Compositor> OpenXrData<C> {
+         };
+     }
+ 
++    /// reverb-g2 0008: external recenter trigger. The dashboard (or any script) touches
++    /// `$XRIZER_RECENTER_FILE` (default `$HOME/vr/logs/xrizer-recenter`); the compositor calls
++    /// this once per WaitGetPoses -- for every title, whether or not it ever touches IVRInput --
++    /// and every ~30th call (the brightness gain's cadence) looks for the file. Found and the
++    /// session is FOCUSED: remove it and recenter BOTH play-space origins on the current head
++    /// pose -- Standing keeps the floor height, Seated takes the head height; stronger than
++    /// SteamVR, which never moves Standing, because at a booth the STAGE origin is wherever
++    /// Basalt happened to start the session (reverb-g2 docs/80 "the anchor test"), and the
++    /// title's universe is not known here. Headset-only titles (Dreams of Dali) have no
++    /// button to hold for the 0001 shortcut. Guards: a trigger older than 10 s is discarded
++    /// unused (a touch made with no title running cannot recenter the next launch); a session
++    /// that is not FOCUSED leaves the file in place (Dali's bootstrap session is torn down
++    /// ~30 ms after its first frame -- a reset consumed there would be lost with it); with
++    /// XR_EXT_user_presence enabled, a doffed headset ignores the trigger; and
++    /// reset_tracking_space now refuses an invalid head pose. Must be called with no
++    /// session_data guard held: reset_tracking_space takes the write lock.
++    pub fn poll_recenter_trigger(&self) {
++        use std::sync::atomic::AtomicU64;
++        static FRAME: AtomicU64 = AtomicU64::new(0);
++        if FRAME.fetch_add(1, Ordering::Relaxed) % 30 != 0 {
++            return;
++        }
++        let path = std::env::var("XRIZER_RECENTER_FILE").unwrap_or_else(|_| {
++            format!(
++                "{}/vr/logs/xrizer-recenter",
++                std::env::var("HOME").unwrap_or_default()
++            )
++        });
++        let Ok(meta) = std::fs::metadata(&path) else {
++            return;
++        };
++        let age = meta
++            .modified()
++            .ok()
++            .and_then(|t| t.elapsed().ok())
++            .unwrap_or_default();
++        if age > std::time::Duration::from_secs(10) {
++            let _ = std::fs::remove_file(&path);
++            warn!("recenter trigger {path} is {age:?} old -- stale, discarded");
++            return;
++        }
++        let state = self.session_data.get().state; // read guard dropped at the semicolon
++        if state != xr::SessionState::FOCUSED {
++            debug!("recenter trigger {path} seen in session state {state:?} -- waiting for FOCUSED");
++            return;
++        }
++        // Remove first: a recenter that fails must not re-fire on every poll.
++        if let Err(e) = std::fs::remove_file(&path) {
++            warn!("recenter trigger {path}: could not remove ({e}) -- ignoring");
++            return;
++        }
++        if self.enabled_extensions.ext_user_presence && !self.user_present.load(Ordering::Relaxed) {
++            warn!("recenter trigger {path}: headset not worn -- ignored");
++            return;
++        }
++        info!("recenter trigger {path} -- recentering play space (Standing + Seated) on the current head pose");
++        self.reset_tracking_space(vr::ETrackingUniverseOrigin::Standing);
++        self.reset_tracking_space(vr::ETrackingUniverseOrigin::Seated);
++    }
++
+     pub fn get_refresh_rate(&self) -> f32 {
+         let get_fallback_rate = || {
+             Duration::from_nanos(
+-- 
+2.47.3
+

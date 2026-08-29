@@ -109,3 +109,23 @@ works for any closed-source Steam title. Gain is read from a dashboard-controlle
 to stay off the per-frame hot path, clamped `[0,4]`; `1.0` disables the layer entirely. The
 status dashboard's per-user command centre writes that file (brightness slider). Build with
 the same `--features static-openxr` as the rest of the lab tree. Commit `05afead`.
+
+## 0008 — external recenter trigger file (2026-08-29)
+
+Headset-only titles (Dreams of Dalí, the booth's 6dof title) have no button to hold for the
+0001 shortcut, and a booth guest sits 1–2 m from wherever Basalt happened to start the session
+(docs/80 "the anchor test"). Same mechanism as 0007's brightness file: the status dashboard's
+**🎯 Recentrar** button touches `$HOME/vr/logs/xrizer-recenter` (override `$XRIZER_RECENTER_FILE`);
+`OpenXrData::poll_recenter_trigger`, called from `Compositor::WaitGetPoses` every frame for every
+title (NOT from `Input::frame_start_update`, which only exists once a game asks for IVRInput — the
+first draft lived there and was moved after review), checks every ~30th call, removes the file and
+recenters **both** Standing (floor height kept) and Seated (head height) origins on the current
+head pose, yaw only — stronger than SteamVR, which never moves Standing, because the STAGE origin
+here is arbitrary and the title's universe is unknown. Guards: triggers older than 10 s are
+discarded (a touch with no title running cannot recenter the next launch — verified: "25.3 s old
+-- stale, discarded"); a non-FOCUSED session leaves the file in place (Dalí tears its bootstrap
+session down ~30 ms after the first frame); with `XR_EXT_user_presence` enabled a doffed headset
+ignores it; and `reset_tracking_space` now refuses a head pose without POSITION/ORIENTATION_VALID
+(covers 0001 and `ResetSeatedZeroPose` too). Worn-validated 2026-08-29 15:50–15:59 on Dalí via the
+booth button: wearer turned 90° left, operator pressed, the scene came round to the front, 0.2–0.3 s
+from POST to the xrizer log line. Build with `--features static-openxr`. Commit `4090f8e`.

@@ -1830,3 +1830,39 @@ And the GPU-cap reconciliation (NEXT-STEP item 3) has its Dalí answer: the titl
 re-apply of 70 % on the next boot).
 
 **Decisions (15:35, user):** the neck arm stays at 100 (`TITLE_PROFILES["1073390"]`, comment updated), and `~/vr/power.conf` goes `GPU_LIMIT_PCT` 70 → 100 so the watchdog's `--apply` pins 250 W at boot as well — the live cap, the saved intent and the measured need now agree; the 144 W curve of 08-22 remains an Aircar-only data point (docs/84 §7 annotated).
+
+### 2026-08-29 15:50 — the recentre lever: xrizer 0008 + the dashboard's Recentrar button
+
+The last felt Dalí defect after the anchor (15:02) was the 1–2 m the guest sits from the session's
+origin; the note above called a Monado-side "re-anchor on first xrBeginSession" the natural follow-up.
+It was not needed: xrizer already owns a play-space recentre (`reset_tracking_space`, the 0001
+held-menu shortcut) that rewrites the LOCAL/STAGE "adjusted" spaces every pose and projection goes
+through; Dalí just has no button to hold. Patch **0008** (`patches/xrizer/`, commit `4090f8e`) adds an
+external trigger on the 0007 brightness-file pattern — the dashboard's **🎯 Recentrar (visitante
+mirando al frente)** button touches `~/vr/logs/xrizer-recenter`, `WaitGetPoses` polls it every ~30
+frames and resets both Standing and Seated origins on the current head pose (yaw only).
+
+Review before the hardware test (three independent lenses, read-only) found the draft's real gap:
+the poll lived in `Input::frame_start_update`, which the compositor only calls once a title has
+asked for IVRInput — a live probe showed Dalí does, but the poll moved to the compositor so it works
+for every title. The other two points became guards: a session that is not FOCUSED leaves the file
+in place (Dalí's bootstrap session dies ~30 ms after its first frame), and `reset_tracking_space`
+refuses a head pose without valid flags (plus a doffed-headset gate when `XR_EXT_user_presence` is
+on — it is opt-in, `WMR_USER_PRESENCE=1`, and was off here; `user_present` defaults to true so the
+gate is inert without it). Stale triggers (> 10 s) are discarded, so a press with no title running
+cannot recentre the next launch.
+
+Worn, Dalí via the booth button: **v1 15:50:22** press with the wearer already playing — "no vi el
+salto, anda igual que antes" (a recentre where you already look forward is invisible, so the test
+was made deterministic); **15:54:43** wearer turned 90° left, press → "sí, correcto, roto como 90
+grados más a la izquierda". Rig down, v2 built (6.5 s), relaunched with a trigger touched before the
+launch → `WARN … is 25.29 s old -- stale, discarded` from the compositor-hosted poll; **15:59:37**
+90°-left press → scene came round ("me parece que quedó un giro de 180 más que 90, pero sí, giró" —
+the initial forward is wherever the headset pointed on the desk at load, so the perceived jump is
+whatever that was). POST → xrizer log line 0.2–0.3 s. Logs `~/vr/logs/soak/dali-recenter-v{1,2}-*`.
+
+**Booth flow for Dalí is now**: lit room (`light-preflight.sh`) → press the demo button, headset
+on the desk until it delivers frames (~60 s) → guest sits, puts it on, looks straight ahead →
+operator presses **Recentrar** → play. Follow-up idea, not started: with `WMR_USER_PRESENCE=1` on
+the service (patches 0075/0087, threshold flagged provisional) an xrizer hook on
+`UserPresenceChangedEXT` could fire the same recentre ~2 s after donning, making the press automatic.

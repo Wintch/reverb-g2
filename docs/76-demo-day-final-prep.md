@@ -245,7 +245,10 @@ Do all of this, in order, every time the rig physically moves — not a quick gl
   windows (`app-fps.sh`), the two dips coinciding with the GPU at the 250 W cap (91–96 %, 248–249 W,
   clocks 1815–1890 MHz) — keep the booth at 250 W; delivered-frame lateness p50 −0.07 ms, ≥ 1 period
   late 0.02 % worn; SLAM 30 Hz, 0 guard trips, max 1.57 m; wearer *"Bien, solido"* — docs/80 "the
-  booth button, measured", `~/vr/logs/soak/dali-booth-1-*`. This bullet is closed.
+  booth button, measured", `~/vr/logs/soak/dali-booth-1-*`. This bullet is closed. *15:50*: and the
+  guest's 1–2 m start offset has its lever — the dashboard's **🎯 Recentrar** button (xrizer patch 0008,
+  worn-validated with a 90° test; docs/80 "the recentre lever"). Dalí booth flow: lit room → demo
+  button → headset on the desk ~60 s → guest sits looking ahead → Recentrar → play.
 - **The three cosmetic/low-risk gaps in §1** (power-setup script sync, jack-in-wayland.sh
   stale comment, vr-launcher.py stale comment) — harmless tonight, unfixed.
 - **The Aircar NTFS duplicate install** (§1, MEDIUM) — not cleaned up, just verified inert.

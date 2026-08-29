@@ -276,6 +276,10 @@ TITLE_PROFILES = {
         # of yaw, final 0.50 m, wearer "se juega muy similar" (1-2 m off at the start, playable).
         # Operator rule that goes with it: headset still on the desk until the title has loaded, then
         # the guest puts it on. Reversible: remove both lines to get the raw position back.
+        # 2026-08-29 15:50: the 1-2 m residue is handled by the dashboard's Recentrar button (xrizer
+        # patch 0008: touches ~/vr/logs/xrizer-recenter, WaitGetPoses recentres Standing + Seated on
+        # the current head pose) once the guest is seated and looking straight ahead -- worn-validated,
+        # docs/80 "the recentre lever". No launcher knob involved.
         "SLAM_SESSION_ANCHOR_RADIUS_CM": "300",
         "SLAM_QUAT_NORM_CHECK": "1",
     },

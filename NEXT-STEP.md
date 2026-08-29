@@ -50,6 +50,14 @@
 > 0101 with no extra offset** (docs/80 "RQ replay"). `replay-basalt-variants.py` parser fixed
 > (fused `vit_` line). Next sweep: rebuild `build-tools/basalt_vio` first (predates 0021).
 >
+> **15:50–16:04 — the recentre lever, worn-validated**: xrizer patch **0008** (`patches/xrizer/`, commit
+> `4090f8e`, built + live in `~/vr/xrizer/target/release`) + dashboard button **🎯 Recentrar** — touches
+> `~/vr/logs/xrizer-recenter`, `WaitGetPoses` polls it, resets Standing + Seated on the current head pose.
+> 90°-left test on Dalí: scene came round to the front, 0.2–0.3 s; stale (> 10 s) triggers discarded,
+> FOCUSED-only, invalid-pose refused. Booth flow: demo button → headset on the desk ~60 s → guest sits
+> looking ahead → **Recentrar** → play. The Monado-side "re-anchor on first session" idea is superseded.
+> docs/80 "the recentre lever".
+>
 > **15:15 — Dalí measured on the booth button** (`demo-591360-6dof`, worn, scale 100 + anchor profile):
 > **89–90 fps in 6/8 20-s windows, 79 / 85 in two = the GPU at the 250 W cap** (91–96 %, 248–249 W);
 > pacer 0.02 % late worn; SLAM 30 Hz, **0 guard trips**, max 1.57 m; wearer *"Bien, solido"* — docs/80
@@ -75,7 +83,10 @@
 > 250 W is the live state AND the saved intent, 144 W stays an Aircar-only 08-22 data point; (4) the 06:34:04 teardown core, pid 731059 (JN100's
 > monado-service, on kill; `coredumpctl info 731059`, the `pop_pose` family); (5) why P2 at −5 ms
 > diverges on this recording (curiosity only, JQT is closed); (6) the post-trip snap-back (0.7–4.4 m from the origin in one frame)
-> contradicts the reset-offset carry's "stays continuous" — docs/80.
+> contradicts the reset-offset carry's "stays continuous" — docs/80; (7) auto-recentre on donning:
+> `WMR_USER_PRESENCE=1` on the service (patches 0075/0087, threshold flagged provisional) + an xrizer hook
+> on `UserPresenceChangedEXT` firing the 0008 recentre ~2 s after the guest puts the headset on — idea,
+> not started.
 >
 > **Process rules that cost us tonight**: no heavy analysis on iashur while a wearer session is
 > live (06:24 contention: three `awk`s over the 609 MB log, load 13 on 12 threads, *"a veces tira
