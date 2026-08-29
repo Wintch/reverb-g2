@@ -1,20 +1,21 @@
 # Next step
 
-> ## START HERE (2026-08-29 ~00:30 -03, unattended night run from the everyday box — at-rest pair
-> base→P2: first attempt lost to orchestration, rerun detached and in flight (~00:02–01:09);
+> ## START HERE (2026-08-29 ~01:20 -03, unattended night run from the everyday box — at-rest pair
+> base→P2 DONE: P2 trips 4–5× fewer at rest, promotion gated only on the Dalí 6dof worn check;
 > hardening landed; nothing worn)
 >
-> **At-rest soak (base vs P2)**: attempt 1 (23:12) lost its data to orchestration — the agent drove
-> `soak-variant.py` from a foreground ssh, the session died mid-leg, SIGHUP killed the script before
-> teardown, `monado-service` sat orphaned 17 min and its later kill tripped the teardown SIGSEGV
-> (docs/80 "first attempt lost to orchestration"). `base-i1` itself ran its full 900 s: **104
-> `Tracker diverged` by t=841 s** (base 7 / base2 36 on the 27th — hour and scene, hence interleave);
-> artifacts kept under `~/vr/logs/soak/base-i1-*` and `slam-csv/slam-20260828-231216-*`.
-> **New `scripts/soak-sequence.sh`** runs legs detached (`setsid nohup`) with forced teardown, a
-> `STOP` file, a `.done` marker and the attention flag; relaunched 00:01 -03:
-> `base-i2 → P2-i2 → base-i3 → P2-i3`, 15 min each, until ~01:09 — JSONs in `~/vr/logs/soak/`, log
-> `sequence-20260829-000136.log`. Grade with `soak-grade.py` / `soak-families.py`; **no promotion
-> call until then**.
+> **At-rest pair base→P2 — DONE (00:01–01:11 -03, `scripts/soak-sequence.sh`, headset untouched)**:
+> `base-i2 → P2-i2 → base-i3 → P2-i3`, 15 min each. Trips **142 → 35** and **107 → 19**; span 13.4 →
+> 7.8 m and 18.4 → 5.8 m; landmarks p50 0/1 → 22/24, frames with <5 landmarks 88/80 % → 4/2 %;
+> 0 cores, clean teardowns, 84.2 fps in all four. Costs as known: frontend p99 25.6/27.2 → 32.0/32.8
+> ms (`soak-grade.py`'s only "UNSAFE" flag, still under the 33 ms period), `opt` p99 ×2, recall cache
+> 208–223 k patches — RSS start→end 259–421 MB/h but steady-state slope 49/−229 (cache fill; 0014's
+> bound holds). Attempt 1 (23:12) had lost its data to orchestration (docs/80 "first attempt lost");
+> `base-i1`'s 104 trips matched. **Promoting P2 into the global `basalt-g2-config.json` is now gated
+> only on one Dalí 6dof worn run** (table in docs/80 "interleaved at-rest pair"). Driver notes:
+> `soak-variant.py`'s absolute "0 trips at rest" rule fails every base leg, so `soak-sequence.sh`
+> treats only no-JSON / death / core / dirty teardown as fatal (`1ef9c8b`); `SOAK_BASELINE=` seeds a
+> variant-first run; `soak-families.py` now understands `-iN` tags.
 >
 > **Hardening landed** (`vr-launcher.py`/`demo-recorder.py`/`status-dashboard.py`, deployed +
 > `deploy-check.py` clean): jack-in-timeout kill now `pgrep -x monado-service` (exact comm, not
@@ -35,8 +36,8 @@
 > "not yet copied" corrected — in `scripts/` since `3bde463`.
 >
 > **Still pending**: Dalí 6dof once with P2 (global `basalt-g2-config.json` still the old one;
-> Aircar uses P2 per-title), the interleaved at-rest pair (base→P2 — rerun in flight, see above;
-> grade it), and the `prunePatches` snapshot frame (p99 12 ms, 1 in 30).
+> Aircar uses P2 per-title; the at-rest pair is done, see above — this run is the last gate) and
+> the `prunePatches` snapshot frame (p99 12 ms, 1 in 30).
 
 > ## START HERE (2026-08-28 ~19:45 -03, remote session from the everyday box — instruments for the
 > residual experiment are in place; nothing worn)

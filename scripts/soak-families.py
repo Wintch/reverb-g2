@@ -10,6 +10,7 @@ Usage: soak-families.py            (reads ~/vr/logs/soak/*.json + *-tracking.csv
 """
 import importlib.util
 import json
+import re
 import statistics
 import sys
 from pathlib import Path
@@ -24,10 +25,13 @@ VARIANTS = HERE / "basalt-variants"
 
 def recipe(tag):
     """Config recipe of a run, from the variant JSON its tag maps to (I2/I3/I4/I5 -> I, base2 -> base)."""
-    stem = "".join(c for c in tag if not c.isdigit()) if tag not in ("G2", "G3") else tag
-    if stem in ("base", "record"):
+    tag = re.sub(r"-i\d+$", "", tag)  # interleaved legs (2026-08-29): P2-i2 -> P2, base-i3 -> base
+    if tag in ("base", "record"):
         return "base (as shipped)"
-    p = VARIANTS / f"{stem}.json"
+    p = VARIANTS / f"{tag}.json"  # exact variant first (P1..P8, N1..N5 are distinct configs)
+    if not p.exists():
+        stem = "".join(c for c in tag if not c.isdigit()) if tag not in ("G2", "G3") else tag
+        p = VARIANTS / f"{stem}.json"
     if not p.exists():
         return f"? ({tag})"
     v = json.load(open(p))["value0"]

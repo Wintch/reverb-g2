@@ -1289,3 +1289,39 @@ Relaunched 2026-08-29 00:01:36 -03: `base-i2 → P2-i2 → base-i3 → P2-i3`, 1
 graded against the preceding base leg (`--baseline`), expected end ~01:09; log
 `~/vr/logs/soak/sequence-20260829-000136.log`. The results and the promotion call go below when it
 finishes.
+
+**Results (2026-08-29 00:01 → 01:11 -03, `sequence-20260829-000136` + `-001957`).** The first
+driver stopped after `base-i2` because it treated `soak-variant.py`'s absolute "0 trips at rest"
+rule as fatal (fixed in `1ef9c8b`: only no-JSON / service death / new core / dirty teardown are);
+the remaining three legs ran under the second driver with `SOAK_BASELINE=base-i2.json`. Headset
+untouched on the desk throughout; 84.2 delivered fps, 0 coredumps, `monado-service` alive at the
+end and a clean teardown in every leg. Per leg (15 min; `<tag>.json` + `soak-grade.py`):
+
+| leg | trips | span m | max from start m | lm p50 / p10 | % frames lm<5 | keypoints p50 | frontend p50 / p99 ms | opt p99 ms | patches max | RSS start→end MB/h | RSS steady slope MB/h |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| base-i2 | 142 | 13.4 | 7.3 | 0 / 0 | 88.5 | 1866 | 21.9 / 25.6 | 1.6 | 0 | 31 | 77 |
+| **P2-i2** | **35** | **7.8** | 5.2 | **22 / 10** | **3.7** | 1503 | 19.4 / 32.0 | 3.4 | 223 k | 421 | 49 |
+| base-i3 | 107 | 18.4 | 14.2 | 1 / 0 | 79.5 | 2080 | 23.4 / 27.2 | 1.8 | 0 | 26 | −65 |
+| **P2-i3** | **19** | **5.8** | 3.1 | **24 / 13** | **1.8** | 1540 | 19.8 / 32.8 | 3.7 | 208 k | 259 | −229 |
+
+Both interleaved pairs say the same thing. At rest the shipped base config has essentially no
+landmarks (p50 0–1; 80–89 % of frames under 5) and trips the session anchor 107–142 times in 15
+minutes; P2 keeps 22–24 (2–4 % of frames under 5), trips 4–5.6× less (35 and 19) and halves the raw
+span or better (7.8 and 5.8 m vs 13.4 and 18.4). The at-rest trip rate itself drifted between legs
+of the same config (142 → 107, 35 → 19) — the hour/scene drift that made interleaving necessary —
+but the ordering never flipped. Costs are the known ones: frontend p99 +21–25 % (32.0 / 32.8 ms,
+still under the 33 ms camera period; p50 lower than base), backend `opt` p99 1.6 → 3.5 ms, and the
+recall patch cache — 208–223 k patches and a start→end RSS growth of 259–421 MB/h over 15 minutes,
+while `soak-grade.py`'s steady-state slope is 49 and −229 MB/h: the growth is the cache filling in
+the first minutes, 0014/0016/0018's bound holds. `soak-grade.py` labels both P2 legs "UNSAFE" on its
+frontend-p99 rule alone (base + 20 %) and lists every other column as "better". (`soak-families.py`
+did not recognise the `-iN` tags — its recipe lookup stripped digits, `P2-i2` → `P-i`; fixed the same
+night to drop a trailing `-i<n>` and try the exact tag first.)
+
+**Verdict**: P2 is at least as safe at rest as base on every failure criterion (no crash, no core,
+clean teardown, same delivered fps) and far more stable in tracking; nothing here argues against
+promoting its backend settings into the global `basalt-g2-config.json`. The remaining gate is the one
+NEXT-STEP already named — one Dalí 6dof worn run under P2 (the other approved 6dof title) — plus,
+for a booth day, a glance at RSS after the first hour. Aircar already runs P2 per-title; Cyberpilot
+would inherit it from the global file. Artifacts: `~/vr/logs/soak/{base-i2,P2-i2,base-i3,P2-i3}.*`,
+CSVs `~/vr/logs/slam-csv/slam-20260829-00{0144,2005,3730,5454}-*`.
