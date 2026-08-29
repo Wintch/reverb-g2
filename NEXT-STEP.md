@@ -69,7 +69,10 @@
 > `~/vr/power.conf` 70 % (~175 W, re-applied by the watchdog on the next boot) vs the 144 W of
 > 08-22 — reconcile, needs the user/root — Dalí's side is now measured (15:15): it touches the 250 W cap
 > on its heavy views at 90 fps, so 70 % (~175 W) would cost fps exactly there → the booth needs 250 W;
-> what is left is the watchdog re-applying 70 % at boot (root); (4) the 06:34:04 teardown core, pid 731059 (JN100's
+> ~~what is left is the watchdog re-applying 70 % at boot~~ DONE 15:35: the user chose
+> `~/vr/power.conf` `GPU_LIMIT_PCT=100` (no root needed, the file is iam's; the watchdog's `--apply`
+> now pins 250 W at boot too) and confirmed the neck arm at 100 — all three cap numbers reconciled:
+> 250 W is the live state AND the saved intent, 144 W stays an Aircar-only 08-22 data point; (4) the 06:34:04 teardown core, pid 731059 (JN100's
 > monado-service, on kill; `coredumpctl info 731059`, the `pop_pose` family); (5) why P2 at −5 ms
 > diverges on this recording (curiosity only, JQT is closed); (6) the post-trip snap-back (0.7–4.4 m from the origin in one frame)
 > contradicts the reset-offset carry's "stays continuous" — docs/80.

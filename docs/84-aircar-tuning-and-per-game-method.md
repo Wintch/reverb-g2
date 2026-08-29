@@ -64,7 +64,7 @@ quality, not raw pixel count). Aircar's in-game quality menu maps its four prese
 ## 7. GPU power is not capped
 
 Measured this session: `nvidia-smi` power limit = 250W (the card's max), draw peaked at
-244W. `power.conf`'s `GPU_LIMIT_PCT=70` is **not applied** in this session. So the fps
+244W. `power.conf`'s `GPU_LIMIT_PCT=70` is **not applied** in this session. *(2026-08-29 15:35: `power.conf` now carries `GPU_LIMIT_PCT=100` by the user's decision — the 250 W is the saved intent as well as the live state; Dalí needs it, docs/80 "the booth button, measured".)* So the fps
 ceiling at HIGH+high-SS is genuine GPU compute saturation, not a power cap —
 "raise the power cap" is a no-op here; there's nothing to lift.
 

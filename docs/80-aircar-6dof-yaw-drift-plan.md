@@ -1828,3 +1828,5 @@ And the GPU-cap reconciliation (NEXT-STEP item 3) has its Dalí answer: the titl
 250 W cap on its heavy views at 90 fps, so `power.conf`'s 70 % (~175 W) would put those views well under
 90 — the booth runs at 250 W (the root-set value stays; what is left to reconcile is only the watchdog's
 re-apply of 70 % on the next boot).
+
+**Decisions (15:35, user):** the neck arm stays at 100 (`TITLE_PROFILES["1073390"]`, comment updated), and `~/vr/power.conf` goes `GPU_LIMIT_PCT` 70 → 100 so the watchdog's `--apply` pins 250 W at boot as well — the live cap, the saved intent and the measured need now agree; the 144 W curve of 08-22 remains an Aircar-only data point (docs/84 §7 annotated).

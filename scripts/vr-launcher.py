@@ -162,8 +162,8 @@ TITLE_PROFILES = {
         # "igual parece a la vez anterior" at 100, "la deriva es claramente mayor ahora" at 200).
         # Hypothesis (a) confirmed: less arm, less rotation-onset displacement; 150 was over.
         # 100 rather than 0 because 0 showed near-field cockpit jitter ("un poco de jittering al
-        # mirar la cabina de cerca"). Reversible: 0 felt the same, 150/200 worse. The wearer had
-        # not chosen between 0 and 100 when this was written.
+        # mirar la cabina de cerca"). Reversible: 0 felt the same, 150/200 worse. The wearer
+        # confirmed 100 on 2026-08-29 15:35 ("deja el brazo de cuello en 100").
         "SLAM_PRED_NECK_ARM_MM": "100",
         # 2026-08-27 (evening): 50 -> 25. Variant F (A + spread 25) worn: "bastante solido",
         # smoother settle, latency still low -- the wearer's own ask (E's smoothness without
