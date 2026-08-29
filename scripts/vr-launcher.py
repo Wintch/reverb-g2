@@ -269,6 +269,15 @@ TITLE_PROFILES = {
         # frontend budget (total p50 40.9 vs 24.2 ms); detection is sequential and did not move
         # with threads. Aircar already carries SLAM_THREADS=6 with constellation off, same here.
         "SLAM_THREADS": "6",
+        # 2026-08-29 15:02 (docs/80 "the anchor test"): the 0099 session anchor Aircar and Cyberpilot
+        # already run, now for Dali too. Worn in a lit room with either Basalt config, Dali ran ~40 m
+        # away in the first two minutes of a session (VIO scale snap after a rotation-only start) and
+        # settled 2-9 m off; with the anchor: max 3.45 m, 6 resets carrying 0.02-0.21 m and <= 0.02 deg
+        # of yaw, final 0.50 m, wearer "se juega muy similar" (1-2 m off at the start, playable).
+        # Operator rule that goes with it: headset still on the desk until the title has loaded, then
+        # the guest puts it on. Reversible: remove both lines to get the raw position back.
+        "SLAM_SESSION_ANCHOR_RADIUS_CM": "300",
+        "SLAM_QUAT_NORM_CHECK": "1",
     },
     # Wolfenstein: Cyberpilot (1056970) -- seated mech cockpit; motion controllers
     # are REQUIRED, so constellation stays ON (unlike Aircar/Dali, which drop it).

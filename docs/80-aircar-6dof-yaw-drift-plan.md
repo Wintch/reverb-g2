@@ -1763,3 +1763,33 @@ untested on Dalí as of writing:
 
 Also: Dalí at scale 100 still reads 80–99 % GPU on single grabs in both runs — the "60 fps" question is
 not answered by the scale change; measure with `app-fps.sh`.
+
+### 2026-08-29 15:02 — the anchor test: 3.45 m instead of 38, applied to Dalí's profile
+
+Action `test-591360-anchor` (global base, scale 100, 6 threads, `SLAM_SESSION_ANCHOR_RADIUS_CM=300` +
+`SLAM_QUAT_NORM_CHECK=1` from the env), lit room, **headset still on the desk for the first ~60 s** (the
+title had loaded at 45 s), then worn, 4.8 min, `~/vr/logs/soak/dali-base-anchor-1-*`. Wearer: *"listo,
+aparecí un metro o dos más cerca de lo que hacía falta, un poco más a la derecha de lo necesario también,
+pero se puede iniciar igual. se juega muy similar"*.
+
+| | base + anchor (`dali-base-anchor-1`) | base raw (`dali-base-lit-1`) | P2 raw (`dali-P2-lit-1`) |
+|---|---|---|---|
+| raw position, first 3 min per 15 s | 2.8 3.0 3.0 0.8 1.0 3.0 **3.4** 1.2 1.6 1.6 1.5 1.7 m | 0.1 0.4 1.6 24.5 **38.8** 1.5 … | 0.1 2.0 6.6 … 30.0 **38.6** 8.7 … |
+| max / final | **3.45 m / 0.50 m** | 38.8 / 1.7 m | 38.6 / 8.7 m |
+| guard trips → carried offsets | 6 anchor + 1 quat → 0.02–0.21 m, yaw ≤ 0.02° | 3 speed → 0.4–1.4 m | 1 speed → 8.1 m + 13.3° |
+| frontend / backend p50 ms | 34.9 / 9.1 | 34.9 / 9.6 | 31.3 / 24.9 |
+
+Two things worth noting. The base config random-walks to the 3 m radius **within the first 15 s even
+on the desk** (2.8 / 3.0 / 3.0 m at rest — the daytime soak's "max 1 s displacement 3.5 m"), so "headset
+still on the desk" does not by itself give a clean origin; what it gives is a Basalt initialised at rest.
+And the anchor's resets are nearly free here — 0.02–0.21 m carried, no yaw — where the speed guard's
+reset in the P2 run carried 8 m and 13°: catching the ramp at 3 m instead of at 10 m/s is the whole
+difference. The wearer's "1–2 m off at the start" is the sum of the carried offsets plus the random
+walk; a recentre at title start would remove it (Dalí has none; a Monado-side "re-anchor on first
+xrBeginSession" is the natural follow-up, not tonight's).
+
+**Applied**: `TITLE_PROFILES["591360"]` now carries `SLAM_SESSION_ANCHOR_RADIUS_CM=300` and
+`SLAM_QUAT_NORM_CHECK=1` (reversible; deployed, `deploy-check.py` clean). Operator rule for the booth
+queue: **the headset stays still on the desk until the title has loaded; only then the guest puts it on.**
+`worn-grade.py` now labels its trip count as what it is (speed + anchor + quat, all logged as
+`Tracker diverged`).

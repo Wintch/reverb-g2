@@ -378,7 +378,9 @@ ACTIONS["test-591360-anchor"] = {
             "SLAM_SESSION_ANCHOR_RADIUS_CM": "300", "SLAM_QUAT_NORM_CHECK": "1",
             "VR_DEMO_RECORD": "1", "VR_DEMO_COMMENT": "Dali 6dof base + session anchor 300 cm (test)"},
     "demo": {"title": "Dali base + anchor 3 m (prueba)", "tracking": "6dof", "status": "testing",
-             "note": "PRUEBA 2026-08-29 (docs/80): Dali con la config base de siempre + el guard de anchor de "
+             "note": "RESULTADO 2026-08-29 15:02: max 3.45 m (vs 38 m sin anchor), 6 resets de 0.02-0.21 m y yaw <= 0.02 grados, "
+                     "'se juega muy similar' -> APLICADO al perfil de Dali (vr-launcher.py); el boton queda como referencia. "
+                     "PRUEBA 2026-08-29 (docs/80): Dali con la config base de siempre + el guard de anchor de "
                      "3 m (0099, el mismo que corre Aircar). Motivo: con las dos configs Dali se va ~40 m en "
                      "los primeros 2 min de una sesion con el casco puesto desde el arranque y despues se "
                      "asienta; el anchor acota eso a reinicios de 3 m. Procedimiento a probar junto: casco "

@@ -76,7 +76,7 @@ def grade(d, tag):
             if "d_res_d_" in line and "is not valid" in line: dres += 1
             if "skipping backsubstitution" in line: det += 1   # "det(Q1Jl) == 0, skipping backsubstitution"
             if "Tracker diverged" in line: div += 1
-        print(f"  monado log: {lines} lines, speed-guard trips {div}, Basalt d_res-invalid {dres}, det(Q1Jl)==0 {det}")
+        print(f"  monado log: {lines} lines, guard trips {div} (speed + session-anchor + quat-norm, all logged as Tracker diverged), Basalt d_res-invalid {dres}, det(Q1Jl)==0 {det}")
     else:
         print("  (no jack-in log)")
 

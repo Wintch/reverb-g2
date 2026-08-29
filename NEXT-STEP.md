@@ -55,9 +55,10 @@
 > fine in light, the night was darkness; the warning counts track landmark activity, not darkness
 > (base in light 45 k `d_res` vs 2 in the dark) — docs/80 "the daytime at-rest pair"; (2) ~~Dalí under P2 in a lit room~~ DONE 14:40 + base control 14:58: **both configs run ~40 m
 > away in the first 2 min of a worn Dalí session, then settle** (VIO scale snap after a rotation-only
-> start); wearer "muy parecido". Gate undecided, decision unchanged: P2 Aircar-only, Dalí on base. NEW
-> booth levers, untested: headset still on the desk until the title loaded; `SLAM_SESSION_ANCHOR_RADIUS_CM=300`
-> for Dalí (dashboard action `test-591360-anchor`) — docs/80 "the base control in the same light"; (3) GPU cap: the 250 W is
+> start); wearer "muy parecido". Gate undecided, decision unchanged: P2 Aircar-only, Dalí on base. Booth
+> levers TESTED 15:02 and APPLIED: `SLAM_SESSION_ANCHOR_RADIUS_CM=300` + `SLAM_QUAT_NORM_CHECK=1` in Dalí's
+> profile (max 3.45 m instead of 38, resets carry 0.02–0.21 m, yaw ≤ 0.02°, wearer "se juega muy similar")
+> + operator rule: headset still on the desk until the title has loaded — docs/80 "the anchor test"; (3) GPU cap: the 250 W is
 > deliberate (root, 2026-08-26 04:03:47, `vr-power-setup.sh --gpu-limit 100`; docs/84 §7) vs
 > `~/vr/power.conf` 70 % (~175 W, re-applied by the watchdog on the next boot) vs the 144 W of
 > 08-22 — reconcile, needs the user/root; (4) the 06:34:04 teardown core, pid 731059 (JN100's
