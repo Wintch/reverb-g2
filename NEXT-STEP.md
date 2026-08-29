@@ -1,5 +1,43 @@
 # Next step
 
+> ## START HERE (2026-08-29 ~00:30 -03, unattended night run from the everyday box — at-rest pair
+> base→P2: first attempt lost to orchestration, rerun detached and in flight (~00:02–01:09);
+> hardening landed; nothing worn)
+>
+> **At-rest soak (base vs P2)**: attempt 1 (23:12) lost its data to orchestration — the agent drove
+> `soak-variant.py` from a foreground ssh, the session died mid-leg, SIGHUP killed the script before
+> teardown, `monado-service` sat orphaned 17 min and its later kill tripped the teardown SIGSEGV
+> (docs/80 "first attempt lost to orchestration"). `base-i1` itself ran its full 900 s: **104
+> `Tracker diverged` by t=841 s** (base 7 / base2 36 on the 27th — hour and scene, hence interleave);
+> artifacts kept under `~/vr/logs/soak/base-i1-*` and `slam-csv/slam-20260828-231216-*`.
+> **New `scripts/soak-sequence.sh`** runs legs detached (`setsid nohup`) with forced teardown, a
+> `STOP` file, a `.done` marker and the attention flag; relaunched 00:01 -03:
+> `base-i2 → P2-i2 → base-i3 → P2-i3`, 15 min each, until ~01:09 — JSONs in `~/vr/logs/soak/`, log
+> `sequence-20260829-000136.log`. Grade with `soak-grade.py` / `soak-families.py`; **no promotion
+> call until then**.
+>
+> **Hardening landed** (`vr-launcher.py`/`demo-recorder.py`/`status-dashboard.py`, deployed +
+> `deploy-check.py` clean): jack-in-timeout kill now `pgrep -x monado-service` (exact comm, not
+> `-f`) — same ghost-kill class as `rig_telemetry.monado_pid()`/the 22.5h incident.
+> `DEMO_RECORDER_MAX_H` 3→8h default; JX note fixed to horizon 50 (JH's 100 refuted).
+> `pmadminka-agent`+dashboard restarted onto the new `monado_pid()`, but the agent's journal still
+> logs `heartbeat failed`/`long-poll timed out` vs `pmadminka-hub.internal` before AND after
+> (`getent hosts` resolves fine) — dedicated look needed, not caused by this run.
+>
+> **Faulto's Basalt 0014** (docs/85): bounds the same unbounded `patches` map (49 GB/hr vs our
+> 18 GB/3min) with a 16,384-entry hard cap that stops inserting once full — our own soak data
+> (249k–385k live patches under P2) puts that 1–2 orders below what P2 needs, so **not
+> recommended** as a swap-in for ours.
+>
+> **Doc pointers fixed**: "Monado sends no LED command" (docs/67, re-windows/README,
+> 06-synthesis) now points to `04-led-model.md` §4's addendum (claim itself still true); docs/80's
+> JX line marked historical (horizon 100 as-planned, ran at 50); docs/82's `playlist-runner.py`
+> "not yet copied" corrected — in `scripts/` since `3bde463`.
+>
+> **Still pending**: Dalí 6dof once with P2 (global `basalt-g2-config.json` still the old one;
+> Aircar uses P2 per-title), the interleaved at-rest pair (base→P2 — rerun in flight, see above;
+> grade it), and the `prunePatches` snapshot frame (p99 12 ms, 1 in 30).
+
 > ## START HERE (2026-08-28 ~19:45 -03, remote session from the everyday box — instruments for the
 > residual experiment are in place; nothing worn)
 >

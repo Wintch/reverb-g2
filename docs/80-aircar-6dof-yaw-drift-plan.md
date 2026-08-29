@@ -1102,7 +1102,7 @@ the drift does not move (0.78 vs 0.70, noise floor 0.1, settles 7 mm). P3 goes f
 cost but starts paying in yaw (0.68); P4 buys a little drift for a lot of ms. **P2 is J
 without the 18 ms** and under the 33 ms camera period at p90 — buttons **JP** (P2 alone) and
 **JX** (P2 + horizon 100 + correction averaged over 3 + mid-exposure stamp, the whole night's
-stack, for after the single-lever tests). Queued offline: P5/P7 (`levels` 2 on J, J + 2 pts),
+stack, for after the single-lever tests). [As run on the 28th JX kept horizon 50 — JH's 100 ms had been refuted worn by then; see the JX verdict below.] Queued offline: P5/P7 (`levels` 2 on J, J + 2 pts),
 P6/P8 (`levels` 2 and `max_threshold` 60 on P2) for the margins.
 
 **`optical_flow_levels` 3 → 2 is refuted, hard**: P5 (J + levels 2) saves 1 ms (43.7 vs 44.9
@@ -1260,3 +1260,32 @@ dereferences.
 All six sessions' CSVs (`filtering` / `prediction` / `timing` / `tracking.csv`, 127 MB) were
 copied 2026-08-28 19:37 from tmpfs to `~/vr/logs/slam-csv/slam-20260828-<HHMMSS>-<file>.csv`
 (session → button in that directory's `README.md`; the tmpfs originals were left in place).
+
+### 2026-08-28 late — the interleaved at-rest pair base→P2: first attempt lost to orchestration, rerun detached
+
+The pending "interleaved at-rest pair base→P2" (above: placement and lighting dominate at-rest
+stability, so base → candidate → base → candidate back to back is the only fair comparison) was
+attempted unattended from the everyday box at 23:12 -03, driving `scripts/soak-variant.py` from a
+foreground ssh session inside an agent turn. Leg 1 ran: `base-i1`, `monado-service` pid 685622, the
+360 player for its full 900 s (23:12:20 → 23:27:20), RSS 316 → 328 MB, **`Tracker diverged` 104 by
+t = 841 s** (vs 7 in the daytime `base` and 36 in `base2` on the 27th — the at-rest trip rate is a
+property of the scene and the hour, which is exactly why the pair must interleave). Then the
+orchestrating session died (a 600 s harness cap moved the ssh to the background and the agent's turn
+ended); SIGHUP reached `soak-variant.py` before its metrics/teardown step, so no `base-i1.json` was
+written and `monado-service` sat orphaned for 17 minutes holding the DRM lease, until a later agent
+killed it by pid at 23:44 — a kill that tripped the known teardown race (SIGSEGV, core 685622, 32 MB,
+the third of the day; "Teardown SIGSEGVs" above). Preserved by hand: `~/vr/logs/soak/base-i1-{run.out,
+player.log,jack-in-stdout.log,jack-in.log}` (the jack-in log includes the orphaned minutes: 546
+`Tracker diverged` lines over 32 min) and the leg's CSVs as `~/vr/logs/slam-csv/slam-20260828-231216-*`
+(4 files). P2 never ran in that attempt.
+
+**Fix, not a retry: `scripts/soak-sequence.sh` (new).** Runs N legs back to back detached from the
+caller (`setsid nohup`), one `soak-variant.py` per leg under a per-leg `timeout`, forces the rig down
+if a leg leaves `monado-service` or the IPC socket behind, waits 60 s between legs (USB settle),
+stops at the first leg without a JSON, sets the dashboard attention flag with abort instructions
+(`touch ~/vr/logs/soak/STOP` between legs; `~/vr/jack-in-wayland.sh down` for the running leg),
+clears it on any exit, and writes `sequence-<stamp>.done` (`ok` / `failed` / `stopped` / `aborted`).
+Relaunched 2026-08-29 00:01:36 -03: `base-i2 → P2-i2 → base-i3 → P2-i3`, 15 min each, variant legs
+graded against the preceding base leg (`--baseline`), expected end ~01:09; log
+`~/vr/logs/soak/sequence-20260829-000136.log`. The results and the promotion call go below when it
+finishes.
