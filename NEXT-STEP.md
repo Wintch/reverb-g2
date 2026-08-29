@@ -1,8 +1,48 @@
 # Next step
 
-> ## START HERE (2026-08-28 ~02:00 — seven worn A/Bs in one night; Aircar 6dof is now "sólido,
-> pero no resuelto aún"; the night's stack (JQ) is the profile; the residual is named and has
-> a cheap discriminating experiment)
+> ## START HERE (2026-08-28 ~19:45 -03, remote session from the everyday box — instruments for the
+> residual experiment are in place; nothing worn)
+>
+> **Dashboard round 7** (`status-dashboard.py`, restarted; each new button = profile dict `JQ_ENV` +
+> one lever): **RQ** = R's protocol recorded under JQ (`EUROC_RECORD_PATH=/mnt/vrtmp/euroc-yaw2`,
+> calib `~/vr/logs/calib-g2-yaw2.json`; stop right after the protocol (tmpfs); copy to
+> `~/vr/logs/euroc/` before a reboot); **JN0 / JN100 / JN200** = `SLAM_PRED_NECK_ARM_MM` 0 / 100 / 200
+> (hypothesis a: the neck model over the ~75 ms stale anchor; 150 = JQ = control); **JQT** =
+> `VIT_CAM_TIME_OFFSET_NS=-5000000` over the mid-exposure stamp (hypothesis b: `start_ts` lags
+> exposure start). **Wearer, 10 min, this order**: RQ (3 min, follow the voice) → JN0 → JN100 → JN200
+> (~1 min each, same fast yaw) → JQT last, only if RQ replayed at −5 ms still wins.
+>
+> **`scripts/euroc-shift.py` (new)** copies a dataset with `camN/data.csv` shifted by N ms (PNGs
+> symlinked, ~1 MB — regenerate, never archive). Validated on the 27th recording: P2 at −5 ms yaw
+> max-far 0.43 → 0.26 m (J at −5 ms: 0.21), settle phases ≤ 0.015 m. Sweep for RQ, ~3 min per shift,
+> no headset (`D` = the trimmed dataset with `phases.json` as on the 27th, `C` = its calib dump):
+> `for ms in 0 -5 -10; do s=${ms/-/m}; python3 scripts/euroc-shift.py --src $D --dst /mnt/vrtmp/euroc-yaw2-shift_$s --ms $ms; python3 scripts/replay-basalt-variants.py --dataset /mnt/vrtmp/euroc-yaw2-shift_$s --calib $C --config P2=$HOME/vr/basalt-variants/P2.json --out ~/vr/logs/replay-yaw2-P2shift-$s; done`
+> `python3 scripts/replay-phase-slice.py --phases $D/phases.json --json ~/vr/logs/replay-phase-yaw.jsonl P2=~/vr/logs/replay-yaw2-P2shift-0/P2/P2.csv P2-5ms=~/vr/logs/replay-yaw2-P2shift-m5/P2/P2.csv P2-10ms=~/vr/logs/replay-yaw2-P2shift-m10/P2/P2.csv`
+>
+> **Also landed**: `~/vr/logs/slam-csv/slam-20260828-<HHMMSS>-<file>.csv` = today's six sessions (4
+> CSVs each, 127 MB; README: session → button; CSVs end mid-record — drop the last line). Cyberpilot:
+> 0098 removed, spread stays 50. JA and JM died in teardown SIGSEGVs (`Tracker::pop_pose` under
+> `wmr_camera_stop` — docs/80 "Teardown SIGSEGVs"). `demo-recorder.py` never stopped (`monado_pid()`
+> was `pgrep -f`, matched an agent's wait-loop; now `pgrep -n -x`, pid-bound, 3 h backstop,
+> `stop_reason` in `summary.json`). Dates: JP…JQ ran 18:13–18:57 -03 today, not ~00:30–02:00 (docs/80,
+> the block below, dashboard/launcher comments fixed). **Comms side**: `LICENSE` (MIT) at the repo
+> root (4b585d1; GitHub reported none); Monado MR !2968 rebased onto main from the everyday box (the
+> !2937 `wmr_controller_base.h` add/add conflict; review fixup folded into its parents, 4 commits,
+> `drv_wmr` + clang-format clean), force-pushed `80135e92d`, note 3636033. **LED-command claim
+> corrected** (prompted by a LVRA Matrix reader): T229's "no brightness/power/PWM command exists in
+> the WMR controller protocol" (commit `39d7e5b`, `docs/63`, patch 0091's text) was wrong —
+> `docs/re-windows/04-led-model.md` s3 already had Windows' pulse-train command on the wire
+> (2026-08-25) and thaytan's `dev-constellation-controller-tracking` implements it
+> (`WMR_MOTION_CONTROLLER_LED_CONTROL 0x03`, `fill_timesync_packet()`, 1..399 intensity/pulse-length
+> field, brightness feedback loop since 2025-05) — new s4 addendum there; `docs/63:151` ("confirmed
+> absence" → "confirmed present"), `docs/03:747`, `patches/monado/README.md` 0091 note, `CLAUDE.md`
+> updated. Still true: upstream Monado and this stack send no LED command. **Still pending**: Dalí 6dof once with
+> P2 (the global `basalt-g2-config.json` is still the old one; Aircar uses P2 per-title), the
+> interleaved at-rest pair (base→P2 now), and the `prunePatches` snapshot frame (p99 12 ms, 1 in 30).
+
+> ## START HERE (2026-08-28 ~18:58 — seven worn A/Bs in two rounds (J/JT 27th evening, JP→JQ
+> 28th 18:13–18:57 -03); Aircar 6dof is now "sólido, pero no resuelto aún"; the afternoon's
+> stack (JQ) is the profile; the residual is named and has a cheap discriminating experiment)
 >
 > Full record: docs/80 from "The wearer's recording, replayed" to "JQ". Instruments that now
 > exist: `replay-phase-slice.py` (per-phase drift), Basalt 0019 (per-stage frontend ms), 0020
