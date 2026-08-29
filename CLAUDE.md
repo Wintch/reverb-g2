@@ -64,6 +64,9 @@
 > LED intensity at all — so Windows sends something we don't, a candidate tracking lever upstream
 > of every threshold. `scripts/led-ring-photometry.py` measures it (area, not brightness —
 > brightness saturates). Decisive test queued: position-swap + battery-swap photos.
+> **Answered (2026-08-25/28)**: Windows sends an LED pulse-train / intensity command ~15x/s
+> (`docs/re-windows/04` s3) and thaytan's reference branch already implements it (s4 addendum);
+> the "no host command" wording in T229 / `docs/63` was wrong and is corrected.
 >
 > **CONTROLLER PAIRING — researched deep, ATTEMPTED, honest negative (T235/T236, `docs/03`)**:
 > `WMR_BT_CONTROL_MSG_PAIR=0x05` sits unused in Monado's own header; we built `controller-pair.py`

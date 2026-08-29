@@ -515,6 +515,15 @@ Logs per-blob area and brightness per controller: brightness saturates, area doe
 how the Windows-vs-Linux LED-drive asymmetry (2.45× blob area on the left ring under Windows)
 became measurable. Instrument only; the LED-drive investigation is still queued.
 
+**Correction (2026-08-28)**: this patch's description and the code comment it adds say that
+"the WMR controller protocol has no brightness/power/PWM command". That is wrong -- see
+`docs/re-windows/04-led-model.md` s3/s4: Windows drives an LED pulse-train / intensity command
+~15x/s during tracking (confirmed on the wire 2026-08-25), and thaytan's Monado branch already
+implements it (`WMR_MOTION_CONTROLLER_LED_CONTROL 0x03`, `fill_timesync_packet()`, brightness
+feedback loop). What remains true is that THIS stack (upstream Monado + these patches) never
+sends it, so the per-device photometry the patch adds still measures a real, host-independent
+baseline on Linux. The patch file itself is left as applied.
+
 ## 0092 — pipelined pacer: advance past the previous GATE, not the shifted promise (2026-08-21, T244)
 
 The pipelined model (T175) promised each frame one period after its gate slot, then required the

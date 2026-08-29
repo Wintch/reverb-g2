@@ -148,7 +148,7 @@ single-PSU row above as covering only this unit.
 | Subsystem | Part | How we know | Confidence |
 |---|---|---|---|
 | Tracking LEDs | ring of **32** IR LEDs | Constellation model in the WMR calibration data; ~11° spacing derived in T224 | **confirmed count** |
-| LED drive | **no host command exists** | The WMR controller protocol carries no brightness/power/PWM command, and `docs/12` records none (verified T229) | **confirmed absence** |
+| LED drive | **host-commanded LED pulse train / intensity** (12-byte output report: 9-bit 1-399 pulse-length field + 55-bit exposure timestamp) | Windows re-sends it ~15x/s for the whole tracking session (10,503 commands in one 730 s capture) -- `docs/re-windows/04-led-model.md` s3, decompiled 2026-08-17 and confirmed on the wire 2026-08-25. Upstream Monado never sends it; thaytan's `dev-constellation-controller-tracking` branch does (`WMR_MOTION_CONTROLLER_LED_CONTROL` `0x03`, `fill_timesync_packet()`, plus a blob-brightness feedback loop) -- see s4 of the same doc. T229's "no host command exists" (2026-08-19) was wrong; row corrected 2026-08-28 | **confirmed present** |
 | IMU | — | Data fully characterised (gain 0.9905 L/R, wobble <1°, T212 quorum test); part unknown | **unknown** |
 | Radio | Bluetooth, tunnelled through the headset's HoloLens device | `docs/03` | **confirmed path, part unknown** |
 | Battery | 2 × AA | Measured extensively (`docs/46`) | **confirmed** |
@@ -191,8 +191,8 @@ Ordered by what it would actually unlock, not by how easy it is:
    gyro-bias-under-dynamics (`docs/pruebas` T203 item 2). Knowing the part means knowing its
    spec'd bias stability, which turns "the drift seems high" into "the drift is 3× spec" or "we
    are asking too much of a cheap part".
-3. **The controller IMU and MCU.** Same reasoning, plus it bears on the LED question: whether
-   LED drive is regulated at all is a property of that board.
+3. **The controller IMU and MCU.** Same reasoning. (The LED-drive half of this question is
+   answered: the host commands the pulse length, see the Controllers table above.)
 4. **The panel part number.** Would settle whether the 90 Hz limit is the panel or the bridge,
    which is the question this whole repo started from.
 5. **The exact STM32 model.** With `MCU Download` and `DES JTAG` headers on the board, a named

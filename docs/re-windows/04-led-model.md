@@ -300,6 +300,51 @@ on whatever blink pattern the firmware defaults to on connect/power-on**,
 with no explicit request for a specific count/duration/period and no
 attempt to synchronize the blink to camera exposure.
 
+### Addendum 2026-08-28 -- the reference branch already sends this command
+
+"None" above is still true of upstream `monado/monado` `main` (checked at
+`365863615`, 2026-08-28: the WMR driver writes only the `0x06` control/fw
+reports and is not wired to `src/xrt/tracking/constellation/` at all). It is
+NOT true of the branch this project treats as the reference for controller
+tracking, Jan Schmidt's `gitlab.freedesktop.org/thaytan/monado`
+(`dev-constellation-controller-tracking`, also `-kalman`), which has carried
+the command since `4d18710` "d/wmr: Initial implementation of timesync
+protocol" (2023-07-03):
+
+- `wmr_controller_protocol.h:43`: `WMR_MOTION_CONTROLLER_LED_CONTROL 0x03`
+  -- "Sent to control LED brightness / timing".
+- `wmr_controller_base.c:809-827` `fill_timesync_packet()`: 12 bytes =
+  `0x03`, 8-bit message counter, 2-bit 1..3 counter, **9-bit "LED intensity /
+  pulse length" clamped 1..399** (default 200; the reverse-engineered Windows
+  routine is named `setLEDPulseLengthMaybe()`), 55-bit device-clock timestamp
+  in microseconds of the predicted next SLAM-frame exposure, 11-bit unknown
+  (Windows sends 800 first; the branch defaults to 500), 3-bit "LED train
+  type" (Windows always 1; 2 looks like "off"). Re-sent whenever the
+  next-exposure estimate moves (`wmr_controller_base_notify_frame`), with a
+  separate 2-byte keepalive `{0x05, ctr}` every 125 ms.
+- Since `1d67d4d` (Beyley Cardellio, 2025-05-17) it is a **closed loop**: the
+  constellation tracker pushes each controller's average blob brightness back
+  to the driver (`push_brightness_update`), which steps the 1..399 field -3
+  when blobs saturate (>70) and +10 when they are dim (<30) or under >20 m/s^2
+  acceleration.
+- The same packet exists statically in thaytan's OpenHMD `dev-wmr` branch
+  (2019): `motion_controller_leds_bright[12] = {0x03,0x01,0x21,0x03,0,0,0,0,0,0,0x80,0x2c}`
+  = intensity 200, timestamp 0, unknown 800, type 1 -- byte for byte the
+  payload this file's s3 saw as the first command on the wire (the 10 bytes
+  after the per-message counter `06`: `21 03 00 00 00 00 00 00 80 2c`); the
+  OpenHMD array matches once its own type byte `0x03` and counter `0x01` are
+  dropped.
+
+Consequences for this file: what s3 calls the 9-bit **count** is what the
+reference branch's RE calls **intensity / pulse length** -- brightness IS
+commanded, as on-time per pulse, which is also the mechanism behind T230's
+OS-dependent asymmetry. Gap-list item 1 in s5 is therefore solved in the
+reference branch; porting means adopting `fill_timesync_packet()` and the
+brightness loop, not re-deriving the packet. None of it is upstream (!2188
+only pushed the math/camera pieces). Community note: this correction was
+prompted by a LVRA Matrix reader pointing at the stale "no LED command" claim
+in commit `39d7e5b` / `docs/63` (2026-08-28).
+
 This is not a gap unique to WMR in the codebase, though — Monado **already
 has the generic machinery** for exactly this, just wired to a different
 controller family:
@@ -357,11 +402,10 @@ controller is already doing.
 
 ## 6. What this doesn't establish
 
-- Byte-exact values for the packed pulse-train report (report ID, exact
-  bit offsets within the 11-byte body) were not pinned — the packing
-  routine was read at the field/bit-width level (9-bit count, 11-bit
-  period, 55-bit duration, 2-bit sequence ID), not captured against a real
-  USB trace.
+- ~~Byte-exact values for the packed pulse-train report (report ID, exact
+  bit offsets within the 11-byte body) were not pinned~~ -- superseded by
+  s3's 2026-08-25 sections (report ID `0x08`/`0x10`, field bits pinned on a
+  real capture) and by the s4 addendum (the reference branch's packer).
 - Whether firing an equivalent pulse-train report at a WMR controller from
   Linux would actually change its blink behavior (vs. being ignored/NAKed
   by firmware) is unverified — this pass is static analysis only, nothing

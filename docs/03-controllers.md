@@ -744,8 +744,10 @@ turned out to not even be necessary -- **the real thing was already sitting in t
   command/step from PAIR (`16 05`) itself, sending only `16 05` -- everything this project has
   tried since T236 -- would be sending the second half of a two-step sequence without the first.**
 - `MotionControllerSystem.dll` exports the higher-level API: `CrystalKeySendCommand`,
-  `CrystalKeyWriteCommand`, `CrystalKeyReadCommand`, `CrystalKeySetLedPulseTrain` (very likely the
-  actual LED slow-pulse-in-discovery command), `CrystalKeyGetBluetoothAddress`,
+  `CrystalKeyWriteCommand`, `CrystalKeyReadCommand`, `CrystalKeySetLedPulseTrain` (the tracking-time
+  LED strobe/timesync command, re-sent ~15x/s from tracking start to stop -- `docs/re-windows/04`
+  s3; an earlier guess here called it the pairing slow-pulse, corrected 2026-08-28),
+  `CrystalKeyGetBluetoothAddress`,
   `CrystalKeyInitializeDevice`, `CrystalKeyKeepAlive`, `CrystalKeySetToIdle`,
   `CrystalKeyOpenDevice`/`CrystalKeyCloseDevice`. A real, previously-unknown command API surface,
   distinct from and richer than the bare `wmr_protocol.h` enum this whole project has been working
