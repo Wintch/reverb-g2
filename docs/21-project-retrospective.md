@@ -107,8 +107,13 @@ both trace back to his commits via `git blame` against upstream `main`. The four
   the original forum report; no further response since, independent of this investigation.
 - **Jan Schmidt / Nima01** — original authors of the Monado WMR driver code this project
   found and fixed real bugs in. Jan notified directly via a comment on !2968 (2026-08-06)
-  explaining the three defects traced to his commits; no reply yet as of this writing.
-  Nima01 not yet notified.
+  explaining the three defects traced to his commits; he reviewed all four MRs on
+  2026-08-09/12 (approved !2968, substantive questions on !2967, answered 2026-08-27), and a
+  second maintainer, `bl4ckb0ne`, reviewed !2968/!2971 on 2026-08-13 (addressed 2026-08-28) —
+  status log in `docs/18`. Jan's `dev-constellation-controller-tracking` branch is also the
+  reference implementation of the WMR controller LED/timesync command this project's early
+  notes wrongly said did not exist (`docs/re-windows/04` §4, `docs/88` §2.2). Nima01 not yet
+  notified.
 
 ## State at the end of day 3
 

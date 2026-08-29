@@ -79,7 +79,9 @@ the same controller files — textual conflict risk only, no functional overlap.
    the tag match the git author. The commits also carry a `Co-Authored-By: Claude` trailer
    as an honest note that the work was AI-assisted; Monado has no rule about such trailers.
    Strip them before pushing if you prefer (`git rebase` + reword) — but do not add
-   anyone's sign-off but your own.
+   anyone's sign-off but your own. *(Status 2026-08-28: the branches as pushed carry
+   `Signed-off-by` only; the one review fixup that briefly had the trailer was folded away
+   when !2968 was rebased — `docs/88` §3.)*
 
 **Testing disclosure (include in every MR, it will be asked):** everything was validated on
 a single HP Reverb G2 (rev B) and its controllers over the tunnelled transport, on Debian
@@ -183,9 +185,32 @@ devices default to off or preserve upstream behaviour.
 > Implementation note: the plugin ships via `install(DIRECTORY)` of the build output, so the
 > build-tree binary is installed verbatim and `BUILD_RPATH` is what takes effect;
 > `INSTALL_RPATH` is set alongside for the day the install method changes. Linux-only
-> (`UNIX AND NOT APPLE`). `DT_RUNPATH` is non-transitive — it covers the driver's direct
+> (`if(LINUX)` — v1–v3 said `UNIX AND NOT APPLE`; switched on review, 2026-08-28). `DT_RUNPATH` is non-transitive — it covers the driver's direct
 > `NEEDED` entries, which is what the reported failures are.
 >
 > Complementary to !2802 (IPC-client mode), which solves the same environment the other way
 > and is the better long-term answer; this is a two-line change that makes today's
 > in-process driver deployable.
+
+## Status log (added 2026-08-28; newest last)
+
+| date | what |
+|---|---|
+| 2026-08-06 | All four MRs opened from `Wintch/monado` (project 27788): **!2967** hid-resilience, **!2968** controller-input-fixes, **!2969** camera-stream-toggle, **!2971** rpath (supersedes !2970). Jan Schmidt (`@thaytan`) pinged on !2968. |
+| 2026-08-07 | All pipelines green after two `cmake-format` follow-ups on !2971. |
+| 2026-08-09 | thaytan on !2967: were the messages "entirely LLM generated", and is `#491` really this path? Answered the same day under the user's real name, disclosing the AI assistance. |
+| 2026-08-12 | thaytan's review round: !2967 five inline questions (wants recovery logs; BT path untested; 1 ms pacing fine; polling-loop decision invited); **!2968 approved**; !2969 skeptical, Christoph Haag (`@haagch`) asks whether the existing SLAM/hand env vars already avoid the camera cost; !2971 labelled `needs-review`. |
+| 2026-08-13 | Second reviewer `bl4ckb0ne` **requests changes** on !2968 (drop four comments redundant with the message) and !2971 (`LINUX` instead of `UNIX AND NOT APPLE`; squash the format follow-ups). Not noticed until 2026-08-28. |
+| 2026-08-27 | !2969: env-var answer posted (the existing vars only gate forwarding; `WMR_CAMERAS=0` is the only thing that skips `wmr_camera_start()`). !2967: five inline replies (no clean fw-retry recovery log yet; BT path architecturally untestable on a G2; **new finding**: re-enumeration invalidates the open hidraw fd, 0.92–4.63 drops/min measured, fix offered as a follow-up; will drop the cond/signal code if polling stands). Upstream **!2937** (EuRoC recorder + controller IMU unification) merged to `main` 21:16Z. |
+| 2026-08-28 | bl4ckb0ne's requests addressed: !2968 comments removed (`2643a7945`), !2971 `if(LINUX)` + squashed, force-pushed `2d61595a4`; replies 3635910 / 3635912. Later the same day: !2968 found `cannot_be_merged` (a content conflict in `wmr_controller_base.h` from !2937 — both sides add a declaration at the same spot), **rebased onto `365863615` with the fixup folded into its parents** — four commits `3e2238b12 ae8fa9a25 940312bba 80135e92d`, tree identical to a plain rebase, `drv_wmr` builds clean, clang-format clean — force-pushed, note 3636033. !2967 / !2969 / !2971 merge clean. See `docs/88` §3. |
+
+**Open**: thaytan's recovery-log ask on !2967 (the fw-retry path has no clean example yet);
+no reviewer activity since 2026-08-13 on any of the four; `doc/changes` fragments not yet
+added (runbook step 5); the `DEBUG_GET_ONCE_FLOAT_OPTION` placement between `#include`s in
+`wmr_controller_base.c` (pre-existing in the deadzone commit) may still be raised.
+
+**Access, now that `gitlab.freedesktop.org/api/v4` GETs sit behind the Anubis challenge**: a
+feed token (`?feed_token=`) opens `.atom`, MR pages, `/-/merge_requests/<iid>/discussions.json`
+and `/-/merge_requests/<iid>/cached_widget.json` (`merge_status`); a personal access token
+still POSTs notes and pushes over HTTPS; `git ls-remote … refs/merge-requests/<iid>/head`
+needs nothing.
