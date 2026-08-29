@@ -356,7 +356,9 @@ ACTIONS["gate-591360-P2"] = {
             "SLAM_CONFIG": f"{HOME}/vr/basalt-variants/P2.toml",
             "VR_DEMO_RECORD": "1", "VR_DEMO_COMMENT": "Dali 6dof P2 gate (lit room)"},
     "demo": {"title": "Dali compuerta P2 (con luz)", "tracking": "6dof", "status": "testing",
-             "note": "PROMOCION DE P2 AL GLOBAL, ultima compuerta (docs/80 2026-08-29): Dali 6dof con el "
+             "note": "RESULTADO 2026-08-29 14:40 (con luz, 887 landmarks): saltos de 6.6 m a los 30 s y 38.6 m a "
+                     "los 107 s -> compuerta NO pasada, P2 queda solo en Aircar, Dali sigue en base (docs/80). "
+                     "El boton queda para repetir la prueba. PROMOCION DE P2 AL GLOBAL, ultima compuerta (docs/80 2026-08-29): Dali 6dof con el "
                      "backend P2 en pieza ILUMINADA, ~10 min, misma rutina que la aprobacion (mirar "
                      "alrededor, inclinarse, giros lentos y rapidos). Si se siente como base con luz "
                      "('solido'), P2 puede ir al basalt-g2-config.json global. Con poca luz no vale: a "

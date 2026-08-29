@@ -1684,3 +1684,36 @@ are session-anchor restarts), graded with `soak-grade.py base-i4 P2-i4`:
   title that would inherit a promoted P2, behind Aircar's freeze + anchor.
 
 Artifacts: `~/vr/logs/soak/{base-i4,P2-i4}.*`, `sequence-20260829-135503.{log,done}`; CSV copies next to them.
+
+### 2026-08-29 14:40 — the gate, this time in a lit room: P2 worn in Dalí still jumps metres — not promoted
+
+Dashboard action `gate-591360-P2` (Dalí 6dof, own profile — scale 100, 6 threads, constellation off, no
+head-prediction/anchor knobs — plus `SLAM_CONFIG=P2.toml` from the env), daylight + lights on, worn from the
+first second, 9.5 min, `~/vr/logs/soak/dali-P2-lit-1-*`. Wearer: *"listo, jugué un poco. Parecido a como
+venía"* — asked whether they felt a jump at ~30 s and ~1:45, no explicit answer (Dalí's open scenes hide a
+few metres; this morning's *"aparecí muy lejos"* took 100+).
+
+| | `dali-P2-lit-1` (P2, lit) | `dali-base-worn-1`, lit part (base, this morning) |
+|---|---|---|
+| landmarks p10 / p50 / p90 | **73 / 887 / 1584** — no starvation | (no `vit_` lines) |
+| raw position | 0.13 m (0–15 s) → **6.6 m at 30–45 s**, held ~45 s → **30 → 38.6 m at 90–120 s**, then ~8.7–8.9 m for 8 min | within 0.19 m for 75 s, 0.97 → 4.0 m while recovering (4 min sample) |
+| guard | 1 speed trip at t = 107 s; reset carried **8.1 m and −13.3° of yaw** | 0 |
+| frontend / backend p50 (p99) | 31.3 (45.6) / 24.9 (51.8) ms, camera 30 Hz throughout | 39.6 (48.2) / — ms, 23–26 Hz (4 threads) |
+| `d_res` / `det(Q1Jl)` | 30 996 / 41 254 — all logged around the two jumps, flat afterwards | 2 249 after the lights came on |
+| GPU (single grabs) | 98 / 93 / 73 % at 235–248 W, scale 100 | 73 % / 235 W |
+
+So the dark room was the reason for *this morning's* 161 m, but it was not the only thing wrong with P2 on
+a raw-position title: with 887 landmarks in view it still produced a 6.6 m step at 30 s and a 38.6 m
+excursion at 107 s, both while the wearer was simply looking around, and the reset-offset carry then
+parked the wearer 8–9 m from the origin with a 13° yaw error for the remaining 8 minutes. The daytime
+at-rest pair (previous section) still favours P2 at rest — 5 trips vs 44 — and Aircar's wearer sessions
+under P2 are clean because the 3 m session anchor and the seated cockpit bound it; Dalí has neither and
+the booth runs it standing, looking around.
+
+**Gate result: not passed. P2 stays Aircar-only; Dalí keeps the global base config.** The only fair
+follow-up left is a 10-minute base control in the same lit room (this morning's lit base segment is
+4 minutes of a recovering estimator) — optional; Dalí on base is what the 2026-08-26 approval and this
+morning's lit segment already validated. Where the two jumps come from (recall re-observations at 12
+keyframes on a standing wearer? the 2 cm triangulation gate?) is a P2-backend question for the Aircar
+investigation, not a booth blocker. GPU at scale 100 still reads 73–98 % in Dalí — measure fps
+(`app-fps.sh`/`frame-pacing.sh`) before treating scale 100 as the fix for the wearer's "60 fps".

@@ -16,8 +16,8 @@
 > nothing below it; base worn ran at `SLAM_THREADS=4`, tracking p50 20.4 vs P2's 12.4 ms):
 > docs/80 "Dalí 6dof worn under P2 — the gate run was invalid".
 >
-> **Decision on P2**: NOT promoted to the global `basalt-g2-config.json` — the gate was not
-> passed (invalid run), not failed; and the booth does not need it (Dalí on base + light is
+> **Decision on P2**: NOT promoted to the global `basalt-g2-config.json` — the 05:24 gate run was
+> invalid (dark), and the 14:40 rerun in a lit room FAILED it (6.6 m / 38.6 m jumps with 887 landmarks); and the booth does not need it (Dalí on base + light is
 > "solido", Aircar keeps P2 per-title, Cyberpilot is not in the lineup). A valid gate = one Dalí
 > 6dof worn run under P2 in a LIT room, ~10 min, scale 100 — optional.
 >
@@ -52,7 +52,9 @@
 > **Open**: (1) ~~the daytime at-rest pair base→P2 on the 0021 build~~ DONE 13:55–14:29: base-i4 lm p50
 > **143** / 44 trips, P2-i4 **190** / **5** trips, P2 frontend p50 22.8 vs 33.4 ms, 0 cores — the build is
 > fine in light, the night was darkness; the warning counts track landmark activity, not darkness
-> (base in light 45 k `d_res` vs 2 in the dark) — docs/80 "the daytime at-rest pair"; (2) Dalí under P2 in a lit room — optional; (3) GPU cap: the 250 W is
+> (base in light 45 k `d_res` vs 2 in the dark) — docs/80 "the daytime at-rest pair"; (2) ~~Dalí under P2 in a lit room~~ DONE 14:40 (`dali-P2-lit-1`, 887 landmarks p50): **6.6 m
+> at 30 s, 38.6 m at 107 s, reset carried 8 m + 13° yaw — gate NOT passed, P2 stays Aircar-only**,
+> Dalí on base (docs/80 "the gate, this time in a lit room"); optional 10-min base control in the same light; (3) GPU cap: the 250 W is
 > deliberate (root, 2026-08-26 04:03:47, `vr-power-setup.sh --gpu-limit 100`; docs/84 §7) vs
 > `~/vr/power.conf` 70 % (~175 W, re-applied by the watchdog on the next boot) vs the 144 W of
 > 08-22 — reconcile, needs the user/root; (4) the 06:34:04 teardown core, pid 731059 (JN100's
