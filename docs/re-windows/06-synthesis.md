@@ -65,7 +65,7 @@ bad update from poisoning the estimate.
 9. LED **geometry matches** (32 LEDs, pos+normal; Windows reads it live via HID Feature,
    Monado from the factory calibration blob). But **Windows drives a LED pulse train**
    (`CrystalKeySetLedPulseTrain`: count 1-399 / mode 1-4 / period / duration, ~11-byte
-   report) and **Monado sends no LED commands at all** (only fixed activation + haptics).
+   report) and **Monado sends no LED commands at all** (only fixed activation + haptics) — still true for upstream and this stack; thaytan's dev-constellation-controller-tracking branch does send it, see 04-led-model.md §4 addendum (2026-08-28).
    Monado already has the generic machinery (`t_led_sync_refinement.{h,c}`) wired only to
    the `pssense` driver — a concrete in-repo blueprint to add pulse-train/LED-sync to WMR,
    potentially improving blob detection and camera-exposure alignment. *Confidence: high

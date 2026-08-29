@@ -459,7 +459,7 @@ AIRCAR_VARIANTS = [
      {"SLAM_PRED_POSITION_HORIZON_MS": "50", "SLAM_PRED_POSITION_MAX_SPEED_CM_S": "150",
       "SLAM_CORRECTION_SPREAD_MS": "25", "SLAM_CONFIG": f"{HOME}/vr/basalt-variants/P2.toml",
       "SLAM_CORRECTION_AVG_N": "3", "WMR_CAM_TS_MID_EXPOSURE": "1"},
-     "La pila completa de esta noche: config P2 (J barato) + JH (horizonte 100 ms) + JA (correccion promediada 3 anchors) + JM (stamp a mitad de exposicion). Para probar DESPUES de JP/JH/JA/JM por separado: si alguno empeora solo, aca se mezcla y no se sabe cual fue."),
+     "La pila completa: config P2 (J barato) + horizonte 50 ms (JH/100 ms fue refutado) + JA (correccion promediada 3 anchors) + JM (stamp a mitad de exposicion). Para probar DESPUES de JP/JH/JA/JM por separado: si alguno empeora solo, aca se mezcla y no se sabe cual fue."),
     # ---- round 6 (2026-08-28 ~18:45 -03; time corrected from the session's own file mtimes,
     # the original comment said ~01:30): JA kept (jitter), JM kept (excursions), JH refuted.
     # 0020's age_in/age_out split the pose age: transport 11 ms flat, Basalt in->out p50 59 /

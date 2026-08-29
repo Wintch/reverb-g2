@@ -48,7 +48,7 @@ layer (`driver_oasis`, `driver_Holographic`, `Microsoft.MixedReality.Input`,
 3. **Keepalive myth busted** — Windows sends no discrete controller keepalive; the
    USB2-hub-reset is a traffic-density difference, not a missing packet
    (`05-timesync-keepalive-imu.md`, correction to `docs/06`).
-4. **LED pulse train** — Windows drives a pulse train; Monado sends no LED commands.
+4. **LED pulse train** — Windows drives a pulse train; Monado sends no LED commands — still true for upstream and this stack; thaytan's dev-constellation-controller-tracking branch does send it, see 04-led-model.md §4 addendum (2026-08-28).
    Blueprint already in-tree (`t_led_sync_refinement`, wired only to `pssense`).
 
 ## Relevance to the active SLAM pose-rate collapse (T192–T195)

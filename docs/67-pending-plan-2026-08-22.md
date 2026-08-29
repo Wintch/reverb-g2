@@ -40,7 +40,7 @@ S2-S4 must not depend on it; S1 starts now.
 
 ## 1. Findings from the planning pass that the record had not connected
 
-1. **Windows programs the controllers' LED pulse train; Monado sends no LED command at all.**
+1. **Windows programs the controllers' LED pulse train; Monado sends no LED command at all** — still true for upstream and this stack; thaytan's dev-constellation-controller-tracking branch does send it, see 04-led-model.md §4 addendum (2026-08-28).
    `docs/re-windows/04-led-model.md`: `CrystalKeySetLedPulseTrain` (count 1-399, mode 1-4,
    period 1-5 ms, 55-bit duration, 11-byte body), and Monado's own
    `t_led_sync_refinement` is wired only to `pssense`. `NEXT-STEP.md:329` carried "NAMED NEXT

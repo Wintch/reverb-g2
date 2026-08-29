@@ -20,7 +20,7 @@ run's summary records the eye-height it ran at, so the runs are comparable after
 matched a background `bash -c '... pgrep -x monado-service ...'` wait-loop, and a service
 restart inside one 20 s poll was invisible, so every run outlived its session and they all
 finalized together when that loop died. A run also ends on `stop`/SIGTERM, or after
-DEMO_RECORDER_MAX_H hours (default 3) as a backstop; summary.json's `stop_reason` says which.
+DEMO_RECORDER_MAX_H hours (default 8) as a backstop; summary.json's `stop_reason` says which.
 The CURRENT pointer and the STOP flag are shared files but belong to ONE run each (STOP names
 the run dir it is for): a run finalizes up to one interval after its service died, by when
 playlist-runner may already have brought up the next session and its run, so a blind unlink
@@ -41,7 +41,7 @@ launches died on that import 2026-08-26..27 -- scripts/deploy-check.py reports i
 
 Environment (all optional; the last three let the stop logic be tested without a headset):
   DEMO_RECORDER_INTERVAL    seconds between samples (20)
-  DEMO_RECORDER_MAX_H       backstop: finalize after this many hours even if alive (3)
+  DEMO_RECORDER_MAX_H       backstop: finalize after this many hours even if alive (8)
   DEMO_RECORDER_WATCH_COMM  process name to bind to (monado-service; pgrep -x, <=15 chars)
   DEMO_RECORDER_DIR         permanent storage dir (~/vr/logs/demo-sessions)
   DEMO_RECORDER_RAM_DIR     live working dir, meant to be a tmpfs mount (/mnt/vrtmp)
@@ -81,7 +81,7 @@ RAM_BASE = Path(os.environ.get("DEMO_RECORDER_RAM_DIR", "/mnt/vrtmp"))  # live w
 CURRENT = PERM_DIR / "CURRENT"                     # points at the live RAM dir of the active run
 STOP_FLAG = PERM_DIR / "STOP"                      # names the run dir it is for (stop_requested)
 INTERVAL_S = int(os.environ.get("DEMO_RECORDER_INTERVAL", "20"))
-MAX_H = float(os.environ.get("DEMO_RECORDER_MAX_H", "3"))
+MAX_H = float(os.environ.get("DEMO_RECORDER_MAX_H", "8"))
 WATCH_COMM = os.environ.get("DEMO_RECORDER_WATCH_COMM", "monado-service")
 
 # The docs/80 tuning knobs = every variable with these prefixes in the service's environ. A

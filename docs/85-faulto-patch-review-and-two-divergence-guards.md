@@ -87,3 +87,53 @@ soak, the wearer put the headset on mid-soak). Two separate results, worth keepi
   lives wouldn't be expected to help. Not chased further this session -- worth deciding explicitly
   whether 0098 stays on (harmless, no observed downside either) or gets reverted to reduce
   variables, before the next real attempt at the gold→approved blocker itself.
+
+## Faulto's Basalt 0014 (2026-08-27) — the same recall-cache leak, bounded independently
+
+Faulto's fork independently found the same unbounded `patches` map Basalt's own comment flags
+(`frame_to_frame_optical_flow.h:675` in our tree, same TODO in theirs) and shipped
+`patches/basalt-wmr/0014-optical-flow-bound-feature-recall-patch-cache.patch` plus a
+process-level backstop, `scripts/vrserver-memory-guard.sh` (commit `247f66a8`, same day as
+ours). Their number: "one real session reached 49 GB in about an hour" (README.md,
+`docs/troubleshooting.md`); ours: 18 GB RSS after three minutes at rest, 7.5 M patches,
++1,953/frame (docs/80) — same bug, same order of magnitude once normalized for session length.
+
+**One container each, different policy.** Neither fork's 0014 touches a second map. Theirs
+recomputes `live_landmarks` fresh from `latest_lm_bundle` on every call
+(`0014.patch:140-144`) rather than persisting a stamp, so it never grew the `patch_last_seen`
+container our 0018 had to fix — no second map to leak or to full-scan. Their "recent" grace is
+ID-space (`last_keypoint_id - 4096`, `0014.patch:146-148`), ours is frame-count (default 90
+frames = 3 s, `BASALT_RECALL_PATCH_GRACE_FRAMES`, our `0014...patch:684-694`). Theirs also
+hard-caps the map at 16,384 entries and *stops inserting new patches* once that cap is full of
+live/recent ids (`0014.patch:718`, `patches.size() < RECALL_PATCH_CACHE_MAX`) — a ceiling we
+never adopted; our map grows to whatever the live set needs.
+
+**The one genuinely new idea**: `vrserver-memory-guard.sh` watches `vrserver` RSS from outside
+the process — warns at half of a 4 GB default limit, requires three consecutive over-limit
+samples, then calls the launcher's `stop` and SIGKILLs after a 10 s grace. Orthogonal to any
+recall-map fix; it would still catch a leak neither 0014 bounds.
+
+**Would theirs keep our recall win? Very likely not, in our configuration.** J and its
+descendant P2 (Aircar's shipped `SLAM_CONFIG`) both run recall on top of
+`vio_marg_lost_landmarks: false`; docs/80 is explicit that recall's value there is
+"re-attaching the **same** landmark IDs after a sweep," not landmark count. Our soaks in that
+regime show the live+grace working set at 249 k (p50) to 385 k (p99.9) patches (I4), 325 k at
+the end of the J run — one to two orders of magnitude above their 16,384 ceiling. Once
+`live_landmarks` alone exceeds the cap, their insert guard (`0014.patch:718`) permanently stops
+recording new patches: every keypoint born after that point has nothing to recall from later,
+silently defeating what J/P2 depend on. Their cap reads as sized for stock recall with
+`marg_lost_landmarks` at its default (on), not this project's wider window.
+
+**Code risk in theirs**: `pruneRecallPatchCache()` runs unconditionally every frame
+(`0014.patch:193`) and, once at the cap, does a full scan-and-erase of the whole map every
+single frame from then on — the same unamortized-sweep shape our 0016 fixed, only worse (ours
+was one frame in 30; theirs is every frame, forever). No env override to disable the cap for an
+A/B. **Risk in ours**: two containers to keep in sync was a real latent cost until 0018.
+
+**Recommendation**: don't adopt Faulto's 0014 in place of ours — it would quietly regress P2
+once the cap fills. Do take `vrserver-memory-guard.sh` as a candidate for this repo's launcher,
+independent of which map patch runs underneath. As an upstream contribution to Basalt: both
+forks hit the same un-fixed TODO independently, worth reporting on its own; ours is the better
+base patch to send, but should disclose the `marg_lost_landmarks: false` interaction —
+upstream has likely only ever exercised recall with marg-lost on, the regime Faulto's cap
+assumes.

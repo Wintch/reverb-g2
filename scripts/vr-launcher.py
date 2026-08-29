@@ -319,9 +319,12 @@ def bring_up_monado():
         _save_jackin_output(partial, "(timeout a los 180s)", "timeout")
         if partial:
             print(partial)
-        # pgrep + kill, not pkill -- matches jack-in-wayland.sh's own convention
-        # elsewhere in this project (pkill isn't consistently available/safe here).
-        pids = subprocess.run(["pgrep", "-f", "monado[-]service"], capture_output=True, text=True).stdout.split()
+        # pgrep -x (exact comm), not -f -- matches jack-in-wayland.sh's own convention
+        # (see rig_telemetry.monado_pid()'s docstring): -f scans every process's full
+        # command line, so it would also SIGKILL an agent's wait-loop or an ssh wrapper
+        # whose argv merely mentions monado-service -- that ghost class is what left
+        # demo-recorder.py sampling for 22.5 h on 2026-08-27.
+        pids = subprocess.run(["pgrep", "-x", "monado-service"], capture_output=True, text=True).stdout.split()
         for pid in pids:
             subprocess.run(["kill", "-9", pid])
         IPC_SOCKET.unlink(missing_ok=True)
@@ -632,7 +635,8 @@ def main():
     # Auto-registro del demo (docs/75, docs/80). Opt-in via VR_DEMO_RECORD=1 so it fires for
     # real demo runs (the dashboard demo buttons set it) but not for dev/tuning launches.
     # demo-recorder.py records to RAM while the session is live and flushes to permanent
-    # storage with date + eye-height + notes when monado-service ends. It stops on its own.
+    # storage with date + eye-height + notes when monado-service ends. It stops on its own
+    # (bound to the monado-service pid it finds at start; DEMO_RECORDER_MAX_H backstop).
     if os.environ.get("VR_DEMO_RECORD") == "1":
         rec = VR / "demo-recorder.py"
         if rec.exists():
