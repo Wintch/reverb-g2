@@ -1,0 +1,151 @@
+From 9b92a8b55a96fe28d6ed3a66f134fb9b99062e18 Mon Sep 17 00:00:00 2001
+From: Wintch <nikolai.viktorovich@gmail.com>
+Date: Sat, 29 Aug 2026 16:55:33 -0300
+Subject: [PATCH] openxr_data: opt-in recentre on donning (XR_EXT_user_presence
+ edge + delay)
+
+When the flag file $XRIZER_RECENTER_ON_DON_FILE (default
+$HOME/vr/logs/xrizer-recenter-on-don, content = delay in ms, default 2000)
+exists, the PRESENT edge of UserPresenceChangedEXT arms a recentre that
+poll_recenter_trigger fires once the delay has passed, in a FOCUSED session
+and only while still worn -- the same Standing + Seated reset as the 0008
+file trigger. The NOT PRESENT edge disarms it; a fire less than 15 s ago
+blocks re-arming (sensor flap); an arm that never reaches FOCUSED within
+10 s is dropped. Needs the runtime to surface presence (Monado:
+WMR_USER_PRESENCE=1 on the service). Lock order: session_data is read
+before don_recenter_at on both paths (reviewer-caught inversion in the
+first draft). Without the flag file nothing changes.
+
+Not yet worn-validated: the G2 proximity threshold is flagged provisional
+in the Monado wmr driver; the dashboard test action creates the flag file
+and sets WMR_USER_PRESENCE=1 for exactly that test.
+---
+ src/openxr_data.rs | 87 ++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 87 insertions(+)
+
+diff --git a/src/openxr_data.rs b/src/openxr_data.rs
+index 6ca2012..9d301d5 100644
+--- a/src/openxr_data.rs
++++ b/src/openxr_data.rs
+@@ -55,6 +55,13 @@ pub struct OpenXrData<C: Compositor> {
+     /// this placeholder should only be observable for a very short window.
+     pub user_present: AtomicBool,
+ 
++    /// reverb-g2 0009: auto-recentre on donning. Armed by the PRESENT edge of
++    /// `UserPresenceChangedEXT` when the flag file exists (see `poll_recenter_trigger`);
++    /// holds the instant the recentre is due, cleared again on the NOT PRESENT edge.
++    pub(crate) don_recenter_at: std::sync::Mutex<Option<std::time::Instant>>,
++    /// Last time the donning recentre actually fired -- rate limit against sensor flaps.
++    pub(crate) don_recenter_last: std::sync::Mutex<Option<std::time::Instant>>,
++
+     /// should only be externally accessed for testing
+     pub(crate) input: Injected<crate::input::Input<C>>,
+     pub(crate) compositor: Injected<C>,
+@@ -203,6 +210,8 @@ impl<C: Compositor> OpenXrData<C> {
+             display_period_nanos: 11111111.into(), // This will get replaced on the first WaitGetPoses
+             enabled_extensions: exts,
+             user_present: AtomicBool::new(true),
++            don_recenter_at: std::sync::Mutex::new(None),
++            don_recenter_last: std::sync::Mutex::new(None),
+             input: injector.inject(),
+             compositor: injector.inject(),
+         })
+@@ -237,6 +246,27 @@ impl<C: Compositor> OpenXrData<C> {
+                         if present { "PRESENT (worn)" } else { "NOT PRESENT (doffed)" }
+                     );
+                     self.user_present.store(present, Ordering::Relaxed);
++                    // 0009: arm (or disarm) the donning recentre. Opt-in per launch through
++                    // the flag file, so the booth's buttons behave exactly as before unless an
++                    // operator/test action created it; the file's content is the delay in ms.
++                    let mut due = self.don_recenter_at.lock().unwrap();
++                    if present {
++                        if let Some(delay_ms) = recenter_on_don_delay_ms() {
++                            let recently = self
++                                .don_recenter_last
++                                .lock()
++                                .unwrap()
++                                .is_some_and(|t| t.elapsed() < Duration::from_secs(15));
++                            if recently {
++                                info!("donning recentre: fired < 15 s ago -- not re-arming (sensor flap?)");
++                            } else {
++                                info!("donning recentre armed: {delay_ms} ms after this PRESENT edge");
++                                *due = Some(std::time::Instant::now() + Duration::from_millis(delay_ms));
++                            }
++                        }
++                    } else if due.take().is_some() {
++                        info!("donning recentre disarmed: headset doffed before it fired");
++                    }
+                 }
+                 _ => {
+                     info!("unknown event");
+@@ -391,6 +421,40 @@ impl<C: Compositor> OpenXrData<C> {
+     /// session_data guard held: reset_tracking_space takes the write lock.
+     pub fn poll_recenter_trigger(&self) {
+         use std::sync::atomic::AtomicU64;
++        // 0009: a donning recentre that has come due fires here, on the same frame path and
++        // with the same gates (FOCUSED session, worn, valid pose) as the file trigger below.
++        let due_now = {
++            // Lock order: session_data is read BEFORE don_recenter_at, matching the presence
++            // event handler (which holds the session_data read guard when it takes
++            // don_recenter_at) -- reviewer-caught inversion in the first draft.
++            let state = self.session_data.get().state;
++            let mut due = self.don_recenter_at.lock().unwrap();
++            match *due {
++                Some(t) if std::time::Instant::now() >= t => {
++                    if state == xr::SessionState::FOCUSED {
++                        due.take();
++                        true
++                    } else if t.elapsed() > Duration::from_secs(10) {
++                        warn!("donning recentre: session never FOCUSED (state {state:?}) -- dropped");
++                        due.take();
++                        false
++                    } else {
++                        false
++                    }
++                }
++                _ => false,
++            }
++        };
++        if due_now {
++            if self.user_present.load(Ordering::Relaxed) {
++                info!("donning recentre: firing (Standing + Seated on the current head pose)");
++                *self.don_recenter_last.lock().unwrap() = Some(std::time::Instant::now());
++                self.reset_tracking_space(vr::ETrackingUniverseOrigin::Standing);
++                self.reset_tracking_space(vr::ETrackingUniverseOrigin::Seated);
++            } else {
++                info!("donning recentre: headset no longer worn when due -- skipped");
++            }
++        }
+         static FRAME: AtomicU64 = AtomicU64::new(0);
+         if FRAME.fetch_add(1, Ordering::Relaxed) % 30 != 0 {
+             return;
+@@ -948,3 +1012,26 @@ mod tests {
+         drop(comp);
+     }
+ }
++
++/// reverb-g2 0009: the donning recentre is opt-in per launch. Returns the delay in ms when the
++/// flag file (`$XRIZER_RECENTER_ON_DON_FILE`, default `$HOME/vr/logs/xrizer-recenter-on-don`)
++/// exists; its content is the delay (default 2000 ms when empty/unparsable). Read only on a
++/// presence edge, so it is never on the frame path. Needs XR_EXT_user_presence from the
++/// runtime (Monado: `WMR_USER_PRESENCE=1` on the service, patches 0075/0087).
++fn recenter_on_don_delay_ms() -> Option<u64> {
++    let path = std::env::var("XRIZER_RECENTER_ON_DON_FILE").unwrap_or_else(|_| {
++        format!(
++            "{}/vr/logs/xrizer-recenter-on-don",
++            std::env::var("HOME").unwrap_or_default()
++        )
++    });
++    let content = std::fs::read_to_string(&path).ok()?;
++    Some(
++        content
++            .trim()
++            .parse::<u64>()
++            .ok()
++            .filter(|ms| *ms <= 30_000)
++            .unwrap_or(2000),
++    )
++}
+-- 
+2.47.3
+

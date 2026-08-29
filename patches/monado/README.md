@@ -706,3 +706,25 @@ across anchors and averages to itself, so the cost is a moving average's group d
 everything. Default 1 = current behaviour. (Reviewer nit: the first draft said "~1 anchor" for
 any N.) `filter_pose`'s filters are NOT the alternative:
 `SLAM_FILTER` is unset in every deployed profile, so that whole block is inert.
+
+## 0104 — `t_slam`: no pushes into a stopped tracker (the teardown SIGSEGV in `pop_pose`) (2026-08-29)
+
+Every `monado-service` core on this rig had the same stack: `basalt::Tracker::pop_pose` ←
+`flush_poses` ← `receive_frame` ← `t_slam_receive_cam3` ← `wmr_cam_usb_thread`, main thread inside
+`wmr_source_stream_stop` (docs/06 "segfaults in Basalt's pop_pose()", 2026-08-21; two more on
+2026-08-29 at 06:34 and 14:59). Cause: `xrt_frame_context_destroy_nodes` runs `break_apart` on
+the **newest node first** (`xrt_frame_context_add` prepends), and the SLAM tracker node is created
+after the camera source it consumes — so `tracker_stop` runs while the WMR USB thread can still
+push one more frame (and a client can still query a pose) into a tracker Basalt has already
+dismantled. Fix: a `std::shared_mutex vit_lock` + `stopped` flag in `TrackerSlam`; `receive_frame`
+(whole body, it contains `flush_poses`), `t_slam_receive_imu`, `t_slam_get_tracked_pose` and the
+debug-UI reset/enable buttons hold it shared and bail when stopped; `t_slam_node_break_apart`
+takes it exclusive around `tracker_stop`. Late arrivals are counted and reported at destroy
+(`0104: N sample pushes / pose queries arrived after tracker_stop and were dropped`). Lock order
+is `vit_lock → {correction.mutex, last_hand_masks_mutex}`, never reversed (Sonnet review; it also
+caught the two unguarded enable buttons). Verified: `scripts/teardown-stress.sh` 8 bare up/down
+cycles (headset on the desk, cameras live, half with a native client) + 3 Dreams of Dalí
+load → `stop all` → `down` cycles: **0 cores**; the counter did not fire in those cycles (the race
+is rare — 2 cores in ~8 game teardowns the same morning), so the guard is argued from the stacks,
+not yet observed catching a push. Build `ninja -C ~/vr/monado/build aux_tracking monado-service`.
+Commit `c84d91e84`. Upstreamable as-is.

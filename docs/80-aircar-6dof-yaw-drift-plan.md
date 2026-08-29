@@ -1866,3 +1866,47 @@ on the desk until it delivers frames (~60 s) → guest sits, puts it on, looks s
 operator presses **Recentrar** → play. Follow-up idea, not started: with `WMR_USER_PRESENCE=1` on
 the service (patches 0075/0087, threshold flagged provisional) an xrizer hook on
 `UserPresenceChangedEXT` could fire the same recentre ~2 s after donning, making the press automatic.
+
+### 2026-08-29 16:00–17:00 — without the wearer: 0104, 0009, The Night Cafe, and a stress test that was not one
+
+The user left for two hours ("avanzá con lo que puedas sin casco", then "podés usar el casco, el
+tema es que no lo podré mover") and asked for Sonnet-class agents to spare the budget.
+
+**The two cores of the day are one bug, now patched (monado 0104).** `coredumpctl info` on
+731059 (06:34) and 764081 (14:59): `basalt::Tracker::pop_pose` ← `flush_poses` ← `receive_frame`
+← `t_slam_receive_cam3` ← `wmr_cam_usb_thread`, main thread in `xrt_device_destroy →
+xrt_frame_context_destroy_nodes → wmr_source_stream_stop`. The frame context breaks nodes apart
+newest-first, so the tracker is stopped while the camera thread can still push — docs/06's
+"real race, not yet fixed" now has its lock (`patches/monado/README.md` §0104, commit
+`c84d91e84`). Verification without a wearer: `scripts/teardown-stress.sh` (new; up/down cycles,
+cores counted, half with a native client) — 8 cycles + 3 Dalí load→teardown cycles, 0 cores.
+
+**The first stress run was void, and it blocked the booth.** Launched `setsid nohup` without the
+Wayland env, `jack-in-wayland.sh` refused every `up` ("not a Wayland session") *and wrote its fail
+marker*, so 18 "cycles" never started Monado and the dashboard's launches (Night Cafe, then three
+Dalí cycles) were refused with "Monado no quedó listo" — read as a headset fault for ten minutes
+until the marker's own `reason:` line said otherwise. The script now exports `gui_env.get()` like
+`light-preflight.sh`, checks that each `up` actually produced a service + socket, and refuses to
+run with the marker present. Lesson filed: a detached hardware script must carry the GUI env and
+verify the thing it claims to exercise.
+
+**xrizer 0009 — recentre on donning, opt-in, unvalidated.** The 0008 press made automatic on the
+PRESENT edge of `XR_EXT_user_presence` (`patches/xrizer/README.md` §0009, commit `9b92a8b`); only
+with the flag file, so the booth buttons are unchanged. Test action on the dashboard (**🧪 Dalí
+auto-recentrar al ponerse**) sets `WMR_USER_PRESENCE=1` and creates the flag. Waits for a wearer.
+
+**The Night Cafe (482390) never reached Monado — and the reason is Steam, not the title.** Unworn
+launch via its demo button: xrizer up, then `EnumeratingExtensionsFailed(ERROR_RUNTIME_UNAVAILABLE)`.
+The Proton log (`~/vr/logs/steam-482390.log`, `XR_LOADER_DEBUG=all` is in Steam's environment)
+shows the loader searching `active_runtime.json` in the XDG dirs — **no `XR_RUNTIME_JSON`
+override** — while Dalí's log says "using environment variable override". Both titles carry the
+identical `LaunchOptions` string under `apps/<id>` in `localconfig.vdf`; Steam applied one and not
+the other (unexplained; the 64-bit exe and the compat tool are the same as Dalí's). Two fixes, both
+the repo's own doctrine (docs/23: export before the Steam client starts, don't trust per-game
+Launch Options): `~/.config/openxr/1/active_runtime.json → openxr_monado-dev.json` (loader
+fallback; with it the failure moved to `xrCreateInstance`: `Failed to connect to socket
+/run/user/1000/monado_comp_ipc` — the container cannot see the socket without
+`PRESSURE_VESSEL_FILESYSTEMS_RW`), and `XR_RUNTIME_JSON` + `IPC_IGNORE_VERSION=1` +
+`PRESSURE_VESSEL_FILESYSTEMS_RW` added to `vr-launcher.py`'s `GAME_ENV`, which is what the Steam
+client inherits when the launcher starts it. Steam restarted with that env at 16:57 and the unworn
+test re-run; result in the next entry.

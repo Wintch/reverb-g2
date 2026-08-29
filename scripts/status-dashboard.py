@@ -314,6 +314,19 @@ ACTIONS = {
         "cmd": ["/usr/bin/touch", f"{HOME}/vr/logs/xrizer-recenter"],
         "cwd": f"{HOME}/vr",
     },
+    # 2026-08-29 (xrizer patch 0009, UNVALIDATED until worn): Dali with the donning auto-recentre.
+    # WMR_USER_PRESENCE=1 makes Monado surface the G2 proximity sensor as XR_EXT_user_presence
+    # (patches 0075/0087, threshold flagged provisional); the flag file (content = delay ms) arms
+    # xrizer to recentre 2 s after the PRESENT edge. The plain demo button never creates the flag,
+    # so booth behaviour is unchanged. Wearer test: headset on the desk -> title loads -> put it on
+    # looking sideways -> the scene should come round by itself ~2 s later (xrizer.txt logs it).
+    "test-591360-autorecenter": {
+        "label": "🧪 Dalí auto-recentrar al ponerse (0009, sin validar)",
+        "cmd": ["bash", "-c", f"echo 2000 > {HOME}/vr/logs/xrizer-recenter-on-don; exec python3 {HOME}/vr/vr-launcher.py 1 6dof"],
+        "cwd": f"{HOME}/vr",
+        "env": {"VR_LAUNCH_APPID": "591360", "WMR_USER_PRESENCE": "1", "U_PACING_APP_LOG": "debug",
+                "VIT_COLLAPSE_LOG": "1", "VR_DEMO_RECORD": "1", "VR_DEMO_COMMENT": "Dali 6dof autorecenter test (0009)"},
+    },
 }
 
 

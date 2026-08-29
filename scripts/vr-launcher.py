@@ -75,6 +75,15 @@ GAME_ENV = {
     "WINEDEBUG": "+timestamp,+pid,+tid,+seh,+unwind,+debugstr,+loaddll,+mscoree,+env,+file",
     "DXVK_LOG_LEVEL": "info",
     "VKD3D_DEBUG": "warn",
+    # 2026-08-29 (docs/80 "Night Cafe"): the three variables every VR title needs to reach
+    # Monado from inside pressure-vessel, exported here for the same reason as the logging
+    # ones above -- per-game Launch Options are NOT reliably applied: The Night Cafe (482390)
+    # carries the identical LaunchOptions string as Dali in localconfig.vdf and Steam launched
+    # it without them (loader log: no environment override, then no socket). Belt and braces
+    # with ~/.config/openxr/1/active_runtime.json (loader fallback, added the same day).
+    "XR_RUNTIME_JSON": str(Path.home() / "vr/monado/build/openxr_monado-dev.json"),
+    "IPC_IGNORE_VERSION": "1",
+    "PRESSURE_VESSEL_FILESYSTEMS_RW": "/run/user/1000/monado_comp_ipc",
 }
 # NOT automated here, on purpose: Unreal Engine's own -log/-LogCmds flags
 # (Aircar) need to reach the game binary itself, which only happens via

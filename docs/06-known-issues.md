@@ -284,6 +284,15 @@ implementation and `flush_poses()`'s call site for the missing lock/lifetime, th
 trigger it on demand (rapid session start/stop under camera load looks like the likeliest
 lever, going by the crash's own call stack).
 
+**FIXED 2026-08-29 — monado patch 0104.** The lifetime problem, read from the cores' own stacks
+(06:34 and 14:59 that day, both identical to the one above): `xrt_frame_context_destroy_nodes`
+calls `break_apart` newest-node-first, so the SLAM tracker's `tracker_stop` runs *before* the WMR
+camera source stops its USB thread, and that thread's last frame lands in `flush_poses` →
+`pop_pose` on a stopped tracker. 0104 puts a `shared_mutex` + `stopped` flag around every runtime
+call into the VIT tracker; `break_apart` takes it exclusive around the stop. 11 teardown cycles
+(8 bare, 3 with Dreams of Dalí loaded, `scripts/teardown-stress.sh`) with 0 cores; see
+`patches/monado/README.md` §0104 and docs/80 "without the wearer".
+
 ## Basalt SLAM diverges (6DoF head tracking)
 
 > **Update 2026-08-07 (T060): NOT reproduced with a fresh build, don't treat this entry

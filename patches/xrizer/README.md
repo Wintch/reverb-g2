@@ -129,3 +129,20 @@ ignores it; and `reset_tracking_space` now refuses a head pose without POSITION/
 (covers 0001 and `ResetSeatedZeroPose` too). Worn-validated 2026-08-29 15:50–15:59 on Dalí via the
 booth button: wearer turned 90° left, operator pressed, the scene came round to the front, 0.2–0.3 s
 from POST to the xrizer log line. Build with `--features static-openxr`. Commit `4090f8e`.
+
+## 0009 — opt-in recentre on donning (2026-08-29, NOT worn-validated)
+
+The 0008 button pressed by hand becomes automatic: with the flag file
+`$HOME/vr/logs/xrizer-recenter-on-don` present (`$XRIZER_RECENTER_ON_DON_FILE`; content = delay
+in ms, default 2000) the PRESENT edge of `XR_EXT_user_presence` arms a recentre that
+`poll_recenter_trigger` fires after the delay, in a FOCUSED session and only while still worn —
+the same Standing + Seated reset as 0008. NOT PRESENT disarms it; a fire < 15 s ago blocks
+re-arming (sensor flap); an arm that never reaches FOCUSED within 10 s is dropped. Without the
+flag file nothing changes, so the booth buttons are untouched. Needs Monado to surface the
+G2 proximity sensor: `WMR_USER_PRESENCE=1` on the service (patches 0075/0087; the worn/not-worn
+threshold is flagged provisional there). The dashboard's **🧪 Dalí auto-recentrar al ponerse**
+action creates the flag file and sets that variable for the test: headset on the desk → title
+loads → put it on looking sideways → the scene should come round by itself ~2 s later
+(`~/.local/state/xrizer/xrizer.txt` logs `donning recentre armed` / `firing`). Lock order:
+`session_data` is read before `don_recenter_at` on both paths (reviewer-caught inversion in the
+first draft). Commit `9b92a8b`.

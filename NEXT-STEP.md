@@ -50,6 +50,18 @@
 > 0101 with no extra offset** (docs/80 "RQ replay"). `replay-basalt-variants.py` parser fixed
 > (fused `vit_` line). Next sweep: rebuild `build-tools/basalt_vio` first (predates 0021).
 >
+> **16:00–17:00, user away — done without a wearer** (docs/80 "without the wearer"): **monado 0104**
+> fixes the teardown SIGSEGV (`pop_pose` after `tracker_stop`; both of today's cores), stress-tested
+> 11 cycles / 0 cores with the new `scripts/teardown-stress.sh` (the first run was VOID — no GUI env,
+> jack-in fail marker blocked the booth; fixed); **xrizer 0009** recentre-on-donning, opt-in, waits for a
+> wearer (dashboard 🧪 action); **Night Cafe**: Steam did not apply its LaunchOptions → no runtime →
+> `active_runtime.json` + `GAME_ENV` carry the three Monado variables now, Steam restarted 16:57.
+> `power.conf` 100 %, neck arm 100 (user). **When the user is back (needs a wearer)**: (a) 🧪 Dalí
+> auto-recentrar al ponerse — headset on the desk until loaded, put it on looking sideways, does the
+> scene come round by itself ~2 s later? (`xrizer.txt`: `donning recentre armed`/`firing`); if yes,
+> decide whether `WMR_USER_PRESENCE=1` + the flag go into Dalí's booth button; (b) The Night Cafe
+> worn, if the unworn retest reached a session; (c) nothing else pending on the headset.
+>
 > **15:50–16:04 — the recentre lever, worn-validated**: xrizer patch **0008** (`patches/xrizer/`, commit
 > `4090f8e`, built + live in `~/vr/xrizer/target/release`) + dashboard button **🎯 Recentrar** — touches
 > `~/vr/logs/xrizer-recenter`, `WaitGetPoses` polls it, resets Standing + Seated on the current head pose.
