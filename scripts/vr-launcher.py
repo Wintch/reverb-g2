@@ -167,7 +167,7 @@ TITLE_PROFILES = {
         # "varios cm" where F went "uno o dos metros". Per-title on purpose (the global
         # basalt-g2-config.json is shared with Dali/Cyberpilot -- promote after a Dali 6dof
         # check). Costs ~18 ms/frame in the frontend (p50 46 vs 28 ms, budget 33) -- round P.
-        # 2026-08-28 ~01:45 (docs/80, seven worn A/Bs): "JQ" = the night's stack, best verdict
+        # 2026-08-28 ~18:47 (docs/80, seven worn A/Bs): "JQ" = the round's stack, best verdict
         # "solido, pero no resuelto aun". P2 = J + detection grid 40 (frontend 27 ms instead
         # of 45, same drift); AVG_N 3 (jitter, patch 0103); mid-exposure camera stamp (fewer
         # excursions, patch 0101); queue depth 1 (Basalt 0021: pose age p90 94 ms instead of
@@ -249,10 +249,13 @@ TITLE_PROFILES = {
         "SLAM_PRED_FREEZE_POSITION": "1",
         "SLAM_PRED_NECK_ARM_MM": "150",
         "SLAM_CORRECTION_SPREAD_MS": "50",
-        # 2026-08-27: same 0098/0099 first wearer test as the Aircar profile above -- see
-        # its comment for the double-counting risk against SLAM_PRED_FREEZE_POSITION and
-        # what to watch for in the log.
-        "WMR_FORWARD_ANGULAR_VELOCITY": "1",
+        # 2026-08-27: same 0099 first wearer test as the Aircar profile above -- see its
+        # comment for what to watch for in the log. 2026-08-28: patch 0098
+        # (WMR_FORWARD_ANGULAR_VELOCITY) REMOVED here too, for the same reason as Aircar:
+        # a confirmed no-effect on the fast-turn drift ("no parece cambiar nada", docs/85's
+        # closing section) with a documented double-counting risk against
+        # SLAM_PRED_FREEZE_POSITION -- one variable fewer, not a harm fix. SPREAD_MS stays 50
+        # here: Aircar's 25 was only validated worn on Aircar, not on this title.
         "SLAM_QUAT_NORM_CHECK": "1",
         "SLAM_SESSION_ANCHOR_RADIUS_CM": "300",
     },

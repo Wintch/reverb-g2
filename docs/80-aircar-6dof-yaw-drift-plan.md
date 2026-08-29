@@ -1124,7 +1124,11 @@ frame of `prunePatches` (1 in 30: the snapshot of ~120 k patch keys), which is t
 tail above p90. Next micro-lever if the tail ever matters: spread the snapshot too, or drop
 the grace from 90 to 60 frames to halve the map. Not needed for the wearer test.
 
-### 2026-08-28 ~00:30 — worn: JP; and the pose age, measured for the first time, is 115 ms under load
+### 2026-08-28 ~18:13 — worn: JP; and the pose age, measured for the first time, is 115 ms under load
+
+[Times in this and the next section corrected 2026-08-28 19:40 from the sessions' own artifacts
+(/mnt/vrtmp/slam-20260828-181330 … -184706, demo-recorder finalisation 18:59); the headers
+originally said ~00:30 / ~01:45.]
 
 **JP** (P2 config): *"Si me muevo lento, parece que apenas mejoró el jittering mirando la
 cabina. Si me muevo rápido, circular — me voy unos cuantos cm y tengo que reiniciar. Dentro de
@@ -1188,17 +1192,18 @@ adds ~50 ms on top of `age_out` (out-queue wait until the next `flush_poses` + t
 time being ~2 frames ahead). **JQ** = JX + `VIT_QUEUE_DEPTH=1` (Basalt 0021) is the test of
 the queue hypothesis, with 0020's numbers as the instrument.
 
-### 2026-08-28 ~01:45 — JQ: "sólido, pero no resuelto aún" — the night's stack becomes Aircar's profile
+### 2026-08-28 ~18:47 — JQ: "sólido, pero no resuelto aún" — the afternoon's stack becomes Aircar's profile
 
 **JQ** (P2 + AVG_N 3 + mid-exposure + queue depth 1): *"se va pero se acomoda bastante bien.
-Sólido, pero no resuelto aún."* — the best verdict of the night. The instrument agrees:
+Sólido, pero no resuelto aún."* — the best of the seven verdicts. The instrument agrees:
 Basalt in→out **p50 43 / p90 103 / p99 153 ms** over the full session (first minute 42 / 50 /
 73; JM 59 / 170 / 265, JX 102 / 188 / 257), display-side age **p50 75 / p90 93 / max 281**
 (JX 155 / 186 / 1159), frontend 24 / 36 / 46, **383 of 18,280 frames dropped (2.1 %)** at the
 depth-1 queues, 0 divergence trips. The queue hypothesis held: the tail above p90 was
 queueing, and depth 1 halves it without a felt cost.
 
-**Seven worn A/Bs tonight, one line each**: J (metres → cm) · JT (−7 ms: no felt change) ·
+**Seven worn A/Bs (J/JT 2026-08-27 ~20:12–20:22, JP→JQ 2026-08-28 18:13–18:57 -03), one line
+each**: J (metres → cm) · JT (−7 ms: no felt change) ·
 JP (P2: cost fix, same feel) · JH (horizon 100: **worse**, more jitter) · JA (AVG_N 3: jitter
 manageable, kept) · JM (mid-exposure: hard to leave the ship, kept) · JX (JA+JM: same) · JQ
 (+ queues 1: solid). **Profile** (`vr-launcher.py` Aircar): `SLAM_CONFIG=P2.toml`,
@@ -1220,3 +1225,38 @@ false`, `vio_min_triangulation_dist: 0.02`, `vio_max_kfs: 12` and the default re
 into `basalt-g2-config.json` (global — one Dalí 6dof check afterwards). Round N (J + one
 refinement each: gate 1 cm, 16 kfs, kf-threshold 0.9, kf every 2 frames, recall on all 4 cams)
 and the ±5/10 ms time-offset sweep are queued offline for the margins.
+
+### Teardown SIGSEGVs during the round (JA, JM)
+
+Two of the six sessions did not tear down clean. `coredumpctl info 636130` / `651124` (`Timestamp:`,
+matching the kernel `segfault at a8 ... libbasalt.so` journal lines; `coredumpctl list` shows the
+dump-completion times 18:34:35 / 18:40:43; re-checked 19:40, read-only): monado-service SIGSEGV at
+**18:34:12 -03, pid 636130, core 555 M** — the end
+of JA (its CSVs and jack-in log stop at 18:34:12) — and at **18:40:17 -03, pid 651124, 615 M** —
+the end of JM (last write 18:40:17). Both cores are present under `/var/lib/systemd/coredump/`.
+Same shape in both (`coredumpctl info <pid>`):
+
+- Crashing thread: `wmr_cam_usb_thread` → `libusb_handle_events_completed` →
+  `xrt_sink_push_frame` → `t_slam_receive_cam3` → `receive_frame` → `flush_poses` →
+  `basalt::vit_implementation::Tracker::pop_pose` (frame #0, in `libbasalt.so`).
+- Main thread at that moment: `ipc_server_main_common` → `xrt_system_devices_destroy` →
+  `xrt_device_destroy` → `xrt_frame_context_destroy_nodes` → `wmr_source_stream_stop` →
+  `wmr_camera_stop` — JM inside `libusb_cancel_transfer`, JA one step later inside
+  `os_thread_helper_stop_and_wait`.
+
+That is the known teardown race family — patches 0095/0096 make `wmr_camera_stop` join the USB
+thread — with the USB thread still delivering a frame into `flush_poses` evidently after the
+tracker is already gone, so it now surfaces in `pop_pose`. JP, JH, JX and JQ tore down clean.
+Both crashed sessions were P2.toml without `VIT_QUEUE_DEPTH` (JA = P2 + AVG_N 3, JM = P2 +
+mid-exposure; `VIT_QUEUE_DEPTH` appears only in JQ's jack-in log), but JP and JX were P2
+without it too and did not crash — a race, not a config. The sessions' data survived: the CSVs
+were written up to the crash instant, and their partial last line is not crash damage — 22 of
+the 24 CSVs end mid-record (JX's `filtering` / `prediction` happen to stop on a row boundary);
+the writer never flushes its final buffer, so drop the last line of all of them regardless.
+Low priority unless it starts appearing mid-session; the next step when it does is
+`coredumpctl gdb 636130` (or `651124`) + `thread apply all bt`, to see what `pop_pose`
+dereferences.
+
+All six sessions' CSVs (`filtering` / `prediction` / `timing` / `tracking.csv`, 127 MB) were
+copied 2026-08-28 19:37 from tmpfs to `~/vr/logs/slam-csv/slam-20260828-<HHMMSS>-<file>.csv`
+(session → button in that directory's `README.md`; the tmpfs originals were left in place).

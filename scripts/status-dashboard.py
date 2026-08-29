@@ -341,6 +341,16 @@ for _name, _appid, _tracking, _status, _note in DEMO_LAUNCHES:
         "demo": {"title": _name, "tracking": _tracking, "status": _status, "note": _note},
     }
 
+# JQ_ENV = the Aircar profile as of 2026-08-28 ~18:45 -03 (docs/80 "JQ", NEXT-STEP's START
+# HERE): P2 backend + averaged correction + mid-exposure stamp + queues at depth 1, horizon 50,
+# clamp 150, spread 25. Module-level so the JQ button below and every round-7 button that
+# reads "JQ + one lever" share one dict and cannot drift from each other.
+JQ_ENV = {
+    "SLAM_PRED_POSITION_HORIZON_MS": "50", "SLAM_PRED_POSITION_MAX_SPEED_CM_S": "150",
+    "SLAM_CORRECTION_SPREAD_MS": "25", "SLAM_CONFIG": f"{HOME}/vr/basalt-variants/P2.toml",
+    "SLAM_CORRECTION_AVG_N": "3", "WMR_CAM_TS_MID_EXPOSURE": "1", "VIT_QUEUE_DEPTH": "1",
+}
+
 # Aircar 6dof head-tracking VARIANTS (2026-08-27 night, docs/80's closing sections): one button
 # per candidate so the wearer can A/B several approaches back to back without an agent editing
 # TITLE_PROFILES between runs. Each sets ONLY the env vars that differ from the gold profile;
@@ -421,8 +431,9 @@ AIRCAR_VARIANTS = [
      {"SLAM_PRED_POSITION_HORIZON_MS": "180", "SLAM_PRED_POSITION_MAX_SPEED_CM_S": "150",
       "SLAM_CORRECTION_SPREAD_MS": "25", "SLAM_CONFIG": f"{HOME}/vr/basalt-variants/P2.toml"},
      "PREDICCION, escalon 2 (sobre P2). La edad de pose medida con Aircar corriendo es p50 115 ms / p90 151 / max 359: JH (100) solo cubre la mediana. 180 cubre el p90; el clamp de 1.5 m/s acota la extrapolacion a 27 cm por frame. Si JH ayudo pero sigue congelando en los giros rapidos, este es el siguiente."),
-    # (2026-08-28 00:50: JA and JM moved from J.toml to P2.toml -- JP is the new base after its
-    # wearer test, and JH (horizon 100) was refuted worn: more jitter, larger excursions.)
+    # (2026-08-28 ~18:27 -03: JA and JM moved from J.toml to P2.toml -- JP is the new base after
+    # its wearer test, and JH (horizon 100) was refuted worn: more jitter, larger excursions.
+    # Time corrected from the session's own file mtimes; the original comment said ~00:50.)
     ("JA", "P2 + correccion promediada (3 anchors)",
      {"SLAM_PRED_POSITION_HORIZON_MS": "50", "SLAM_PRED_POSITION_MAX_SPEED_CM_S": "150",
       "SLAM_CORRECTION_SPREAD_MS": "25", "SLAM_CONFIG": f"{HOME}/vr/basalt-variants/P2.toml",
@@ -449,15 +460,43 @@ AIRCAR_VARIANTS = [
       "SLAM_CORRECTION_SPREAD_MS": "25", "SLAM_CONFIG": f"{HOME}/vr/basalt-variants/P2.toml",
       "SLAM_CORRECTION_AVG_N": "3", "WMR_CAM_TS_MID_EXPOSURE": "1"},
      "La pila completa de esta noche: config P2 (J barato) + JH (horizonte 100 ms) + JA (correccion promediada 3 anchors) + JM (stamp a mitad de exposicion). Para probar DESPUES de JP/JH/JA/JM por separado: si alguno empeora solo, aca se mezcla y no se sabe cual fue."),
-    # ---- round 6 (2026-08-28 ~01:30): JA kept (jitter), JM kept (excursions), JH refuted.
+    # ---- round 6 (2026-08-28 ~18:45 -03; time corrected from the session's own file mtimes,
+    # the original comment said ~01:30): JA kept (jitter), JM kept (excursions), JH refuted.
     # 0020's age_in/age_out split the pose age: transport 11 ms flat, Basalt in->out p50 59 /
     # p90 170 / p99 265 with the frontend at 29/39/53 -- the 2+2 queue slots are the tail.
     # JQ = JX + both live queues at depth 1 (Basalt patch 0021, VIT_QUEUE_DEPTH).
     ("JQ", "JX + colas de profundidad 1 (menos edad de pose)",
-     {"SLAM_PRED_POSITION_HORIZON_MS": "50", "SLAM_PRED_POSITION_MAX_SPEED_CM_S": "150",
-      "SLAM_CORRECTION_SPREAD_MS": "25", "SLAM_CONFIG": f"{HOME}/vr/basalt-variants/P2.toml",
-      "SLAM_CORRECTION_AVG_N": "3", "WMR_CAM_TS_MID_EXPOSURE": "1", "VIT_QUEUE_DEPTH": "1"},
+     JQ_ENV,
      "LATENCIA LATERAL. JX + VIT_QUEUE_DEPTH=1 (patch Basalt 0021): las dos colas vivas (imagen->frontend y frontend->backend) pasan de 2 a 1 slot. Medido en JM: transporte 11 ms fijo, pero exposicion->pose p50 59 / p90 170 / p99 265 ms con el frontend en 29/39/53 -- el resto es cola (4 frames x 33 ms tras un frame lento del backend). Con 1 slot la edad queda acotada a ~2 frames + proceso; se descarta un frame solo cuando hay un atasco real (el IMU cubre). Si baja la demora lateral sin sumar jitter, queda."),
+    # ---- round 7 (2026-08-28 ~19:40 -03, NEXT-STEP "START HERE" + docs/80 "JQ"): JQ is the
+    # profile; the residual is the rotation-onset displacement ("yaw/pitch first moves you off
+    # the seat, then it settles"). Offline the raw VIO does not do it (yaw net 5 cm on the
+    # recording), so it is either (a) the prediction layer -- the position freeze +
+    # SLAM_PRED_NECK_ARM_MM 150 model during the ~75 ms the anchor is stale (a wrong arm length
+    # or centre shows up exactly as "moves then settles") -- or (b) the timing shortfall the
+    # sweep left (optimum -5..-10 ms vs the ~2.5 ms the mid-exposure stamp recovers -> start_ts
+    # lags exposure start). Cheap to separate: RQ = one recording under JQ's env with R's
+    # protocol, replayed by the agent at 0 / -5 / -10 ms (scripts/euroc-shift.py, being added
+    # in parallel, + replay-basalt-variants.py + replay-phase-slice.py). Raw trajectory clean
+    # while the wearer felt the displacement -> (a): JN0/JN100/JN200 A/B the neck arm against
+    # the profile's 150 (= JQ itself, the control). -5 ms still wins offline -> (b): JQT. All
+    # env-only on top of JQ_ENV; the profile itself stays JQ.
+    ("RQ", "GRABAR protocolo yaw (JQ + EuRoC 3 min)",
+     {**JQ_ENV, "EUROC_RECORD": "1", "EUROC_RECORD_PATH": "/mnt/vrtmp/euroc-yaw2",
+      "VIT_DUMP_CALIB": f"{HOME}/vr/logs/calib-g2-yaw2.json"},
+     "LA GRABACION 2 (bajo JQ). Mismo protocolo que R (segui la voz de yaw-protocol-voice.py: 30 s quieto, 10 giros rapidos izq-der, 10 arriba-abajo, 10 inclinaciones, 60 s de juego libre), pero grabada con el perfil JQ completo, asi los stamps de camara ya vienen a mitad de exposicion (0101) y la grabacion mide lo que el casco usa hoy. EuRoC en PNG a /mnt/vrtmp/euroc-yaw2_<fecha> + volcado de calibracion. Despues el agente la replayea a 0 / -5 / -10 ms con scripts/euroc-shift.py + replay-basalt-variants.py + replay-phase-slice.py, sin casco: si la trayectoria cruda sale limpia mientras vos sentiste el 'te saca del asiento', es la prediccion (probar JN0/JN100/JN200); si -5 ms sigue ganando, es el timing (probar JQT). ~1.4 GB/min en tmpfs (~5 GB el protocolo; 14 GB si queda 10 min, docs/80): copiar el dataset a ~/vr/logs/euroc/ ANTES de cualquier reboot; cerrar el juego al terminar."),
+    ("JN0", "JQ + brazo de cuello 0 mm",
+     {**JQ_ENV, "SLAM_PRED_NECK_ARM_MM": "0"},
+     "PREDICCION (hipotesis a). JQ con SLAM_PRED_NECK_ARM_MM=0: sin modelo de cuello, la posicion queda congelada a secas durante los ~75 ms en que el anchor esta viejo. El perfil usa 150 (= JQ, el control). Si el 'te saca del asiento y despues se acomoda' al girar desaparece o cambia claramente, el desplazamiento es del modelo de cuello y no del VIO."),
+    ("JN100", "JQ + brazo de cuello 100 mm",
+     {**JQ_ENV, "SLAM_PRED_NECK_ARM_MM": "100"},
+     "PREDICCION (hipotesis a). JQ con el brazo de cuello en 100 mm en vez de 150: el ojo congelado barre un arco mas corto al girar. Comparar contra JQ (150) y JN0 (0) en el mismo giro."),
+    ("JN200", "JQ + brazo de cuello 200 mm",
+     {**JQ_ENV, "SLAM_PRED_NECK_ARM_MM": "200"},
+     "PREDICCION (hipotesis a). JQ con el brazo de cuello en 200 mm: arco mas largo. Si 200 se siente PEOR que 150 y 100 mejor, el arco esta sobreestimado; si al reves, subestimado; si los tres se sienten iguales, el modelo de cuello no es la causa y queda la hipotesis (b) = JQT."),
+    ("JQT", "JQ + camaras -5 ms encima del stamp mid-exposure",
+     {**JQ_ENV, "VIT_CAM_TIME_OFFSET_NS": "-5000000"},
+     "TIMING (hipotesis b). JQ + VIT_CAM_TIME_OFFSET_NS=-5 ms (patch Basalt 0017) ENCIMA del stamp a mitad de exposicion (0101): el sweep offline queria -5..-10 ms y el stamp mid-exposure recupera solo ~2.5, o sea que start_ts llega tarde respecto del inicio real de la exposicion. JT era -7 fijo sobre J SIN el stamp mid-exposure y no se sintio; esto es -5 ademas del stamp. Probar solo si la grabacion RQ replayeada a -5 ms sigue ganando contra 0. Comparar contra JQ."),
     # R = the ONE wearer session the offline pipeline needs: F's config + EUROC_RECORD (PNG,
     # lossless -- JPG changes the features) + the live calibration dump. ~3 min following
     # yaw-protocol-voice.py's spoken script. Afterwards replay-basalt-variants.py replays the
@@ -467,7 +506,7 @@ AIRCAR_VARIANTS = [
      {"SLAM_PRED_POSITION_HORIZON_MS": "50", "SLAM_PRED_POSITION_MAX_SPEED_CM_S": "150",
       "SLAM_CORRECTION_SPREAD_MS": "25", "EUROC_RECORD": "1",
       "EUROC_RECORD_PATH": "/mnt/vrtmp/euroc-yaw", "VIT_DUMP_CALIB": f"{HOME}/vr/logs/calib-g2-yaw.json"},
-     "LA GRABACION. Config F (A + spread 25) + grabacion EuRoC en PNG a /mnt/vrtmp/euroc-yaw_<fecha> + volcado de calibracion. Ponete el casco, arranca Aircar, y segui la voz de yaw-protocol-voice.py (30 s quieto, 10 giros rapidos izq-der, 10 arriba-abajo, 10 inclinaciones, 60 s de juego libre). Despues el agente replayea la grabacion contra todas las configs de backend sin casco. ~3 GB en tmpfs; cerrar el juego al terminar."),
+     "LA GRABACION. Config F (A + spread 25) + grabacion EuRoC en PNG a /mnt/vrtmp/euroc-yaw_<fecha> + volcado de calibracion. Ponete el casco, arranca Aircar, y segui la voz de yaw-protocol-voice.py (30 s quieto, 10 giros rapidos izq-der, 10 arriba-abajo, 10 inclinaciones, 60 s de juego libre). Despues el agente replayea la grabacion contra todas las configs de backend sin casco. ~1.4 GB/min en tmpfs (~5 GB el protocolo; 14 GB si queda 10 min, docs/80); cerrar el juego al terminar."),
 ]
 for _tag, _label, _env, _note in AIRCAR_VARIANTS:
     ACTIONS[f"variant-1073390-{_tag}"] = {
