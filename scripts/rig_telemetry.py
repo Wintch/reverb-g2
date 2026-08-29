@@ -82,8 +82,17 @@ def power_mode():
         return None
 
 
-def monado_pid():
-    out, rc = run(["pgrep", "-f", "monado[-]service"])
+def monado_pid(name="monado-service"):
+    """Pid of the running monado-service, or None. `pgrep -x` (exact process name, the
+    convention jack-in-wayland.sh's teardown already uses), NOT `-f`: -f scans every
+    process's full command line, so a `bash -c '... pgrep -x monado-service ...'` wait-loop,
+    an ssh wrapper or a log tail matched too -- that is how demo-recorder.py kept sampling
+    for 22.5 h after the 2026-08-27 J/JT sessions, and how a dashboard could show the
+    service "running" with no headset session at all (NEXT-STEP.md 2026-08-28 ~19:45 block;
+    demo-recorder.py's docstring). -n = newest match: if an orphan from a timed-out launch
+    survived, the session just brought up is the newer one. `name` is demo-recorder.py's
+    DEMO_RECORDER_WATCH_COMM test seam; comm is 15 chars max."""
+    out, rc = run(["pgrep", "-n", "-x", name])
     if rc != 0 or not out:
         return None
     try:
