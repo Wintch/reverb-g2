@@ -1720,3 +1720,46 @@ morning's lit segment already validated. Where the two jumps come from (recall r
 keyframes on a standing wearer? the 2 cm triangulation gate?) is a P2-backend question for the Aircar
 investigation, not a booth blocker. GPU at scale 100 still reads 73–98 % in Dalí — measure fps
 (`app-fps.sh`/`frame-pacing.sh`) before treating scale 100 as the fix for the wearer's "60 fps".
+
+### 2026-08-29 14:58 — the base control in the same light: base jumps too — the early excursion is Dalí-worn, not P2
+
+Approved demo action `demo-591360-6dof` (global base config, scale 100, 6 threads), same lit room, worn from
+the first second, 6.8 min, `~/vr/logs/soak/dali-base-lit-1-*`. Wearer: *"jugué, listo. Aparecí más centrado,
+se siente muy parecido"*.
+
+| | base, lit (`dali-base-lit-1`) | P2, lit (`dali-P2-lit-1`) |
+|---|---|---|
+| raw position, first 3 min per 15 s | 0.1 0.4 1.6 **24.5 38.8** 1.5 1.5 1.6 1.6 1.9 1.9 1.9 m | 0.1 2.0 6.6 6.4 6.4 6.4 **30.0 38.6** 8.7 8.9 8.8 8.7 m |
+| max / final | 38.8 m at t = 68 s / 1.7 m | 38.6 m at t = 107 s / 8.7 m |
+| speed trips → carried offsets | 3 → 0.4, 0.7, 1.4 m | 1 → **8.1 m + 13.3° yaw** |
+| frontend / backend p50 (p99) ms | 34.9 (41.6) / 9.6 (28.1), 30 Hz | 31.3 (45.6) / 24.9 (51.8), 30 Hz |
+| `d_res` / `det(Q1Jl)` | 242 / 702 | 30 996 / 41 254 |
+| GPU (single grabs, scale 100) | 80–99 % / 232–246 W | 73–98 % / 235–248 W |
+
+**Both configs run ~40 m away within the first two minutes of a worn Dalí session in a lit room, then
+settle.** The at-rest instrument never saw it because the headset starts still on the desk; this
+morning's lit base segment never saw it because it began in minute 8 of a session. The shape — a
+rotation-only start (the wearer looks around), then a step of metres at the first real translation, then
+stability — is textbook monocular-VIO scale unobservability under pure rotation: the scale snaps when
+parallax finally arrives. (Aircar sits behind the 3 m session anchor and a seated cockpit; Cyberpilot the
+same; Dalí runs raw and standing.) The wearer noticed neither run's 38 m ("Dalí's open scenes"), only
+the residue: P2's reset happened to carry 8 m + 13° (*"unos metros a la derecha"*), base's three carried
+0.4–1.4 m (*"más centrado"*). One sample each — the carry size is where the reset caught the ramp, not a
+config property.
+
+**What this changes.** The 14:40 section's "P2 still jumps metres" stands as a fact but not as a
+P2-specific one; the gate is *undecided* rather than failed — and the decision does not move: P2 stays
+Aircar-only (nothing to gain for the booth, Cyberpilot not in the lineup), Dalí keeps base. What the
+booth needs is a bound on the start-of-session excursion, and there are two cheap levers, both
+untested on Dalí as of writing:
+
+1. **Procedure**: headset on the desk, still, until the title has loaded (Monado initialises Basalt at
+   rest, as in every soak); only then the guest puts it on. The launcher already brings Monado up before
+   `steam -applaunch`, so this is a queue rule for the operator, not code.
+2. **`SLAM_SESSION_ANCHOR_RADIUS_CM=300` in Dalí's profile** (0099, the guard Aircar and Cyberpilot
+   already run): bounds any excursion to a 3 m restart instead of 38 m. With the carry it still parks the
+   wearer up to 3 m off — the yaw-carry error seen today (13°) is the thing to watch. Dashboard action
+   `test-591360-anchor` (added now) runs Dalí on base with the anchor from the env for a worn check.
+
+Also: Dalí at scale 100 still reads 80–99 % GPU on single grabs in both runs — the "60 fps" question is
+not answered by the scale change; measure with `app-fps.sh`.

@@ -366,6 +366,26 @@ ACTIONS["gate-591360-P2"] = {
                      "scripts/light-preflight.sh antes (DARK = no arrancar)."},
 }
 
+# 2026-08-29 14:58 (docs/80 "the base control in the same light"): both configs ran ~40 m away in the
+# first two minutes of a worn Dali session (VIO scale snap after a rotation-only start), then settled.
+# Lever 2: the 0099 session anchor Aircar/Cyberpilot already run, for Dali -- bounds an excursion to a
+# 3 m restart. Env-only test button; if the worn check is clean it goes into TITLE_PROFILES["591360"].
+ACTIONS["test-591360-anchor"] = {
+    "label": "Dreams of Dali · 6dof · base + anchor 3 m [prueba]",
+    "cmd": ["python3", f"{HOME}/vr/vr-launcher.py", "1", "6dof"],
+    "cwd": f"{HOME}/vr",
+    "env": {"VR_LAUNCH_APPID": "591360", "U_PACING_APP_LOG": "debug", "VIT_COLLAPSE_LOG": "1",
+            "SLAM_SESSION_ANCHOR_RADIUS_CM": "300", "SLAM_QUAT_NORM_CHECK": "1",
+            "VR_DEMO_RECORD": "1", "VR_DEMO_COMMENT": "Dali 6dof base + session anchor 300 cm (test)"},
+    "demo": {"title": "Dali base + anchor 3 m (prueba)", "tracking": "6dof", "status": "testing",
+             "note": "PRUEBA 2026-08-29 (docs/80): Dali con la config base de siempre + el guard de anchor de "
+                     "3 m (0099, el mismo que corre Aircar). Motivo: con las dos configs Dali se va ~40 m en "
+                     "los primeros 2 min de una sesion con el casco puesto desde el arranque y despues se "
+                     "asienta; el anchor acota eso a reinicios de 3 m. Procedimiento a probar junto: casco "
+                     "quieto en la mesa hasta que el juego cargo, recien ahi ponerselo. Mirar en el log los "
+                     "'Tracker diverged ... from the session anchor' y el yaw delta de cada reset."},
+}
+
 # JQ_ENV = the Aircar profile as of 2026-08-28 ~18:45 -03 (docs/80 "JQ", NEXT-STEP's START
 # HERE): P2 backend + averaged correction + mid-exposure stamp + queues at depth 1, horizon 50,
 # clamp 150, spread 25. Module-level so the JQ button below and every round-7 button that
