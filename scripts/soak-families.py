@@ -31,6 +31,8 @@ def recipe(tag):
     p = VARIANTS / f"{tag}.json"  # exact variant first (P1..P8, N1..N5 are distinct configs)
     if not p.exists():
         stem = "".join(c for c in tag if not c.isdigit()) if tag not in ("G2", "G3") else tag
+        if stem in ("base", "record"):  # base2, base3 ... replicate legs of the shipped config
+            return "base (as shipped)"
         p = VARIANTS / f"{stem}.json"
     if not p.exists():
         return f"? ({tag})"
