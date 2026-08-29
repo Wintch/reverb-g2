@@ -1690,8 +1690,11 @@ Artifacts: `~/vr/logs/soak/{base-i4,P2-i4}.*`, `sequence-20260829-135503.{log,do
 Dashboard action `gate-591360-P2` (Dalí 6dof, own profile — scale 100, 6 threads, constellation off, no
 head-prediction/anchor knobs — plus `SLAM_CONFIG=P2.toml` from the env), daylight + lights on, worn from the
 first second, 9.5 min, `~/vr/logs/soak/dali-P2-lit-1-*`. Wearer: *"listo, jugué un poco. Parecido a como
-venía"* — asked whether they felt a jump at ~30 s and ~1:45, no explicit answer (Dalí's open scenes hide a
-few metres; this morning's *"aparecí muy lejos"* took 100+).
+venía"*, then: *"aparecí unos metros a la derecha, pero pude jugar igual. No sé si tiene reset de posición,
+no uso controles, solo casco. Girando lento casi perfecto, rápido se siente un jitter como siempre"* — the
+6.6 m step and the carried 8 m offset are the "unos metros a la derecha" (Dalí is gaze-only, no recentre;
+its open scenes hide a few metres where this morning's *"aparecí muy lejos"* took 100+); the fast-turn
+jitter is the known rotation-onset residual, the same one Aircar's neck-arm round is chasing.
 
 | | `dali-P2-lit-1` (P2, lit) | `dali-base-worn-1`, lit part (base, this morning) |
 |---|---|---|
