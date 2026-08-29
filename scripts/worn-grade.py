@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """worn-grade.py -- grade a WORN (headset on, real title) 6dof run from its archived artifacts.
 
-Companion to soak-grade.py (which grades at-rest player soaks). A worn run is archived by hand
-or by the launcher's helpers as ~/vr/logs/soak/<tag>-{tracking,timing}.csv plus
-<tag>-jack-in.log (or .log.gz). This prints, per run: raw Basalt position excursion (max |p|
-from the first row, per 30 s bucket), camera rate per minute (rows/60 s -- dips mean the
-frontend starved), frontend and backend latency percentiles per minute from timing.csv, the
-speed-guard trip count ("Tracker diverged") and Basalt's numeric-degeneracy warning counts
-(`d_res_d_p/xi is not valid`, `det(Q1Jl) == 0`). Those two counts are a FRONTEND-STARVATION
-instrument, not a runaway detector (docs/80, 2026-08-29): they scale with darkness x P2's
-recall/12-keyframe backend (dark Dali P2 run 5.1M lines, at-rest P2 200-600x base) and with CPU
-contention (JN100: 1,252 -> 9,697 in 3 min while awks ran over a log), NOT with runaway
-magnitude -- base's 80 m dark runaway logged 14,701, Aircar JQ's clean 1.03 m session 0.
+Companion to soak-grade.py (which grades at-rest player soaks). A worn run is archived by hand as
+~/vr/logs/soak/<tag>-{tracking,timing}.csv plus <tag>-jack-in.log (or .log.gz). Per run this prints:
+raw Basalt position excursion (max |p| from the first row, per 30 s bucket), camera rate per minute
+(rows/60 s -- dips mean the frontend starved), frontend and backend latency percentiles per minute
+from timing.csv, the speed-guard trip count ("Tracker diverged") and Basalt's two numeric warning
+counts, `d_res_d_p/xi is not valid` and `det(Q1Jl) == 0, skipping backsubstitution`.
+
+Read the two warning counts only as SAME-CONDITION A/B columns (same room, same light, same CPU
+load). They are not a darkness or runaway detector: the base config at rest logged 45 245 `d_res`
+lines in a lit room (143 landmarks p50) against 2 in the dark (0 landmarks) -- the count tracks how
+many landmarks the backend is optimising. `det(Q1Jl)` is the P2/recall-specific one (17-40x base in
+the same room). CPU contention also inflates both (2026-08-29 JN100: 1 252 -> 9 697 in 3 min).
+docs/80, 2026-08-29 sections.
 
 Usage: worn-grade.py TAG [TAG ...]      (looks in ~/vr/logs/soak by default; -d DIR to change)
 """

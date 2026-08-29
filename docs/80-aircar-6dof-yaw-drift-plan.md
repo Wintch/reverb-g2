@@ -1645,3 +1645,42 @@ Two tool notes from the sweep: `replay-basalt-variants.py` died in its log parse
 (statically linked, built 08-27 21:06) still predates Basalt 0021 — every replay above ran the
 pre-0021 frontend queue; rebuild it alongside `libbasalt.so` before the next sweep so the two
 cannot diverge silently.
+
+### 2026-08-29 13:55 — the daytime at-rest pair base→P2 on the current build: A1's gap closed, and the warning counts re-read
+
+`scripts/soak-sequence.sh 15 base-i4 P2-i4=~/vr/basalt-variants/P2.toml`, detached 13:55–14:29, lights on plus
+daylight, headset on the desk, nobody in the room; both legs `ok`, 0 cores, clean teardowns, rig down at the
+end. Same instrument as the night pair (`soak-variant.py` under Aircar's env: 0099 anchor 300 cm, so "trips"
+are session-anchor restarts), graded with `soak-grade.py base-i4 P2-i4`:
+
+| leg | lm p50 / p10 | % frames lm<5 | trips | span m | max 1 s m | keypoints p50 | frontend p50 / p99 ms | opt p99 ms | patches max | RSS start→end MB/h | RSS steady slope MB/h | `d_res … not valid` | `det(Q1Jl) == 0` |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| base-i4 | **143 / 35** | 7.0 | 44 | 5.54 | 3.52 | 3140 | 33.4 / 39.5 | 18.6 | 0 | −6 | −173 | 45 245 | 9 765 |
+| **P2-i4** | **190 / 71** | **0.7** | **5** | 4.97 | 3.03 | 1851 | **22.8 / 33.2** | 24.1 | 198 k | +1129 | −30 | 57 008 | 162 737 |
+
+- **A1's open item is closed.** The current build (`libbasalt.so` with 0021, 08-28 18:46) in a lit room gives
+  the base config **143 landmarks p50 — the best at-rest base number on file** (08-27 daytime: 16 / 64; the
+  night pair: 0 / 1). 0021 was not the night's problem; darkness was. Trips at rest are a scene/hour
+  number for base (7 / 36 / 44 by day, 142 / 107 at night), so the ordering base→P2 is what carries
+  information: **44 → 5 in light**, 142 → 35 and 107 → 19 in the dark.
+- **P2 in light**: 9× fewer anchor trips than base, more landmarks (190 / 71), fewer frames under 5
+  (0.7 %), and a *cheaper* frontend — p50 22.8 vs 33.4 ms — because grid 40 cuts detection where features
+  are plentiful (keypoints 1851 vs 3140), the cost that Round P measured offline. Patches 198 k (within
+  0014's bound, same as the night's 208–223 k); RSS start→end +1129 MB/h is the recall cache filling
+  from a rich scene in the first minutes — the steady-state slope is −30 MB/h (base −173). `soak-grade.py`
+  flags P2 "UNSAFE" on that raw RSS delta, as it did at night; the slope is the number to read, and a
+  booth day still wants the glance at RSS after the first hour.
+- **The numeric warnings, re-read once more — they do not measure darkness.** Base at rest in light
+  logged **45 245** `d_res` lines against **2 / 151** in the dark: the count tracks how many landmarks
+  the backend is optimising (143 vs 0), not how starved it is. What is P2-specific is `det(Q1Jl) == 0`
+  (162 737 vs 9 765 = 17× in light; 20–40× in the dark) — the recall's re-observed landmarks reaching
+  the solver with singular Hessian blocks. The 5.1 M of the dark Dalí run therefore reads as recall
+  thrash + resets, and the JN100 contention bump (1 252 → 9 697 in 3 min) as extra solver churn under
+  dropped frames. **Use both counts only as same-condition A/B columns** (same room, same light, same
+  load); a raw count on its own says nothing. `worn-grade.py`'s docstring says so now.
+- What this does *not* change: P2 is still not promoted to the global file. The at-rest instrument now
+  argues for it in light as it did in the dark, but the gate is the lit-room Dalí worn run under P2
+  (the only raw-position title), and the booth runs Dalí on base with light. Cyberpilot is the only
+  title that would inherit a promoted P2, behind Aircar's freeze + anchor.
+
+Artifacts: `~/vr/logs/soak/{base-i4,P2-i4}.*`, `sequence-20260829-135503.{log,done}`; CSV copies next to them.

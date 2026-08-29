@@ -49,8 +49,10 @@
 > 0101 with no extra offset** (docs/80 "RQ replay"). `replay-basalt-variants.py` parser fixed
 > (fused `vit_` line). Next sweep: rebuild `build-tools/basalt_vio` first (predates 0021).
 >
-> **Open**: (1) the daytime at-rest pair base→P2 on the 0021 build — no at-rest soak has ever run
-> in daylight on it; (2) Dalí under P2 in a lit room — optional; (3) GPU cap: the 250 W is
+> **Open**: (1) ~~the daytime at-rest pair base→P2 on the 0021 build~~ DONE 13:55–14:29: base-i4 lm p50
+> **143** / 44 trips, P2-i4 **190** / **5** trips, P2 frontend p50 22.8 vs 33.4 ms, 0 cores — the build is
+> fine in light, the night was darkness; the warning counts track landmark activity, not darkness
+> (base in light 45 k `d_res` vs 2 in the dark) — docs/80 "the daytime at-rest pair"; (2) Dalí under P2 in a lit room — optional; (3) GPU cap: the 250 W is
 > deliberate (root, 2026-08-26 04:03:47, `vr-power-setup.sh --gpu-limit 100`; docs/84 §7) vs
 > `~/vr/power.conf` 70 % (~175 W, re-applied by the watchdog on the next boot) vs the 144 W of
 > 08-22 — reconcile, needs the user/root; (4) the 06:34:04 teardown core, pid 731059 (JN100's
