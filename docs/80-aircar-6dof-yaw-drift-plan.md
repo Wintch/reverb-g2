@@ -1793,3 +1793,38 @@ xrBeginSession" is the natural follow-up, not tonight's).
 queue: **the headset stays still on the desk until the title has loaded; only then the guest puts it on.**
 `worn-grade.py` now labels its trip count as what it is (speed + anchor + quat, all logged as
 `Tracker diverged`).
+
+### 2026-08-29 15:15 — the booth button, measured: Dalí at scale 100 delivers 90 fps
+
+The one number the day still owed (docs/76: "Dalí has zero recorded fps/pacing metrics"). Launched from
+the dashboard's own `demo-591360-6dof` button — exactly what a guest gets: the profile as committed in
+`287c2b7` (scale 100, 6 threads, anchor 3 m + quat check), auto-record on, `U_PACING_APP_LOG=debug` — with
+the operator rule applied: headset on the desk from the 15:14:20 launch until the title delivered frames
+(15:15:23, 63 s; ~79 fps on the desk, GPU 75 % / 220 W), then worn until "listo" at ~15:19. `app-fps.sh 20 7`
+plus `nvidia-smi -l 5` ran from the everyday box; artifacts `~/vr/logs/soak/dali-booth-1-*`,
+`~/vr/logs/fps/dali-booth-20260829-1515-*`, demo record `~/vr/logs/demo-sessions/20260829-151434`.
+
+| window (20 s) | 1 | 2 | 3 | 4 | 5 | 6 | 7 | pass 2 #1 |
+|---|---|---|---|---|---|---|---|---|
+| delivered fps | 89.95 | 89.90 | 88.65 | **78.85** | 89.85 | **85.35** | 88.95 | 89.95 |
+
+Render 2160×2160 per eye (`CREATE … 2160x2160`, the scale-100 target). GPU over the two minutes: mean 83 %,
+64–96 %, mean 237 W, peaks 248–249 W against the 250 W cap with the clocks pulled down to 1815–1890 MHz.
+The two dips line up with the GPU samples: window 4 (15:16:53–15:17:13) sits on 91/80/92/95 % at 248–249 W,
+window 6 (15:17:33–15:17:53) on 92/89/90/96 % at 236–248 W; the 90-fps windows sit at 64–83 %. So the dips
+are the GPU at its power cap on the heavy views — not the pacer, not SLAM. Pacer: of 23 288 delivered frames
+the app was ≥ one 90 Hz period late on 24 (0.10 %, all during the load; max 5.07 s there) and on 2 of the
+last 10 800 once worn (0.02 %, max 11.5 ms); lateness p50 −0.07 ms, p99 4.5 ms — far under the 1 % that
+`frame-pacing.sh` calls felt. (`frame-pacing.sh`'s own counter is not instrumented on the demo button —
+`up` mode, `VR_PACING=0` by design; the delivered-frame lateness above is the same deadline seen from the
+app pacer.) SLAM: camera 30 Hz throughout, **0 guard trips** — same desk rule as the 15:02 run, which
+needed 6 anchor resets; this one needed none — raw position max 1.57 m at 201 s, final 0.48 m, frontend
+p50 33.6 ms (the game at 90 fps competes for the CPU: 24.2 ms in this morning's 6-thread worn run),
+backend p50 5.3 ms, no `input_img_queue dropped`. Teardown needed the usual SIGKILL escalation.
+Wearer: *"Bien, solido"*.
+
+Two consequences. Dalí's dashboard note ("46-67 fps measured") was stale and now carries these numbers.
+And the GPU-cap reconciliation (NEXT-STEP item 3) has its Dalí answer: the title already touches the
+250 W cap on its heavy views at 90 fps, so `power.conf`'s 70 % (~175 W) would put those views well under
+90 — the booth runs at 250 W (the root-set value stays; what is left to reconcile is only the watchdog's
+re-apply of 70 % on the next boot).

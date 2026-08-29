@@ -50,6 +50,12 @@
 > 0101 with no extra offset** (docs/80 "RQ replay"). `replay-basalt-variants.py` parser fixed
 > (fused `vit_` line). Next sweep: rebuild `build-tools/basalt_vio` first (predates 0021).
 >
+> **15:15 — Dalí measured on the booth button** (`demo-591360-6dof`, worn, scale 100 + anchor profile):
+> **89–90 fps in 6/8 20-s windows, 79 / 85 in two = the GPU at the 250 W cap** (91–96 %, 248–249 W);
+> pacer 0.02 % late worn; SLAM 30 Hz, **0 guard trips**, max 1.57 m; wearer *"Bien, solido"* — docs/80
+> "the booth button, measured", `~/vr/logs/soak/dali-booth-1-*`. Dalí has its fps number; the last
+> wearer item of the day is done.
+>
 > **Open**: (1) ~~the daytime at-rest pair base→P2 on the 0021 build~~ DONE 13:55–14:29: base-i4 lm p50
 > **143** / 44 trips, P2-i4 **190** / **5** trips, P2 frontend p50 22.8 vs 33.4 ms, 0 cores — the build is
 > fine in light, the night was darkness; the warning counts track landmark activity, not darkness
@@ -61,7 +67,9 @@
 > + operator rule: headset still on the desk until the title has loaded — docs/80 "the anchor test"; (3) GPU cap: the 250 W is
 > deliberate (root, 2026-08-26 04:03:47, `vr-power-setup.sh --gpu-limit 100`; docs/84 §7) vs
 > `~/vr/power.conf` 70 % (~175 W, re-applied by the watchdog on the next boot) vs the 144 W of
-> 08-22 — reconcile, needs the user/root; (4) the 06:34:04 teardown core, pid 731059 (JN100's
+> 08-22 — reconcile, needs the user/root — Dalí's side is now measured (15:15): it touches the 250 W cap
+> on its heavy views at 90 fps, so 70 % (~175 W) would cost fps exactly there → the booth needs 250 W;
+> what is left is the watchdog re-applying 70 % at boot (root); (4) the 06:34:04 teardown core, pid 731059 (JN100's
 > monado-service, on kill; `coredumpctl info 731059`, the `pop_pose` family); (5) why P2 at −5 ms
 > diverges on this recording (curiosity only, JQT is closed); (6) the post-trip snap-back (0.7–4.4 m from the origin in one frame)
 > contradicts the reset-offset carry's "stays continuous" — docs/80.

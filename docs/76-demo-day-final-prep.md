@@ -239,7 +239,13 @@ Do all of this, in order, every time the rig physically moves — not a quick gl
   scale, the profile now sets `XRT_COMPOSITOR_SCALE_PERCENTAGE=100` + `SLAM_THREADS=6` (re-confirm
   worn). And a booth rule: **Dalí 6dof requires a lit room** — in the dark it ran 80–161 m away
   under both Basalt configs and was "solido" the minute the lights came on; run
-  `scripts/light-preflight.sh` (detached; untested on hardware as of 2026-08-29) before a 6dof slot.
+  `scripts/light-preflight.sh` (detached; validated 07:07: OK, lm p50 137) before a 6dof slot.
+  *Update 2026-08-29 15:15*: **fps MEASURED** on the dashboard's own `demo-591360-6dof` button, worn,
+  scale 100 + anchor profile: 89.95 / 89.90 / 88.65 / 78.85 / 89.85 / 85.35 / 88.95 / 89.95 fps in 20-s
+  windows (`app-fps.sh`), the two dips coinciding with the GPU at the 250 W cap (91–96 %, 248–249 W,
+  clocks 1815–1890 MHz) — keep the booth at 250 W; delivered-frame lateness p50 −0.07 ms, ≥ 1 period
+  late 0.02 % worn; SLAM 30 Hz, 0 guard trips, max 1.57 m; wearer *"Bien, solido"* — docs/80 "the
+  booth button, measured", `~/vr/logs/soak/dali-booth-1-*`. This bullet is closed.
 - **The three cosmetic/low-risk gaps in §1** (power-setup script sync, jack-in-wayland.sh
   stale comment, vr-launcher.py stale comment) — harmless tonight, unfixed.
 - **The Aircar NTFS duplicate install** (§1, MEDIUM) — not cleaned up, just verified inert.
