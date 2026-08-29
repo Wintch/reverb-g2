@@ -59,8 +59,10 @@
 > `power.conf` 100 %, neck arm 100 (user). **When the user is back (needs a wearer)**: (a) 🧪 Dalí
 > auto-recentrar al ponerse — headset on the desk until loaded, put it on looking sideways, does the
 > scene come round by itself ~2 s later? (`xrizer.txt`: `donning recentre armed`/`firing`); if yes,
-> decide whether `WMR_USER_PRESENCE=1` + the flag go into Dalí's booth button; (b) The Night Cafe
-> worn, if the unworn retest reached a session; (c) nothing else pending on the headset.
+> decide whether `WMR_USER_PRESENCE=1` + the flag go into Dalí's booth button; (b) **The Night Cafe worn**
+> — unworn 17:04 it reached FOCUSED at 89 fps (demo button `demo-482390-6dof`, controllers not needed
+> to launch; whether the walkthrough needs point/grab is the open docs/81 question); (c) nothing else
+> pending on the headset.
 >
 > **15:50–16:04 — the recentre lever, worn-validated**: xrizer patch **0008** (`patches/xrizer/`, commit
 > `4090f8e`, built + live in `~/vr/xrizer/target/release`) + dashboard button **🎯 Recentrar** — touches

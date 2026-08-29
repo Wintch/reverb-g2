@@ -1910,3 +1910,15 @@ fallback; with it the failure moved to `xrCreateInstance`: `Failed to connect to
 `PRESSURE_VESSEL_FILESYSTEMS_RW` added to `vr-launcher.py`'s `GAME_ENV`, which is what the Steam
 client inherits when the launcher starts it. Steam restarted with that env at 16:57 and the unworn
 test re-run; result in the next entry.
+
+**17:04 — The Night Cafe reaches Monado.** With Steam restarted carrying `GAME_ENV` (its process
+environment now shows the three variables) the demo button gives a real session: xrizer
+`IVRClientCore_002`, the Unity bootstrap restart, then `FOCUSED` at +0.7 s; 89 fps delivered
+(3939 → 4838 in 10 s), GPU 35 % / 54 W on the opening scene, one `IVRSettings_001` unknown-interface
+line and nothing else. Two traps on the way, both mine: the round-3 driver's "delivering after 5 s"
+was the previous Dalí cycle's frame count (the jack-in log is only reset when Monado restarts —
+the check now requires a fresh `xrizer.txt`), and the first `-applaunch` after a Steam shutdown is
+swallowed while the client boots, so the "retest" at 16:57 never launched anything. Logs
+`~/vr/logs/soak/nightcafe-unworn-3-*`. Dashboard status stays `untested` until it is worn: what
+remains is the docs/81 question of whether it needs controller point/grab.
+

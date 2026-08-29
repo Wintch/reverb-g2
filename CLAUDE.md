@@ -545,3 +545,13 @@ NVDEC/cuvid path should work the same on 595, but it needs to be verified explic
 
 Only then is the final install planned. The cutoff criterion agreed with the
 user is **"the headset on par with Windows or better"**.
+
+- **Detached hardware drivers (setsid/nohup) must carry the GUI env and verify what they claim to
+  exercise** (2026-08-29): a detached shell has `XDG_SESSION_TYPE=tty`, `jack-in-wayland.sh` refuses
+  to launch there AND writes `~/vr/.jack-in-failed`, which blocks every dashboard launch until
+  `--force up`. Export `gui_env.get()` like `scripts/light-preflight.sh` / `teardown-stress.sh`,
+  check service pid + socket after each `up`, refuse to run with the marker present, and when a
+  launch "does not get ready", read the marker's `reason:` line before suspecting the headset.
+  Also: a frame count read from `~/vr/jack-in-wayland.log` before Monado restarted is the
+  previous run's — key "is it delivering" checks on a fresh `xrizer.txt`/service pid.
+
