@@ -320,6 +320,16 @@ ACTIONS = {
     # xrizer to recentre 2 s after the PRESENT edge. The plain demo button never creates the flag,
     # so booth behaviour is unchanged. Wearer test: headset on the desk -> title loads -> put it on
     # looking sideways -> the scene should come round by itself ~2 s later (xrizer.txt logs it).
+    # Same test for Aircar 6dof (its own profile applies: JQ stack, neck arm 100). 2026-08-29 22:57 the
+    # Dali run validated 0009 live: PRESENT edge -> recentre 2.0 s later, scene came round by itself;
+    # a 15 s headset adjustment re-armed and fired again (by design: > 15 s since the last fire).
+    "test-1073390-autorecenter": {
+        "label": "🧪 Aircar auto-recentrar al ponerse (0009)",
+        "cmd": ["bash", "-c", f"echo 2000 > {HOME}/vr/logs/xrizer-recenter-on-don; exec python3 {HOME}/vr/vr-launcher.py 1 6dof"],
+        "cwd": f"{HOME}/vr",
+        "env": {"VR_LAUNCH_APPID": "1073390", "WMR_USER_PRESENCE": "1", "U_PACING_APP_LOG": "debug",
+                "VIT_COLLAPSE_LOG": "1", "VR_DEMO_RECORD": "1", "VR_DEMO_COMMENT": "Aircar 6dof autorecenter test (0009)"},
+    },
     "test-591360-autorecenter": {
         "label": "🧪 Dalí auto-recentrar al ponerse (0009, sin validar)",
         "cmd": ["bash", "-c", f"echo 2000 > {HOME}/vr/logs/xrizer-recenter-on-don; exec python3 {HOME}/vr/vr-launcher.py 1 6dof"],

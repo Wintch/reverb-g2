@@ -1922,3 +1922,41 @@ swallowed while the client boots, so the "retest" at 16:57 never launched anythi
 `~/vr/logs/soak/nightcafe-unworn-3-*`. Dashboard status stays `untested` until it is worn: what
 remains is the docs/81 question of whether it needs controller point/grab.
 
+### 2026-08-29 22:50–23:56 — 0009 worn: recentre on donning validated on Dalí and Aircar; the box was powered off, not hung
+
+**Dalí (`test-591360-autorecenter`, 22:52–22:59).** `WMR_USER_PRESENCE=1` on the service + flag
+file `xrizer-recenter-on-don` = 2000 ms. The first pick-up (22:53) produced only NOT PRESENT
+edges (the wearer adjusted the headset before it sat); the real don at 22:57:21 armed and fired
+at 22:57:23 (2.0 s), wearer: *"si, de frente bien"*. Watch totals: 5 presence events, 2 fires
+(the second one after a 15 s headset adjustment, a legitimate re-don). Logs
+`~/vr/logs/soak/dali-autorecenter-1-*`.
+
+**Aircar (`test-1073390-autorecenter`, 23:24–23:56).** Launched 23:24:35 after the Dalí
+teardown (monado gone, no `0104:` line; one 32-bit Steam client core at 23:24:05 during the
+`-applaunch 591360` shutdown — the 25th of its kind in `coredumpctl`, not Monado). FOCUSED at
++75 s (monado 812386). Don 1: 23:26:25 PRESENT → 23:26:27 fire (2.0 s); a 1.4 s doff/don flap at
+23:26:32–34 correctly refused (*"fired < 15 s ago -- not re-arming"*). Re-check asked for by the
+wearer: 23:33:44 doffed, 35 s on the desk, 23:34:19 PRESENT → 23:34:21 fire → 23:34:26 doffed.
+Three arms, three fires, every one at delay + one poll, no false fire. Demo record
+`~/vr/logs/demo-sessions/20260829-232443` (93 ticks, 9 wearer sessions, P2 per-title, neck arm
+100, ended by the shutdown SIGTERM); xrizer log archived as
+`~/vr/logs/soak/aircar-autorecenter-1-xrizer.txt`. Still missing: the wearer's verdict on the
+cockpit orientation after the automatic recentre — the session ended before it was recorded.
+The dashboard test action **🧪 Aircar auto-recentrar al ponerse (0009)** is committed with this
+entry; the booth buttons still do not set the variable or the flag.
+
+**Not a hang.** The remote session lost ssh and the dashboard around 03:50 and read it as a
+freeze because ping still answered — from another device that had taken the .173 lease. The
+journal says otherwise: Aircar closed cleanly at 23:56:15 (STOPPING → EXITING), the GNOME
+end-session dialog → `systemd-logind: The system will power off now!` at 23:56:25, clean
+poweroff 23:56:44, zero kernel / GPU / OOM lines in the whole evening. Booted 04:39 on the 30th
+with a **new DHCP lease, 192.168.1.174** (ifupdown `iface enp4s0 inet dhcp`, no reservation;
+MAC `30:56:0f:a5:bc:58`). The everyday box now reaches it by mDNS (`iashur.local`, avahi active
+on both sides) through an ssh alias `iashur` with the verified host key; the repo has no
+hard-coded .173 and the pmadminka hub learns the address from the heartbeat. A DHCP reservation
+on the router would pin it — the operator's call.
+
+**Disk 83 %** (162 / 207 G, 35 G free; rule ~80 %). Candidates, nothing deleted:
+`~/vr/logs/euroc` 4.9 G (dataset), `/var/lib/systemd/coredump` 2.2 G (25 Steam client cores,
+root to clear), `~/vr/logs/soak` 1.1 G, `demo-sessions` 648 M, `slam-csv` 605 M, `~/.cache`
+5.6 G, journal 1.2 G.

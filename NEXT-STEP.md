@@ -1,5 +1,18 @@
 # Next step
 
+> ## START HERE (2026-08-30 ~05:30 -03 — iashur was POWERED OFF at 23:56 by the operator, not a
+> hang; it came back on a NEW IP 192.168.1.174 (DHCP) — reach it as `ssh iashur` / `iashur.local`)
+>
+> **xrizer 0009 (recentre on donning) is worn-validated**: Dalí 22:57 + Aircar 23:26 and 23:34
+> (re-check), 3/3 fires at delay + one poll, a 1.4 s flap correctly refused. Dashboard has both
+> test actions (🧪 Dalí / 🧪 Aircar auto-recentrar al ponerse); the booth buttons still do NOT set
+> `WMR_USER_PRESENCE=1` + the flag file — decide after the wearer's Aircar verdict (cockpit
+> straight after the auto-recentre?) and consider a minimum-absence rule before re-arming.
+> **Next wearer test**: The Night Cafe worn (`demo-482390-6dof`): visuals + whether it needs
+> controller point/grab (third booth slot). **Housekeeping**: root fs 83 % (candidates in the
+> docs/80 entry of 22:50–23:56, nothing deleted); 25 Steam-client cores in coredumpctl (2.2 G, root).
+> Full record: docs/80 "2026-08-29 22:50–23:56".
+
 > ## START HERE (2026-08-29 ~07:00 -03, remote session from the everyday box — the Dalí gate ran
 > and was INVALID (dark room): P2 stays per-title, not promoted; lighting rule + light-preflight;
 > the 10-min wearer slot ran: RQ recorded, neck arm 0 ≈ 100 < 150 < 200 → Aircar neck arm 100)

@@ -130,7 +130,7 @@ ignores it; and `reset_tracking_space` now refuses a head pose without POSITION/
 booth button: wearer turned 90° left, operator pressed, the scene came round to the front, 0.2–0.3 s
 from POST to the xrizer log line. Build with `--features static-openxr`. Commit `4090f8e`.
 
-## 0009 — opt-in recentre on donning (2026-08-29, NOT worn-validated)
+## 0009 — opt-in recentre on donning (2026-08-29, worn-validated on Dalí + Aircar)
 
 The 0008 button pressed by hand becomes automatic: with the flag file
 `$HOME/vr/logs/xrizer-recenter-on-don` present (`$XRIZER_RECENTER_ON_DON_FILE`; content = delay
@@ -146,3 +146,10 @@ loads → put it on looking sideways → the scene should come round by itself ~
 (`~/.local/state/xrizer/xrizer.txt` logs `donning recentre armed` / `firing`). Lock order:
 `session_data` is read before `don_recenter_at` on both paths (reviewer-caught inversion in the
 first draft). Commit `9b92a8b`.
+
+Worn-validated 2026-08-29: Dalí 22:57 (fired 2.0 s after PRESENT, wearer *"de frente bien"*),
+Aircar 23:26 and 23:34 (re-check after 35 s on the desk; a 1.4 s doff/don flap refused by the
+15 s rule). Three arms, three fires, no false fire. Still opt-in: the booth buttons do not create
+the flag yet — pending the wearer's verdict on the Aircar cockpit orientation and a possible
+minimum-absence rule before re-arming. Dashboard test actions: 🧪 Dalí / 🧪 Aircar
+auto-recentrar al ponerse. Record: docs/80, entry "2026-08-29 22:50–23:56".
