@@ -314,7 +314,7 @@ ACTIONS = {
         "cmd": ["/usr/bin/touch", f"{HOME}/vr/logs/xrizer-recenter"],
         "cwd": f"{HOME}/vr",
     },
-    # 2026-08-29 (xrizer patch 0009, UNVALIDATED until worn): Dali with the donning auto-recentre.
+    # 2026-08-29 (xrizer patch 0009, worn-validated 2026-08-29/30, now baked into the booth buttons): Dali test action.
     # WMR_USER_PRESENCE=1 makes Monado surface the G2 proximity sensor as XR_EXT_user_presence
     # (patches 0075/0087, threshold flagged provisional); the flag file (content = delay ms) arms
     # xrizer to recentre 2 s after the PRESENT edge. The plain demo button never creates the flag,
@@ -355,23 +355,38 @@ ACTIONS = {
 # does NOT work (kept visible so nobody re-tries it live thinking it's untested).
 # Only "approved" is a demo option.
 DEMO_LAUNCHES = [
-    ("Aircar", "1073390", "3dof", "approved", "Xbox pad. Recentre: A button."),
+    ("Aircar", "1073390", "3dof", "approved", "Xbox pad. Recentre: A button (the guest) or 🎯 (the operator). 2026-08-30: the donning auto-recentre (xrizer 0009) is NOT enabled here -- on this 3dof button the cockpit follows a runtime recentre by a few degrees only (game-side re-basing; it works at the logo and in 6dof). docs/80 2026-08-30."),
     ("Aircar", "1073390", "6dof", "gold", "2026-08-26 fix (patch 0097): gyro-pred + freeze + 150mm neck-arc + 50ms spread, auto-applied by the launcher. 2026-08-27 SOAK (several min worn): held 90 (0 pacer stalls), 0 USB/companion drops, 0 SLAM loss -- stability certified. Wearer: still/gamepad-only = very good; STAYS GOLD, not approved. The gold->perfect blocker is a felt ~100-200ms positioning-latency (SLAM anchor-age floor) on FAST full-axis head motion -- A recentres, tolerable but 'rompe todo' when moving fast. NOTE: any fps counter you see is the DESKTOP MIRROR (mutter 60Hz vsync); no in-headset counter works (xrizer overlay whitelist)."),
-    ("Dreams of Dali", "591360", "6dof", "approved", "Headset-only gaze-dwell, no controllers. 2026-08-29 15:15 worn on THIS button (scale 100, anchor profile): 89-90 fps in 6/8 20-s windows, dips to 79/85 when the GPU hits the 250 W cap (91-96 %) -- keep the cap at 250 W for the booth; pacer 0.02 % late; SLAM 30 Hz, 0 guard trips, max 1.57 m. Wearer: solido. RULES: lit room (light-preflight.sh); headset still on the desk until the title has loaded (~60 s); then the guest puts it on, sits looking straight ahead and the operator presses the Recentrar button (xrizer 0008, worn-validated 2026-08-29: 90-degree test, 0.2 s)."),
+    ("Dreams of Dali", "591360", "6dof", "approved", "Headset-only gaze-dwell, no controllers. 2026-08-29 15:15 worn on THIS button (scale 100, anchor profile): 89-90 fps in 6/8 20-s windows, dips to 79/85 when the GPU hits the 250 W cap (91-96 %) -- keep the cap at 250 W for the booth; pacer 0.02 % late; SLAM 30 Hz, 0 guard trips, max 1.57 m. Wearer: solido. RULES: lit room (light-preflight.sh); headset still on the desk until the title has loaded (~60 s); then the guest puts it on, sits looking straight ahead and the operator presses the Recentrar button (xrizer 0008, worn-validated 2026-08-29: 90-degree test, 0.2 s). 2026-08-30: recentres by itself ~2 s after donning (xrizer 0009, validated worn 2026-08-29 22:57); 🎯 stays as fallback."),
     ("Wolfenstein: Cyberpilot", "1056970", "6dof", "testing", "2026-08-27: WORKS in-headset (native Bethesda idTech, motion controllers). Launcher auto-applies the Aircar 6dof head recipe (patch 0097 knobs) WITH constellation ON (the game needs 6dof hands). Wearer: hands ~ok, less drift than before, playable; ~2m drift on FAST head turns (bounded). RESET = RIGHT SHIFT held 3s. Perceived ~60fps ('Fake pacer fell behind' spam) -- for 90: minimize the game window (mutter vsyncs any visible window to the 60Hz desktop), lift the GPU 70% power cap, lower graphics/render-scale (docs/23). NOT guest-ready until the 60->90 residual is settled."),
     ("Hellblade", "747350", "6dof", "broken", "2026-08-27 retest: prefix relocated NTFS->ext4 (docs/70), and it's GAMEPAD-played (not motion controllers -- constellation not needed). But it CRASHES in the UE4 render thread on 'start' (LowLevelFatalError RenderingThread.cpp:933, UE4 minidump in the prefix). Worked ONCE 2026-08-21 pre-reinstall ('very promising, steady 45fps' -- docs/75:198); uninstalled+reinstalled 2026-08-26 since. The Aug-21 working prefix still exists at ~/.steam/.../compatdata/747350 but Steam bypasses it (game moved to /mnt/win5). Dedicated retest pending: reuse the Aug-21 prefix / drop SCALE=100 / try another Proton (docs/67 §4 B5)."),
     ("The Night Cafe", "482390", "6dof", "untested", "CORRECTED 2026-08-27: the 2026-08-26 'broken/flat-2D' verdict was WRONG -- that one launch died inside the OpenXR loader because XR_RUNTIME_JSON was unset for that process (the launch-options trap, not a Unity flat-fallback). Never actually reached the runtime. 2026-08-29 17:04 UNWORN RETEST after the Steam env fix (docs/80): reaches a FOCUSED Monado session, 89 fps delivered, 1 harmless unknown-interface line (IVRSettings_001). Root cause was Steam not applying this title's LaunchOptions; XR_RUNTIME_JSON/IPC_IGNORE_VERSION/PRESSURE_VESSEL_FILESYSTEMS_RW now come from the Steam client env (vr-launcher GAME_ENV) + active_runtime.json. NEXT: a worn test (does it need controller point/grab?)."),
     ("Anne Frank House VR", "2877690", "6dof", "broken", "CORRECTED 2026-08-27: DOES reach a real Monado session (BEGIN_SESSION, controllers registered) -- the earlier '0 delivered frames' framing came from the dead-grep metric trap (needs U_PACING_APP_LOG=debug), not a proven flat-fallback. Real cause: engine abandons the session after ONE capability probe and never retries -- matches Valve unity-xr-plugin #97/#111. Engine-side give-up, not a render failure. Parked."),
 ]
+# 2026-08-30: 6dof booth titles (approved / gold) recentre by themselves when the guest puts the
+# headset on -- xrizer patch 0009, worn-validated on Dali 6dof (2026-08-29 22:57) and Aircar 6dof
+# (2026-08-29 23:26 + 23:34, 2026-08-30 05:28 / 05:38 / 05:42, both 90-degree sides; wearer:
+# "vuelve al centro"). WMR_USER_PRESENCE=1 makes Monado surface the G2 proximity sensor as
+# XR_EXT_user_presence; the flag file (content = delay in ms) arms xrizer to recentre 2 s after the
+# PRESENT edge; a fire < 15 s ago blocks re-arming (sensor flap / headset adjustment). The 🎯 button
+# stays as the manual fallback. Every other button REMOVES the flag so the behaviour is explicit
+# per launch. docs/80 "2026-08-29 22:50–23:56" + the 2026-08-30 entry.
+_DON_FLAG = f"{HOME}/vr/logs/xrizer-recenter-on-don"
 for _name, _appid, _tracking, _status, _note in DEMO_LAUNCHES:
+    # 2026-08-30 06:25: 6dof only. On Aircar 3dof the fire is correct but the cockpit follows it by
+    # "a few degrees" only (the game re-bases the view itself there; docs/80 2026-08-30 entry), so
+    # the lineup's 3dof button keeps the A-button / 🎯 flow. One-liner to flip once understood.
+    _auto = _status in ("approved", "gold") and _tracking == "6dof"
+    _prep = f"echo 2000 > {_DON_FLAG}" if _auto else f"rm -f {_DON_FLAG}"
     ACTIONS[f"demo-{_appid}-{_tracking}"] = {
         "label": f"{_name} · {_tracking} [{_status}]",
-        "cmd": ["python3", f"{HOME}/vr/vr-launcher.py", "1", _tracking],
+        "cmd": ["bash", "-c", f"{_prep}; exec python3 {HOME}/vr/vr-launcher.py 1 {_tracking}"],
         "cwd": f"{HOME}/vr",
         "env": {"VR_LAUNCH_APPID": _appid, "U_PACING_APP_LOG": "debug",
                 # Demo buttons auto-record (RAM -> permanent on session end, docs/80). Approved
                 # titles record by default; the record is what turns the live demo into the soak.
-                "VR_DEMO_RECORD": "1", "VR_DEMO_COMMENT": f"{_name} {_tracking} [{_status}]"},
+                "VR_DEMO_RECORD": "1", "VR_DEMO_COMMENT": f"{_name} {_tracking} [{_status}]",
+                **({"WMR_USER_PRESENCE": "1"} if _auto else {})},
         "demo": {"title": _name, "tracking": _tracking, "status": _status, "note": _note},
     }
 

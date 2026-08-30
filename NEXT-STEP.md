@@ -1,5 +1,20 @@
 # Next step
 
+> ## START HERE (2026-08-30 ~06:30 -03 — 0009 auto-recentre: Aircar 6dof VALIDATED by the wearer
+> (both sides), baked into the 6dof booth buttons; Aircar 3dof cockpit does NOT follow it — game-side)
+>
+> **Booth buttons now**: Dalí 6dof + Aircar 6dof (gold) set `WMR_USER_PRESENCE=1` + the flag file
+> (recentre 2 s after donning); `Aircar · 3dof [approved]` unchanged (A button / 🎯), flag removed.
+> **3dof finding** (xrizer patch 0010 diagnostics, commit `ed77ef8`): the reset is right (130° → 0.0°,
+> served 0 next frame), the 3dof yaw is stable on the desk (±0.1°), but the cockpit moves "a few
+> degrees" → the game re-bases the view itself in its 3dof cockpit. **Next cheap test**: 3dof cockpit,
+> still, press 🎯 — comes round (don-event reaction) or "few degrees" (continuous re-base)? Same at
+> the logo. **Sensor hole**: 1 don in 11 gave no PRESENT edge (change-driven message; a feature-read
+> poll of id 0x01 while NOT WORN would close it if the device answers — never tried).
+> **Also this morning**: iashur was powered off by the operator 23:56 (not a hang), new DHCP lease
+> .174 → `ssh iashur` (mDNS); one "no textures, only the ship" Aircar launch at 05:27, cleared by a
+> full relaunch, not reproduced. Full record: docs/80 "2026-08-30 05:26–06:25".
+
 > ## START HERE (2026-08-30 ~05:30 -03 — iashur was POWERED OFF at 23:56 by the operator, not a
 > hang; it came back on a NEW IP 192.168.1.174 (DHCP) — reach it as `ssh iashur` / `iashur.local`)
 >

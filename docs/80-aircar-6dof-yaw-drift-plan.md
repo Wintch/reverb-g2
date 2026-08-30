@@ -1960,3 +1960,67 @@ on the router would pin it — the operator's call.
 `~/vr/logs/euroc` 4.9 G (dataset), `/var/lib/systemd/coredump` 2.2 G (25 Steam client cores,
 root to clear), `~/vr/logs/soak` 1.1 G, `demo-sessions` 648 M, `slam-csv` 605 M, `~/.cache`
 5.6 G, journal 1.2 G.
+
+### 2026-08-30 05:26–06:25 — 0009 goes on the booth buttons: Aircar 6dof re-validated, the 3dof cockpit does not follow, and what the diagnostics say
+
+**Aircar 6dof, the wearer's verdict (05:26–05:44).** The 23:xx runs had fired without a verdict,
+so the test action was rerun: 05:28:13 fire (the first session showed *"sin texturas, solo la
+nave"* — the world never streamed in; a full stop-games / compositor-down / relaunch at 05:35
+cleared it, not reproduced since, no log line for it), then 05:38:06 and 05:42:24 — both 90°
+sides, wearer: *"cabina bien"*, *"si, vuelve al centro. No es el comportamiento esperado por el
+juego, pero si funciona"* (correct: the game does not do this by itself; xrizer 0009 does).
+**Aircar 6dof is validated**, 3/3 fires at delay + one poll.
+
+**Baked into the booth buttons (05:45).** `status-dashboard.py`: demo buttons with status
+`approved` / `gold` set `WMR_USER_PRESENCE=1` and write the flag file (`echo 2000 >
+xrizer-recenter-on-don`) before `vr-launcher.py`; every other button removes the flag so the
+behaviour is explicit per launch; 🎯 stays as the manual fallback. Restart of the dashboard
+kills the action children (`KillMode` control-group), so the rig is torn down first. Verified
+on the real `Aircar · 3dof [approved]` button: FOCUSED at +60 s, `WMR_USER_PRESENCE=1` in the
+Monado environment, flag 2000, `XR_EXT_user_presence` active in xrizer.
+
+**Aircar 3dof: fires, but the cockpit stays turned (05:46–06:25).** Three sessions, eight
+dons, every PRESENT edge fired 2.0 s later; the wearer: *"solo una vez durante el logo, luego no
+se acomodo mas"*, then *"a veces se trata de acomodar al ponerme el casco, luego de 2-3 segundos.
+Pero son apenas unos grados, no se centra bien"*, finally *"durante el logo, 90 grados bien,
+pero solo 2 veces. Girando a la izquierda si, a la derecha no. En el juego se acomoda unos
+grados nada mas"*. xrizer commit `ed77ef8` (patch 0010) instruments the reset — head yaw in the
+reference space and in the new adjusted space, the universe the game selected, the game's own
+`IVRChaperone::ResetZeroPose` / `IVRCompositor::SetTrackingSpace` calls, and (opt-in
+`XRIZER_LOG_SERVED_YAW=1`) the yaw served to the game once a second. What it says:
+
+- **The reset is right.** Every fire: `recenter STAGE: head yaw 72.2 / 155.4 / 129.8 deg in the
+  reference space -> 0.1 / 0.2 / 0.0 deg in the new adjusted space; game universe Standing`, and
+  the served yaw 0.4 s later is 0.4 / −2.4 / −1.3°. The game never calls `SetTrackingSpace`
+  (default Standing) nor `ResetZeroPose`.
+- **The 3dof head yaw is stable when nothing moves**: headset on the desk 06:21–06:24, raw STAGE
+  yaw −129.7 ± 0.1° over 60 samples. The 80–115° swings the served-yaw log shows 1–4 s after
+  each fire (73 → −43°; 153 → 17 → −84°; 128 → 59°) are therefore the wearer turning after the
+  fire — consistent with *"girando a la izquierda si, a la derecha no"*: the recentre happens
+  once per don; turning while worn does not re-arm anything (by design).
+- **The cockpit does not follow the served pose.** At the 06:21:10 fire xrizer moved the served
+  head yaw by −130° and the wearer saw *"unos grados"*. So before the fire the cockpit was
+  already nearly centred although the runtime said the head was at 130° — in the 3dof cockpit
+  the game re-bases the view itself (game-side), and a runtime-level recentre reaches it only as
+  a residual. The same title in 6dof followed the runtime recentre fully at 05:38 / 05:42, and
+  the 3dof logo/menu also follows it — the difference is the cockpit level in 3dof. Untested
+  hypotheses: UE4's own base-orientation logic reacting to the constant position of a 3dof pose,
+  or an Aircar comfort/auto-centre feature.
+- **One don was missed by the sensor**: 06:04:41 doffed, the following don (wearer: *"luego no
+  se acomodo mas"*) produced no PRESENT edge in xrizer nor a WORN edge in Monado, no USB event,
+  no companion reconnect. The proximity message is change-driven (`WMR_CONTROL_MSG_IPD_VALUE`),
+  so one missed / never-sent "1" leaves presence NOT WORN for the whole wearing; the driver's
+  feature-read re-sync exists only on the reconnect path and is off (`WMR_COMPANION_RECONNECT_RESYNC`).
+  The other 10 dons of the morning all registered.
+
+**Decision (this commit).** The booth auto-recentre stays on the **6dof** buttons only (Dalí
+6dof, Aircar 6dof "gold"): `_auto = status in (approved, gold) and tracking == "6dof"` in the
+demo loop, a one-liner to flip. `Aircar · 3dof [approved]` — the actual lineup button — keeps
+its old behaviour: the game's A-button recentre for the guest, 🎯 for the operator; it also
+removes the flag file now. Next diagnostic for 3dof, cheap and decisive: in the 3dof cockpit,
+still, press 🎯 (0008) — if the view comes round, the don event is what the game reacts to; if
+it moves "a few degrees" again, the game re-bases continuously; repeat at the logo. And a
+proximity poll (feature read of id 0x01 every ~500 ms while NOT WORN) would close the missed-don
+hole if the device answers it (unknown, never tried). Logs:
+`~/vr/logs/soak/aircar-3dof-autorecenter-instr-xrizer.txt` (instrumented session),
+demo records `~/vr/logs/demo-sessions/20260830-*`.

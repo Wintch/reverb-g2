@@ -153,3 +153,19 @@ Aircar 23:26 and 23:34 (re-check after 35 s on the desk; a 1.4 s doff/don flap r
 the flag yet — pending the wearer's verdict on the Aircar cockpit orientation and a possible
 minimum-absence rule before re-arming. Dashboard test actions: 🧪 Dalí / 🧪 Aircar
 auto-recentrar al ponerse. Record: docs/80, entry "2026-08-29 22:50–23:56".
+
+**3dof caveat (2026-08-30).** On `Aircar · 3dof` the fire is correct (reset to 0.0° in the
+adjusted space, served yaw 0 the next frame) but the cockpit only moves "a few degrees": the
+game re-bases the view itself in its 3dof cockpit (logo/menu and the 6dof cockpit follow the
+runtime recentre fully). The booth buttons therefore enable 0009 on 6dof titles only. One
+don in eleven produced no PRESENT edge (change-driven proximity message, no re-sync). docs/80,
+2026-08-30 entry.
+
+## 0010 — recentre diagnostics (2026-08-30)
+
+Every `reset_tracking_space` logs `recenter <STAGE|LOCAL>: head yaw X deg in the reference space
+-> Y deg in the new adjusted space; anchor pos; game universe`; `IVRChaperone::ResetZeroPose`
+and `IVRCompositor::SetTrackingSpace` log their calls; `XRIZER_LOG_SERVED_YAW=1` logs the yaw
+served to the game once a second (universe, adjusted, raw STAGE / LOCAL). Zero cost when the
+variable is unset beyond one atomic per WaitGetPoses. Commit `ed77ef8`. This is what showed
+that the 3dof failure is game-side (docs/80, 2026-08-30 entry).

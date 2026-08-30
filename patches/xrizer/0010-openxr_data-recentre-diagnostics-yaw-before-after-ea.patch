@@ -1,0 +1,128 @@
+From ed77ef87c205cf408cd04abd35b996f5c18455fa Mon Sep 17 00:00:00 2001
+From: Wintch <nikolai.viktorovich@gmail.com>
+Date: Sun, 30 Aug 2026 06:24:40 -0300
+Subject: [PATCH] openxr_data: recentre diagnostics -- yaw before/after each
+ reset, game universe, game Reset/SetTrackingSpace calls, opt-in served-yaw
+ log
+
+Every reset_tracking_space logs the head yaw in the reference space and in the new adjusted
+space plus the universe the game selected; IVRChaperone::ResetZeroPose and
+IVRCompositor::SetTrackingSpace log their calls; XRIZER_LOG_SERVED_YAW=1 logs the yaw served to
+the game once a second. Written for the 3dof booth question (the donning recentre logs a fire but
+the cockpit stays turned): the resets are correct (72/155/130 deg -> 0.0 in the adjusted space);
+what moves is the 3dof head yaw itself, 80-115 deg within a second after the fire while the wearer
+reports holding still. Record: reverb-g2 docs/80, 2026-08-30 entry.
+---
+ src/chaperone.rs   |  1 +
+ src/compositor.rs  |  2 ++
+ src/openxr_data.rs | 48 ++++++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 51 insertions(+)
+
+diff --git a/src/chaperone.rs b/src/chaperone.rs
+index 1f0353f..34a0b17 100644
+--- a/src/chaperone.rs
++++ b/src/chaperone.rs
+@@ -21,6 +21,7 @@ impl Chaperone {
+ 
+ impl vr::IVRChaperone004_Interface for Chaperone {
+     fn ResetZeroPose(&self, origin: vr::ETrackingUniverseOrigin) {
++        log::info!("game called IVRChaperone::ResetZeroPose({origin:?})");
+         self.openxr.reset_tracking_space(origin);
+     }
+ 
+diff --git a/src/compositor.rs b/src/compositor.rs
+index b9d7492..525ea8e 100644
+--- a/src/compositor.rs
++++ b/src/compositor.rs
+@@ -1158,6 +1158,7 @@ impl vr::IVRCompositor029_Interface for Compositor {
+         // 0008: external recenter trigger, polled here so it works for every title (Input is
+         // only constructed once a game asks for IVRInput). No session_data guard is held here.
+         self.openxr.poll_recenter_trigger();
++        self.openxr.log_served_yaw();
+         if let Some(input) = self.input.get() {
+             input.frame_start_update();
+         }
+@@ -1175,6 +1176,7 @@ impl vr::IVRCompositor029_Interface for Compositor {
+     }
+ 
+     fn SetTrackingSpace(&self, origin: vr::ETrackingUniverseOrigin) {
++        log::info!("game called IVRCompositor::SetTrackingSpace({origin:?})");
+         self.openxr.set_tracking_space(origin);
+     }
+ }
+diff --git a/src/openxr_data.rs b/src/openxr_data.rs
+index 9d301d5..4d49402 100644
+--- a/src/openxr_data.rs
++++ b/src/openxr_data.rs
+@@ -315,6 +315,7 @@ impl<C: Compositor> OpenXrData<C> {
+ 
+     pub fn reset_tracking_space(&self, origin: vr::ETrackingUniverseOrigin) {
+         let mut guard = self.session_data.0.write().unwrap();
++        let game_universe = guard.current_origin;
+         let SessionData {
+             session,
+             view_space,
+@@ -382,6 +383,19 @@ impl<C: Compositor> OpenXrData<C> {
+                     },
+                 )
+                 .unwrap();
++            // 2026-08-30 diagnostics (3dof booth button: the fire logs but the cockpit stays
++            // turned): what the reset actually did, from the runtime's point of view.
++            if let Ok(after) = view_space.locate(&*adjusted_space, self.display_time.get()) {
++                let q = after.pose.orientation;
++                let yaw_after = Quat::from_xyzw(q.x, q.y, q.z, q.w)
++                    .to_euler(glam::EulerRot::YXZ).0.to_degrees();
++                let yaw_before = Quat::from_xyzw(orientation.x, orientation.y, orientation.z, orientation.w)
++                    .to_euler(glam::EulerRot::YXZ).0.to_degrees();
++                info!(
++                    "recenter {ty:?}: head yaw {yaw_before:.1} deg in the reference space -> {yaw_after:.1} deg in the new adjusted space; anchor pos ({:.2}, {:.2}, {:.2}); game universe {game_universe:?}",
++                    position.x, position.y, position.z
++                );
++            }
+         };
+ 
+         match origin {
+@@ -419,6 +433,40 @@ impl<C: Compositor> OpenXrData<C> {
+     /// XR_EXT_user_presence enabled, a doffed headset ignores the trigger; and
+     /// reset_tracking_space now refuses an invalid head pose. Must be called with no
+     /// session_data guard held: reset_tracking_space takes the write lock.
++    /// 2026-08-30 diagnostics (opt-in: XRIZER_LOG_SERVED_YAW=1): the head yaw the game is being
++    /// served, once a second, in the universe it selected and in both raw reference spaces.
++    /// Called from WaitGetPoses. Found the 3dof yaw swings of docs/80 (2026-08-30 entry).
++    pub fn log_served_yaw(&self) {
++        use std::sync::atomic::{AtomicU32, Ordering};
++        use std::sync::OnceLock;
++        static ENABLED: OnceLock<bool> = OnceLock::new();
++        if !*ENABLED.get_or_init(|| std::env::var_os("XRIZER_LOG_SERVED_YAW").is_some()) {
++            return;
++        }
++        static N: AtomicU32 = AtomicU32::new(0);
++        if N.fetch_add(1, Ordering::Relaxed) % 90 != 0 {
++            return;
++        }
++        let d = self.session_data.get();
++        let t = self.display_time.get();
++        let yaw = |space: &xr::Space| -> String {
++            match d.view_space.locate(space, t) {
++                Ok(l) => {
++                    let q = l.pose.orientation;
++                    format!("{:.1}", Quat::from_xyzw(q.x, q.y, q.z, q.w).to_euler(glam::EulerRot::YXZ).0.to_degrees())
++                }
++                Err(e) => format!("err {e:?}"),
++            }
++        };
++        info!(
++            "served-yaw: universe {:?}: adjusted {} deg | raw STAGE {} LOCAL {} deg",
++            d.current_origin,
++            yaw(d.tracking_space()),
++            yaw(&d.stage_space_reference),
++            yaw(&d.local_space_reference)
++        );
++    }
++
+     pub fn poll_recenter_trigger(&self) {
+         use std::sync::atomic::AtomicU64;
+         // 0009: a donning recentre that has come due fires here, on the same frame path and
+-- 
+2.47.3
+
