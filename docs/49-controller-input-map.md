@@ -217,10 +217,21 @@ not apply and the real cause is more likely that `setup_legacy_actions` never go
 call at all (e.g. the game never drives `WaitGetPoses`, so `frame_start_update` never
 executes) — a different, not-yet-investigated bug.
 
-## 5. Fix specification (not implemented)
+## 5. Fix specification (IMPLEMENTED 2026-08-18, commit `48fc243`)
 
-Goal: let `GetControllerState`/`GetControllerStateWithPose` keep working even after a
-manifest has been loaded, for titles that mix both APIs, without breaking modern-API-only
+**Status update (2026-08-31, docs/89):** confirmed via `git blame` that xrizer's
+`src/input/legacy.rs` already carries this fix — `get_legacy_controller_state` no longer has
+the unconditional `get_loaded_actions().is_some() → return false` early exit, the legacy set
+is created/attached/synced from both `setup_legacy_actions` and `load_action_manifest`
+(see `get_or_create_legacy_actions`'s own doc comment, which narrates the same fix), and a
+regression test (`legacy_input_still_works_with_manifest`) pins both halves of it. The
+subsections below are kept as the original design record; treat them as history, not a
+TODO. This bug is NOT the explanation for Aircar's dead-VR-controller-buttons symptom
+(docs/89) — that title's buttons stay dead for a different, still-unresolved reason.
+
+Goal (as originally written, now met): let `GetControllerState`/`GetControllerStateWithPose`
+keep working even after a manifest has been loaded, for titles that mix both APIs, without
+breaking modern-API-only
 titles.
 
 ### 5.1 Changes needed
