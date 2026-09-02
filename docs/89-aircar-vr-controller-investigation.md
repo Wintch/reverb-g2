@@ -338,3 +338,67 @@ as that A/B: launch Aircar, attempt real button/trigger/grip input on both contr
 instrumentation (`DEBUGBOOL`/`DEBUGVEC1`/etc., still present uncommitted) is left in place for that
 test, its log output can be used to confirm the fix directly rather than relying on gameplay feel
 alone.
+
+## 12. 2026-09-02 (later same day): the live A/B test ran -- patch 0011 does NOT fix it, real cause still open
+
+Ran the exact test section 11 asked for: `RUST_LOG=xrizer=debug`, both G2 controllers on and
+paired before Monado start (confirmed `{'left': True, 'right': True}` via `rig_telemetry.
+controller_status()`), Aircar launched fresh (3dof). **Wearer verdict: "solo anda xbox, no los
+vr"** -- the Xbox pad (which stayed connected this run, not yet controlled out) worked, the VR
+wands did not.
+
+**Confirmed independently, not just from the wearer's impression**: the exact binary loaded into
+the live game process (`/proc/<pid>/maps` on the real `AirCar-Win64-Shipping.exe` PID, inode
+matched against the on-disk file) *is* the patch-0011 build (process started 19:04:57, binary
+built 18:46 -- the fix genuinely was running). `DEBUGBOOLFINAL`/`DEBUGVEC1EXPLICIT` still logged
+`is_active=false` for every handle, both hands, continuously, minutes into the session
+(19:06:43, 19:08:13-14 sampled) -- **the fix did not change the observed symptom at all.**
+
+**So the sync-actions race (patch 0004/0011) is confirmed real and correctly fixed, but is
+either not the actual cause of Aircar's specific failure, or only one contributing factor among
+several.** Read `frame_start_update`'s logic directly against this session's own log to check
+the two remaining unconditional-sync code paths patch 0011 did NOT touch:
+
+- The "no controllers connected -- syncing info set" branch (fires only when xrizer's own
+  `devices.get_controller()` sees no connected hand) fired **exactly once**, at `19:05:19.122`,
+  right at startup, on the compositor thread -- before xrizer's own device tracking had caught up
+  with Monado's already-registered controllers. It never fired again for the rest of the session
+  (checked via a later window of the same log). Real, but a narrow one-time startup race, not an
+  ongoing per-frame cause.
+- **A legitimate session recreation does happen, confirmed directly in the log**: session #1
+  created `19:05:00.291` (`ThreadId(1)`), manifest loaded against it at `19:05:19.006`; ~30ms
+  later the session cycles `SYNCHRONIZED -> STOPPING -> IDLE -> EXITING` and **session #2** is
+  created at `19:05:19.162` (`ThreadId(3)`, right after "Creating real backend for texture type
+  Vulkan" / a new 2160x2160 swapchain) -- this is xrizer's own known deferred-graphics-binding
+  design (create a placeholder session, then rebuild it once the game's real swapchain format is
+  known), not a bug by itself. **The manifest correctly reloads fresh against session #2**
+  (`19:05:19.166`, same 23 actions, same bindings) -- `InputSessionData` is confirmed
+  per-session (the second `actions.set(loaded)` call would have panicked via
+  `unwrap_or_else(|| unreachable!())` if the `OnceLock` had already been set once by session #1;
+  the process did not crash, so this path is clean). **This one-time resync at ~19:05:19 is not
+  the ongoing cause either** -- the failure persists in steady state for minutes afterward, long
+  past both of these startup-only events.
+
+**Net: two more candidate mechanisms directly ruled out with primary evidence, real cause of the
+STEADY-STATE (not startup) `is_active=false` still open.** Whoever picks this up next should
+stop looking at startup/session-lifecycle events (three separate ones now checked and cleared)
+and instead trace what happens to a *specific* action's `xr::Action` handle and its owning
+`xr::ActionSet` across many consecutive `UpdateActionState` frames deep into a session, since
+that's where the failure actually lives. The raw capture behind this section is
+`~/.local/state/xrizer/xrizer.txt`, Aircar PID 245947 launched 19:04:57 -- keep a copy before it
+rotates/grows further, this is the richest primary-source session recorded on this bug so far
+(full manifest load, both session generations, and live steady-state failure all in one file).
+
+## 13. Operational note: unplugging the Xbox pad mid-flow trips a Steam "no controller detected" dialog
+
+Found while planning a cleaner A/B (Xbox physically disconnected, not just ignored): Steam pops
+a "no controller detected" style dialog when its previously-tracked Xbox 360 pad disappears
+mid-session, and it needs a manual click to dismiss -- there is no known way to suppress or
+auto-dismiss it from here (SSH has no GUI access to click it, and this project deliberately does
+not attempt to drive a real desktop dialog from a headless session, see the "manos remotas"
+gap noted 2026-08-xx in `NEXT-STEP.md`). **Practical consequence for the booth**: do not plan on
+unplugging/re-plugging the Xbox pad live during a demo as a troubleshooting step -- it is not a
+transparent hot-swap, a guest-visible Steam dialog appears and someone has to be at the physical
+desktop to clear it. This is now the second reason (after the wand-input bug itself) that the
+Xbox pad has to be treated as a standing, physically-present booth requirement for Aircar, not
+an occasional fallback.
