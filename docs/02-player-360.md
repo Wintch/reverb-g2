@@ -361,6 +361,58 @@ works. Two follow-ups from the same session (both parked for a proper pass, not 
 - The wearer also asked for the same next-track/playlist control to work in the **360 (photo?)
   mode** — verify whether photo-mode has playlist navigation and add it if missing.
 
+### Xbox 360 gamepad fallback (2026-09-02, `0022-*.patch`) — BUILD-VERIFIED + host smoke-tested, NOT YET VERIFIED LIVE
+
+Requested so the player has a controls path that doesn't depend on a paired VR controller:
+this rig's own known gap is that Monado never re-probes for controllers after session
+startup (see `docs/03-controllers.md` / the project's controller-hotplug notes), so a
+session started with the WMR controllers off, or that loses them, is stuck with no
+controller input until the whole session restarts. A USB Xbox 360 pad is already this rig's
+established no-controllers-needed fallback for Aircar; it now does the same job here.
+
+New file `gamepadinput.h`/`.cpp`, a third producer into the exact same `PlayerControl::`
+functions the OpenXR controller-action poll and the keyboard thread already both call — no
+control logic duplicated, just a second input source. Reads the pad directly as a Linux
+joystick device (`/dev/input/jsN`, joydev), located via
+`/sys/class/input/jsN/device/id/{vendor,product}` for the same `045e:028e` this repo's own
+scripts already use to detect an Xbox 360 pad (`scripts/power-on.py`, `scripts/reseat_audio.py`)
+— never a hardcoded `jsN` path, since the kernel is free to reassign that across
+replugs/reboots. Mapped: **A** pause/resume, **Start** recenter, **RB** next track, **LB**
+previous track, **hold Guide ~1.5s** quit (mirrors the VR controller's Menu-hold gesture).
+Button events from joydev are already edges (press/release), so unlike the VR controller's
+analog trigger/thumbstick there's no hysteresis-latch to reimplement — each press fires once.
+Bonus this path gets for free that the VR controller path doesn't: real hotplug, both
+directions — the kernel creates/destroys the `jsN` node as the pad is plugged/unplugged, and
+the thread just keeps polling for it, so a pad connected mid-session (or unplugged and
+replugged) works with no restart.
+
+**Verified:** clean `ninja hello_xr` build (`-Wall` plus this project's usual
+`-Werror=implicit-fallthrough`/`-Werror=undef`/`-Werror=missing-braces`/`-Werror=unreachable-code`,
+no warnings). Then, since this rig had a real Xbox 360 pad plugged in
+(`Bus 003 Device 003: ID 045e:028e`), a standalone host-side harness was compiled and linked
+against the *actual* compiled `gamepadinput.cpp`/`playercontrol.cpp`/`logger.cpp` objects
+(same objects `hello_xr` itself links, entirely outside OpenXR/Vulkan/Monado) and run twice:
+idle for several seconds (found+opened `/dev/input/js0`, zero spurious `PlayerControl` state
+changes — proves the poll loop doesn't spin, crash, or false-trigger with a pad merely
+present), then again with `scripts/usb-reset-device.py --vid 045e --pid 028e` fired
+mid-run to force a real USB-level disconnect/reconnect. Result: `gamepad: disconnected`
+logged within one poll cycle of the reset, `gamepad: connected (/dev/input/js0)` logged
+~1s later once the kernel re-enumerated it, process never crashed or hung either side of
+the cycle — directly exercises the "must not crash/hang if unplugged mid-session"
+requirement this feature was built to.
+
+**NOT verified — needs a human:** no button was actually pressed (no hands attached to this
+SSH session), so the button-index-to-`PlayerControl::` dispatch itself (right button really
+does pause/recenter/next/prev/quit, not some other one) has only been checked by reading
+`jstest --normal`'s live report against the actual pad
+(`11 buttons (BtnA, BtnB, BtnX, BtnY, BtnTL, BtnTR, BtnSelect, BtnStart, BtnMode, BtnThumbL,
+BtnThumbR)`, confirming the index order the code assumes), not by pressing one and watching
+the player react. Also unverified: coexistence with a live OpenXR/Vulkan render loop and a
+real VR controller session running at the same time (both input paths write into the same
+atomics; nothing in the design should conflict, but that's a claim, not yet a measurement).
+Per this project's own rule, that needs a person wearing the headset with the pad in hand,
+not an agent.
+
 ### Mixed-format / arbitrary-size playlist projection (2026-08-26) — KNOWN ISSUE, to fix
 
 Playing a directory that mixes formats (SBS flat, VR180 half-equirect, 360) launched without an

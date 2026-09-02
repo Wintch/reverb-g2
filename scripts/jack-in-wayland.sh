@@ -239,6 +239,28 @@ if [ "$TRACKING" = "6dof" ] && [ ! -e "$BASALT_LIB" ]; then
     fail "6dof requested but $BASALT_LIB doesn't exist -- build it first (docs/01, 'Basalt's own deps')."
 fi
 
+if [ "${XDG_SESSION_TYPE:-}" != "wayland" ] && [ -S "/run/user/1000/wayland-0" ]; then
+    # A detached setsid/nohup/SSH shell has XDG_SESSION_TYPE=tty even when a real GNOME
+    # Wayland session is up and running (the socket check above proves it) -- recover its
+    # real DISPLAY/XAUTHORITY/WAYLAND_DISPLAY instead of refusing outright. Same gui_env.py
+    # already hand-copied into teardown-stress.sh/light-preflight.sh for this exact reason;
+    # wiring it in here once stops it from being forgotten by every new caller (docs/89-era
+    # "no hay graficas" incidents were all this: a real session up, just not inherited).
+    ENVLINES=$(python3 - "$(dirname "${BASH_SOURCE[0]}")" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import gui_env
+e = gui_env.get()
+for k in ("XDG_RUNTIME_DIR", "XDG_SESSION_TYPE", "WAYLAND_DISPLAY", "DISPLAY", "XAUTHORITY"):
+    if k in e:
+        print(f"{k}={e[k]}")
+PY
+    )
+    if [ -n "$ENVLINES" ]; then
+        while IFS='=' read -r k v; do [ -n "$k" ] && export "$k=$v"; done <<< "$ENVLINES"
+    fi
+fi
+
 if [ "${XDG_SESSION_TYPE:-}" != "wayland" ]; then
     echo "This needs a WAYLAND session (XDG_SESSION_TYPE=${XDG_SESSION_TYPE:-unset})." >&2
     echo "Log out and choose 'GNOME on Wayland' in SDDM." >&2

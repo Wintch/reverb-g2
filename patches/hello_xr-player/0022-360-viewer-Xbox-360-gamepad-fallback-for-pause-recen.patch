@@ -1,0 +1,451 @@
+From 872b56664dad3da5af2369ea9527293123c38907 Mon Sep 17 00:00:00 2001
+From: iam <iam@iashur.internal>
+Date: Wed, 2 Sep 2026 18:53:58 -0300
+Subject: [PATCH] 360 viewer: Xbox 360 gamepad fallback for
+ pause/recenter/next/prev/quit
+
+Requested so the player has a controls path that doesn't depend on a paired VR
+controller. This rig's own known gap: Monado never re-probes for controllers after
+session startup, so a session started with the WMR controllers off/unpaired - or
+that loses them mid-run - has no controller input at all until the whole session
+restarts. A USB Xbox 360 pad is already this rig's no-controllers-needed fallback
+for Aircar; this gives the 360/VR180 player the same option.
+
+New gamepadinput.h/.cpp is a third, fully independent producer into the exact same
+PlayerControl:: functions the OpenXR controller-action poll (openxr_program.cpp)
+and the raw-stdin keyboard thread (main.cpp) already both call - no control logic
+duplicated, just a second input source read on its own detached thread, the same
+architecture patch 0003's keyboard thread already established.
+
+Reads the pad directly as a Linux joystick device (/dev/input/jsN, the joydev API)
+rather than going through OpenXR/Monado - a real USB Xbox 360 pad is not visible to
+Monado on this rig at all (no prober/driver ever instantiates an xrt_device for it,
+confirmed by grepping the whole drivers/ tree; binding an action to
+/interaction_profiles/microsoft/xbox_controller would pass validation but resolve
+to a permanently unbound, always-isActive=false action). Located via
+/sys/class/input/jsN/device/id/{vendor,product} for the same 045e:028e VID:PID this
+repo's own scripts already use to detect an Xbox 360 pad (scripts/power-on.py,
+scripts/reseat_audio.py) - never a hardcoded jsN path, which the kernel is free to
+reassign across replugs/reboots/other joysticks.
+
+Mapped: A pause/resume, Start recenter, RB next track, LB previous track, hold
+Guide ~1.5s to quit (mirrors the VR controller's Menu-hold gesture - hold, don't
+tap; releasing early cancels with no cooldown). joydev button events are already
+edges (one event per press, one per release), so unlike the VR controller's analog
+trigger/thumbstick there is no hysteresis-latch to reimplement; each press calls
+its PlayerControl:: function exactly once. B/X/Y/Select/both thumbstick clicks are
+read (harmlessly ignored) but not bound to anything, and the sticks/triggers
+aren't read at all yet - kept to the requested core-controls scope, both are a
+natural follow-up.
+
+Genuinely hotplug-capable in both directions, unlike the VR controller path: the
+kernel creates/destroys the jsN node as the pad is plugged/unplugged, and the
+thread just keeps polling for it (open() failures and mid-session read/poll
+errors alike just go back to searching, logged, never fatal), so a pad connected
+mid-session or unplugged and replugged works with no restart.
+
+Build-verified clean (`ninja hello_xr`, -Wall plus this project's usual
+-Werror=implicit-fallthrough/-Werror=undef/-Werror=missing-braces/
+-Werror=unreachable-code, no warnings). This rig had a real Xbox 360 pad plugged in
+(Bus 003 Device 003: ID 045e:028e) during this change, so beyond the build a
+standalone host-side harness was compiled and linked against the actual compiled
+gamepadinput.cpp/playercontrol.cpp/logger.cpp objects (the same ones hello_xr
+itself links) and run entirely outside OpenXR/Vulkan/Monado: idle for several
+seconds first (found and opened /dev/input/js0, zero spurious PlayerControl state
+changes), then again with scripts/usb-reset-device.py firing a real USB reset on
+the pad mid-run to force a genuine disconnect/reconnect. Result: "disconnected"
+logged within one poll cycle of the reset, "connected (/dev/input/js0)" logged
+~1s later once the kernel re-enumerated it, no crash or hang on either side of the
+cycle - directly exercising the "must not crash/hang if unplugged mid-session"
+requirement this was built to.
+
+NOT verified: no button was actually pressed (no hands on this SSH session), so
+the button-index-to-PlayerControl:: dispatch itself is checked only against
+`jstest --normal`'s live report against the real pad ("11 buttons (BtnA, BtnB,
+BtnX, BtnY, BtnTL, BtnTR, BtnSelect, BtnStart, BtnMode, BtnThumbL, BtnThumbR)",
+confirming the index order this code assumes), not by pressing one and watching
+the player react. Also unverified: coexistence with a live OpenXR/Vulkan render
+loop and a real VR controller session running at the same time. Per this
+project's own rule, that needs a person wearing the headset with the pad in hand,
+not an agent.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013wcJ6UeY8LBrZJu9hwH8vB
+---
+ src/tests/hello_xr/CMakeLists.txt    |   2 +
+ src/tests/hello_xr/gamepadinput.cpp  | 219 +++++++++++++++++++++++++++
+ src/tests/hello_xr/gamepadinput.h    |  40 +++++
+ src/tests/hello_xr/main.cpp          |   7 +
+ src/tests/hello_xr/playercontrol.cpp |   4 +-
+ src/tests/hello_xr/playercontrol.h   |  15 +-
+ 6 files changed, 281 insertions(+), 6 deletions(-)
+ create mode 100644 src/tests/hello_xr/gamepadinput.cpp
+ create mode 100644 src/tests/hello_xr/gamepadinput.h
+
+diff --git a/src/tests/hello_xr/CMakeLists.txt b/src/tests/hello_xr/CMakeLists.txt
+index a703640..da6dd02 100644
+--- a/src/tests/hello_xr/CMakeLists.txt
++++ b/src/tests/hello_xr/CMakeLists.txt
+@@ -20,6 +20,7 @@ set(LOCAL_HEADERS
+     common.h
+     d3d_common.h
+     d3d12_utils.h
++    gamepadinput.h
+     geometry.h
+     graphicsapi.h
+     graphicsplugin.h
+@@ -38,6 +39,7 @@ set(LOCAL_HEADERS
+ set(LOCAL_SOURCE
+     d3d_common.cpp
+     d3d12_utils.cpp
++    gamepadinput.cpp
+     graphicsplugin_d3d11.cpp
+     graphicsplugin_d3d12.cpp
+     graphicsplugin_factory.cpp
+diff --git a/src/tests/hello_xr/gamepadinput.cpp b/src/tests/hello_xr/gamepadinput.cpp
+new file mode 100644
+index 0000000..d460536
+--- /dev/null
++++ b/src/tests/hello_xr/gamepadinput.cpp
+@@ -0,0 +1,219 @@
++// Copyright (c) 2017-2026 The Khronos Group Inc.
++//
++// SPDX-License-Identifier: Apache-2.0
++
++#include "pch.h"
++#include "common.h"
++#include "logger.h"
++#include "playercontrol.h"
++#include "gamepadinput.h"
++
++// See gamepadinput.h for the why. Everything below is Linux-only (joydev is a Linux kernel
++// API); on every other platform Start() is a harmless no-op further down.
++#if defined(XR_OS_LINUX)
++
++#include <algorithm>
++#include <cerrno>
++#include <chrono>
++#include <cstdint>
++#include <fcntl.h>
++#include <fstream>
++#include <linux/joystick.h>
++#include <optional>
++#include <poll.h>
++#include <string>
++#include <thread>
++#include <unistd.h>
++
++namespace GamepadInput {
++namespace {
++
++// Same VID:PID this repo's own scripts already use to identify an Xbox 360 pad (see
++// scripts/power-on.py's GAMEPAD_ID / scripts/reseat_audio.py's GAMEPAD_ID, both
++// "045e:028e") - split into two strings here because that's the shape sysfs hands back
++// (id/vendor and id/product are two separate files), not because the ID means anything
++// different in this file.
++constexpr const char* kVendor = "045e";
++constexpr const char* kProduct = "028e";
++
++// Xbox 360 pad button indices as reported through joydev on this rig's xpad driver,
++// confirmed live against the actual pad with `jstest --normal /dev/input/js0` (2026-09-02):
++// "11 buttons (BtnA, BtnB, BtnX, BtnY, BtnTL, BtnTR, BtnSelect, BtnStart, BtnMode, BtnThumbL,
++// BtnThumbR)", in that index order. Only the ones this file binds get a name; B, X, Y,
++// Select, and both thumbstick clicks are read (harmlessly ignored) but not wired to
++// anything, matching the requested "core controls" scope - the sticks and triggers aren't
++// read at all yet either (a natural follow-up, not done here).
++constexpr uint8_t kBtnA = 0;      // pause / resume            (mirrors the VR trigger)
++constexpr uint8_t kBtnTL = 4;     // left shoulder / LB        - previous track
++constexpr uint8_t kBtnTR = 5;     // right shoulder / RB       - next track
++constexpr uint8_t kBtnStart = 7;  // Start                     - recenter (mirrors the VR grip)
++constexpr uint8_t kBtnMode = 8;   // Xbox / Guide button, held - quit (mirrors the VR Menu hold)
++
++// Mirrors openxr_program.cpp's own Menu-hold-to-quit gesture (kQuitHoldSeconds there): hold,
++// don't tap, and releasing early cancels with no cooldown. Kept as a separate constant here
++// rather than shared with that file - same value, but the two hold timers run on completely
++// independent threads with no shared state, so there is nothing to actually share.
++constexpr double kQuitHoldSeconds = 1.5;
++
++// Looks for a /dev/input/jsN node whose kernel-reported vendor:product is the Xbox 360
++// pad's (045e:028e), via the joystick input-core's own id files
++// (/sys/class/input/jsN/device/id/{vendor,product}) rather than parsing `lsusb` text (this
++// repo's convention elsewhere, but that only proves *a* matching device is on the USB bus,
++// not which input node it became) or hardcoding a jsN number, which the kernel is free to
++// reassign across replugs, reboots, or whenever some other joystick is also plugged in.
++// Returns an empty string if none is found right now - normal whenever the pad isn't
++// plugged in, not logged as an error.
++std::string FindDevice() {
++    for (int n = 0; n < 32; ++n) {
++        const std::string base = "/sys/class/input/js" + std::to_string(n) + "/device/id/";
++        std::ifstream vendorFile(base + "vendor");
++        std::ifstream productFile(base + "product");
++        std::string vendor, product;
++        if (!(vendorFile >> vendor) || !(productFile >> product)) continue;
++        std::transform(vendor.begin(), vendor.end(), vendor.begin(), ::tolower);
++        std::transform(product.begin(), product.end(), product.begin(), ::tolower);
++        if (vendor == kVendor && product == kProduct) {
++            return "/dev/input/js" + std::to_string(n);
++        }
++    }
++    return {};
++}
++
++// One button transition. Buttons only, on purpose (see the file header): each joydev
++// JS_EVENT_BUTTON is already an edge (a press or a release), never a continuous level like
++// the VR controller's analog trigger/thumbstick axes, so there is no hysteresis-latch to
++// reimplement here - PlayerControl's own functions are called at most once per real
++// press, exactly like the keyboard path already does.
++void HandleButton(uint8_t number, bool down, std::optional<std::chrono::steady_clock::time_point>* guideHoldStart) {
++    switch (number) {
++        case kBtnA:
++            if (down) PlayerControl::TogglePause();
++            break;
++        case kBtnStart:
++            if (down) PlayerControl::RequestRecenter();
++            break;
++        case kBtnTR:
++            if (down) PlayerControl::RequestNextTrack();
++            break;
++        case kBtnTL:
++            if (down) PlayerControl::RequestPreviousTrack();
++            break;
++        case kBtnMode:
++            if (down) {
++                *guideHoldStart = std::chrono::steady_clock::now();
++            } else {
++                guideHoldStart->reset();  // released early - cancels, same as the VR Menu hold
++            }
++            break;
++        default:
++            break;  // not wired - see the file header for scope
++    }
++}
++
++// The whole thread: find the pad, poll it, map its buttons onto PlayerControl, and go back
++// to looking for it if it ever disappears. Never exits, never throws. Deliberately never
++// told to stop - it is harmless to leave parked in poll() with a short timeout for the rest
++// of the process's life, the same way the keyboard thread is deliberately left parked in
++// read() past quit (see main.cpp's ReadKeyByte comment) rather than torn down.
++void PollLoop() {
++    Log::Write(Log::Level::Info,
++               "gamepad: watching for an Xbox 360 pad (045e:028e) - optional; A pause/resume, "
++               "Start recentra, RB/LB next/prev track, hold Guide ~1.5s to quit. Useful when a "
++               "VR controller isn't paired/available.");
++    int fd = -1;
++    std::optional<std::chrono::steady_clock::time_point> guideHoldStart;
++
++    while (true) {
++        if (fd < 0) {
++            const std::string path = FindDevice();
++            if (path.empty()) {
++                std::this_thread::sleep_for(std::chrono::milliseconds(500));
++                continue;
++            }
++            // O_NONBLOCK: reads must never block this thread past the poll() below, and
++            // joydev's own "give me the current state of every axis/button" burst on open
++            // (JS_EVENT_INIT, drained in the loop below) would otherwise do exactly that if
++            // it ever raced with an empty read buffer.
++            fd = open(path.c_str(), O_RDONLY | O_NONBLOCK);
++            if (fd < 0) {
++                // Race with the device disappearing again between FindDevice() and open(),
++                // or a permissions hiccup - either way, just try again shortly.
++                std::this_thread::sleep_for(std::chrono::milliseconds(500));
++                continue;
++            }
++            Log::Write(Log::Level::Info, Fmt("gamepad: connected (%s)", path.c_str()));
++        }
++
++        pollfd pfd{fd, POLLIN, 0};
++        // A 100ms cap, not an unbounded wait: the Guide-hold-to-quit timer below needs to
++        // keep advancing even while the pad sits idle mid-hold with no new event to wake us.
++        const int pr = poll(&pfd, 1, 100);
++        if (pr > 0 && (pfd.revents & (POLLERR | POLLHUP | POLLNVAL))) {
++            Log::Write(Log::Level::Info, "gamepad: disconnected");
++            close(fd);
++            fd = -1;
++            guideHoldStart.reset();
++            continue;
++        }
++        if (pr > 0 && (pfd.revents & POLLIN)) {
++            js_event ev;
++            bool disconnected = false;
++            while (true) {
++                const ssize_t n = read(fd, &ev, sizeof(ev));
++                if (n == (ssize_t)sizeof(ev)) {
++                    // JS_EVENT_INIT is OR'd onto the type for the synthetic "here's the
++                    // current state" events joydev sends right after open() - masked off so
++                    // an already-held button at open time isn't treated as a fresh press
++                    // (most relevant for Guide: holding it through a reconnect shouldn't
++                    // silently start the quit timer).
++                    if ((ev.type & ~JS_EVENT_INIT) == JS_EVENT_BUTTON) {
++                        HandleButton(ev.number, ev.value != 0, &guideHoldStart);
++                    }
++                    continue;
++                }
++                if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) break;  // drained
++                // Anything else (unplugged mid-read, a short read, ...) is the normal,
++                // expected "pad went away" case here, not a fatal error - go back to
++                // searching rather than propagating it.
++                disconnected = true;
++                break;
++            }
++            if (disconnected) {
++                Log::Write(Log::Level::Info, "gamepad: disconnected");
++                close(fd);
++                fd = -1;
++                guideHoldStart.reset();
++                continue;
++            }
++        }
++
++        // Guide-hold-to-quit timing, checked on every poll wakeup (event or 100ms timeout
++        // alike) so it fires the moment the hold crosses the threshold instead of only when
++        // the next unrelated event happens to arrive.
++        if (guideHoldStart) {
++            const double held =
++                std::chrono::duration<double>(std::chrono::steady_clock::now() - *guideHoldStart).count();
++            if (held >= kQuitHoldSeconds) {
++                Log::Write(Log::Level::Info, "gamepad: Guide held ~1.5s - quitting");
++                PlayerControl::RequestQuit();
++                guideHoldStart.reset();
++            }
++        }
++    }
++}
++
++}  // namespace
++
++void Start() {
++    std::thread(PollLoop).detach();
++}
++
++}  // namespace GamepadInput
++
++#else  // !XR_OS_LINUX
++
++namespace GamepadInput {
++void Start() {}
++}  // namespace GamepadInput
++
++#endif
+diff --git a/src/tests/hello_xr/gamepadinput.h b/src/tests/hello_xr/gamepadinput.h
+new file mode 100644
+index 0000000..97c8876
+--- /dev/null
++++ b/src/tests/hello_xr/gamepadinput.h
+@@ -0,0 +1,40 @@
++// Copyright (c) 2017-2026 The Khronos Group Inc.
++//
++// SPDX-License-Identifier: Apache-2.0
++
++// Xbox 360 gamepad fallback for the 360/VR180 player, Linux only.
++//
++// Monado has no runtime controller hotplug on this rig (the WMR device is built once at
++// session startup and never re-probed - see the project's own G2-controller-hotplug notes),
++// so a session started with the VR controllers off/unpaired, or that loses them mid-run, has
++// no controller input at all until the whole session is restarted. This gives the player a
++// second, fully independent way to reach the same core controls without touching Monado or
++// OpenXR at all: an Xbox 360 pad read directly as a Linux joystick device (/dev/input/jsN,
++// the joydev API), located by the same 045e:028e USB vendor:product this repo already uses
++// to detect an Xbox 360 pad elsewhere (see scripts/power-on.py, scripts/reseat_audio.py)
++// rather than a hardcoded device path. Unlike the VR controller path, this one is genuinely
++// hot-pluggable in both directions - the kernel creates/destroys the jsN node as the pad is
++// plugged or unplugged, and this polls for that continuously - so a pad plugged in mid-
++// session, or unplugged and replugged, just works with no restart needed.
++//
++// Architecturally this is a third producer into the same shared control surface the raw-
++// stdin keyboard thread (main.cpp) and the OpenXR controller-action poll
++// (openxr_program.cpp's PollActions) already both feed: it calls straight into
++// PlayerControl::* for pause/resume, recenter, and next/previous track, and nothing else -
++// no control logic is duplicated here, only read and mapped.
++#pragma once
++
++namespace GamepadInput {
++
++// Starts the background polling thread. Call once, from main(), alongside
++// PlayerControl::BeginRawInput(). Returns immediately - the thread does its own device
++// discovery and never blocks the caller. On a non-Linux build this is a no-op: joydev is a
++// Linux kernel interface, and every other supported platform here (Windows/Android/Metal)
++// still gets the player's existing VR-controller and keyboard paths unchanged.
++//
++// Never throws and never exits. A pad that is absent, unplugged mid-session, or replugged
++// is the normal, expected case, not an error - it is retried silently, forever, without any
++// effect on the render loop or the other two input paths.
++void Start();
++
++}  // namespace GamepadInput
+diff --git a/src/tests/hello_xr/main.cpp b/src/tests/hello_xr/main.cpp
+index 31cfba9..04636f4 100644
+--- a/src/tests/hello_xr/main.cpp
++++ b/src/tests/hello_xr/main.cpp
+@@ -10,6 +10,7 @@
+ #include "graphicsplugin.h"
+ #include "openxr_program.h"
+ #include "playercontrol.h"
++#include "gamepadinput.h"
+ 
+ #include <cstdlib>
+ #include <cstring>
+@@ -422,6 +423,12 @@ int main(int argc, char* argv[]) {
+         }};
+         exitPollingThread.detach();
+ 
++        // Xbox 360 pad fallback - a second, fully independent input source for the same
++        // core controls (pause/resume, recenter, next/previous track), useful when a VR
++        // controller isn't paired or available (Monado has no runtime controller hotplug on
++        // this rig - see gamepadinput.h). No-op if no such pad is ever plugged in.
++        GamepadInput::Start();
++
+         bool requestRestart = false;
+         do {
+             // Create platform-specific implementation.
+diff --git a/src/tests/hello_xr/playercontrol.cpp b/src/tests/hello_xr/playercontrol.cpp
+index 237ed88..6345d55 100644
+--- a/src/tests/hello_xr/playercontrol.cpp
++++ b/src/tests/hello_xr/playercontrol.cpp
+@@ -373,7 +373,9 @@ const char* HelpLine() {
+            "enter recentra   n siguiente   p anterior   q salir "
+            "(mando WMR: trigger pausa, stick X seek, stick Y zoom, grip recentra, "
+            "A/B (der.) brillo, Y (izq.) siguiente, X (izq.) anterior, "
+-           "mantener Menu ~1.5s sale)";
++           "mantener Menu ~1.5s sale) "
++           "(mando Xbox, opcional: A pausa, Start recentra, RB siguiente, LB anterior, "
++           "mantener Guide ~1.5s sale)";
+ }
+ 
+ }  // namespace PlayerControl
+diff --git a/src/tests/hello_xr/playercontrol.h b/src/tests/hello_xr/playercontrol.h
+index c75dbb0..4380cea 100644
+--- a/src/tests/hello_xr/playercontrol.h
++++ b/src/tests/hello_xr/playercontrol.h
+@@ -4,7 +4,7 @@
+ // consumer sits deep inside the render loop, so the state between them is a small set of
+ // atomics rather than a parameter threaded through the graphics plugin interface.
+ //
+-//   space   pause / resume (also: WMR controller trigger)
++//   space   pause / resume (also: WMR controller trigger; Xbox pad A)
+ //   [  ]    slower / faster (1x, 0.5x, 0.25x, 2x ...)
+ //   1       back to normal speed
+ //   h  l    seek -10s / +10s (also: WMR controller thumbstick X)
+@@ -15,10 +15,15 @@
+ //   0       back to no zoom (1x)
+ //   b  d    brighter / dimmer (also: Touch controller A/B, right hand)
+ //   9       back to normal brightness (1x)
+-//   enter   recenter forward (also: WMR controller squeeze/grip)
+-//   n       next file in the playlist (also: Touch controller Y, left hand)
+-//   p       previous file in the playlist (also: Touch controller X, left hand)
+-//   q ESC   quit (also: hold the WMR Menu button ~1.5s)
++//   enter   recenter forward (also: WMR controller squeeze/grip; Xbox pad Start)
++//   n       next file in the playlist (also: Touch controller Y, left hand; Xbox pad RB)
++//   p       previous file in the playlist (also: Touch controller X, left hand; Xbox pad LB)
++//   q ESC   quit (also: hold the WMR Menu button ~1.5s; Xbox pad: hold Guide ~1.5s)
++//
++// An Xbox 360 pad (see gamepadinput.h/.cpp) is a third, fully independent producer into
++// this same control surface - a fallback for when a VR controller isn't paired/available,
++// since Monado has no runtime controller hotplug on this rig. Only the controls listed
++// above are wired to it; seek/zoom/brightness have no pad binding yet.
+ 
+ #pragma once
+ 
+-- 
+2.47.3
+

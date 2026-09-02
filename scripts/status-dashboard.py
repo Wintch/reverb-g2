@@ -818,6 +818,7 @@ def build_status():
         "coredumps": coredump_info(),
         "monado": monado,
         "tracking": rig_telemetry.tracking_mode(monado["pids"][0] if monado["running"] else None),
+        "controllers": rig_telemetry.controller_status(),
         "gpu": driver_info(),
         "gpu_power": gpu_power(),
         "power_mode": rig_telemetry.power_mode(),
@@ -956,6 +957,10 @@ PAGE = """<!doctype html>
   .demo button { font-family:var(--font-body); font-weight:600; font-size:13px; text-align:left;
                  background:transparent; border:none; color:var(--ink); padding:0; cursor:pointer; width:100%; }
   .demo .note { font-family:var(--font-mono); font-size:11.5px; color:var(--ink-dim); line-height:1.4; }
+  .demo .note-more { margin-top:4px; }
+  .demo .note-more summary { cursor:pointer; color:var(--ink-inactive); font-size:11px; user-select:none; }
+  .demo .note-more summary:hover { color:var(--ink-dim); }
+  .demo .note-more[open] summary { margin-bottom:4px; }
   .demo .st { font-family:var(--font-mono); font-size:10.5px; font-weight:700; letter-spacing:.03em;
               padding:2px 6px; border-radius:4px; margin-right:6px; text-transform:uppercase; }
   .st.approved { background:var(--ok-bg); color:var(--ok); }
@@ -1361,7 +1366,14 @@ async function loadDemos() {
       btn.onclick = () => runAction(id, btn);
       const info = document.createElement('div');
       info.className = 'note';
-      info.innerHTML = `<span class="st ${d.status}">${d.status.toUpperCase()}</span>${d.note}`;
+      // 2026-09-02: these notes are internal engineering history (often 100-300+ words per
+      // title) and were being dumped on the card in full -- exactly the "mucha info demas"
+      // the user flagged. Show a short first-sentence preview always, hide the rest behind a
+      // native <details> disclosure (zero extra JS, keyboard-operable) instead of dropping it.
+      const firstSentence = (d.note.match(/^.*?[.!?](?=\\s|$)/) || [d.note.slice(0, 110)])[0];
+      const rest = d.note.slice(firstSentence.length).trim();
+      info.innerHTML = `<span class="st ${d.status}">${d.status.toUpperCase()}</span>${firstSentence}`
+        + (rest ? `<details class="note-more"><summary>+ detalle</summary>${rest}</details>` : '');
       row.appendChild(btn);
       row.appendChild(info);
       // "approved" is the only status a guest should ever see offered -- kept as
@@ -1464,6 +1476,19 @@ async function tick() {
     const trackingRow = sessionActive
       ? `<div class="row"><span>DoF (head tracking)</span><span class="ok">${dofMap[d.tracking] || (d.tracking || '?')} <span class="dim">&middot; ${headset}</span></span></div>`
       : `<div class="row"><span>DoF (head tracking)</span><span class="dim">n/a -- no session (set per player &times; headset when a demo starts)</span></div>`;
+    // Controllers (joysticks): startup-time detection only (Monado has no live hotplug --
+    // project_g2_controller_hotplug_gap), so a "off" here after they were just powered on
+    // means "jack-in-wayland.sh down/up", not "wait and refresh". See rig_telemetry.controller_status.
+    const ctrl = d.controllers || {};
+    function ctrlSpan(v) {
+      if (v === true) return '<span class="ok">on</span>';
+      if (v === false) return '<span class="bad">off</span>';
+      return '<span class="dim">?</span>';
+    }
+    const ctrlNeedsCycle = ctrl.left === false || ctrl.right === false;
+    const controllersRow = sessionActive
+      ? `<div class="row"><span>controllers (joysticks)</span><span>${ctrl.error ? `<span class="dim">${ctrl.error}</span>` : `L ${ctrlSpan(ctrl.left)} &middot; R ${ctrlSpan(ctrl.right)}`}${ctrlNeedsCycle ? ' <span class="warn">-- power on, then jack-in down/up (no live hotplug)</span>' : ''}</span></div>`
+      : `<div class="row"><span>controllers (joysticks)</span><span class="dim">n/a -- no session running</span></div>`;
     const audio = d.audio || {};
     const audioCls = audio.route === 'headset' ? 'ok' : 'warn';
     const audioLabel = `${audio.route || '?'}${audio.muted ? ' (MUTED)' : ''} -- ${audio.volume_pct != null ? audio.volume_pct + '%' : '?'}`;
@@ -1481,6 +1506,7 @@ async function tick() {
       <div class="row"><span>state</span><span class="${sessionActive?'ok':'dim'}">${sessionActive?'ACTIVE -- compositor running':'IDLE -- no game/compositor session right now, this is normal at rest'}</span></div>
       <div class="row"><span>power mode</span>${powerRow}</div>
       ${trackingRow}
+      ${controllersRow}
       ${audioRow}
       ${pmRow}
     `;

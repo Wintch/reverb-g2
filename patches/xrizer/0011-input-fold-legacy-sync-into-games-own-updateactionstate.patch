@@ -1,0 +1,111 @@
+From 92768358d266c81f3572b58391ddadf491a7b1a1 Mon Sep 17 00:00:00 2001
+From: iam <iam@iashur.internal>
+Date: Wed, 2 Sep 2026 18:40:36 -0300
+Subject: [PATCH] input: fold legacy sync into game's own UpdateActionState
+ call
+
+Patch 0004 made frame_start_update call xrSyncActions([legacy.set])
+unconditionally every frame on the compositor/WaitGetPoses thread, even
+when a game has its own manifest loaded and is already driving its own
+per-frame xrSyncActions from its own game-logic thread (main+pose+
+skeletal+haptic sets via UpdateActionState).
+
+Monado's oxr_action_sync_data_with_context resets every previously
+attached action set (U_ZERO) and then repopulates only the sets named
+in the current call, with no lock protecting that reset+repopulate
+section against a concurrent caller. Two independent per-frame
+xrSyncActions callers on two different threads are therefore
+last-write-wins at the whole-action-set granularity: whichever call's
+reset+repopulate lands second zeroes is_active for every set the other
+call named that it didn't also name itself.
+
+This is confirmed to be the Aircar controller regression (both hands,
+all action types, ~100% of samples): a live failing-session RUST_LOG
+showed WaitGetPoses/session-state on one thread and UpdateActionState/
+GetActionState on another, with no synchronization between them.
+
+Fix: fold the legacy set into UpdateActionState's own sync_sets when a
+manifest is loaded and the game is actively calling it, so legacy and
+the game's own sets land in one combined xrSyncActions call instead of
+two racing ones. frame_start_update now only falls back to its own
+standalone legacy sync when the game did *not* fold it in this frame
+(e.g. a title that loads a manifest defensively but only ever polls
+the legacy API) -- tracked via a new legacy_synced_by_game flag set by
+UpdateActionState and consumed (swap-cleared) by frame_start_update.
+---
+ src/input.rs | 38 +++++++++++++++++++++++++++++++++++---
+ 1 file changed, 35 insertions(+), 3 deletions(-)
+
+diff --git a/src/input.rs b/src/input.rs
+index 2602beb..06b683c 100644
+--- a/src/input.rs
++++ b/src/input.rs
+@@ -63,6 +63,23 @@ pub struct Input<C: openxr_data::Compositor> {
+     subaction_paths: SubactionPaths,
+     events: Mutex<VecDeque<InputEvent>>,
+     loading_actions: AtomicBool,
++    // Set by UpdateActionState whenever it folds the legacy action set into its own
++    // xrSyncActions call; cleared by frame_start_update the next time it checks it. This
++    // exists because xrSyncActions is "last write wins" per action set on runtimes that
++    // reset every attached set not included in a given call (Monado's
++    // oxr_action_sync_data_with_context does exactly this in its "Reset all action set
++    // attachments" step, unprotected by any lock against a concurrent caller). frame_start_update
++    // runs on the compositor/WaitGetPoses thread, independently of the game's own
++    // UpdateActionState thread (confirmed via a live Aircar session's RUST_LOG:
++    // WaitGetPoses/session-state activity landed on a different ThreadId than
++    // UpdateActionState/GetActionState calls) -- an unconditional standalone
++    // sync_actions([legacy.set]) call from frame_start_update therefore races the game's own
++    // sync_actions([main, ...]) call and can zero out the game's action-set activity the
++    // instant it lands after the game's own sync. This is what made Aircar (and any other
++    // title that drives its own per-frame UpdateActionState) see is_active=false permanently
++    // once patch 0004 made this sync unconditional. Skip the standalone sync whenever the
++    // game is already doing it for us.
++    legacy_synced_by_game: AtomicBool,
+     // No dashboard/vrmonitor exists in this reimplementation to provide SteamVR's usual
+     // "hold the menu button to recenter" shortcut, so games without their own in-game
+     // recenter option have no way to fix play-space drift. This adds that shortcut back
+@@ -143,6 +160,7 @@ impl<C: openxr_data::Compositor> Input<C> {
+             subaction_paths,
+             events: Mutex::default(),
+             loading_actions: false.into(),
++            legacy_synced_by_game: false.into(),
+             system_recenter_hold: Mutex::new(None),
+             system_recenter_fired: false.into(),
+         }
+@@ -1073,6 +1091,15 @@ impl<C: openxr_data::Compositor> vr::IVRInput011_Interface for Input<C> {
+             ));
+             sync_sets.push(xr::ActiveActionSet::new(&skeletal_input.set));
+             sync_sets.push(xr::ActiveActionSet::new(&actions.haptic_set));
++            // Fold the legacy set into THIS sync call rather than leaving frame_start_update
++            // to sync it on its own, separate (and, per the live-tested evidence, separate-
++            // thread) call: one combined xrSyncActions call is the only way to keep both the
++            // game's own sets AND legacy active at the same time on a runtime that resets
++            // every attached set not named in a given call.
++            if let Some(legacy) = data.input_data.get_legacy_actions() {
++                sync_sets.push(xr::ActiveActionSet::new(&legacy.set));
++                self.legacy_synced_by_game.store(true, Ordering::Relaxed);
++            }
+             self.legacy_state.on_action_sync();
+         }
+ 
+@@ -1508,9 +1535,14 @@ impl<C: openxr_data::Compositor> Input<C> {
+             // GetControllerState per-frame for the buttons they actually care about -- see
+             // docs on load_action_manifest's legacy-set attach). load_action_manifest
+             // guarantees the legacy set exists by the time we get here, so this is normally
+-            // always `Some`; the `if let` is just defensive. Cheap: one extra sync_actions
+-            // call per frame for titles that never touch the legacy API at all.
+-            if let Some(legacy) = input_data.get_legacy_actions() {
++            // always `Some`. UpdateActionState folds legacy into its own sync call whenever
++            // the game is actively driving one this frame (see legacy_synced_by_game's doc
++            // comment for why a standalone call here is unsafe to do unconditionally) -- only
++            // fall back to syncing it ourselves when the game hasn't done that for us, e.g. a
++            // title that loaded a manifest defensively but only ever polls the legacy API.
++            if !self.legacy_synced_by_game.swap(false, Ordering::Relaxed)
++                && let Some(legacy) = input_data.get_legacy_actions()
++            {
+                 data.session
+                     .sync_actions(&[xr::ActiveActionSet::new(&legacy.set)])
+                     .unwrap();
+-- 
+2.47.3
+

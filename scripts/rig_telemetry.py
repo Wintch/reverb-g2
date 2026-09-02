@@ -126,3 +126,64 @@ def tracking_mode(pid=None):
     if env.get("WMR_CAMERAS") == "1":
         return "ctrl"
     return "3dof"
+
+
+_LIBMONADO_PATH = None
+
+
+def _libmonado_path():
+    global _LIBMONADO_PATH
+    if _LIBMONADO_PATH is None:
+        vr_dir = os.path.join(os.path.expanduser("~"), "vr")
+        _LIBMONADO_PATH = os.path.join(
+            vr_dir, "monado", "build", "src", "xrt", "targets", "libmonado", "libmonado.so"
+        )
+    return _LIBMONADO_PATH
+
+
+def controller_status():
+    """{"left": bool, "right": bool} if monado-service answered, or {"error": str} if it
+    couldn't be asked at all (not running, or libmonado missing) -- same libmonado
+    mnd_root_create/mnd_root_get_device_from_role call controller-battery-check.py already
+    uses (see that script's header), just presence instead of battery, so this and that
+    script can never disagree about whether a controller is "there".
+
+    NOTE: this is startup-time detection, not live -- Monado's WMR driver only probes
+    controllers once at wmr_hmd_create() (see project_g2_controller_hotplug_gap), so a
+    controller powered on AFTER the session started still reads False here. That is the
+    correct, honest answer (it reflects what Monado itself knows), not a bug in this check:
+    the fix for a False here is "power on + jack-in-wayland.sh down/up", not a dashboard
+    refresh.
+    """
+    import ctypes
+
+    lib_path = _libmonado_path()
+    if not os.path.exists(lib_path):
+        return {"error": "libmonado.so not built"}
+    if monado_pid() is None:
+        return {"error": "monado-service not running"}
+    try:
+        lib = ctypes.CDLL(lib_path)
+        lib.mnd_root_create.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
+        lib.mnd_root_create.restype = ctypes.c_int
+        lib.mnd_root_destroy.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
+        lib.mnd_root_destroy.restype = None
+        lib.mnd_root_get_device_from_role.argtypes = [
+            ctypes.c_void_p, ctypes.c_char_p, ctypes.POINTER(ctypes.c_int32),
+        ]
+        lib.mnd_root_get_device_from_role.restype = ctypes.c_int
+    except OSError as e:
+        return {"error": f"libmonado load failed: {e}"}
+
+    root = ctypes.c_void_p()
+    if lib.mnd_root_create(ctypes.byref(root)) != 0:
+        return {"error": "couldn't connect to monado-service"}
+    try:
+        result = {}
+        for hand in ("left", "right"):
+            idx = ctypes.c_int32(-1)
+            rc = lib.mnd_root_get_device_from_role(root, hand.encode(), ctypes.byref(idx))
+            result[hand] = bool(rc == 0 and idx.value >= 0)
+        return result
+    finally:
+        lib.mnd_root_destroy(ctypes.byref(root))

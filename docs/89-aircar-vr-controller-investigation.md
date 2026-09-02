@@ -215,3 +215,126 @@ actually implemented 2026-08-18 (commit `48fc243`), with a regression test
 (`legacy_input_still_works_with_manifest`). docs/49 has been corrected in place (header +
 status note) rather than rewritten, since the original spec is still an accurate historical
 record of the design.
+
+## 10. 2026-09-02: the bug is NOT Vector1-specific -- boolean/digital actions show the exact same is_active=false
+
+Added matching debug instrumentation to `GetDigitalActionData` (`DEBUGBOOL`/`DEBUGBOOLEXPLICIT`/
+`DEBUGBOOLFINAL`, mirroring the existing `DEBUGVEC1`/`DEBUGVEC1EXPLICIT` prints in
+`GetAnalogActionData`), rebuilt `libxrizer.so` (`--features static-openxr`, confirmed via
+`/proc/<pid>/maps` that the freshly-built `~/vr/xrizer/target/release/libxrizer.so` was the one
+actually loaded), and captured a real wearer session (headset on, both G2 controllers on and
+paired before Monado start, both explicit button/trigger/grip presses attempted).
+
+**Result: every one of the 5 boolean-action handles, plus both Vector1 handles, logged
+`is_active=false` continuously for the entire ~9.5-minute captured session** (16:49:07-16:58:49,
+`~/.local/state/xrizer/xrizer.txt`) -- a grep for any `true` value across the whole file
+(current_state/changed/right_state/left_state) returns **0 hits**. `DEBUGBOOLEXPLICIT` confirms
+both `right_active` and `left_active` are false at every single sample, not just the "any
+device" aggregate -- ruling out a `restrict_to_device`/subaction-path routing bug for the
+digital path too, the same way section 6 already ruled it out for the analog path.
+
+**This changes the shape of the bug**: it is not specific to Vector1/axis actions (as section 6
+left it), and not specific to any one binding or action -- it's uniform across every action type
+and every handle checked, both hands. This points AWAY from a per-action binding/manifest
+problem (already exhaustively checked clean in section 5) and TOWARD something upstream and
+structural: either the action SET itself never registers as truly "active" from the runtime's
+perspective despite "Activating set /actions/main" firing every sync (dozens of times per
+second, i.e. per-frame, per the log), or the session's synced-action-state bookkeeping has a bug
+that makes every subsequent action-state read return stale/inactive data regardless of the
+actual input. The section 6 "session gets silently recreated once ~200ms after start" lead is
+still open and now looks like the most likely remaining thread to pull -- but this session's
+data alone can't distinguish "stuck on the pre-restart action objects forever" from "some other
+single, one-time init step never completes" without directly instrumenting the sync-actions call
+in xrizer itself, not just its own action-state readback. Not done this session; next step for
+whoever picks this up.
+
+**Practical note**: given this is broader than previously scoped, don't budget "a quick session
+fix" for it again -- it needs either xrizer's own sync-actions call instrumented directly (one
+more debug print, cheap) or a from-scratch synthetic OpenXR client test isolating just
+"activate an action set, sync actions, read one boolean action" against Monado, to see whether
+the bug is xrizer-side or reachable in raw OpenXR too (the hello_xr harness in section 4 tested
+the *analog pipeline* end-to-end via Monado's raw API, not the action-set/sync-actions layer
+specifically -- these are different code paths and this gap was not closed by section 4).
+
+## 11. 2026-09-02: root cause found and fixed -- patch 0004's unconditional legacy sync races the game's own UpdateActionState
+
+This closes the "uniform across every action type and both hands" mystery section 10 left open. The
+regression window bisects to the same two commits already on record for this repo's xrizer fork:
+`5b957d4` (patch 0003, HMD presence) and `48fc243` (patch 0004, "legacy state coexists with action
+manifests") are the only two commits in the window that touch any input-related file
+(`src/input.rs`, `src/input/action_manifest.rs`, `src/input/legacy.rs`, `src/devices.rs`,
+`src/openxr_data.rs`) -- confirmed again this session via `git log`. Patch 0004 is the regression:
+before it, `frame_start_update` only synced the legacy OpenVR action set when no manifest was
+loaded (or no controllers were connected). Patch 0004 made that call **unconditional** -- it now
+fires every frame from `frame_start_update` regardless of whether a manifest is loaded and the
+game is already driving its own per-frame sync via `UpdateActionState`.
+
+**Mechanism, verified against the live source, not just the patch text:**
+
+- `UpdateActionState` (input.rs, game-logic thread) and `frame_start_update` (input.rs, called from
+  `Compositor::WaitGetPoses` -- the compositor/render thread) each independently call
+  `session.sync_actions(...)` every frame, with nothing in xrizer serializing them against each
+  other -- each just takes its own `session_data.get()` read-guard.
+- Monado's `oxr_action_sync_data_with_context` (`oxr_input.c`) resets (`U_ZERO`) every
+  previously-attached action set's state, then repopulates only the sets named in *that specific
+  call*. `oxr_action_cache_update` zeroes `cache->current` (including `active`) for any set that
+  comes back unselected.
+- The only mutex in that path (`sess_context->sync_actions_mutex`) guards an earlier, unrelated
+  "redo dynamic-role bindings" block -- the reset+repopulate section itself is **not** lock-protected
+  against a second, concurrent caller.
+- Net effect: two independent per-frame `xrSyncActions` callers on two different threads are
+  last-write-wins at the whole-action-set granularity. Whichever call's reset+repopulate lands
+  second zeroes `is_active` for every set the other call named that it didn't also name. No
+  sub-millisecond interleaving is required -- any ordering where one call finishes after the other
+  is sufficient. This explains why the failure was 100% of samples, both hands, every action type
+  (boolean and Vector1 alike, per section 10) rather than intermittent: the clobbering happens
+  upstream of any per-action or per-binding logic, at the whole-set level, on effectively every
+  frame.
+- A real 2026-09-02 failing-session log (the one behind section 10's findings) already shows the
+  two call sites on distinct threads -- `WaitGetPoses`/session-state activity on one `ThreadId`,
+  `UpdateActionState`/`GetActionState` on another -- with no synchronization between them, which is
+  exactly the precondition for this to fire on effectively every frame.
+- Alternative candidates were ruled out: Aircar's launcher entry `WMR_CONSTELLATION_CONTROLLERS=0`
+  is real (`vr-launcher.py:164-167`) but every reference to that env var in Monado's source lives in
+  the WMR driver files (`wmr_hmd.c`, `wmr_camera.c`, `wmr_source.c`, `wmr_controller_base.c`,
+  `target_builder_wmr.c`) -- never in `src/xrt/state_trackers/oxr`, where action attachment, sync,
+  and `is_active` computation actually live -- so it cannot be a contributing mechanism to this
+  bug. Patches 0005-0010 are compositor/`openxr_data`/chaperone-only and don't touch the input
+  path at all.
+
+**Fix applied (a real fix, not instrumentation).** `UpdateActionState` now folds the legacy action
+set into its *own* `sync_actions` call whenever a manifest is loaded (so legacy and the game's own
+sets land in one combined call instead of two racing ones), and sets a new `legacy_synced_by_game`
+flag (`AtomicBool`) when it does. `frame_start_update` now only performs its own standalone legacy
+sync when that flag was *not* set this frame (swap-and-clear) -- i.e. only for the case patch 0004
+was actually trying to serve: a title that loaded a manifest defensively but only ever polls the
+legacy `GetControllerState` API and never calls `UpdateActionState` itself. Applied to
+`~/vr/xrizer/src/input.rs` on iashur (4 hunks: struct field, `Input::new` init, the
+`UpdateActionState` sync-set build, and the `frame_start_update` fallback branch), matching the
+current tree byte-for-byte before editing -- re-read from the live file first, not patched blind
+by line number. Committed as `9276835` ("input: fold legacy sync into game's own UpdateActionState
+call") on top of `ed77ef8`, isolated from an unrelated, still-uncommitted debug-instrumentation diff
+already sitting in the working tree from section 10's investigation (left untouched, not mine to
+remove). Vendored as
+`patches/xrizer/0011-input-fold-legacy-sync-into-games-own-updateactionstate.patch` in this repo,
+following the existing 0001-0010 convention.
+
+**Build result:** `cargo build --release --features static-openxr` on iashur --
+`Finished \`release\` profile [optimized] target(s) in 6.51s`, zero errors, zero warnings (forced a
+full recompile of `input.rs` via `touch` to confirm, not relying on a stale incremental cache).
+`target/release/libxrizer.so` regenerated (16201056 bytes, timestamped to the build).
+
+**Confidence:** high on the mechanism -- independently re-derived from Monado's actual source
+(`oxr_input.c`) and xrizer's actual current source in this session, not taken on faith from an
+earlier report. Still **NOT wearer-confirmed**: no live test was available this session.
+
+**Outstanding: needs a live wearer A/B test before this can be marked resolved.** Both G2
+controllers powered on and paired *before* Monado start, **no Xbox 360 pad connected** (Aircar's
+own gamepad requirement, docs/23, was already controlled out once in the unrelated T193 A/B and
+should be again here so it can't confound the result), following the same before/after methodology
+as that A/B: launch Aircar, attempt real button/trigger/grip input on both controllers, confirm
+`is_active=true` and real gameplay response where section 10's captured session showed
+`is_active=false` for the full ~9.5 minutes on every handle checked. If section 10's debug
+instrumentation (`DEBUGBOOL`/`DEBUGVEC1`/etc., still present uncommitted) is left in place for that
+test, its log output can be used to confirm the fix directly rather than relying on gameplay feel
+alone.
