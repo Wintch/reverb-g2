@@ -1,0 +1,189 @@
+From ba7828acfa592b901dd113858f227aaa744c0d5a Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Thu, 3 Sep 2026 03:19:55 -0300
+Subject: [PATCH] input: is_active and profile-state diagnostics (docs/89 s10 +
+ s14)
+
+Diagnostic logging only, no behaviour change. DEBUGBOOL*/DEBUGVEC1* lines
+(section 10) record the raw is_active/value returned by xrGetActionState* per
+call; DEBUGPROFILE (section 14) logs what xrizer itself believes about each
+hand's bound profile and connected state on the same call; the
+InteractionProfileChanged arm now logs the event's own session handle next to
+the session poll_events treats as current (same_session tripwire).
+
+Built clean (cargo build --release --features static-openxr), not yet run
+under a wearer. Aircar's steady-state is_active=false remains open.
+---
+ src/input.rs       | 78 ++++++++++++++++++++++++++++++++++++++++++++--
+ src/openxr_data.rs | 25 ++++++++++++++-
+ 2 files changed, 100 insertions(+), 3 deletions(-)
+
+diff --git a/src/input.rs b/src/input.rs
+index 06b683c..f3fd21c 100644
+--- a/src/input.rs
++++ b/src/input.rs
+@@ -371,6 +371,39 @@ macro_rules! get_subaction_path {
+     };
+ }
+ 
++// Instrumentation (2026-09-02, Aircar dead-action-state investigation, see
++// docs/89-aircar-vr-controller-investigation.md section 14): logs the exact profile-bound
++// state xrizer holds for both hands (TrackedDevice::profile_path/connected, populated by
++// interaction_profile_changed()) plus the session identity/state, immediately before
++// GetDigitalActionData/GetAnalogActionData ask the runtime for is_active below. This is *not*
++// a fix -- the interaction-profile-changed-event hypothesis it was chasing was already refuted
++// by reading openxr-rs and Monado in full -- it exists so a live capture can be grepped for
++// exactly what xrizer believed about profile binding on the same line as (and immediately
++// before) the DEBUGBOOL/DEBUGVEC1 is_active result that call produces, closing the one gap
++// neither the primary trace nor its adversarial check could check without a live wearer: is
++// this a binding-resolution miss (cache->input_count==0 on Monado's side) that happens to
++// correlate with a specific profile_path/connected combination here.
++macro_rules! log_profile_snapshot {
++    ($self:expr, $session_data:expr, $handle:expr, $kind:expr) => {
++        {
++            let devices = $session_data.input_data.devices.read().unwrap();
++            let left = devices.get_controller(Hand::Left);
++            let right = devices.get_controller(Hand::Right);
++            debug!(
++                "DEBUGPROFILE({}) handle={} session={:?} session_state={:?} left_profile={:?} left_connected={:?} right_profile={:?} right_connected={:?}",
++                $kind,
++                $handle,
++                $session_data.session.as_raw(),
++                $session_data.state,
++                left.map(|d| d.profile_path),
++                left.map(|d| d.connected),
++                right.map(|d| d.profile_path),
++                right.map(|d| d.connected),
++            );
++        }
++    };
++}
++
+ impl<C: openxr_data::Compositor> vr::IVRInput011_Interface for Input<C> {
+     fn GetBindingVariant(
+         &self,
+@@ -907,12 +940,29 @@ impl<C: openxr_data::Compositor> vr::IVRInput011_Interface for Input<C> {
+         let mut out = WriteOnDrop::new(action_data);
+         get_action_from_handle!(self, handle, session_data, action, loaded);
+         let subaction_path = get_subaction_path!(self, restrict_to_device, action_data);
++        log_profile_snapshot!(self, session_data, handle, "analog");
+ 
+         let mut active_hand = restrict_to_device;
+         let (state, delta) = match action {
+             ActionData::Vector1 { action, last_value } => {
+                 let mut state = action.state(&session_data.session, subaction_path).unwrap();
+ 
++                debug!(
++                    "DEBUGVEC1 handle={handle} restrict_to_device={restrict_to_device} is_active={} current_state={}",
++                    state.is_active, state.current_state
++                );
++                {
++                    let right_path = self.get_subaction_path(crate::openxr_data::Hand::Right);
++                    let left_path = self.get_subaction_path(crate::openxr_data::Hand::Left);
++                    let right_state = action.state(&session_data.session, right_path).unwrap();
++                    let left_state = action.state(&session_data.session, left_path).unwrap();
++                    debug!(
++                        "DEBUGVEC1EXPLICIT handle={handle} right_active={} right_state={} left_active={} left_state={}",
++                        right_state.is_active, right_state.current_state,
++                        left_state.is_active, left_state.current_state
++                    );
++                }
++
+                 // It's generally not clear how SteamVR handles float actions with multiple bindings;
+                 //   so emulate OpenXR, which takes maximum among active actions
+                 if let Some((binding_state, binding_source)) =
+@@ -994,9 +1044,26 @@ impl<C: openxr_data::Compositor> vr::IVRInput011_Interface for Input<C> {
+         let ActionData::Bool(action) = &action else {
+             return vr::EVRInputError::WrongType;
+         };
++        log_profile_snapshot!(self, session_data, handle, "bool");
+ 
+         let mut state = action.state(&session_data.session, subaction_path).unwrap();
+ 
++        debug!(
++            "DEBUGBOOL handle={handle} restrict_to_device={restrict_to_device} is_active={} current_state={} changed={}",
++            state.is_active, state.current_state, state.changed_since_last_sync
++        );
++        {
++            let right_path = self.get_subaction_path(crate::openxr_data::Hand::Right);
++            let left_path = self.get_subaction_path(crate::openxr_data::Hand::Left);
++            let right_state = action.state(&session_data.session, right_path).unwrap();
++            let left_state = action.state(&session_data.session, left_path).unwrap();
++            debug!(
++                "DEBUGBOOLEXPLICIT handle={handle} right_active={} right_state={} left_active={} left_state={}",
++                right_state.is_active, right_state.current_state,
++                left_state.is_active, left_state.current_state
++            );
++        }
++
+         let mut active_hand = restrict_to_device;
+         if let Some((binding_state, binding_source)) =
+             self.state_from_bindings(handle, restrict_to_device)
+@@ -1007,6 +1074,11 @@ impl<C: openxr_data::Compositor> vr::IVRInput011_Interface for Input<C> {
+             active_hand = binding_source;
+         }
+ 
++        debug!(
++            "DEBUGBOOLFINAL handle={handle} is_active={} current_state={} activeOrigin={active_hand}",
++            state.is_active, state.current_state
++        );
++
+         *out.value = vr::InputDigitalActionData_t {
+             bActive: state.is_active,
+             bState: state.current_state,
+@@ -1477,12 +1549,14 @@ impl<C: openxr_data::Compositor> Input<C> {
+             session_data.input_data.interaction_profile_changed();
+ 
+             info!(
+-                "{} interaction profile changed: {}",
++                "{} interaction profile changed: {} (session={:?} session_state={:?})",
+                 self.openxr
+                     .instance
+                     .path_to_string(self.get_subaction_path(hand))
+                     .unwrap(),
+-                profile_name
++                profile_name,
++                session_data.session.as_raw(),
++                session_data.state,
+             )
+         }
+ 
+diff --git a/src/openxr_data.rs b/src/openxr_data.rs
+index 4d49402..1ee5b07 100644
+--- a/src/openxr_data.rs
++++ b/src/openxr_data.rs
+@@ -234,7 +234,30 @@ impl<C: Compositor> OpenXrData<C> {
+                     state = Some(event.state());
+                     info!("OpenXR session state changed: {:?}", event.state());
+                 }
+-                xr::Event::InteractionProfileChanged(_) => {
++                xr::Event::InteractionProfileChanged(event) => {
++                    // Instrumentation (2026-09-02, Aircar dead-action-state investigation,
++                    // see docs/89-aircar-vr-controller-investigation.md section 14): logs the
++                    // session this event actually names (straight off the raw
++                    // XrEventDataInteractionProfileChanged, via event.session()) next to
++                    // whichever session poll_events_impl currently considers "current"
++                    // (session_data.session, passed in by poll_events()'s caller). The
++                    // hypothesis this was added to test -- that the event could fire for one
++                    // session generation while GetActionState keeps reading from a different,
++                    // now-stale one -- was already refuted by reading openxr-rs and Monado in
++                    // full (neither gates is_active on any cached event; both recompute it
++                    // live on every call). This log stays as a live tripwire: if
++                    // event_session and current_session ever print different values in a
++                    // captured run, that IS a genuine session-identity bug, caught directly
++                    // instead of inferred.
++                    let event_session = event.session();
++                    let current_session = session_data.session.as_raw();
++                    info!(
++                        "XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED polled: event_session={:?} current_session={:?} same_session={} session_state={:?}",
++                        event_session,
++                        current_session,
++                        event_session == current_session,
++                        session_data.state,
++                    );
+                     if let Some(input) = self.input.get() {
+                         input.interaction_profile_changed(session_data);
+                     }
+-- 
+2.47.3
+

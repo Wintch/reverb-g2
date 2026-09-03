@@ -402,3 +402,125 @@ transparent hot-swap, a guest-visible Steam dialog appears and someone has to be
 desktop to clear it. This is now the second reason (after the wand-input bug itself) that the
 Xbox pad has to be treated as a standing, physically-present booth requirement for Aircar, not
 an occasional fallback.
+
+## 14. 2026-09-02 (later still): interaction-profile-changed-event hypothesis refuted; session/event identity confirmed clean; new is_active-and-profile-state instrumentation added (NOT a fix)
+
+A fresh hypothesis was chased in parallel with section 12's own open question: could `is_active`
+be gated somewhere on the one-time `XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED` event, such
+that it fires correctly for session #1 but never re-fires (or is never consulted) once section
+12's session #2 comes up? **Refuted, with primary source read in full on both sides of the
+xrizer/Monado boundary:**
+
+- xrizer's `GetDigitalActionData`/`GetAnalogActionData` (`input.rs`) call `action.state(&session,
+  subaction_path)` straight into the vendored `openxr` crate (`github.com/ralith/openxrs` @
+  `d0afdd3`, matching `Cargo.lock`), which does nothing but forward to
+  `xrGetActionStateBoolean`/`_float` on every single call -- zero caching in that crate.
+- Monado's own `oxr_action_get_boolean`/`oxr_get_state.c` reset `isActive=XR_FALSE` and fill it
+  from `act_attached-><path>.current.active`, which `oxr_action_cache_update`
+  (`oxr_input.c`) recomputes **live, on every `xrSyncActions`**, from session-focus state and
+  `oxr_input_combine_input()` (itself live: bound-input count + driver `xrt_input->active`). The
+  `XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED` push exists purely to notify the *application*
+  -- nothing in this gating path reads it.
+- A same-day capture (`~/.local/state/xrizer/xrizer.txt`, 19:04:57-19:23:39, since rotated out)
+  showed the event firing correctly and specifically for session #2 (4 ms after it reached
+  FOCUSED, correct profile for both hands), with `is_active=false` unchanged 18 minutes later --
+  direct evidence against the hypothesis, not just source-reading.
+- An adversarial re-check (independent, 92→refuted confidence writeup) additionally found: (a)
+  Monado's `session_update_action_bindings()` computes the profile-changed event and the actual
+  per-action binding call from the *same* `dynamic_roles_generation_id`-gated struct in the same
+  pass, so the event firing correctly for session #2 is direct proof the real bind call ran for
+  session #2 too, not merely correlated with it; (b) the WMR G2 controller driver
+  (`wmr_controller_hp.c`) sets every `xrt_input.active=true` exactly once at controller-object
+  creation and never toggles it again, ruling out a driver-level-active-flag cause; (c) this rig's
+  `wmr_controller_hp.c` already carries a `binding_profiles[]` compat table (dated 2026-08-06 in
+  its own comment) mapping the exact resolved profile from section 12's log
+  (`oculus/touch_controller`) to the G2's native inputs -- weakening (not proving false, but
+  substantially de-prioritizing) a profile-identity/binding-count-zero theory as the steady-state
+  cause; (d) the process runs for minutes without ever panicking on `GetAnalogActionData`'s bare
+  `.unwrap()` on `action.state(...)`, which is direct proof (a panic, not an inference) that
+  action-set attachment against the current session succeeds and Monado's `false` is a legitimate
+  `Ok(is_active=false)`, not a stale-session/detached-actionset error surfacing as a fluke.
+
+**Net result:** this closes the event-identity/session-generation branch of the investigation
+that section 12 left implicitly open (it already showed the manifest reload across session #1→#2
+was clean; this extends that to the interaction-profile-changed event specifically). It also
+narrows section 12's own parting instruction ("trace what happens to a specific action's `xr::
+Action` handle... across many consecutive frames") down to one concrete remaining candidate:
+**Monado's per-action binding resolution (`cache->input_count==0` inside
+`oxr_input_combine_input`/`oxr_action_cache_update`, `oxr_input.c`)** -- still unconfirmed, not yet
+directly observed, and the adversarial check's own proposed instrumentation for it
+(`OXR_DEBUG_BINDINGS=1` on `monado-service`, and a grep for Monado's `"Failed to get/combine input
+values '%s'"` log line) is Monado/env-side, not something to patch into xrizer.
+
+**What was actually done this session: instrumentation only, NOT a fix** (the specific hypothesis
+under test was refuted, so per the task's own branching there was nothing here to patch). Three
+changes applied to `~/vr/xrizer` (on top of the already-committed `9276835` / patch 0011, which
+section 12 already showed does not fix Aircar), re-reading each file's current source before
+editing and diffing the edited copy back against a fresh fetch before pushing it back (no
+blind/by-line-number patching):
+
+1. `src/openxr_data.rs`, `poll_events_impl`: the `InteractionProfileChanged` arm now binds the
+   event (was `(_)`) and logs `event.session()` (the raw session the event itself names, straight
+   off `XrEventDataInteractionProfileChanged`) next to `session_data.session.as_raw()` (whatever
+   `poll_events_impl` currently treats as "current"), plus whether they match and the session
+   state -- `XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED polled: event_session=... current_
+   session=... same_session=... session_state=...`. A live tripwire: if a captured run ever shows
+   `same_session=false`, that is direct proof of the exact session-identity bug the original
+   hypothesis guessed at, without needing to re-derive it from source again.
+2. `src/input.rs`, `Input::interaction_profile_changed`'s existing per-hand log line now also
+   prints the session's raw handle and state, so it can be correlated against (1) and against
+   Monado's own log by session identity, not just by timestamp.
+3. `src/input.rs`: a new `log_profile_snapshot!` macro, called from both `GetDigitalActionData`
+   and `GetAnalogActionData` immediately before the existing `action.state(...)` call, logging
+   `DEBUGPROFILE(bool|analog) handle=... session=... session_state=... left_profile=...
+   left_connected=... right_profile=... right_connected=...` -- i.e. exactly what xrizer's own
+   `TrackedDevice` bookkeeping believes about profile binding for both hands, on the same call
+   that immediately afterward logs the resulting `is_active` (the pre-existing `DEBUGBOOL*`/
+   `DEBUGVEC1*` lines from section 10). This is the piece neither the primary trace nor its
+   adversarial check could produce without a live capture: whether `connected`/`profile_path` are
+   healthy throughout the steady-state failure window, which — if they come back clean — would
+   finish ruling out anything on xrizer's side of the boundary and point Monado's
+   `cache->input_count` squarely at the sole remaining candidate.
+
+**Build result:** `cd ~/vr/xrizer && source ~/.cargo/env && cargo build --release --features
+static-openxr` on iashur -- `Finished \`release\` profile [optimized] target(s) in 9.49s`, zero
+errors, zero warnings. `target/release/libxrizer.so` regenerated (16,217,904 bytes, timestamped to
+the build). **Not installed/deployed** and **not committed** -- see the live-session note below;
+the working tree is left with these two files modified, uncommitted, on top of `9276835`, the same
+way section 10's own debug instrumentation was left uncommitted in the tree per section 11's note.
+
+**Heads-up, unresolved by this session: a live session appears to be running right now.**
+`monado-service` (PID 290187) has been running continuously since ~19:30 at 500-560% CPU (checked
+twice, 19:39 and 19:59, ~29 min elapsed at the second check), with the same Steam/Aircar PIDs
+(28292/30278) alive since 16:47 -- this looks like an active wearer session, which is why the new
+build was deliberately **not** installed or hot-loaded and `monado-service` was **not** touched.
+This contradicts this task's own stated assumption that "no live session is currently running
+Aircar" -- flagging it for whoever picks this up rather than silently overriding it. No heavy log
+analysis was performed against `~/.local/state/xrizer/xrizer.txt` while this appeared to be live,
+per the standing rule (only cheap `ls`/`grep -c` checks to confirm rotation, both showing zero
+hits for the section 10-12 capture window, meaning that primary evidence has already rotated out
+of the live file and only exists as quoted in this document and the session transcripts that
+produced sections 10-12).
+
+**What a live wearer test still needs to check to close this out:**
+
+- Confirm no one is currently wearing the headset, then build+install this instrumented binary
+  into whatever path the live `monado-service`/Steam session actually loads `libxrizer.so` from
+  (not identified this session -- no install script was found under `~/vr/xrizer`; check how
+  patch 0011's build made it into the process section 12 tested, since that same mechanism applies
+  here), and restart the affected process(es) cleanly (stale-socket + USB-settle hygiene as usual).
+- Launch Aircar with `RUST_LOG=xrizer=debug` as before, reproduce the dead-wand symptom, and pull
+  the new `XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED polled` lines: confirm `same_session`
+  reads `true` for the whole session (expected, per the source-level refutation above -- but this
+  is the first time it will be *observed* rather than reasoned about).
+- Correlate the new `DEBUGPROFILE` lines against the adjacent `DEBUGBOOLFINAL`/`DEBUGVEC1EXPLICIT`
+  lines for the same handle, deep into the steady-state failure window (minutes in, not just at
+  startup): if `left_connected`/`right_connected` are `true` and `left_profile`/`right_profile`
+  are non-null (matching `oculus/touch_controller`) throughout while `is_active` stays `false`,
+  that finishes eliminating xrizer's side of the boundary entirely and confirms the remaining work
+  is purely inside Monado's `oxr_input_combine_input`/`oxr_action_cache_update`.
+- In the same run, set `OXR_DEBUG_BINDINGS=1` on `monado-service` (the adversarial check's own
+  suggestion, exported the same way `jack-in-wayland.sh` already exports other Monado env vars)
+  and grep its output for the specific Aircar actions (Thrust/Reverse axis, Menu Interaction) on
+  both hands -- this answers directly whether `cache->input_count` is 0 for them, without needing
+  any further xrizer or Monado source patch to find out.
