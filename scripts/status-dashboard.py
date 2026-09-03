@@ -49,14 +49,41 @@ def usb_census():
     return {"devices": found, "present_count": present_count, "total": len(KNOWN_USB), "tree": tree}
 
 
+def _hmd_connector():
+    """DRM connector the HP Reverb G2 panel is on, by EDID fingerprint (HPN + product
+    0x36c1 = bytes 8..11 '22 0e c1 36'); None if the panel is asleep. This is the G2
+    display MODEL's id, identical on every G2 unit -- NOT rig-specific, and it never
+    reads the per-unit serial (bytes 12..15, docs/91). /sys .../edid is world-readable."""
+    import glob, os
+    for edid in glob.glob("/sys/class/drm/card*-*/edid"):
+        try:
+            with open(edid, "rb") as f:
+                head = f.read(12)
+        except OSError:
+            continue
+        if len(head) >= 12 and head[8:12] == b"\x22\x0e\xc1\x36":
+            return os.path.basename(os.path.dirname(edid))
+    return None
+
+
 def drm_status():
-    # Plain read works for most connectors; DP-1 specifically needs the scoped sudo grant.
+    # Enumerate the DRM connectors actually present and flag the one the HP Reverb G2
+    # panel is on (auto-detected by EDID fingerprint -- the port moved DP-1 -> DP-3 after
+    # the 2026-09-03 GPU swap and could move again, so nothing is hardcoded). status is
+    # world-readable, so the old scoped-sudo fallback is no longer needed.
+    import glob, os
+    hmd = _hmd_connector()  # e.g. "card0-DP-3", or None when the panel is down
     result = {}
-    for conn in ["DP-1", "DP-2", "HDMI-A-1", "HDMI-A-2"]:
-        out, rc = run(["cat", f"/sys/class/drm/card0-{conn}/status"])
-        if rc != 0 or not out:
-            out, rc = run(["sudo", "-n", "/bin/cat", f"/sys/class/drm/card0-{conn}/status"])
-        result[conn] = out if rc == 0 and out else "unknown (no permission)"
+    for path in sorted(glob.glob("/sys/class/drm/card*-*")):
+        name = os.path.basename(path)            # card0-DP-3
+        if "-" not in name:
+            continue
+        conn = name.split("-", 1)[1]             # DP-3, HDMI-A-1, ...
+        if not (conn.startswith("DP-") or conn.startswith("HDMI")):
+            continue
+        out, rc = run(["cat", f"{path}/status"])
+        key = conn + (" (HMD)" if name == hmd else "")
+        result[key] = out if rc == 0 and out else "unknown"
     return result
 
 

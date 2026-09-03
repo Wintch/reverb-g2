@@ -22,7 +22,10 @@ set -u
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONF="$REPO/experiments/vblank/nvkms-override-candidates.conf"
-CONNECTOR="/sys/class/drm/card0-DP-1"
+# Auto-detect the G2's DRM connector by EDID fingerprint (DP-3 since the 2026-09-03 GPU
+# swap, was DP-1); fall back to the historical port if the panel is asleep at run time.
+HMD_CONN="$("$REPO/scripts/hmd-connector.sh" 2>/dev/null)"
+CONNECTOR="/sys/class/drm/${HMD_CONN:-card0-DP-1}"
 
 EXPECTED="${1:-}"
 if [ -z "$EXPECTED" ]; then

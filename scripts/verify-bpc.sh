@@ -42,13 +42,15 @@ gcc -O2 -o "$BUILD/hmd-vk" scripts/hmd-vk.c "$BUILD/drm-lease-v1-protocol.c" -I"
 echo
 echo "=== waking up the panel (the connector appears a few seconds later) ==="
 ./scripts/panel.py activate >/dev/null 2>&1
+# Wait for the G2 panel to appear on whatever DRM connector it lands on (auto-detected
+# by EDID fingerprint -- the port is DP-3 since the 2026-09-03 GPU swap, was DP-1).
+HMD_CONN=""
 for i in $(seq 1 8); do
     sleep 3
-    st=$(cat /sys/class/drm/card0-DP-1/status 2>/dev/null)
-    [ "$st" = "connected" ] && { echo "  DP-1 connected at $((i*3))s"; break; }
+    HMD_CONN="$(./scripts/hmd-connector.sh 2>/dev/null)" && { echo "  G2 panel up on $HMD_CONN at $((i*3))s"; break; }
 done
-[ "$(cat /sys/class/drm/card0-DP-1/status 2>/dev/null)" = "connected" ] || {
-    echo "  !! the connector never showed up. Check the USB (all five, cap. 00)."; exit 1; }
+[ -n "$HMD_CONN" ] || {
+    echo "  !! the G2 panel connector never showed up. Check the USB (all five, cap. 00)."; exit 1; }
 
 ID=$(./scripts/testlog.py open "post-patch-0004 mode $MODE" "verify byte18 06->08 and panel at 90Hz")
 echo
