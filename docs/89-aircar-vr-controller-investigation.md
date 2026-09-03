@@ -524,3 +524,45 @@ produced sections 10-12).
   and grep its output for the specific Aircar actions (Thrust/Reverse axis, Menu Interaction) on
   both hands -- this answers directly whether `cache->input_count` is 0 for them, without needing
   any further xrizer or Monado source patch to find out.
+
+## 15. 2026-09-03: RESOLVED — the real cause was a SECOND patch-0004 defect (binding clobber), fixed in patch 0013
+
+§14's open item is closed. The decisive worn capture ran (docs/93) and named the mechanism. The
+cause was NOT the sync race §11 chased — that was a real but separate bug, correctly fixed by
+0011 and correctly found not to help here (§12). The real cause is a binding-table **clobber**,
+also introduced by patch 0004, one layer earlier: at bind/attach time, before any `sync_actions`
+call is even relevant.
+
+**Mechanism (code-confirmed + live-confirmed):**
+- `load_action_manifest` suggests the manifest's bindings for the active profile
+  (`oculus/touch_controller` for Aircar) via `load_bindings_for_profile` → one
+  `xrSuggestInteractionProfileBindings`.
+- It then calls `get_or_create_legacy_actions`, whose init closure runs `run_for_all_profiles`
+  and re-suggests **legacy** bindings for **every** supported profile — including the one just
+  bound — using a disjoint legacy action set.
+- Per the OpenXR spec, a second `xrSuggestInteractionProfileBindings` for the same profile
+  **replaces (not merges)** the first (Monado `oxr_binding.c` `reset_all_keys`, line 587). So the
+  manifest's `touch_controller` bindings are discarded before the single
+  `xrAttachSessionActionSets`.
+- Every manifest action ends with `input_count==0` → `is_active=false`, no error, forever.
+
+**Why it hid so long:** the clobber leaves the **legacy** bindings intact (the legacy suggest
+wins), so legacy-API titles (`GetControllerState`, e.g. Google Earth VR) keep working — only
+manifest-API titles (`UpdateActionState`/`GetActionState`, e.g. Aircar) go dead. That reconciles
+every prior "but that other title works" observation and is why this looked Aircar-specific.
+
+**Live capture proof** (real G2 hardware, session FOCUSED throughout, both controllers connected,
+profile bound):
+- OLD binary: `is_active=true` = **0** of 123010; `DEBUGVEC1` true = 0.
+- FIXED binary: `is_active=true` = **224928**; `DEBUGVEC1` true present; **182 real presses**
+  (`current_state=true`).
+- Wearer confirmed in-game: Y switches music, A starts the game, flight works.
+
+**Fix** (`patches/xrizer/0013`, xrizer commit `23df986`): any profile the manifest binds now gets
+ONE suggest call carrying the union of manifest + legacy bindings (`load_bindings_for_profile`
+folds in `legacy_bindings_for_profile`); `suggest_legacy_bindings_except` handles only the
+profiles the manifest did not cover. `get_or_create_legacy_actions` was split into
+`get_or_create_legacy_action_data` (create only) + the two suggest helpers. Compiles clean
+(`cargo build --release`, 36.7 s, 0 warnings); adversarially verified (2 skeptics, HOLDS).
+**Known-benign follow-up**: `pose_data.grip` is bound twice in the merged call — Monado tolerates
+duplicate binding pairs (proven live), dedup later.

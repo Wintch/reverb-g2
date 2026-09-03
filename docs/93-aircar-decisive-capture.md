@@ -106,3 +106,15 @@ profile the manifest already covers, or merge instead of clobber; for (2): find 
 session leaves FOCUSED) — **but they are flagged needs-live-confirmation and not written yet.**
 Patch 0011 is the standing precedent for why theorizing a fix before the capture is a trap: run
 the capture, let it name the mechanism, then fix that one.
+
+## RESOLVED (2026-09-03)
+
+Hypothesis (1) **confirmed**, (2) **refuted**. The capture ran on real G2 hardware: session
+`FOCUSED` throughout (refutes (2) — not a presence/focus problem), and `is_active=false` on every
+action despite the profile bound and both controllers connected (the (1) signature). Fix in
+`patches/xrizer/0013` (xrizer commit `23df986`): merge the manifest's and the legacy path's
+bindings into a single `xrSuggestInteractionProfileBindings` per profile instead of two, so the
+legacy call no longer clobbers the manifest's. Live A/B: `is_active` 0 → 224928 true, 182 real
+presses, wearer confirmed Y=music / A=start / flight. Full writeup: `docs/89` §15. The
+`OXR_DEBUG_BINDINGS` note above is moot — the xrizer-side `DEBUGPROFILE`/`DEBUGBOOLFINAL`
+instrumentation was enough to both name the mechanism and prove the fix.

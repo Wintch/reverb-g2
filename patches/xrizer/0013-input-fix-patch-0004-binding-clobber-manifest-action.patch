@@ -1,0 +1,432 @@
+From 23df986bd30a30c30e9456c07e32ec533f20ebea Mon Sep 17 00:00:00 2001
+From: iam <iam@iashur.internal>
+Date: Thu, 3 Sep 2026 15:24:18 -0300
+Subject: [PATCH] input: fix patch-0004 binding clobber (manifest actions dead
+ on arrival)
+
+Patch 0004 made load_action_manifest suggest the manifest bindings for a profile
+(e.g. oculus/touch_controller), then unconditionally call the legacy path whose
+closure re-suggested legacy bindings for EVERY profile -- including the one just
+bound. xrSuggestInteractionProfileBindings REPLACES (not merges) per profile, so
+the legacy call wiped the manifest bindings before the single attach_action_sets.
+Every manifest action ended up with zero bound sources -> is_active=false forever
+(live capture on Aircar: 0 of 123010 true, session FOCUSED, controllers connected,
+profile bound).
+
+Fix: a profile the manifest binds now gets ONE suggest carrying the union of
+manifest + legacy bindings (load_bindings_for_profile folds in
+legacy_bindings_for_profile); suggest_legacy_bindings_except handles the remaining
+profiles the manifest did not cover. Splits get_or_create_legacy_actions into
+get_or_create_legacy_action_data (create only) + the two suggest helpers.
+
+Live A/B confirmed on Aircar (1073390), real G2 hardware: is_active 0 -> 224928
+true, current_state=true on real presses; wearer confirmed Y=music, A=start,
+flight all work. Explains why patch 0011 (sync-race fix) never helped -- this
+clobber happens earlier, at bind/attach time. Known-benign follow-up: pose_data.grip
+is bound twice in the merged call (Monado tolerates duplicate binding pairs; proven
+harmless live) -- dedup later.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_016hLhNFWNfr9kz98qXtoftw
+---
+ src/input.rs                 |   2 +-
+ src/input/action_manifest.rs |  90 +++++++++++++++++----
+ src/input/legacy.rs          | 147 +++++++++++++++++++++++++----------
+ 3 files changed, 180 insertions(+), 59 deletions(-)
+
+diff --git a/src/input.rs b/src/input.rs
+index f3fd21c..28466c5 100644
+--- a/src/input.rs
++++ b/src/input.rs
+@@ -268,7 +268,7 @@ pub struct InputSessionData {
+     // state from once the slot held a Manifest. They're independent now: a session can (and,
+     // once frame_start_update or load_action_manifest has run once, always does) have both
+     // attached and synced simultaneously, so legacy polling keeps working for titles that mix
+-    // both APIs. See action_manifest::load_action_manifest and legacy::get_or_create_legacy_actions.
++    // both APIs. See action_manifest::load_action_manifest and legacy::get_or_create_legacy_action_data.
+     actions: OnceLock<ManifestLoadedActions>,
+     legacy_actions: OnceLock<LegacyActionData>,
+     estimated_skeleton_actions: OnceLock<SkeletalInputActionData>,
+diff --git a/src/input/action_manifest.rs b/src/input/action_manifest.rs
+index 230b2fa..2b877cf 100644
+--- a/src/input/action_manifest.rs
++++ b/src/input/action_manifest.rs
+@@ -7,8 +7,9 @@ pub(super) use bindings::{ClickThresholdParams, GrabParameters};
+ 
+ use crate::input::InteractionProfile;
+ use crate::input::action_manifest::context::BindingsLoadContext;
++use crate::input::legacy::LegacyActionData;
+ use crate::input::profiles::LegalPathsT;
+-use crate::input::{ActionKey, Input, profiles::RunWithProfile, skeletal::SkeletalInputActionData};
++use crate::input::{ActionKey, Input, PoseData, profiles::RunWithProfile, skeletal::SkeletalInputActionData};
+ use crate::openxr_data::{self, Hand, SessionData};
+ use log::{debug, error, info, warn};
+ use openvr as vr;
+@@ -49,7 +50,7 @@ impl<C: openxr_data::Compositor> Input<C> {
+             }
+             None => {
+                 // Note: legacy actions being already attached is no longer an error here --
+-                // they can coexist with a manifest (see get_or_create_legacy_actions below).
++                // they can coexist with a manifest (see get_or_create_legacy_action_data below).
+                 // A manifest specifically already being loaded with no `loaded_actions_path`
+                 // set would mean this function's own invariant (always set the path before
+                 // storing manifest actions, below) was violated somewhere -- still worth
+@@ -134,19 +135,41 @@ impl<C: openxr_data::Compositor> Input<C> {
+             )
+             .unwrap();
+ 
++        // Legacy action data (menu/trigger/squeeze/xy/the dedicated recenter-hold action/etc)
++        // is needed BEFORE we suggest any manifest bindings below, not after: a profile that
++        // both the manifest and legacy want bindings for must get exactly ONE
++        // suggest_interaction_profile_bindings call carrying the union of both, since a
++        // second call for the same profile REPLACES the first rather than merging with it
++        // (see get_or_create_legacy_action_data's doc comment -- this is the xrizer patch
++        // 0004 clobber this reordering fixes). Idempotent: if legacy was already attached in
++        // an EARLIER session generation (a game used legacy first, then called
++        // SetActionManifestPath), SetActionManifestPath already forced a session restart
++        // before calling us, so there's nothing stale to carry over here -- this always
++        // creates a fresh one for the new session.
++        let legacy = self.get_or_create_legacy_action_data(&session_data.input_data);
++        let pose_data = session_data.input_data.pose_data.get().unwrap();
++
+         let mut binding_context = context::BindingsLoadContext::new(
+             &sets,
+             actions,
+-            &session_data.input_data.pose_data.get().unwrap().grip,
++            &pose_data.grip,
+             &info_action,
+             &haptic_action,
+             skeletal_input,
+         );
+ 
++        // Profiles load_bindings suggests bindings for below, with this session's legacy
++        // bindings folded into the SAME call (see load_bindings_for_profile) -- the
++        // suggest_legacy_bindings_except call further down must skip re-suggesting these.
++        let mut manifest_bound_profiles: HashSet<&'static str> = HashSet::new();
++
+         self.load_bindings(
+             manifest_path.parent().unwrap(),
+             manifest.default_bindings,
+             &mut binding_context,
++            legacy,
++            pose_data,
++            &mut manifest_bound_profiles,
+         );
+ 
+         let context::BindingsLoadContext {
+@@ -162,17 +185,20 @@ impl<C: openxr_data::Compositor> Input<C> {
+         // is what keeps GetControllerState/GetControllerStateWithPose working for titles that
+         // load a manifest but still poll legacy state per-frame for some/all of their input
+         // (e.g. a defensively-registered stub manifest alongside real hellovr-style legacy
+-        // polling) -- see get_or_create_legacy_actions and get_legacy_controller_state.
+-        // Idempotent: if legacy was already attached in an EARLIER session generation (a game
+-        // used legacy first, then called SetActionManifestPath), SetActionManifestPath already
+-        // forced a session restart before calling us, so there's nothing stale to carry over
+-        // here -- this always creates a fresh one for the new session.
+-        let legacy = self.get_or_create_legacy_actions(&session_data.input_data);
++        // polling) -- see get_or_create_legacy_action_data and get_legacy_controller_state.
++        //
++        // Suggest legacy-only bindings for every OTHER supported profile (Vive, Knuckles,
++        // SimpleController, ...) that the manifest above didn't already cover -- e.g. a game
++        // whose manifest only ships touch_controller bindings still gets legacy-only
++        // GetControllerState on a Vive wand. Profiles the manifest DID cover were already
++        // suggested, with legacy bindings merged in, by load_bindings_for_profile above; must
++        // NOT re-suggest those here, or this call would silently replace that merged one.
++        self.suggest_legacy_bindings_except(legacy, pose_data, &manifest_bound_profiles);
+ 
+         let xr_sets: Vec<_> = sets
+             .values()
+             .chain([
+-                &session_data.input_data.pose_data.get().unwrap().set,
++                &pose_data.set,
+                 &info_set,
+                 &haptic_set,
+                 &skeletal_input.set,
+@@ -271,6 +297,9 @@ impl<C: openxr_data::Compositor> Input<C> {
+         parent_path: &Path,
+         bindings: Vec<actions::DefaultBindings>,
+         context: &mut context::BindingsLoadContext,
++        legacy: &LegacyActionData,
++        pose_data: &PoseData,
++        covered_profiles: &mut HashSet<&'static str>,
+     ) {
+         let mut it = bindings.into_iter().peekable();
+         while let Some(actions::DefaultBindings {
+@@ -314,20 +343,35 @@ impl<C: openxr_data::Compositor> Input<C> {
+                     info!("Ignoring bindings for unknown profile {other}")
+                 }
+                 ref other => {
+-                    let mut runner = Runner(self, context, bindings);
++                    let mut runner = Runner(
++                        self,
++                        context,
++                        bindings,
++                        legacy,
++                        pose_data,
++                        &mut *covered_profiles,
++                    );
+                     other.run_for_profile(&mut runner);
+ 
+                     // lifetime moment
+-                    struct Runner<'a, 'b, 'c, C: openxr_data::Compositor>(
++                    struct Runner<'a, 'b, 'c, 'd, C: openxr_data::Compositor>(
+                         &'a Input<C>,
+                         &'b mut BindingsLoadContext<'c>,
+                         bindings::Bindings,
++                        &'a LegacyActionData,
++                        &'a PoseData,
++                        &'d mut HashSet<&'static str>,
+                     );
+-                    impl<C: openxr_data::Compositor> RunWithProfile for Runner<'_, '_, '_, C> {
++                    impl<C: openxr_data::Compositor> RunWithProfile for Runner<'_, '_, '_, '_, C> {
+                         fn run<P: super::InteractionProfile>(&mut self) {
+                             if let Some(mut context) = self.1.for_profile::<C, P>(self.0) {
+-                                self.0
+-                                    .load_bindings_for_profile::<P>(&self.2.bindings, &mut context);
++                                self.0.load_bindings_for_profile::<P>(
++                                    &self.2.bindings,
++                                    &mut context,
++                                    self.3,
++                                    self.4,
++                                );
++                                self.5.insert(P::profile_path());
+                             } else {
+                                 warn!(
+                                     "Couldn't create context for profile {}?",
+@@ -349,6 +393,8 @@ impl<C: openxr_data::Compositor> Input<C> {
+         &self,
+         bindings: &HashMap<String, bindings::ActionSetBinding>,
+         context: &mut context::BindingsProfileLoadContext<'_>,
++        legacy: &LegacyActionData,
++        pose_data: &PoseData,
+     ) {
+         info!("loading bindings for {}", P::profile_path());
+ 
+@@ -399,7 +445,7 @@ impl<C: openxr_data::Compositor> Input<C> {
+             .trigger_click
+             .first()
+             .unwrap_or_else(|| panic!("Missing trigger_click binding for {}", P::profile_path()));
+-        let bindings: Vec<xr::Binding<'_>> = context
++        let mut bindings: Vec<xr::Binding<'_>> = context
+             .bindings
+             .iter()
+             .map(|(name, path)| {
+@@ -437,6 +483,18 @@ impl<C: openxr_data::Compositor> Input<C> {
+             .chain(skeletal_bindings.binding_iter(&context.skeletal_input.actions))
+             .collect();
+ 
++        // Fold this profile's legacy-action bindings (app_menu, trigger_click,
++        // system_recenter, xy, haptic, grip pose, ...) into this SAME suggest call, rather
++        // than leaving them to a second, separate suggest_interaction_profile_bindings call
++        // for this profile later (suggest_legacy_bindings_except, called from
++        // load_action_manifest right after load_bindings returns, explicitly skips any
++        // profile already covered here for exactly this reason). A second call for the same
++        // profile REPLACES this one instead of merging with it -- that clobber is the xrizer
++        // patch 0004 regression: every manifest action ended up with zero bound sources
++        // because the legacy-only suggest used to run, for every profile, right after this
++        // one returned.
++        bindings.extend(self.legacy_bindings_for_profile::<P>(legacy, pose_data));
++
+         self.openxr
+             .instance
+             .suggest_interaction_profile_bindings(profile_path, &bindings)
+diff --git a/src/input/legacy.rs b/src/input/legacy.rs
+index 01a76ec..0ee0dec 100644
+--- a/src/input/legacy.rs
++++ b/src/input/legacy.rs
+@@ -6,6 +6,7 @@ use crate::{
+ use log::{debug, info, trace, warn};
+ use openvr as vr;
+ use openxr as xr;
++use std::collections::HashSet;
+ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+ use std::time::Instant;
+ 
+@@ -44,8 +45,9 @@ macro_rules! button_mask_from_ids {
+ }
+ 
+ impl<C: openxr_data::Compositor> Input<C> {
+-    /// Returns this session's legacy action data, creating it (and suggesting its interaction
+-    /// profile bindings) if it doesn't exist yet. Does NOT attach or sync it -- the caller is
++    /// Returns this session's legacy action data, creating it if it doesn't exist yet. Does
++    /// NOT suggest interaction profile bindings, attach, or sync it -- see
++    /// `suggest_legacy_bindings_except` below for suggesting bindings; the caller is
+     /// responsible for including `.set` in its own `attach_action_sets`/`sync_actions` calls,
+     /// since `xrAttachSessionActionSets` is call-once per session and callers of this function
+     /// (`setup_legacy_actions` below, and `action_manifest::load_action_manifest`) each need
+@@ -57,71 +59,132 @@ impl<C: openxr_data::Compositor> Input<C> {
+     /// manifest was loaded. Now load_action_manifest calls this too, so the legacy set exists
+     /// and is attached+synced (see frame_start_update and get_legacy_controller_state)
+     /// regardless of whether a manifest is also loaded.
+-    pub(super) fn get_or_create_legacy_actions<'a>(
++    ///
++    /// Split from suggesting interaction-profile bindings (unlike the single get-or-suggest
++    /// function this used to be) so `load_action_manifest` can create this data BEFORE
++    /// suggesting bindings for the manifest's own profiles, then fold that SAME profile's
++    /// legacy bindings into ONE suggest call instead of a second, separate one -- see
++    /// `legacy_bindings_for_profile` and `suggest_legacy_bindings_except` below, and
++    /// `action_manifest::load_bindings_for_profile`. `xrSuggestInteractionProfileBindings`
++    /// REPLACES the runtime's stored bindings for a given interaction profile rather than
++    /// merging with an earlier call for that same profile, so two calls for the same profile
++    /// clobber instead of accumulating -- this was the root cause of xrizer patch 0004's
++    /// manifest-actions-dead-on-arrival regression (see docs/89 in the reverb-g2 project): the
++    /// legacy-only suggest that used to happen unconditionally here, for every profile,
++    /// always ran AFTER the manifest's own suggest, silently discarding it.
++    pub(super) fn get_or_create_legacy_action_data<'a>(
+         &self,
+         input_data: &'a super::InputSessionData,
+     ) -> &'a LegacyActionData {
+-        let pose_data = input_data.pose_data.get().unwrap();
+         input_data.legacy_actions.get_or_init(|| {
+             // LegacyActionData::new logs "creating legacy actions" itself.
+-            let legacy = LegacyActionData::new(
++            LegacyActionData::new(
+                 &self.openxr.instance,
+                 self.subaction_paths.left,
+                 self.subaction_paths.right,
+-            );
+-
+-            profiles::run_for_all_profiles(&mut Runner {
+-                openxr: &self.openxr,
+-                pose_data,
+-                legacy: &legacy,
+-            });
++            )
++        })
++    }
+ 
+-            struct Runner<'a, C: openxr_data::Compositor> {
+-                openxr: &'a super::OpenXrData<C>,
+-                pose_data: &'a PoseData,
+-                legacy: &'a LegacyActionData,
+-            }
++    /// Returns this profile's legacy bindings (menu/trigger/squeeze/xy/the dedicated
++    /// recenter-hold action/etc, plus the grip pose and haptic bindings), for the caller to
++    /// fold into a single `suggest_interaction_profile_bindings` call alongside any manifest
++    /// bindings for the SAME profile -- see `action_manifest::load_bindings_for_profile`. Does
++    /// NOT suggest anything itself.
++    pub(super) fn legacy_bindings_for_profile<'a, P: super::InteractionProfile>(
++        &self,
++        legacy: &'a LegacyActionData,
++        pose_data: &'a PoseData,
++    ) -> Vec<xr::Binding<'a>> {
++        let conv = super::profiles::InputToXrPath::new(&self.openxr.instance);
++        P::legacy_bindings(&conv)
++            .into_iter(&legacy.actions, pose_data)
++            .collect()
++    }
+ 
+-            impl<C: openxr_data::Compositor> RunWithProfile for Runner<'_, C> {
+-                fn run<P: super::InteractionProfile>(&mut self) {
+-                    if !P::has_required_extensions(&self.openxr.enabled_extensions) {
+-                        return;
+-                    }
++    /// Suggests this session's legacy-only bindings for every interaction profile xrizer
++    /// supports, EXCEPT the profiles named in `already_bound`. Use this for whichever
++    /// profiles the caller has NOT already suggested bindings for via some other, merged call
++    /// (see `legacy_bindings_for_profile` above) -- e.g. `load_action_manifest` passes the set
++    /// of profiles its own manifest just suggested bindings for, so a Vive/Knuckles/etc. wand
++    /// connected alongside a Touch-only manifest still gets working legacy
++    /// `GetControllerState`, while Touch itself is skipped here because its legacy bindings
++    /// were already folded into the manifest's own suggest call for it.
++    /// `setup_legacy_actions` (the no-manifest-ever path) passes an empty set, suggesting
++    /// legacy bindings for every supported profile, same as before this function was split
++    /// out of the old `get_or_create_legacy_actions`.
++    ///
++    /// Calling this for a profile in `already_bound` would silently REPLACE (not merge with)
++    /// that earlier suggest call -- see `get_or_create_legacy_action_data`'s doc comment.
++    pub(super) fn suggest_legacy_bindings_except(
++        &self,
++        legacy: &LegacyActionData,
++        pose_data: &PoseData,
++        already_bound: &HashSet<&'static str>,
++    ) {
++        profiles::run_for_all_profiles(&mut Runner {
++            openxr: &self.openxr,
++            pose_data,
++            legacy,
++            already_bound,
++        });
++
++        struct Runner<'a, C: openxr_data::Compositor> {
++            openxr: &'a super::OpenXrData<C>,
++            pose_data: &'a PoseData,
++            legacy: &'a LegacyActionData,
++            already_bound: &'a HashSet<&'static str>,
++        }
+ 
+-                    let conv = super::profiles::InputToXrPath::new(&self.openxr.instance);
+-                    let bindings = P::legacy_bindings(&conv);
+-                    self.openxr
+-                        .instance
+-                        .suggest_interaction_profile_bindings(
+-                            self.openxr
+-                                .instance
+-                                .string_to_path(P::profile_path())
+-                                .unwrap(),
+-                            &bindings
+-                                .into_iter(&self.legacy.actions, self.pose_data)
+-                                .collect::<Vec<_>>(),
+-                        )
+-                        .unwrap();
++        impl<C: openxr_data::Compositor> RunWithProfile for Runner<'_, C> {
++            fn run<P: super::InteractionProfile>(&mut self) {
++                if !P::has_required_extensions(&self.openxr.enabled_extensions) {
++                    return;
++                }
++                if self.already_bound.contains(P::profile_path()) {
++                    debug!(
++                        "skipping legacy-only suggest for {} -- already suggested alongside manifest bindings",
++                        P::profile_path()
++                    );
++                    return;
+                 }
+-            }
+ 
+-            legacy
+-        })
++                let conv = super::profiles::InputToXrPath::new(&self.openxr.instance);
++                let bindings = P::legacy_bindings(&conv);
++                self.openxr
++                    .instance
++                    .suggest_interaction_profile_bindings(
++                        self.openxr
++                            .instance
++                            .string_to_path(P::profile_path())
++                            .unwrap(),
++                        &bindings
++                            .into_iter(&self.legacy.actions, self.pose_data)
++                            .collect::<Vec<_>>(),
++                    )
++                    .unwrap();
++            }
++        }
+     }
+ 
+     /// Sets up legacy actions as the ONLY thing attached to the session (the no-manifest-ever
+     /// path -- see frame_start_update's `None` branch). Titles that later load a manifest via
+     /// SetActionManifestPath force a session restart specifically because this already did a
+     /// call-once `attach_action_sets`; the restarted session's legacy set is then created fresh
+-    /// (via get_or_create_legacy_actions above) as part of THAT attach call instead, so it
++    /// (via get_or_create_legacy_action_data above) as part of THAT attach call instead, so it
+     /// isn't dropped.
+     pub fn setup_legacy_actions(&self) {
+         let session_data = self.openxr.session_data.get();
+         let session = &session_data.session;
+         let input_data = &session_data.input_data;
+ 
+-        let legacy = self.get_or_create_legacy_actions(input_data);
+-        let pose_set = &input_data.pose_data.get().unwrap().set;
++        let legacy = self.get_or_create_legacy_action_data(input_data);
++        let pose_data = input_data.pose_data.get().unwrap();
++        // No manifest exists on this path, so there's nothing to skip -- suggest legacy
++        // bindings for every supported profile, same as get_or_create_legacy_actions used to
++        // do in one shot before it was split.
++        self.suggest_legacy_bindings_except(legacy, pose_data, &HashSet::new());
++        let pose_set = &pose_data.set;
+ 
+         session
+             .attach_action_sets(&[&legacy.set, pose_set])
+-- 
+2.47.3
+

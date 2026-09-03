@@ -169,3 +169,21 @@ and `IVRCompositor::SetTrackingSpace` log their calls; `XRIZER_LOG_SERVED_YAW=1`
 served to the game once a second (universe, adjusted, raw STAGE / LOCAL). Zero cost when the
 variable is unset beyond one atomic per WaitGetPoses. Commit `ed77ef8`. This is what showed
 that the 3dof failure is game-side (docs/80, 2026-08-30 entry).
+
+## 0013 — fix patch-0004 binding clobber (2026-09-03)
+
+Patch 0004 introduced two defects. The sync race was found and fixed in 0011, which did **not**
+fix Aircar's dead wands (docs/89 §12). The second, root-cause defect: `load_action_manifest`
+suggests the manifest's bindings for a profile, then the legacy path re-suggests bindings for
+that **same** profile, and `xrSuggestInteractionProfileBindings` replaces (not merges) — so the
+manifest's bindings are clobbered and every manifest action reads `is_active=false` forever. Only
+manifest-API titles are hit; legacy-API titles (`GetControllerState`) survive because the legacy
+suggest is the one left standing.
+
+Fix: fold each manifest-covered profile's legacy bindings into that profile's single suggest call
+(`legacy_bindings_for_profile`); `suggest_legacy_bindings_except` handles the profiles the
+manifest did not cover; `get_or_create_legacy_actions` split into `get_or_create_legacy_action_data`
+(create only) + the two suggest helpers. Live A/B on Aircar (1073390): `is_active` 0 → 224928
+true, wearer confirmed Y=music / A=start / flight. Compiles clean (`cargo build --release`).
+Commit `23df986`, full writeup docs/89 §15. Known-benign follow-up: `pose_data.grip` bound twice
+in the merged call — dedup later.
