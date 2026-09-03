@@ -62,6 +62,25 @@ GAME_STOP = HERE / "game-stop.py"
 # it's read by libopenxr_loader.so regardless of who links it.
 LOG_DIR = VR / "logs"
 LOG_DIR.mkdir(exist_ok=True)
+
+# Launched over SSH or from a systemd unit, this process's own env has no
+# DISPLAY/WAYLAND_DISPLAY, so GAME_ENV (= {**os.environ, ...}) would hand Steam no
+# display -- Steam then silently starts, self-verifies, and dies (2026-09-03: an
+# Aircar capture launched detached over SSH lost its game exactly this way).
+# jack-in-wayland.sh already resolves the desktop-session env for Monado's own
+# subprocess via gui_env; mirror it into THIS process's env so the Steam/Proton
+# Popen below inherits it too. Only kicks in when there is no display at all -- on
+# a real interactive desktop session DISPLAY is already set, so this is skipped.
+if not os.environ.get("WAYLAND_DISPLAY") and not os.environ.get("DISPLAY"):
+    try:
+        import gui_env
+        _gui = gui_env.get()
+        for _k in ("XDG_RUNTIME_DIR", "XDG_SESSION_TYPE", "WAYLAND_DISPLAY", "DISPLAY", "XAUTHORITY"):
+            if _gui.get(_k):
+                os.environ.setdefault(_k, _gui[_k])
+    except Exception as _e:
+        print(f"(gui_env not applied: {_e} -- fine on an interactive desktop session)")
+
 GAME_ENV = {
     **os.environ,
     "XR_LOADER_DEBUG": "all",
