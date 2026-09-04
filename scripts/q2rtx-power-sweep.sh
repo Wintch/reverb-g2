@@ -25,6 +25,15 @@
 #
 # Requires: Quake II RTX installed (Steam appid 1089130), Steam already running (a cold
 # Steam boot adds ~30-60s to the first rep only), game-stop.py next to this script.
+#
+# OPTIONAL pre-launch Steam Cloud guard: if steam-cloud-state.sh exists next to this
+# script, each rep checks it before `steam -applaunch`. A non-clean verdict (pending or
+# conflict) skips the launch instead of running into a doomed 60s LAUNCH_TIMEOUT_S wait --
+# a stuck Steam Cloud sync dialog blocks the game window entirely, so the old behavior was
+# a guaranteed timeout every rep until a human intervened. This is READ-ONLY detection: it
+# NEVER forces/resolves/uploads/downloads/clicks the dialog -- that's still on the human,
+# who cancels manually and uses Steam's own "force sync" button. If steam-cloud-state.sh
+# is absent this is a pure no-op (backward compatible with older checkouts).
 
 set -u
 
@@ -32,6 +41,7 @@ APPID=1089130
 CONSOLE_LOG="$HOME/.local/share/quake2rtx/baseq2/logs/console.log"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GAME_STOP="$HERE/game-stop.py"
+CLOUD_STATE="$HERE/steam-cloud-state.sh"
 VR="$HOME/vr"
 [ -d "$VR" ] || VR="$HOME/Documents/reverb-g2"
 OUT_CSV="$VR/logs/q2rtx-power-sweep-$(date +%Y%m%d-%H%M%S).csv"
@@ -107,12 +117,28 @@ run_one() {
     # Routed through vr-power-setup.sh --gpu-limit (percent of max), not a raw
     # `sudo nvidia-smi -pl` call -- keeps the sudoers grant this needs down to one
     # already-reviewed script instead of a second, more generic binary.
-    pct=$(( watts * 100 / GPU_MAX_W ))
+    #
+    # Rounded UP (ceiling), not floored: vr-power-setup.sh's own pct->watts step also
+    # floors (target=max*pct/100), so a floored pct here double-truncates and can land
+    # a couple watts BELOW the requested value -- caught live 2026-09-04 on the 210 W
+    # card, where `watts=100` floored to pct=47 -> target=98 W, under the card's 100 W
+    # floor, so the whole level was refused ("47% of 210W is 98W, below the card's 100W
+    # floor"). Ceiling guarantees the resolved target watts is >= the requested watts.
+    pct=$(( (watts * 100 + GPU_MAX_W - 1) / GPU_MAX_W ))
     sudo "$HERE/vr-power-setup.sh" --gpu-limit "$pct" >/dev/null \
         || { echo "  --gpu-limit $pct (${watts}W) failed -- skipping"; return 1; }
 
     before_lines=0
     [ -f "$CONSOLE_LOG" ] && before_lines="$(wc -l < "$CONSOLE_LOG")"
+
+    if [ -x "$CLOUD_STATE" ]; then
+        local cloud_state
+        cloud_state="$("$CLOUD_STATE" "$APPID")"
+        if [ $? -ne 0 ]; then
+            echo "  ${watts}W rep ${rep}: sync ${cloud_state} for ${APPID} -- NOT forcing, skipping this rep"
+            return 1
+        fi
+    fi
 
     steam -applaunch "$APPID" +set logfile 2 +timedemo 1 +demo q2demo1 >/dev/null 2>&1 &
 
