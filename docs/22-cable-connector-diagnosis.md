@@ -13,6 +13,141 @@ exactly why it stays this long and this specific instead of getting summarized d
 time. If you only need to match today's symptom to a known cause and fix, start with the
 index below; the full sections underneath are where the evidence and the reasoning live.
 
+## Troubleshooting procedure — decision tree
+
+**Operator-runnable summary.** Match what you observe against the steps below, in
+evidence-ranked order (cheapest / most-confirmed lever first, physical intervention last),
+and stop at the first fix that applies. **Step 0 goes first, always** — for the single most
+common "headset looks dead" report it is the highest-yield check, it needs no tools, and it
+is confirmed live as of 2026-09-03. The "Known fault signatures" table right after this
+section is the fuller symptom→cause→fix index; the sections further down are the evidence
+each step here is built on.
+
+### 0. DP dead? Run activation and LOOK, before touching any cable
+
+**Not a cable fault until proven otherwise.** The G2 never raises DP hotplug on its own — it
+needs one WMR activation HID sequence first. If Monado failed early (before it reached its
+own activation step) or a prior session died mid-bringup, the panel is simply sitting in
+**standby**, and every DisplayPort connector will correctly read `disconnected` with no G2
+EDID even though nothing is broken.
+
+1. Run `./scripts/panel.py activate` — **once**.
+2. Look in the visor immediately — a few-second window; the panel auto-powers-off again if
+   no video signal follows.
+3. **HP firmware-splash logo visible** = the panel is alive; the DP link was just waiting on
+   activation, it wasn't dead. Confirm: `for d in /sys/class/drm/card*-DP-*; do echo "$d:
+   $(cat $d/status)"; done` — it's either already `connected`, or comes up within a few
+   seconds of the logo appearing. **The discriminator is exactly this: logo visible + DP
+   still `disconnected` at the GPU is a normal in-between state, not a fault.** Give it a
+   few seconds, then re-check. **This is the fix — go straight to `jack-in-wayland.sh`; do
+   not open a cable/connector diagnosis.**
+4. **No logo at all** after one clean `activate` run → genuinely not standby. Proceed to
+   step 4 (DP-specific fault) or step 5 (power) below, per the fuller signature there.
+
+Don't re-run `activate` more than once chasing a flaky result before looking — see "Do NOT"
+below. This step alone resolved a full DP-dead-while-USB-enumerates session on 2026-09-03
+(the panel came up on `DP-2` that boot — the connector name is not stable across
+machines/sessions, see anatomy point 10 below; always re-scan, never hardcode it).
+
+### 1. Fast checks, before touching any cable
+
+- `lsusb | grep -E "03f0:0580|045e:0659|04b4:650[46]|0bda:4c15"` — count matches. 5/5 = both
+  USB branches healthy (if the panel is still dark, see step 0 above before suspecting a DP
+  fault). Fewer than 5 → step 2.
+- `scripts/hmd-connector.sh` — non-empty output = panel physically present, EDID matches this
+  unit's fingerprint `220ec136`. Empty = panel not detected at all.
+- `grep -c "Invalid frame magic" <jack-in.log>` — near-zero = camera data clean; a large,
+  non-stopping count = frame corruption even though `lsusb` shows the branch present (step 3).
+
+### 2. USB2/companion branch missing — fewer than 5/5, `03f0:0580` absent
+
+1. **PC-end USB-C reconnect first** (PC end or the C-to-A adapter, same port, cold ~10s gap).
+   Cheapest, and proven to recover a *previously-good* seat (6/6 clean). Does **not** rescue a
+   seat that has never been good — if it doesn't recover in 1-2 tries, move on.
+2. Another rear, CPU-fed USB port (front-panel/chipset ports have never worked for this
+   headset).
+3. **Visor-end reseat** (behind the magnetic face gasket) — the connector that carries every
+   conductor group; most of this doc's history traces back to a marginal contact here.
+4. Confirm with `journalctl -k --since "-5 min" | grep -iE "usb|hub"` — `error -71` / "Cannot
+   enable. Maybe the USB cable is bad?" is the marginal-contact signature, not a dead cable.
+5. **STOP CONDITION** — see "Stop conditions" below: a `reqCmd 23` HID config-read failure
+   means stop and reseat, not retry.
+
+### 3. Camera frames corrupt — SLAM sees 0 blobs, debug camera panels pink
+
+`grep -c "Invalid frame magic" <jack-in.log>` returns a large, non-stopping count, and/or
+`lsusb -t` shows HoloLens Sensors (`045e:0659`) at `480M` under the USB2 hub instead of
+`5000M` under the USB3 hub. Monado's own startup log looks clean — this corruption happens
+below anything Monado checks, so a clean log does **not** mean the camera data is good;
+always grep explicitly.
+
+→ **Visor-end reseat** (same connector, same fix as step 2.3). Verify with `lsusb -t`
+(Sensors back to `5000M`) before trusting any tracking data.
+
+### 4. DP dead while USB enumerates fully — the genuine DP-specific fault (escalation only, after step 0)
+
+**Do not enter this step without having already run step 0 once, cleanly, with eyes on the
+visor.** As of 2026-09-03, most of what looks like this signature turns out to be standby
+(step 0), not a fault. Only continue here if activation genuinely produced no logo.
+
+Symptom: all DisplayPort connectors read `disconnected` (`for d in /sys/class/drm/card*-DP-*;
+do echo "$d: $(cat $d/status) $(wc -c < $d/edid)"; done`), no G2 EDID (`220ec136`) on any DP,
+only the desktop's own HDMI connector(s) show connected — while `lsusb` is a healthy 5/5 and
+`panel.py activate` produced no logo. Monado bringup fails at compositor init
+(`XRT_ERROR_VULKAN` / no leasable connector).
+
+1. **Fix: visor-end connector reseat** — the 2026-08-07 fix that restored USB2 + panel + DP
+   all together, for a genuine marginal-contact fault. Same physical connector as steps 2 and
+   3, different pin subset.
+2. **What did NOT fix this, confirmed live 2026-09-03 — don't send an operator down these for
+   a true DP-dead symptom**: a PC-end USB reconnect (restores the USB branches, not DP),
+   moving the DP plug to a different GPU output, or a plain power replug. None of these
+   substitute for the reseat once step 0 has genuinely ruled out standby.
+3. **The USB-C orientation flip is NOT a lever here.** This cable has one good orientation
+   and it is already set; flipping it does nothing for a DP-only dropout — orientation only
+   matters for the seat-lottery USB fault in step 2.
+4. If "logo on, panel off" appears **mid-session** (not at cold boot) right after any physical
+   reconnect while Monado was already running: that's a stale DRM lease, not a hardware fault —
+   kill `monado-service` + `rm -f /run/user/1000/monado_comp_ipc` and relaunch fresh; re-running
+   `panel.py activate` alone will not fix it.
+
+### 5. Nothing lights, DP dead, brick LED off — the power branch
+
+→ **Power-cycle the brick**: unplug and replug the barrel/wall connector. This unit's brick
+runs at **18.5 V** (an HP 65 W laptop adapter — an older "12V" figure elsewhere in this doc
+is superseded) and **has no power button** (user-confirmed) — power-cycling only ever means
+the unplug/replug, never a switch. See "Do NOT" below for why a switch isn't the answer.
+
+### Do NOT — dead ends and risks; skip these
+
+- **Do NOT look for a power switch on the brick.** It doesn't have one. Two older entries in
+  this doc (2026-08-11, 2026-08-15) describe flipping one — that described the rev2A
+  replacement cable (`M52188-001`, HP's own description ends "/W SWITCH"), a different
+  physical part this unit does not have (T232, 2026-08-19, confirmed off the cable's own
+  label). This unit's power-cycle is always unplug/replug the barrel connector.
+- **Do NOT buy a new power supply/brick.** Investigated and explicitly ruled out (2026-08-07
+  elimination chain, "The power rail specifically" section below).
+- **Do NOT spam `panel.py activate` or relaunch repeatedly chasing a flaky result.** Each
+  activation cycle sends a real power transition through the visor-end connector, and it can
+  knock a marginal contact looser — this mechanism is behind several of this doc's worst
+  nights. Run it once, look, then decide; don't retry your way into a worse fault.
+- **Do NOT flip the USB-C orientation as a DP fix.** This cable has a single good orientation
+  and it's already set; the flip only ever helps the USB seat-lottery fault (step 2), never a
+  DP-dead symptom.
+- **Do NOT treat a PC-end USB reconnect, a different GPU port, or a power replug as DP-dead
+  fixes.** None of them restored DP in the 2026-09-03 session; only `panel.py activate`
+  (standby case, step 0) or a genuine visor-end reseat (hardware-fault case, step 4) do.
+
+### Stop conditions — when to stop retrying
+
+- **HID config-read failure**: a launch failing at `reqCmd 23` / `Failed to load headset
+  configuration` / `Failed to issue command 0b` is a STOP CONDITION. Do **not** relaunch
+  again — reseat the visor-end connector (step 2.3) before the next attempt. Retrying here is
+  what turns a marginal contact into a dead one.
+- **Multiple steps matching in the same session** (e.g. camera corruption *and* a config-read
+  failure): treat it as one contact degrading further, not two separate faults — go straight
+  to the visor-end reseat and stop retrying, don't chase each symptom with its own fix.
+
 ## Known fault signatures — quick index
 
 | Symptom | Root cause | Fix | Section |
