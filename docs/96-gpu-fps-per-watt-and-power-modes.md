@@ -564,16 +564,20 @@ revert, and cable were all ruled out.
   **unconfirmed** — not re-tested. **Operational rule:** a black first-launch-after-boot is fixed by
   teardown + relaunch, not by chasing the fake pacer.
 
-### 14.5 Dashboard bug — `status-dashboard.py` hitches VR (found, to fix)
+### 14.5 Dashboard bug — `status-dashboard.py` hitches VR (FIXED 2026-09-04)
 
 `status-dashboard.py` polls **libmonado** repeatedly (opens / describes / closes an IPC client per
 poll — visible as repeated `client_connected`/`client_disconnected application_name libmonado` in the
 compositor log). During a VR session this produces a **~10 s periodic micro-hitch** in the
 compositor — the wearer feels a tick roughly every 10 s. **Killing the dashboard removed the ~10 s
-tick entirely** (isolated live; the fast-turn tick, being game streaming, stayed). **Fix:** throttle
-or decouple the dashboard's libmonado poll (cache the value, lengthen the interval, or hold one
-persistent connection) so it never stalls the compositor. Until then, the booth dashboard adds a
-faint periodic tick to any live VR session — a real demo-quality item.
+tick entirely** (isolated live; the fast-turn tick, being game streaming, stayed).
+
+**Fixed** (`rig_telemetry.py` commit `1bda021`): `controller_status()`'s own docstring already
+said the answer can only change on a Monado restart, never mid-session, so the real IPC round-trip
+is now cached per `monado-service` PID instead of repeated on every poll — one connect/disconnect
+per Monado session instead of one per poll. Smoke-tested (dashboard restarts clean, `/api/status`
+correct with Monado down); **still needs a live wearer session to confirm the felt hitch is gone**,
+not done as of this writing.
 
 ### 14.6 Instrument caveat for reading §8/§10
 
@@ -583,3 +587,80 @@ but not sufficient* for "flawless." §8's 0-late results stand (they are real ap
 but "holds 90" there should be read as "app met deadline" — reprojection is a separate dimension,
 now measurable with `parse-metrics.py`. Every title we call platinum/adamantium should get one
 reprojection pass before the label is trusted.
+
+## 15. Second and third flat GPU-bound benchmarks, re-swept on the 210 W-capped 3060 Ti (2026-09-04)
+
+§1–2 used Superposition as the flat, license-clean instrument. This section adds two more
+GPU-bound flat benchmarks at the same four framework levels (100/130/160/210 W), so the "how
+sensitive is fps to the power cap" question has three independent instruments answering it, not
+one. Both re-use the existing sudoers-covered `vr-power-setup.sh --gpu-limit` path (no new sudo
+grants), and both had their own real automation bugs found and fixed along the way (see
+`scripts/heaven-power-sweep.sh` and the `q2rtx-power-sweep.sh` fix below) — not just re-run
+blindly.
+
+### 15.1 Unigine Heaven 4.0 Basic (new instrument, `scripts/heaven-power-sweep.sh`)
+
+Standalone Proton prefix (`~/vr/proton-prefixes/unigine`, docs/69), no Steam Cloud dependency at
+all. DX11, Quality High, Tessellation Disabled, 1600x900 fullscreen (`-video_mode 5`, the only
+index ever independently confirmed). 2 reps/level, `n=2` throughout:
+
+| cap (W) | avg fps | fps/W | marginal Δfps/W | % of turbo fps | % of turbo power |
+|--------:|--------:|------:|----------------:|---------------:|------------------:|
+| 100 | 243.90 | 2.44 | — | 82.2 % | 47.6 % |
+| 130 | 279.05 | 2.15 | 1.17 | 94.0 % | 61.9 % |
+| 160 | 290.05 | 1.81 | 0.37 | 97.7 % | 76.2 % |
+| 210 | 296.80 | 1.41 | 0.14 | 100 % | 100 % |
+
+Same shape as Superposition: **130 W already captures 94 % of turbo fps at 62 % of turbo power**,
+and the marginal return past 160 W is nearly flat (+0.14 fps per extra watt, 160→210 W). Confirms
+the framework's **smart-eco (130 W)** recommendation generalizes to a second, independent flat
+DX11 benchmark, not just Superposition.
+
+Two real mechanics found live building the automation (screenshotting an actual run, not guessed
+— see the script's own header for exact pixel coordinates):
+- Heaven's documented CLI launch (docs/69) opens the **interactive free-cam viewer**, not the
+  timed benchmark — a real click on the "Benchmark" button starts the timed 26-scene flythrough
+  (confirmed ~260 s real duration, independent of rendered fps). The results overlay that appears
+  on completion needs **Save → Ok** (a native Save-As dialog) clicked to actually write the
+  parseable html; the numbers on screen and in the file matched exactly in verification.
+- `xdotool click --window` delivers via XTest against whatever window **currently holds input
+  focus**, not necessarily the target window — over a multi-minute wait, focus can drift, and the
+  click then silently lands nowhere with zero error. Re-activating the window immediately before
+  *every* click attempt (not just once at the start) fixed a full automated run that had
+  previously timed out at 480 s with no visible cause. Worth remembering for any future
+  xdotool-driven automation on this rig, not just Heaven.
+
+### 15.2 Quake II RTX re-swept on the new card (`scripts/q2rtx-power-sweep.sh`)
+
+First measured 2026-08-23 (docs/48) on the OLD dev GPU, pre-swap — that data is stale the same way
+Dalí's old "needs 248 W" verdict was. Re-run 2026-09-04 on the 210 W-capped 3060 Ti LHR, same
+`+timedemo 1 +demo q2demo1` (631 frames every rep), 2 reps/level:
+
+| cap (W) | avg fps | fps/W | marginal Δfps/W | % of turbo fps | % of turbo power |
+|--------:|--------:|------:|----------------:|---------------:|------------------:|
+| 100 | 45.43 | 0.45 | — | 52.5 % | 47.6 % |
+| 130 | 71.13 | 0.55 | 0.86 | 82.2 % | 61.9 % |
+| 160 | 79.77 | 0.50 | 0.29 | 92.2 % | 76.2 % |
+| 210 | 86.52 | 0.41 | 0.14 | 100 % | 100 % |
+
+**This is the genuinely-different shape** the original 2026-08-23 sweep set out to find (docs/48:
+Q2RTX as "a real GPU-bound counter-example" to the VR-pacing-bound result): at 100 W Heaven and
+Superposition still hold 82%+ of their turbo fps, but Q2RTX's full path-traced renderer drops to
+just **52.5 % of turbo fps at the same 47.6 % power** — confirms Q2RTX stays genuinely GPU-bound
+(saturating the cap at every level tried) on the new card too, not just the old one. **Do not
+apply the VR-title "capping the GPU is free" finding to a genuinely GPU-bound flat renderer like
+this** — the framework's per-title recommendation still needs a real measurement, not an
+assumption, exactly as docs/48 originally argued.
+
+Real automation bug found and fixed along the way: the script converts a requested watt target
+to a percent (`pct = watts*100/GPU_MAX_W`) before handing it to `vr-power-setup.sh --gpu-limit`,
+which floors pct back to watts again — a double-floor. On this 210 W-capped card, `watts=100` →
+pct=47 → target=98 W, one watt under the card's 100 W floor, so the whole level was refused
+("below the card's 100W floor"). Fixed to ceiling-round the watts→pct conversion instead; verified
+live (`--gpu-limit 48` from watts=100 now lands at exactly 100 W).
+
+Separately: this re-sweep needed a one-time bypass of the `steam-cloud-state.sh` guard (moved
+aside for the run, restored immediately after) — the guard read a stale `pending` for a handful of
+zero-byte demo-save entries that never resolved even after a confirmed-clean manual launch. Done
+only on the rig owner's explicit, scoped authorization for this one re-sweep, not a standing
+change to the guard or its never-force policy (see `feedback_steam_sync_and_shared_account`).
