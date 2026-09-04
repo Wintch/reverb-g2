@@ -184,6 +184,21 @@ pgrep -af "monado[-]service"              # must print nothing
 Wipe the lens/facial interface as normal between wearers, then go back to §1 pre-flight
 before the next guest sits down — don't skip straight to launching.
 
+## 6. Known quirks (measured 2026-09-04, `docs/96` §14)
+
+- **The status dashboard adds a faint ~10 s tick to any live VR session.** `status-dashboard.py`
+  polls libmonado (opening an IPC client per poll), which briefly stalls the compositor roughly
+  every 10 s — the wearer feels a periodic micro-hitch. It is not a fault in the demo. Until the
+  poll is throttled/decoupled (fix pending), for a sensitive guest you can stop the dashboard for
+  their session (`systemctl --user stop status-dashboard.service`) and restart it after. Diagnosis:
+  `docs/96` §14.5.
+- **Aircar hitches slightly on very fast flight** — that is the game's own world-tile streaming
+  (Unreal), not the VR stack (0 reprojection measured, `docs/96` §14.3). Nothing to fix; reassure.
+- **Optional "best-case" showcase (adamantium).** For a wow-factor Aircar run, launch at turbo with
+  `XRT_COMPOSITOR_SCALE_PERCENTAGE=130` (supersampling) — sharper than native and still a
+  measured-clean 90 (`docs/96` §14.1). This is a showcase extra, not the standard guest flow; the
+  default Aircar demo stays smart-eco 130 W / native (Card A).
+
 ---
 
 ## See also

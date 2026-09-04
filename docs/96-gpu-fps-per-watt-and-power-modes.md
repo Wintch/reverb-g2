@@ -479,13 +479,107 @@ with headroom. Measured 2026-09-03:
 - **Aircar 3dof — the adamantium candidate (renders a true 90 with slack).** It holds a clean 90 at
   only ~58 % GPU / 130 W (§8.2): a genuine 90-fps app with a large power reserve. That reserve is
   exactly what adamantium spends — at turbo (210 W) there is room to supersample and *stay* at 90.
-  **Open follow-up (`todo`):** worn A/B — raise `XRT_COMPOSITOR_SCALE_PERCENTAGE` on Aircar to the
-  highest value that still reads 0 late frames, and have the wearer confirm the sharpness gain is
-  real. That value is Aircar's adamantium setpoint; until it is measured, adamantium is *defined
-  but not yet validated on any title.*
+  **VALIDATED 2026-09-04 (§14).** The worn A/B was run *with objective reprojection metrics*, not
+  by feel. **Aircar's adamantium setpoint is `XRT_COMPOSITOR_SCALE_PERCENTAGE=130`** at turbo. 130 %
+  and 140 % *both* hold a near-perfect 90 (≈0.1 % reprojection — 3–4 frames in 2700, 0 discarded),
+  but 140 % drives the GPU to 94 % in the dense scene for a negligible sharpness gain and tighter
+  frame margins, while 130 % keeps ~81 % GPU and real slack; 150 % went black (a present break,
+  unconfirmed). Adamantium is now *validated on a title* (Aircar), not merely defined. See §14.
 
 **Takeaway.** Adamantium is a real fifth tier, but it is title-gated: it pays off only on
 GPU-bound-with-slack titles that render a true 90 (Aircar), and is moot on engine-capped titles
 (Dalí). The Dalí result is itself the useful finding — it closes the "why does Dalí show 60?"
 question objectively: the game engine renders ~60 and Monado reprojects it to a clean 90; the
 hardware, display, and 6bpc patch are all fine.
+
+## 14. Adamantium on Aircar — measured validation, with objective reprojection metrics (2026-09-04)
+
+The §13 follow-up was run worn on **Aircar 3dof at turbo (210 W)**, sweeping
+`XRT_COMPOSITOR_SCALE_PERCENTAGE` and — the point of this session — **measuring reprojections
+objectively** instead of trusting felt "micro-stutter." The felt signal kept disagreeing with the
+easy counters, so we went to Monado's own per-frame metrics.
+
+### 14.1 The sweep (turbo 210 W, dense-city scene, wearer flying incl. fast ship-turns)
+
+| SS | pixels/eye | app-late¹ | comp-missed² | **reprojection³** | GPU | wearer |
+|:--:|:----------:|:---------:|:------------:|:-----------------:|:---:|:-------|
+| **100 %** | 2160² (native) | 0 | 0 | — (baseline) | ~41–56 % | "flying fine", no hitch |
+| **130 %** ⭐ | 2808² (1.69×) | 0 | 0 | **4 / 2701 (0.1 %)** | ~81 % | sharper; only the fast-turn tick |
+| **140 %** | 3024² (1.96×, Monado default) | 0 | 0 | **3 / 2700 (0.1 %)** | **94 %** | marginally sharper; tick "felt more" |
+| **150 %** | 3240² (2.25×) | — | — | — | — | **BLACK — present break (unconfirmed, §14.4)** |
+
+¹ `Frame late by` (app missed its deadline). ² `Compositor probably missed frame by`
+(`comp_renderer.c`, compositor present slipped). ³ objective, see §14.2. **⭐ Setpoint = 130 %.**
+
+**Verdict.** 130 % and 140 % are *statistically identical* on reprojection (both ≈0.1 %) and both
+objectively clean. 130 % wins: same cleanliness, more GPU margin (81 % vs 94 % — cooler, quieter,
+further from the cliff), ~90 % of the sharpness. The 130→140 sharpness gain is small and not worth
+the margin — the "no watts without benefit" rule. **Adamantium Aircar = turbo + `SCALE_PERCENTAGE=130`.**
+(The *standard* — non-adamantium — Aircar demo stays smart-eco 130 W / 100 % scale, §8.2.)
+
+### 14.2 The objective reprojection instrument (why the easy counters lied)
+
+Both grep-able counters read **0** at every level *while the wearer clearly felt hitches* — because
+neither one is reprojection: `Frame late by` fires only when the app misses its deadline past a
+threshold; `Compositor probably missed frame by` fires only on a compositor present slip. A
+reprojection is neither — it is the compositor presenting a **reused** app frame because no fresh one
+arrived, which can happen with both counters at 0.
+
+Ground truth is Monado's **`XRT_METRICS_FILE`** (nanopb stream of length-prefixed
+`monado_metrics_Record`). `scripts/parse-metrics.py` (written this session) parses it and counts
+reprojections from the **`used`** records: each records which app (`session_frame_id`) frame a
+compositor (`system_frame_id`) frame used; **presents that reuse a `session_frame_id` = reprojection**
+(`reproj = presents − unique app-frames`). It also reports `SessionFrame.discarded` (app faster than
+90). Enabled per level with `XRT_METRICS_FILE=… XRT_METRICS_EARLY_FLUSH=true` and windowed by byte
+offset over a 30 s fast-turn capture. Reusable for any title — this is how we stop guessing.
+
+Numbers: **130 % → 4 reproj / 2701 (0.1 %), 0 discarded; 140 % → 3 / 2700 (0.1 %), 0 discarded.** The
+app delivered a true ~90 fps at both.
+
+### 14.3 What the "hitch on fast turns" actually is (it is NOT reprojection)
+
+With reprojection ≈0 at both levels, the fast-turn tick is **not a VR-stack miss**. It is **Aircar's
+own world/asset streaming** — Unreal streams tiles as you move, and fast flight crosses tile
+boundaries faster; the game still delivers the frame on time (0 reprojection, 0 discard) but its
+*simulation* stalls for an instant, so the world hitches while every VR frame is perfect.
+SS-independent, and it would happen on Windows too. Why 140 % *feels* slightly worse than 130 %
+despite equal reprojection: at 140 % the GPU runs 94 % in the dense scene (vs 81 %) → tighter
+per-frame margins → pacing-variance micro-judder near the budget edge — still not a dropped or
+reused frame. Felt ≠ measured; the metric settles it.
+
+### 14.4 The black-screen episode (first launch after boot) — diagnosed, resolved
+
+The *first* VR launch after a fresh boot, at 150 %, came up **black** despite everything being
+healthy: 6bpc patch applied (dkms `PATCH[3]`, verified in `dkms.conf`), USB **5/5** incl. companion
+`03f0:0580`, DRM lease **granted**, mode `4320x2160@90` found, GPU rendering. USB fault, patch
+revert, and cable were all ruled out.
+
+- **`Fake pacer fell behind` is a red herring.** It floods the compositor log at ~90/s *whenever an
+  app renders* — a normal Monado+NVIDIA direct-mode artifact (the app pacer resyncs each frame), not
+  a reprojection and not the black cause; it appears identically in healthy sessions (confirmed at a
+  clean 100 %). **Do not chase it.**
+- **Resolution:** clean teardown + relaunch; 100 % then showed image and flew fine. Likely causes of
+  the initial black: a first-boot bring-up flake and/or the G2 proximity sensor (panel dark until
+  seated on the face). A hard present break above ~140 % (hence 150 % black) is plausible but
+  **unconfirmed** — not re-tested. **Operational rule:** a black first-launch-after-boot is fixed by
+  teardown + relaunch, not by chasing the fake pacer.
+
+### 14.5 Dashboard bug — `status-dashboard.py` hitches VR (found, to fix)
+
+`status-dashboard.py` polls **libmonado** repeatedly (opens / describes / closes an IPC client per
+poll — visible as repeated `client_connected`/`client_disconnected application_name libmonado` in the
+compositor log). During a VR session this produces a **~10 s periodic micro-hitch** in the
+compositor — the wearer feels a tick roughly every 10 s. **Killing the dashboard removed the ~10 s
+tick entirely** (isolated live; the fast-turn tick, being game streaming, stayed). **Fix:** throttle
+or decouple the dashboard's libmonado poll (cache the value, lengthen the interval, or hold one
+persistent connection) so it never stalls the compositor. Until then, the booth dashboard adds a
+faint periodic tick to any live VR session — a real demo-quality item.
+
+### 14.6 Instrument caveat for reading §8/§10
+
+`frame-pacing.sh`'s "0 late" means only that the **app** did not miss its deadline past the logged
+threshold; it is **blind to reprojection and to compositor-present slips**. "0 late" is *necessary
+but not sufficient* for "flawless." §8's 0-late results stand (they are real app-deadline results),
+but "holds 90" there should be read as "app met deadline" — reprojection is a separate dimension,
+now measurable with `parse-metrics.py`. Every title we call platinum/adamantium should get one
+reprojection pass before the label is trusted.
