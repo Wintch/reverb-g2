@@ -141,6 +141,9 @@ def _libmonado_path():
     return _LIBMONADO_PATH
 
 
+_controller_status_cache = {"pid": None, "result": None}
+
+
 def controller_status():
     """{"left": bool, "right": bool} if monado-service answered, or {"error": str} if it
     couldn't be asked at all (not running, or libmonado missing) -- same libmonado
@@ -154,14 +157,27 @@ def controller_status():
     correct, honest answer (it reflects what Monado itself knows), not a bug in this check:
     the fix for a False here is "power on + jack-in-wayland.sh down/up", not a dashboard
     refresh.
+
+    Cached per monado-service PID (2026-09-04, docs/96 s14.5): since the answer can only
+    change on a Monado restart (never mid-session, per the NOTE above), status-dashboard.py
+    polling this every few seconds was opening/closing a fresh libmonado IPC client each
+    time -- each mnd_root_create/mnd_root_destroy round-trip briefly stalls the compositor,
+    felt by a wearer as a periodic ~10s hitch in any live VR session. Reusing the cached
+    result for the same PID makes the real IPC call happen at most once per Monado session
+    instead of once per poll.
     """
     import ctypes
 
     lib_path = _libmonado_path()
     if not os.path.exists(lib_path):
         return {"error": "libmonado.so not built"}
-    if monado_pid() is None:
+    pid = monado_pid()
+    if pid is None:
+        _controller_status_cache["pid"] = None
+        _controller_status_cache["result"] = None
         return {"error": "monado-service not running"}
+    if _controller_status_cache["pid"] == pid and _controller_status_cache["result"] is not None:
+        return _controller_status_cache["result"]
     try:
         lib = ctypes.CDLL(lib_path)
         lib.mnd_root_create.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
@@ -184,6 +200,10 @@ def controller_status():
             idx = ctypes.c_int32(-1)
             rc = lib.mnd_root_get_device_from_role(root, hand.encode(), ctypes.byref(idx))
             result[hand] = bool(rc == 0 and idx.value >= 0)
+        # Only successful reads are cached -- a transient connect failure right at Monado
+        # startup should be retried on the next poll, not stuck forever as an error.
+        _controller_status_cache["pid"] = pid
+        _controller_status_cache["result"] = result
         return result
     finally:
         lib.mnd_root_destroy(ctypes.byref(root))
