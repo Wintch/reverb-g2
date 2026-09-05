@@ -761,6 +761,13 @@ def playlist_status():
 USER_PROFILES_FILE = f"{HOME}/vr/logs/user-profiles.json"
 BRIGHTNESS_FILE = f"{HOME}/vr/logs/xrizer-brightness"
 
+# Auto-standby opt-in + timeout (2026-09-04) -- read by rig_telemetry.presence_settings(),
+# written here. Same per-box conf file jack-in-wayland.sh sources at launch
+# (WMR_USER_PRESENCE / WMR_USER_PRESENCE_SCREENOFF_MS), so a change here only takes effect
+# on the next 'jack-in down' + 'up', never live -- Monado caches the env var on first read.
+PRESENCE_CONF_FILE = f"{HOME}/vr/presence.conf"
+PRESENCE_SCREENOFF_MAX_MS = 1800000  # 30 min ceiling
+
 # What CANNOT be changed on this headset -- read-only reference for the operator, so the
 # distinction between "fixed" and "adjustable" is explicit (the user's own framing).
 HEADSET_FIXED = {
@@ -821,6 +828,41 @@ def set_brightness_gain(gain):
     return True, f"brillo -> {g:.2f}x (live si hay juego con el xrizer nuevo)"
 
 
+def save_presence_settings(enable_raw, screenoff_ms_raw):
+    """Rewrite ~/vr/presence.conf from the dashboard's /api/presence/save. Full overwrite
+    is fine -- these are the only two keys this file holds. Validates screenoff_ms is a
+    non-negative integer, clamped to PRESENCE_SCREENOFF_MAX_MS (30 min); anything past
+    that (or non-numeric) is rejected rather than silently clamped-and-accepted, so a typo
+    doesn't quietly ship a different number than the operator typed."""
+    try:
+        screenoff_ms = int(screenoff_ms_raw)
+    except (TypeError, ValueError):
+        return False, "screenoff_ms must be an integer"
+    if screenoff_ms < 0:
+        return False, "screenoff_ms must not be negative"
+    if screenoff_ms > PRESENCE_SCREENOFF_MAX_MS:
+        return False, f"screenoff_ms must be <= {PRESENCE_SCREENOFF_MAX_MS} (30 min)"
+    enable = str(enable_raw) == "1"
+    os.makedirs(f"{HOME}/vr", exist_ok=True)
+    tmp = PRESENCE_CONF_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(
+            "# ~/vr/presence.conf -- auto-standby opt-in, written by status-dashboard.py's\n"
+            "# /api/presence/save (the dashboard's \"Auto-standby\" card). Same KEY=VALUE format\n"
+            "# as power.conf/vr-profile.conf. Read by jack-in-wayland.sh at launch AND by\n"
+            "# rig_telemetry.presence_settings() for display -- a change here only takes effect\n"
+            "# on the NEXT 'jack-in down' + 'up', never live (Monado caches the env var on its\n"
+            "# first read). Ships PRESENCE_ENABLE=0 by default: the RESTORE/re-donning direction\n"
+            "# of this feature has not yet been live-validated with a real wearer (only the\n"
+            "# blank direction was, 2026-09-04) -- don't flip this on for a real session without\n"
+            "# knowing that.\n"
+            f"PRESENCE_ENABLE={1 if enable else 0}\n"
+            f"PRESENCE_SCREENOFF_MS={screenoff_ms}\n"
+        )
+    os.replace(tmp, PRESENCE_CONF_FILE)
+    return True, "guardado -- se aplica en el próximo 'jack-in down/up' (no en caliente)"
+
+
 def user_center():
     d = load_users()
     active = d["active"]
@@ -849,6 +891,8 @@ def build_status():
         "gpu": driver_info(),
         "gpu_power": gpu_power(),
         "power_mode": rig_telemetry.power_mode(),
+        "hmd_temperature": rig_telemetry.hmd_temperature(),
+        "presence": rig_telemetry.presence_settings(),
         "audio": audio_status(),
         "pmadminka": pmadminka_status(),
         # Everything below this line mirrors pmadminka-agent.py's heartbeat body
@@ -1106,6 +1150,18 @@ PAGE = """<!doctype html>
 <details class="access-panel">
   <summary><span class="fault-dot ok-hidden" id="access-fault-dot"></span><span data-i18n="access_h2">Diagnostics</span></summary>
   <div class="grid" id="grid">loading...</div>
+  <!-- Persistent (not rebuilt by the #grid innerHTML replace every tick, so an in-progress
+       edit here survives a refresh) -- 2026-09-04, see renderPresenceSettings(). -->
+  <div class="grid" style="margin-top:0">
+    <div class="card" id="presence-card">
+      <h2>Auto-standby (presence)</h2>
+      <div class="row"><span>enabled</span><span><input type="checkbox" id="presence-enable-cb"></span></div>
+      <div class="row"><span>screen-off timeout</span><span><input type="number" id="presence-screenoff-min" min="0" max="30" step="0.5" style="width:60px"> min</span></div>
+      <div class="row"><span></span><span><button onclick="savePresence()">Guardar</button></span></div>
+      <div class="dim" id="presence-msg" style="font-size:12px"></div>
+      <div class="dim" style="font-size:12px;margin-top:4px">se aplica en el próximo 'jack-in down/up' -- nunca en caliente, Monado cachea la variable al arrancar (takes effect on the next jack-in down/up, never live)</div>
+    </div>
+  </div>
 </details>
 <div class="ts" id="ts"></div>
 <script>
@@ -1447,6 +1503,42 @@ function gpuPowerHtml(p) {
       </div>
     </div>`;
 }
+function hmdThermalHtml(t) {
+  if (!t || t.stale) {
+    return '<span class="dim">sin datos recientes -- monado no está corriendo (no recent data -- monado not running)</span>';
+  }
+  const readings = t.celsius_est.map((c, i) => `T${i} ${c.toFixed(1)}°C`).join('&ensp;');
+  return `<div class="row"><span>${readings}</span></div>` +
+    '<div class="dim" style="font-size:12px">estimado, sin calibrar -- formula ICM-20602, no confirmada en vivo contra esta unidad (estimate, uncalibrated)</div>';
+}
+// Persistent presence-settings card (#presence-card, outside #grid's rebuilt innerHTML) --
+// same "skip while the user is mid-edit" guard the sink-volume slider already uses
+// (document.activeElement check), not a rebuild-on-signature-change like renderAudioDevices,
+// since this card's shape never changes.
+function renderPresenceSettings(presence) {
+  if (!presence) return;
+  const cb = document.getElementById('presence-enable-cb');
+  const mins = document.getElementById('presence-screenoff-min');
+  if (cb && document.activeElement !== cb) cb.checked = !!presence.enable;
+  if (mins && document.activeElement !== mins) {
+    mins.value = presence.screenoff_ms ? (presence.screenoff_ms / 60000) : 0;
+  }
+}
+async function savePresence() {
+  const cb = document.getElementById('presence-enable-cb');
+  const mins = document.getElementById('presence-screenoff-min');
+  const msgEl = document.getElementById('presence-msg');
+  const enable = cb.checked ? 1 : 0;
+  const ms = Math.max(0, Math.round(parseFloat(mins.value || '0') * 60000));
+  msgEl.textContent = 'guardando...';
+  try {
+    const r = await fetch(`/api/presence/save?enable=${enable}&screenoff_ms=${ms}`, {method: 'POST'});
+    const d = await r.json();
+    msgEl.textContent = d.message;
+  } catch (e) {
+    msgEl.textContent = 'error: ' + e;
+  }
+}
 async function tick() {
   try {
     const r = await fetch('/api/status', {cache: 'no-store'});
@@ -1469,6 +1561,7 @@ async function tick() {
     const sessionActive = d.monado.running;
     updateCompositorToggle(sessionActive);
     renderAudioDevices(d.audio);
+    renderPresenceSettings(d.presence);
     const usbRows = Object.entries(d.usb.devices).map(([id, v]) =>
       `<div class="row"><span>${v.label}</span><span class="${v.present?'ok':'bad'}">${v.present?'OK':'MISSING'} (${id})</span></div>`
     ).join('');
@@ -1561,6 +1654,7 @@ async function tick() {
         <pre>${d.coredumps.last || 'none'}</pre>
       </div>
       <div class="card"><h2>GPU</h2>${gpuPowerHtml(d.gpu_power)}<pre>${d.gpu}</pre></div>
+      <div class="card"><h2>HMD thermal</h2>${hmdThermalHtml(d.hmd_temperature)}</div>
       <div class="card"><h2>repo (reverb-g2)</h2>
         <pre>${d.repo.head}</pre>
         <div class="row"><span>working tree</span><span class="${d.repo.dirty?'warn':'ok'}">${d.repo.dirty?'dirty (routine -- telemetry/logs)':'clean'}</span></div>
@@ -1871,6 +1965,11 @@ class Handler(BaseHTTPRequestHandler):
                     save_users(d)
                 except Exception:
                     pass
+            self._json_post(ok, msg)
+        elif self.path.startswith("/api/presence/save"):
+            q = parse_qs(urlparse(self.path).query)
+            ok, msg = save_presence_settings(
+                q.get("enable", ["0"])[0], q.get("screenoff_ms", ["0"])[0])
             self._json_post(ok, msg)
         elif self.path.startswith("/api/user/select"):
             q = parse_qs(urlparse(self.path).query)

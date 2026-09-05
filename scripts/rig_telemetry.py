@@ -8,6 +8,8 @@ No CLI, no side effects on import -- just functions.
 import json
 import os
 import subprocess
+import time
+from pathlib import Path
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -80,6 +82,64 @@ def power_mode():
             return f.read().strip() or None
     except OSError:
         return None
+
+
+def hmd_temperature():
+    """WMR driver's HMD IMU temperature snapshot (~/vr/hmd-temperature.json, written by
+    wmr_hmd.c's hololens_sensors_decode_packet() roughly once/second -- monado commit
+    d1314913f's raw-register decode, plus the dashboard-snapshot follow-up, 2026-09-04).
+    None if the file doesn't exist or fails to parse -- most of the time that just means
+    no monado session has ever written one yet on this box, not an error.
+
+    celsius_est is a datasheet-formula ESTIMATE (ICM-20602: raw/326.8 + 25), never
+    confirmed live against this specific unit -- keep the "_est" name and say so
+    wherever this surfaces (see the dashboard card's caption). Stale data is NOT hidden:
+    `stale` (age_s > 10) is reported alongside the last-known numbers so a caller can
+    show "last seen Ns ago" instead of nothing.
+    """
+    path = Path.home() / "vr" / "hmd-temperature.json"
+    try:
+        raw = json.loads(path.read_text())
+        regs = [int(raw[f"t{i}"]) for i in range(4)]
+        ts = float(raw["ts"])
+    except Exception:
+        return None
+    age_s = time.time() - ts
+    return {
+        "raw": regs,
+        "celsius_est": [round(v / 326.8 + 25, 1) for v in regs],
+        "age_s": round(age_s, 1),
+        "stale": age_s > 10,
+    }
+
+
+def presence_settings():
+    """~/vr/presence.conf -- the auto-standby opt-in + timeout, adjustable from the
+    dashboard (status-dashboard.py's /api/presence/save). Same trivial KEY=VALUE parser
+    style as vr-power-setup.sh's load_power_conf() (skip blank/# lines, split on the
+    first '='), ported to Python so the shell launcher and this dashboard can never
+    disagree about the format. Defaults to disabled/0 if the file is missing or
+    unparseable -- the same fail-safe default presence.conf itself ships with."""
+    result = {"enable": False, "screenoff_ms": 0}
+    path = Path.home() / "vr" / "presence.conf"
+    try:
+        text = path.read_text()
+    except OSError:
+        return result
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key, val = key.strip(), val.strip()
+        if key == "PRESENCE_ENABLE":
+            result["enable"] = val == "1"
+        elif key == "PRESENCE_SCREENOFF_MS":
+            try:
+                result["screenoff_ms"] = int(val)
+            except ValueError:
+                pass
+    return result
 
 
 def monado_pid(name="monado-service"):

@@ -645,6 +645,23 @@ if [ -f "$VR_PROFILE" ]; then
     # shellcheck disable=SC1090
     . "$VR_PROFILE"
 fi
+
+# --- Auto-standby opt-in (WMR_USER_PRESENCE_SCREENOFF_MS, 2026-09-04) ------------------
+# Same per-box conf file convention as VR_PROFILE just above. Adjustable from the dashboard
+# (status-dashboard.py's "Auto-standby" card / /api/presence/save), which just rewrites
+# this file -- it can NEVER take effect live: DEBUG_GET_ONCE_NUM_OPTION in wmr_hmd.c caches
+# WMR_USER_PRESENCE_SCREENOFF_MS on its first read, so a change here only applies starting
+# with the NEXT 'jack-in down' + 'up'. Ambient exports win over the conf file, same pattern
+# as VR_PROFILE/EYE_HEIGHT above and PACING_ENV below.
+PRESENCE_CONF="${PRESENCE_CONF:-$VR/presence.conf}"
+if [ -f "$PRESENCE_CONF" ]; then
+    # shellcheck disable=SC1090
+    . "$PRESENCE_CONF"
+fi
+PRESENCE_ENABLE_VAL="${WMR_USER_PRESENCE:-${PRESENCE_ENABLE:-0}}"
+PRESENCE_SCREENOFF_VAL="${WMR_USER_PRESENCE_SCREENOFF_MS:-${PRESENCE_SCREENOFF_MS:-0}}"
+PRESENCE_ENV=(WMR_USER_PRESENCE="$PRESENCE_ENABLE_VAL" WMR_USER_PRESENCE_SCREENOFF_MS="$PRESENCE_SCREENOFF_VAL")
+
 VR_POSTURE="${VR_POSTURE:-standing}"
 case "$VR_POSTURE" in
     standing) EYE_HEIGHT="${VR_EYE_HEIGHT_M:-${EYE_HEIGHT_STANDING_M:-1.6}}" ;;
@@ -854,6 +871,7 @@ while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
         "${CSV_ENV[@]}" \
         "${HEIGHT_ENV[@]}" \
         "${PACING_ENV[@]}" \
+        "${PRESENCE_ENV[@]}" \
         WMR_DISPLAY_INIT_SLEEP_SECONDS=2 \
         setsid stdbuf -oL -eL "$SERVICE" < /dev/null > "$LOG" 2>&1 &
 
@@ -929,6 +947,15 @@ if [ "$SUCCESS" = 1 ]; then
     # something to trust yet for silently blanking a live session. Coarse and safe instead:
     # no blanking at all for as long as the compositor is up; restored in the 'down' path
     # above the moment there is no session left to interrupt.
+    #
+    # Addendum (2026-09-04): the paragraph above is now half-stale. The BLANK direction of
+    # the presence signal IS live-confirmed as of today (a real wearer session showed the
+    # panel blank at the configured WMR_USER_PRESENCE_SCREENOFF_MS delay). The RESTORE
+    # (re-donning) direction remains UNCONFIRMED with a real wearer. This coarse idle-blank
+    # suppression is unaffected either way and stays exactly as written above -- the
+    # per-session auto-standby feature (WMR_USER_PRESENCE_SCREENOFF_MS, PRESENCE_ENV above)
+    # is a separate, still opt-in-only mechanism (ships disabled by default in
+    # ~/vr/presence.conf) precisely because the restore side isn't proven yet.
     export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
     export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
     dconf write /org/gnome/desktop/session/idle-delay "uint32 0" 2>/dev/null \
