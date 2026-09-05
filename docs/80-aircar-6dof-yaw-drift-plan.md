@@ -2024,3 +2024,17 @@ proximity poll (feature read of id 0x01 every ~500 ms while NOT WORN) would clos
 hole if the device answers it (unknown, never tried). Logs:
 `~/vr/logs/soak/aircar-3dof-autorecenter-instr-xrizer.txt` (instrumented session),
 demo records `~/vr/logs/demo-sessions/20260830-*`.
+
+**CORRECTION 2026-09-04 (code-level, `wmr_hmd.c` read directly): this WAS already tried, and
+found NOT to work.** `id 0x01` above is `WMR_CONTROL_MSG_IPD_VALUE` (`wmr_protocol.h:44`) — the
+exact same message id the reconnect-resync path (`WMR_COMPANION_RECONNECT_RESYNC`, patch 0090,
+`wmr_hmd.c` ~854-887) already does a feature-report read of. That patch's own measurement: **the
+device does NOT answer, and the read blocks for 1.4–5.0 s** (the usbhid control-transfer
+timeout) **inside the shared run loop, which is also the IMU/camera reader** — every attempt
+stalled tracking by up to 5 s, which is why that path is `off by default`. A ~500 ms poll loop
+using the same read would not just fail to close the missed-don hole, it would re-trigger that
+same multi-second IMU/camera stall roughly **twice a second** for as long as the headset sits
+NOT WORN — categorically worse than the rare miss it's meant to fix. **Do not implement this
+without a different mechanism** (e.g. a change-driven read the device actually answers, or
+accepting the 1/11 miss rate as a known, bounded flakiness) — the "unknown, never tried" framing
+above is out of date.
