@@ -653,13 +653,31 @@ fi
 # WMR_USER_PRESENCE_SCREENOFF_MS on its first read, so a change here only applies starting
 # with the NEXT 'jack-in down' + 'up'. Ambient exports win over the conf file, same pattern
 # as VR_PROFILE/EYE_HEIGHT above and PACING_ENV below.
+#
+# CORRECTED 2026-09-05 (docs/101): PRESENCE_SCREENOFF_VAL used to be derived completely
+# independently of PRESENCE_ENABLE -- as long as WMR_USER_PRESENCE resolved truthy by ANY
+# means (including an ambient export set for an unrelated reason, e.g. a launcher just
+# wanting XR_EXT_user_presence telemetry with no intent to enable auto-standby) and
+# presence.conf's PRESENCE_SCREENOFF_MS was nonzero, the screen-off side effect fired --
+# presence.conf's own PRESENCE_ENABLE=0 default never actually gated it. This silently
+# blanked a live Dreams of Dali session (2026-09-05 ~12:2x) although the operator believed
+# auto-standby was fully disabled. Fix: an explicit ambient WMR_USER_PRESENCE_SCREENOFF_MS
+# export still wins outright (same "ambient wins" convention as everywhere else in this
+# file); short of that, presence.conf's PRESENCE_ENABLE is now the real brake on
+# PRESENCE_SCREENOFF_MS, independent of whatever WMR_USER_PRESENCE itself resolves to.
 PRESENCE_CONF="${PRESENCE_CONF:-$VR/presence.conf}"
 if [ -f "$PRESENCE_CONF" ]; then
     # shellcheck disable=SC1090
     . "$PRESENCE_CONF"
 fi
 PRESENCE_ENABLE_VAL="${WMR_USER_PRESENCE:-${PRESENCE_ENABLE:-0}}"
-PRESENCE_SCREENOFF_VAL="${WMR_USER_PRESENCE_SCREENOFF_MS:-${PRESENCE_SCREENOFF_MS:-0}}"
+if [ -n "${WMR_USER_PRESENCE_SCREENOFF_MS+set}" ]; then
+    PRESENCE_SCREENOFF_VAL="$WMR_USER_PRESENCE_SCREENOFF_MS"
+elif [ "${PRESENCE_ENABLE:-0}" = "1" ]; then
+    PRESENCE_SCREENOFF_VAL="${PRESENCE_SCREENOFF_MS:-0}"
+else
+    PRESENCE_SCREENOFF_VAL=0
+fi
 PRESENCE_ENV=(WMR_USER_PRESENCE="$PRESENCE_ENABLE_VAL" WMR_USER_PRESENCE_SCREENOFF_MS="$PRESENCE_SCREENOFF_VAL")
 
 VR_POSTURE="${VR_POSTURE:-standing}"
