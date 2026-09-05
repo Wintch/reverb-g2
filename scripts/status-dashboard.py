@@ -2129,7 +2129,6 @@ async function tick() {
       <div class="row"><span>state</span><span class="${sessionActive?'ok':'dim'}">${sessionActive?'ACTIVE':'IDLE'}</span></div>
       <div class="row"><span>DoF</span><span class="${sessionActive?'ok':'dim'}">${sessionActive ? (d.tracking||'?').toUpperCase() : 'n/a'}</span></div>
       <div class="row"><span>controllers</span><span class="status-dot ${ctrlDotCls}"></span></div>
-      <div class="row"><span>audio route</span><span class="status-dot ${audioCls}"></span></div>
     `;
     // Master status-strip dots (header row, unchanged): the true at-a-glance read, one
     // level above even the session card -- SESSION mirrors the state row above; AUDIO
@@ -2161,7 +2160,6 @@ async function tick() {
     document.getElementById('grid-headset').innerHTML = `
       <div class="card"><h2>Tracking mode</h2>${trackingRow}</div>
       <div class="card"><h2>Controllers</h2>${controllersRow}</div>
-      <div class="card"><h2>Audio route</h2>${audioRow}</div>
       <div class="card"><h2>USB (${d.usb.present_count}/${d.usb.total})</h2>${usbRows}</div>
       <div class="card"><h2>Display connectors</h2>${drmRows}</div>
       <div class="card"><h2>monado-service</h2>
