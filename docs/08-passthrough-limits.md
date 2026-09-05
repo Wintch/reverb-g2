@@ -802,3 +802,117 @@ tracking-origin moment). **Next step for whoever picks this up**: watch for the 
 recur on a fresh `jack-in down`/`up` where the headset is known to be resting on the desk (not
 worn) when Monado starts tracking, versus one where it's donned first -- that A/B would confirm
 or rule this out directly, without touching hello_xr again.
+
+## 2026-09-05 (night): fisheye correction for the live passthrough view
+
+A live wearer, after seeing the v0 passthrough view work well overall, asked (in Spanish):
+"tambien fijate si podemos corregir un poco fisheye, asi se asemeja un mas a lo que veo, es
+geometria, se tiene que poder" -- also see if we can correct the fisheye a bit, so it looks
+more like what I actually see with my own eyes, it's geometry, it has to be doable. Correct:
+the v0 viewer rendered cam0's raw frame with a plain flat/pinhole UV mapping and applied zero
+distortion correction, so straight real-world lines increasingly bow toward the edges of the
+image -- the classic barrel-distortion signature of an uncorrected wide-angle fisheye lens.
+
+### The distortion model, confirmed rather than assumed
+
+`~/vr/camera-calibration.json` carries `fx, fy, cx, cy, k1..k6, p1, p2` per camera. The
+coefficient names alone (`k1..k6`) don't say which distortion convention they follow -- OpenCV's
+"fisheye" model only has 4 k-terms, plain OpenCV radial-tangential has different meaning for
+`k4..k6` (rational, not Kannala-Brandt) -- so this was read from Basalt's own source rather than
+assumed: `~/vr/basalt/thirdparty/basalt-headers/include/basalt/camera/fisheye624_camera.hpp`.
+It is Basalt's `Fisheye624Camera` model -- a Kannala-Brandt equidistant radial term (theta =
+atan(r) off the optical axis, distorted by an order-12 odd polynomial in theta with coefficients
+`k1..k6`) plus a Brown-Conrady tangential term (`p1, p2`) plus an optional "thin prism" term
+(`s1..s4`, part of the same model but not present in this rig's calibration JSON -- equivalent
+to 0, and omitted from the port below). The header's `distort()` function (the FORWARD
+direction: an undistorted normalized ray -> the raw distorted pixel it actually lands on) is:
+
+```
+xp, yp = undistorted normalized ray (x/z, y/z), Basalt/OpenCV convention: +Y down, Z forward
+rp = sqrt(xp^2 + yp^2); th = atan(rp)
+theta_dist = th * (1 + k1*th^2 + k2*th^4 + k3*th^6 + k4*th^8 + k5*th^10 + k6*th^12)
+xr, yr = theta_dist * (xp, yp) / rp
+rd2 = xr^2 + yr^2
+dx_tan = (2*xr^2 + rd2)*p1 + 2*xr*yr*p2
+dy_tan = (2*yr^2 + rd2)*p2 + 2*xr*yr*p1
+u = fx*(xr + dx_tan) + cx;  v = fy*(yr + dy_tan) + cy
+```
+
+### Correction approach: distort the sample coordinate, not the image
+
+Forward Kannala-Brandt distortion is a direct closed-form polynomial; its inverse generally
+isn't (Basalt's own `unproject()` falls back to a per-pixel Newton solve against `distort()`
+for exactly that reason). So rather than trying to undistort the source image itself, the
+shader keeps sampling *forward*: for each output pixel it already computes an undistorted
+rectilinear ray (`screen = dir.xy / depth` in `frag.glsl`'s `PROJ_FLAT` branch -- this is
+already exactly Basalt's `(xp, yp)`, just in this shader's +Y-up view-space convention instead
+of Basalt's +Y-down, so it's negated going in). That ray is forward-distorted with the formula
+above (`Cam0Distort` in `vulkan_shaders/frag.glsl`) to find cam0's actual raw pixel, and the raw
+fisheye texture is sampled there instead of at the old plain linear UV. Corners the fisheye
+doesn't actually cover (an unavoidable side effect of asking for a wide rectilinear output FOV,
+e.g. `-w 100`, out of a lens whose *circular* coverage doesn't fill a rectangle's corners at
+that same nominal FOV) are masked to black by ANDing the existing "inside the requested virtual
+screen" check with a new "raw sample landed inside cam0's real 640x480 frame" check, rather than
+smearing the source's edge pixels into them.
+
+The calibration constants (`fx, fy, cx, cy, k1..k6, p1, p2` for cam0) are baked as plain shader
+constants rather than plumbed through the push-constant buffer: that struct (`VulkanUniformBuffer`
+in `vulkan_utils.h`) is already at Vulkan's guaranteed 128-byte push-constant limit (see the
+GPU-load/test-pattern bit-packing comments already in that file from earlier today), and this
+viewer only ever reads cam0 (`camera0.pgm`) -- its intrinsics don't change at runtime. A second
+live camera would need a real uniform buffer, not more shader constants.
+
+Gated on a new bit (bit 24, the first one HELLO_XR_TEST_PATTERN/HELLO_XR_GPU_LOAD's 0-23 don't
+touch) in the existing `mode.x` push-constant field, set from a new
+`HELLO_XR_PASSTHROUGH_FISHEYE_CORRECT` env var: defaults **on** whenever `HELLO_XR_FIXED_POSE`
+is set (i.e. for the passthrough viewer specifically), can be forced off
+(`HELLO_XR_PASSTHROUGH_FISHEYE_CORRECT=0`) for A/B comparison, and is unconditionally off (the
+bit is set before, and cleared again by, the wholesale `mode[0]` reassignment the
+`HELLO_XR_TEST_PATTERN=card/toggle` synthetic patterns already do) for anything that isn't real
+`HELLO_XR_FIXED_POSE` `PROJ_FLAT` camera content -- ordinary pano/photo/video playback is
+byte-identical to before this change. Touched files: `graphicsplugin_vulkan.cpp` (the new gate,
+right after the existing per-eye bit),`vulkan_utils.h` (mode-bit comment only, no layout
+change), `vulkan_shaders/frag.glsl` (`Cam0Distort` + the `PROJ_FLAT` branch's new sampling path).
+`openxr_program.cpp` was deliberately left untouched (a separate, concurrent fix there today was
+the floor-grid height calibration above -- different topic, same file).
+
+### Verification
+
+Rebuilt clean (`ninja hello_xr`, shader recompiled to `frag.spv`, no warnings). Could **not** be
+verified live against a real wearer this pass -- the rig had an active wearer session in
+progress the whole time this was being built (`pgrep -af hello_xr` showed the floor-grid fix's
+own verification run, live `DEBUGGRAB`/`DEBUGTRIGGER` controller activity, ~11-14 minutes into
+its 900s window), and it would have been disruptive to kill that to grab the DRM lease for an
+unrelated change. So this was verified by math/reasoning and an offline frame-based check
+instead of "does it look right on a real head":
+
+1. **Formula**: every term above was matched line-for-line against Basalt's own
+   `fisheye624_camera.hpp::distort()`, not inferred from the coefficient names.
+2. **Sign/axis convention**: cross-checked against this same shader's own pre-existing Y-flip
+   (the `-panoFov.y` in the old linear mapping, there for the same +Y-up-vs-+Y-down reason).
+3. **Offline numeric port** (Python, `numpy`/`PIL`, not committed -- lived in `/tmp` only)
+   reproduced `Cam0Distort` exactly and ran it against a live-pulled `camera0.pgm` frame: the
+   corrected render shows the expected "TV-screen" pincushion-shaped valid-coverage boundary
+   (content pulled from cam0's circular fisheye coverage into a rectangle, black in the
+   corners) and visibly magnified/stretched content near the frame edges relative to the old
+   linear mapping -- both the correct qualitative signature of a real fisheye-to-rectilinear
+   unwarp, though the actual captured frame (dark IR, low contrast, a shoulder/blanket close to
+   the lens) didn't have a clean enough straight edge in view to measure a bow-angle before/
+   after.
+4. **Independent synthetic check** (same offline script): generated straight lines directly in
+   undistorted-ray space, forward-projected them through the verified `Cam0Distort` to simulate
+   "what cam0 would have actually photographed pointed at a real straight-lined grid" (pure
+   forward projection, same direction the shader itself uses, so this doesn't just mirror the
+   correction code back at itself), producing a synthetic raw frame with the same barrel bowing
+   the wearer described. Running that synthetic frame back through the corrected `PROJ_FLAT`
+   path recovered a genuinely straight rectilinear grid end to end, with only minor pixel-level
+   staircasing from the scatter-plot line rendering, not a geometric error. This is the
+   strongest evidence available without a live wearer: the correction demonstrably straightens
+   lines that are bowed by exactly this lens's own calibrated distortion, across the whole
+   frame, not just near the center.
+
+**Not yet confirmed by an actual wearer** -- next session with the rig idle should relaunch with
+`HELLO_XR_PASSTHROUGH_FISHEYE_CORRECT=0` vs the new default-on, looking at a real door frame or
+monitor bezel, to close the loop this task asked for.
+
+Committed to `~/vr/OpenXR-SDK-Source` (branch `lab`), pushed to `wintch`.
