@@ -142,6 +142,115 @@ def presence_settings():
     return result
 
 
+_cpu_prev = {"ts": None, "lines": None}
+
+
+def _read_proc_stat_cpu_lines():
+    """{'cpu0': (user,nice,system,idle,iowait,irq,softirq,steal,guest,guest_nice), ...} --
+    one tuple per logical core (the aggregate 'cpu' line is skipped, only 'cpuN' lines
+    are kept). Plain /proc/stat read, no subprocess."""
+    lines = {}
+    try:
+        with open("/proc/stat") as f:
+            for line in f:
+                if not line.startswith("cpu"):
+                    break
+                parts = line.split()
+                name = parts[0]
+                if name == "cpu":
+                    continue  # aggregate line -- per-core only
+                try:
+                    lines[name] = tuple(int(x) for x in parts[1:])
+                except ValueError:
+                    continue
+    except OSError:
+        return {}
+    return lines
+
+
+def cpu_telemetry():
+    """Live CPU load, per-core utilisation and package temperature for the dashboard's
+    CPU tab (2026-09-05) -- before this, the only CPU fact anywhere was the static
+    cpu.model/cpu.cores string from machine_specs(), nothing live to actually "tune
+    performance one at a time" against.
+
+    Cheap by construction, safe to poll every tick (wearer session or not, see
+    feedback_no_heavy_analysis_during_wearer_sessions -- this is a few-KB text read
+    plus O(cores) arithmetic, nowhere near that incident's 609 MB/awk scale):
+      - load1/load5/load15: os.getloadavg() (stdlib, zero subprocess).
+      - per_core_pct: diffs two /proc/stat samples. One extra module-level cache
+        (_cpu_prev), parallel to this file's other per-call caches -- the FIRST call
+        this process ever makes has nothing to diff against, so per_core_pct is None
+        for that one tick (the caller renders "collecting...", same honesty already
+        used for a stale camera-preview frame).
+      - temp_c/temp_source: `sensors -j`, first "Tctl" field found under ANY adapter
+        (fallback "Tdie" if no Tctl key exists anywhere) -- deliberately NOT hardcoded
+        to a specific chip/adapter name. This repo already got burned once hardcoding a
+        hardware identifier that later changed (the DP-1->DP-3 connector move after the
+        2026-09-03 GPU swap); same generic-lookup discipline here. None/no source if
+        lm-sensors isn't installed or nothing recognizable is found.
+
+    Thresholds (applied by the caller, not here): ok <75C, warn 75-88C, bad >=88C --
+    grounded in the Ryzen 5 5600X's documented ~90C Tjmax/throttle point. PLACEHOLDER:
+    not yet validated against this box under a real sustained 6dof session -- re-check
+    before the next demo day.
+    """
+    global _cpu_prev
+    try:
+        load1, load5, load15 = os.getloadavg()
+    except OSError:
+        load1 = load5 = load15 = None
+
+    cur_lines = _read_proc_stat_cpu_lines()
+    per_core_pct = None
+    prev_lines = _cpu_prev["lines"]
+    if prev_lines and cur_lines:
+        pct = []
+        ok = True
+        for name in sorted(cur_lines, key=lambda n: int(n[3:])):
+            prev = prev_lines.get(name)
+            cur = cur_lines[name]
+            if prev is None or len(prev) != len(cur):
+                ok = False
+                break
+            deltas = [c - p for c, p in zip(cur, prev)]
+            total = sum(deltas)
+            idle = deltas[3] + (deltas[4] if len(deltas) > 4 else 0)  # idle + iowait
+            pct.append(round(100.0 * (total - idle) / total, 1) if total > 0 else 0.0)
+        if ok:
+            per_core_pct = pct
+    _cpu_prev = {"ts": time.monotonic(), "lines": cur_lines}
+
+    temp_c, temp_source = None, None
+    out, rc = run(["sensors", "-j"])
+    if rc == 0 and out:
+        try:
+            data = json.loads(out)
+        except Exception:
+            data = {}
+        for want in ("Tctl", "Tdie"):
+            for adapter, chip in data.items():
+                if not isinstance(chip, dict):
+                    continue
+                fields = chip.get(want)
+                if not isinstance(fields, dict):
+                    continue
+                for fk, fv in fields.items():
+                    if fk.endswith("_input"):
+                        temp_c, temp_source = fv, f"{adapter}:{want}"
+                        break
+                if temp_c is not None:
+                    break
+            if temp_c is not None:
+                break
+
+    return {
+        "load1": load1, "load5": load5, "load15": load15,
+        "per_core_pct": per_core_pct,
+        "temp_c": temp_c, "temp_source": temp_source,
+    }
+
+
 def monado_pid(name="monado-service"):
     """Pid of the running monado-service, or None. `pgrep -x` (exact process name, the
     convention jack-in-wayland.sh's teardown already uses), NOT `-f`: -f scans every

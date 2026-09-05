@@ -953,6 +953,7 @@ def build_status():
         "gpu_power": gpu_power(),
         "power_mode": rig_telemetry.power_mode(),
         "hmd_temperature": rig_telemetry.hmd_temperature(),
+        "cpu_live": rig_telemetry.cpu_telemetry(),
         "presence": rig_telemetry.presence_settings(),
         "audio": audio_status(),
         "pmadminka": pmadminka_status(),
@@ -1129,12 +1130,76 @@ PAGE = """<!doctype html>
   details.access-panel[open] > summary::before { transform:rotate(90deg); }
   details.access-panel > summary:hover { color:var(--ink); }
   .fault-dot { width:7px; height:7px; border-radius:50%; display:inline-block; }
+  /* The bare `hidden` attribute (instrument-bank tab dots) needs a same-origin rule at
+     HIGHER specificity than `.fault-dot` above to actually win -- otherwise this class's
+     own `display:inline-block` outranks the browser's default `[hidden]{display:none}`
+     UA-stylesheet rule (equal specificity, author stylesheet always wins), and a
+     "hidden" fault-dot renders anyway. Caught live via headless-Chrome screenshot,
+     2026-09-05 -- exactly the class of bug this file's own verification method exists
+     to catch before it ships. */
+  .fault-dot[hidden] { display:none; }
   .fault-dot.ok-hidden { background:transparent; }
   .fault-dot.bad { background:var(--bad); box-shadow:0 0 6px var(--bad-glow); }
+  .fault-dot.warn { background:var(--warn); }
   .grid { display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-top:10px; }
   .grid .card h2 { font-size:11px; letter-spacing:.07em; color:var(--ink-dim); }
   .grid .row { font-family:var(--font-mono); font-size:12px; }
   @media (max-width:720px) { .grid { grid-template-columns:1fr; } }
+
+  /* ---- Profile strip (2026-09-05): the operator/profile row, the first visible thing
+     below #attn -- fast/clean user switching before anything else on the page. The
+     per-user height/dof/mapping/notes fields, plus a read-only "fixed spec plate" of
+     hardware facts (not user data), collapse behind the same access-panel disclosure
+     used everywhere else on the page for "read rarely" content. */
+  .profile-strip { display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px;
+                    padding:10px 14px; background:var(--surface); border:1px solid var(--line);
+                    border-radius:var(--radius); margin-bottom:8px; }
+  .profile-strip label { font-family:var(--font-display); text-transform:uppercase; letter-spacing:.05em;
+                          font-size:10.5px; color:var(--ink-dim); }
+  .profile-strip select, .profile-strip input:not([type=range]) {
+    font-family:var(--font-body); background:var(--surface-2); color:var(--ink); border:1px solid var(--line);
+    border-radius:6px; padding:5px 8px; font-size:13px; }
+  .profile-strip input[type=range] { accent-color:var(--accent); }
+  .profile-strip button { background:var(--surface-2); color:var(--ink); border:1px solid var(--line);
+                           border-radius:6px; padding:6px 12px; font-size:13px; cursor:pointer; font-family:var(--font-body); }
+  .profile-strip button:hover { border-color:var(--accent); }
+  .fixed-plate { margin-top:12px; }
+  .fixed-plate .row span:first-child { font-family:var(--font-display); text-transform:uppercase;
+                                        letter-spacing:.04em; font-size:11px; color:var(--ink-dim); }
+  .fixed-plate .row span:last-child { font-family:var(--font-mono); font-size:12px; color:var(--ink); }
+
+  /* ---- Instrument bank (2026-09-05): HEADSET/GPU/CPU subsystem-detail tabs, replacing
+     the old single "Diagnostics" access-panel so GPU and CPU can be tuned one at a time.
+     Breaker-plate fascia: raised --surface-2 plates in a recessed --bg track, a single
+     accent bar as the ONLY selection signal (--accent stays interactive-only everywhere
+     else in this bank -- never repurposed as a status color). */
+  .instrument-bank { display:flex; gap:3px; background:var(--bg); border:1px solid var(--line);
+                      border-bottom:none; border-radius:var(--radius) var(--radius) 0 0; padding:6px 6px 0; margin-top:18px; }
+  .tab-plate { position:relative; flex:1 1 0; background:var(--surface-2); color:var(--ink-dim);
+               border:1px solid var(--line); border-bottom:none; border-radius:6px 6px 0 0;
+               box-shadow: inset 0 -3px 5px rgba(0,0,0,.3);
+               font-family:var(--font-display); text-transform:uppercase; letter-spacing:.05em;
+               font-size:13px; padding:10px 30px 10px 14px; cursor:pointer; text-align:center; }
+  .tab-plate:hover { color:var(--ink); }
+  .tab-plate[aria-selected="true"] { color:var(--ink); font-weight:700; background:var(--surface);
+                                      border-bottom:3px solid var(--accent); box-shadow:none; }
+  .tab-plate .fault-dot { position:absolute; top:8px; right:10px; }
+  @media (max-width:720px) {
+    .instrument-bank { flex-direction:column; padding:6px; }
+    .tab-plate { border-radius:6px; border-bottom:1px solid var(--line); text-align:left; }
+    .tab-plate[aria-selected="true"] { border-bottom:3px solid var(--accent); }
+  }
+  .nameplate-strip { display:flex; flex-wrap:wrap; gap:6px 22px; align-items:center;
+                      background:var(--surface); border:1px solid var(--line); border-top:none;
+                      padding:8px 14px; font-family:var(--font-mono); font-size:11.5px; color:var(--ink-dim); }
+  .nameplate-strip b { font-family:var(--font-display); text-transform:uppercase; letter-spacing:.05em;
+                        font-size:10px; font-weight:700; color:var(--ink-inactive); margin-right:5px; }
+  .nameplate-strip button { margin-left:6px; padding:2px 8px; font-size:11.5px; font-family:var(--font-body);
+                             background:var(--surface-2); color:var(--ink); border:1px solid var(--line);
+                             border-radius:5px; cursor:pointer; }
+  .nameplate-strip button:hover { border-color:var(--accent); }
+  .tab-panel-body { background:var(--surface); border:1px solid var(--line); border-top:none;
+                     border-radius:0 0 var(--radius) var(--radius); padding:14px 16px; margin-bottom:14px; }
 
   .preview-img { max-width:100%; border-radius:6px; background:var(--bg); display:none; }
   #screen-note { font-size:12px; }
@@ -1150,6 +1215,11 @@ PAGE = """<!doctype html>
 </style></head>
 <body>
 <div id="attn"></div>
+<div class="profile-strip" id="profile-strip-body">loading...</div>
+<details class="access-panel" id="profile-edit-panel">
+  <summary><span data-i18n="cc_edit_profile">edit profile</span></summary>
+  <div id="profile-edit-body">loading...</div>
+</details>
 <div class="tray-header">
   <h1 class="wordmark"><span data-i18n="h1">iashur</span><small data-i18n="h1_sub">HP Reverb G2 lab status</small></h1>
   <div class="status-strip" id="status-dots">
@@ -1189,10 +1259,6 @@ PAGE = """<!doctype html>
   </div>
 </div>
 <div class="card" style="margin-bottom:14px">
-  <h2 data-i18n="cc_h2">Command centre -- headset &amp; user</h2>
-  <div id="user-center">loading...</div>
-</div>
-<div class="card" style="margin-bottom:14px">
   <h2 data-i18n="playlist_h2">Demo round (playlist) -- sequence with "next title" voice cue + clean teardown between each</h2>
   <div id="pl-live"></div>
   <div id="pl-build">loading...</div>
@@ -1215,12 +1281,23 @@ PAGE = """<!doctype html>
     </ul>
   </div>
 </div>
-<details class="access-panel">
-  <summary><span class="fault-dot ok-hidden" id="access-fault-dot"></span><span data-i18n="access_h2">Diagnostics</span></summary>
-  <div class="grid" id="grid">loading...</div>
-  <!-- Persistent (not rebuilt by the #grid innerHTML replace every tick, so an in-progress
-       edit here survives a refresh) -- 2026-09-04, see renderPresenceSettings(). -->
-  <div class="grid" style="margin-top:0">
+<div class="instrument-bank" role="tablist" aria-label="Subsystem detail">
+  <button class="tab-plate" role="tab" id="tab-headset" aria-selected="true"  aria-controls="panel-headset" tabindex="0">
+    HEADSET <span class="fault-dot bad" id="dot-headset" hidden></span>
+  </button>
+  <button class="tab-plate" role="tab" id="tab-gpu" aria-selected="false" aria-controls="panel-gpu" tabindex="-1">
+    GPU <span class="fault-dot bad" id="dot-gpu" hidden></span>
+  </button>
+  <button class="tab-plate" role="tab" id="tab-cpu" aria-selected="false" aria-controls="panel-cpu" tabindex="-1">
+    CPU <span class="fault-dot warn" id="dot-cpu" hidden></span>
+  </button>
+</div>
+<div class="nameplate-strip" id="nameplate-strip">loading...</div>
+<div id="panel-headset" class="tab-panel-body" role="tabpanel" aria-labelledby="tab-headset">
+  <div class="grid" id="grid-headset">loading...</div>
+  <!-- Persistent (not rebuilt by the #grid-headset innerHTML replace every tick, so an
+       in-progress edit here survives a refresh) -- 2026-09-04, see renderPresenceSettings(). -->
+  <div class="grid" style="margin-top:12px">
     <div class="card" id="presence-card">
       <h2>Auto-standby (presence)</h2>
       <div class="row"><span>enabled</span><span><input type="checkbox" id="presence-enable-cb"></span></div>
@@ -1239,7 +1316,13 @@ PAGE = """<!doctype html>
       </div>
     </div>
   </div>
-</details>
+</div>
+<div id="panel-gpu" class="tab-panel-body" role="tabpanel" aria-labelledby="tab-gpu" hidden>
+  <div class="grid" id="grid-gpu">loading...</div>
+</div>
+<div id="panel-cpu" class="tab-panel-body" role="tabpanel" aria-labelledby="tab-cpu" hidden>
+  <div class="grid" id="grid-cpu">loading...</div>
+</div>
 <div class="ts" id="ts"></div>
 <script>
 // ---- i18n -------------------------------------------------------------------
@@ -1273,6 +1356,7 @@ const I18N = {
     cc_adjustable: "Adjustable (per user)", cc_brightness: "brightness", cc_height: "height (m)",
     cc_dof: "preferred DoF", cc_mapping: "controller mapping", cc_notes: "notes",
     cc_save_btn: "Save user", cc_fixed: "Fixed (not changeable on this headset)", cc_lang: "language",
+    cc_edit_profile: "edit profile",
     pl_name_label: "Name:", pl_name_default: "Demo round",
     pl_auto_btn: "▶ Auto round (all, recommended)", pl_custom_btn: "▶ Fire selection",
     pl_hint: "\\"Next title\\" voice cue + clean teardown between each. Pausable / stoppable once launched.",
@@ -1304,6 +1388,7 @@ const I18N = {
     cc_adjustable: "Ajustable (por usuario)", cc_brightness: "brillo", cc_height: "altura (m)",
     cc_dof: "DoF preferido", cc_mapping: "mapeo de controles", cc_notes: "notas",
     cc_save_btn: "Guardar usuario", cc_fixed: "Fijo (no modificable en este casco)", cc_lang: "idioma",
+    cc_edit_profile: "editar perfil",
     pl_name_label: "Nombre:", pl_name_default: "Ronda demo",
     pl_auto_btn: "▶ Ronda automática (todo, recomendada)", pl_custom_btn: "▶ Disparar selección",
     pl_hint: "Voz \\"próximo título\\" + teardown limpio entre cada uno. Pausable / detenible una vez lanzada.",
@@ -1335,6 +1420,7 @@ const I18N = {
     cc_adjustable: "Настраиваемое (по пользователю)", cc_brightness: "яркость", cc_height: "рост (м)",
     cc_dof: "предпочитаемый DoF", cc_mapping: "раскладка контроллеров", cc_notes: "заметки",
     cc_save_btn: "Сохранить пользователя", cc_fixed: "Фиксировано (нельзя изменить на этой гарнитуре)", cc_lang: "язык",
+    cc_edit_profile: "редактировать профиль",
     pl_name_label: "Название:", pl_name_default: "Демо-раунд",
     pl_auto_btn: "▶ Автораунд (всё, рекомендуется)", pl_custom_btn: "▶ Запустить выбранное",
     pl_hint: "Голосовое объявление «следующий тайтл» + чистое завершение между показами. Можно приостановить / остановить после запуска.",
@@ -1776,21 +1862,23 @@ async function tick() {
     const pmRow = `<div class="row"><span>${t('pm_row_label')}</span><span class="${pmCls}">${pmLabel}
       <button onclick="pmToggle(${!!pm.attached})" style="margin-left:8px;padding:2px 8px;font-size:12px">${pmBtnLabel}</button></span></div>`;
     const specs = d.specs || {};
-    const cpu = specs.cpu || {}, gpuSpec = specs.gpu || {};
+    const cpu = specs.cpu || {};
     // ---- Operator-tray tier: session state (always visible, the "2-second glance") ----
+    // TRIMMED (2026-09-05): the full DoF/controller/audio explanations moved to the
+    // HEADSET tab and power_mode moved to the GPU tab -- this card keeps only the
+    // state/DoF-name/controllers-dot/audio-route-dot a glance actually needs.
+    const ctrlDotCls = !sessionActive ? 'dim' : (ctrl.error ? 'dim' : (ctrlNeedsCycle ? 'warn' : (ctrl.left && ctrl.right ? 'ok' : 'warn')));
     document.getElementById('session-rows').innerHTML = `
-      <div class="row"><span>state</span><span class="${sessionActive?'ok':'dim'}">${sessionActive?'ACTIVE -- compositor running':'IDLE -- no game/compositor session right now, this is normal at rest'}</span></div>
-      <div class="row"><span>power mode</span>${powerRow}</div>
-      ${trackingRow}
-      ${controllersRow}
-      ${audioRow}
-      ${pmRow}
+      <div class="row"><span>state</span><span class="${sessionActive?'ok':'dim'}">${sessionActive?'ACTIVE':'IDLE'}</span></div>
+      <div class="row"><span>DoF</span><span class="${sessionActive?'ok':'dim'}">${sessionActive ? (d.tracking||'?').toUpperCase() : 'n/a'}</span></div>
+      <div class="row"><span>controllers</span><span class="status-dot ${ctrlDotCls}"></span></div>
+      <div class="row"><span>audio route</span><span class="status-dot ${audioCls}"></span></div>
     `;
-    // Master status-strip dots (header row): the true at-a-glance read, one level
-    // above even the session card -- SESSION mirrors the state row above; AUDIO
-    // mirrors audioCls; HARDWARE folds USB/display/coredump faults into one dot so
-    // a real problem is visible without opening the access panel; HUB mirrors the
-    // pmadminka attach state (worth a glance before every demo, per docs/86).
+    // Master status-strip dots (header row, unchanged): the true at-a-glance read, one
+    // level above even the session card -- SESSION mirrors the state row above; AUDIO
+    // mirrors audioCls; HARDWARE folds USB/display/coredump faults into one dot so a
+    // real problem is visible without opening any tab; HUB mirrors the pmadminka attach
+    // state (worth a glance before every demo, per docs/86).
     const usbFault = d.usb.present_count < d.usb.total;
     const drmFault = Object.entries(d.drm).some(([, s]) => s === 'disconnected' && sessionActive);
     const hwFault = usbFault || drmFault || d.coredumps.count > 0;
@@ -1798,10 +1886,25 @@ async function tick() {
     document.getElementById('dot-audio').className = 'status-dot ' + audioCls;
     document.getElementById('dot-hw').className = 'status-dot ' + (hwFault ? 'bad' : 'ok');
     document.getElementById('dot-hub').className = 'status-dot ' + (pm.attached ? 'warn' : 'dim');
-    const faultDot = document.getElementById('access-fault-dot');
-    if (faultDot) faultDot.className = 'fault-dot ' + (hwFault ? 'bad' : 'ok-hidden');
-    // ---- Access-panel tier: diagnostics, read rarely, collapsed by default ----
-    document.getElementById('grid').innerHTML = `
+
+    // ---- Nameplate strip (2026-09-05, always visible, not a tab): repo/uptime/sunshine
+    // + the ONE pmadminka attach/detach control on the page. ----
+    document.getElementById('nameplate-strip').innerHTML = `
+      <span><b>REPO</b>${(d.repo.head||'?').split(' ')[0]} <span class="${d.repo.dirty?'warn':'ok'}">${d.repo.dirty?'· dirty':'· clean'}</span></span>
+      <span><b>UPTIME</b>${d.uptime || '?'}</span>
+      <span><b>SUNSHINE</b><span class="${d.sunshine?'ok':'dim'}">${d.sunshine ? 'active' : 'inactive'}</span></span>
+      <span><b>HUB</b><span class="${pmCls}">${pmLabel}</span>
+        <button onclick="pmToggle(${!!pm.attached})">${pmBtnLabel}</button></span>
+    `;
+
+    // ---- Instrument bank tabs: HEADSET/GPU/CPU, tick() writes into all three panels'
+    // DOM every cycle regardless of which is visible (same as the old collapsed
+    // <details> content always did) -- pure attribute toggling, not a re-fetch, picks
+    // which one is actually shown (see selectTab()). ----
+    document.getElementById('grid-headset').innerHTML = `
+      <div class="card"><h2>Tracking mode</h2>${trackingRow}</div>
+      <div class="card"><h2>Controllers</h2>${controllersRow}</div>
+      <div class="card"><h2>Audio route</h2>${audioRow}</div>
       <div class="card"><h2>USB (${d.usb.present_count}/${d.usb.total})</h2>${usbRows}</div>
       <div class="card"><h2>Display connectors</h2>${drmRows}</div>
       <div class="card"><h2>monado-service</h2>
@@ -1809,27 +1912,125 @@ async function tick() {
         <div class="row"><span>coredumps (total)</span><span class="${d.coredumps.count>0?'warn':'ok'}">${d.coredumps.count}</span></div>
         <pre>${d.coredumps.last || 'none'}</pre>
       </div>
-      <div class="card"><h2>GPU</h2>${gpuPowerHtml(d.gpu_power)}<pre>${d.gpu}</pre></div>
       <div class="card"><h2>HMD thermal</h2>${hmdThermalHtml(d.hmd_temperature)}</div>
-      <div class="card"><h2>repo (reverb-g2)</h2>
-        <pre>${d.repo.head}</pre>
-        <div class="row"><span>working tree</span><span class="${d.repo.dirty?'warn':'ok'}">${d.repo.dirty?'dirty (routine -- telemetry/logs)':'clean'}</span></div>
-      </div>
-      <div class="card"><h2>system</h2>
-        <div class="row"><span>cpu</span><span>${cpu.model || '?'}${cpu.cores ? ' (' + cpu.cores + 'c/' + (cpu.threads||'?') + 't)' : ''}</span></div>
-        <div class="row"><span>gpu</span><span>${gpuSpec.name || '?'}</span></div>
-        <div class="row"><span>ram</span><span class="${d.ram_pct > 90 ? 'warn' : ''}">${d.ram_pct != null ? d.ram_pct + '%' : '?'}${specs.ram_gb ? ' of ' + specs.ram_gb + ' GB' : ''}</span></div>
-        <div class="row"><span>sunshine (remote play)</span><span class="${d.sunshine?'ok':'dim'}">${d.sunshine ? 'active' : 'inactive'}</span></div>
-        <div class="row"><span>vr device present</span><span class="${d.vr_device?'ok':'dim'}">${d.vr_device ? 'yes' : 'no'}</span></div>
-        <pre>${d.uptime}</pre>
+      <div class="card"><h2>vr device</h2><div class="row"><span>present</span><span class="${d.vr_device?'ok':'dim'}">${d.vr_device ? 'yes' : 'no'}</span></div></div>
+    `;
+    const dotHeadset = document.getElementById('dot-headset');
+    if (dotHeadset) dotHeadset.hidden = !hwFault;
+
+    // GPU tab: power gauge + power_mode (moved out of the Session card -- same
+    // subsystem fact) + driver/name string, all folded into one card.
+    const gpuFault = d.gpu_power == null;
+    document.getElementById('grid-gpu').innerHTML = `
+      <div class="card"><h2>GPU power</h2>${gpuPowerHtml(d.gpu_power)}
+        <div class="row"><span>power mode</span>${powerRow}</div>
+        <pre>${d.gpu}</pre>
       </div>
     `;
+    const dotGpu = document.getElementById('dot-gpu');
+    if (dotGpu) dotGpu.hidden = !gpuFault;
+
+    // CPU tab (2026-09-05): the first LIVE cpu data anywhere on this page -- load
+    // average + per-core utilisation + temperature, generalized on top of the same
+    // .pwr-track/.pwr-fill meter gpuPowerHtml() already uses, plus the static
+    // model/cores string and the governor field (fetched all along, never rendered
+    // until now), plus RAM (co-located here as the shared host-resource budget).
+    const cpuLive = d.cpu_live || {};
+    const cores = cpu.cores || 1;
+    const loadRatio = cpuLive.load1 != null ? (cpuLive.load1 / cores) : null;
+    const loadColor = loadRatio == null ? 'var(--ink-inactive)' : (loadRatio > 0.95 ? 'var(--bad)' : (loadRatio > 0.75 ? 'var(--warn)' : 'var(--ok)'));
+    const loadHtml = loadRatio == null ? '<span class="dim">load unavailable</span>' : `
+      <div class="pwr-wrap">
+        <div class="pwr-nums"><span><b style="color:${loadColor}">${cpuLive.load1.toFixed(2)}</b> load1 / ${cores} cores</span>
+          <span class="dim">5m ${cpuLive.load5.toFixed(2)} &middot; 15m ${cpuLive.load15.toFixed(2)}</span></div>
+        <div class="pwr-track"><div class="pwr-fill" style="width:${Math.min(100,loadRatio*100)}%; background:${loadColor}"></div></div>
+      </div>`;
+    const coreRows = cpuLive.per_core_pct == null
+      ? '<span class="dim">collecting...</span>'
+      : cpuLive.per_core_pct.map((p,i) => {
+          const c = p > 95 ? 'var(--bad)' : (p > 80 ? 'var(--warn)' : 'var(--ok)');
+          return `<div class="pwr-wrap" style="margin-bottom:4px"><div class="pwr-nums"><span>core ${i}</span><span class="dim">${p.toFixed(0)}%</span></div>
+            <div class="pwr-track" style="height:5px"><div class="pwr-fill" style="width:${p}%; background:${c}"></div></div></div>`;
+        }).join('');
+    let tempHtml, cpuTempFault = false;
+    if (cpuLive.temp_c == null) {
+      tempHtml = '<span class="dim">temperature unavailable</span>';
+    } else {
+      cpuTempFault = cpuLive.temp_c >= 75;
+      const tCls = cpuLive.temp_c >= 88 ? 'bad' : (cpuLive.temp_c >= 75 ? 'warn' : 'ok');
+      tempHtml = `<span class="${tCls}">${cpuLive.temp_c.toFixed(1)}&deg;C</span> <span class="dim">(${cpuLive.temp_source||'?'})</span>`;
+    }
+    const ramPct = d.ram_pct;
+    const ramColor = ramPct == null ? 'var(--ink-inactive)' : (ramPct > 90 ? 'var(--bad)' : (ramPct > 75 ? 'var(--warn)' : 'var(--ok)'));
+    const ramHtml = ramPct == null ? '<span class="dim">?</span>' : `
+      <div class="pwr-wrap"><div class="pwr-nums"><span><b style="color:${ramColor}">${ramPct}%</b>${specs.ram_gb ? ' of ' + specs.ram_gb + ' GB' : ''}</span></div>
+        <div class="pwr-track"><div class="pwr-fill" style="width:${Math.min(100,ramPct)}%; background:${ramColor}"></div></div></div>`;
+    document.getElementById('grid-cpu').innerHTML = `
+      <div class="card"><h2>CPU load</h2>${loadHtml}</div>
+      <div class="card"><h2>Per-core utilisation</h2>${coreRows}</div>
+      <div class="card"><h2>Temperature</h2>${tempHtml}
+        <div class="dim" style="font-size:11px;margin-top:6px">umbral provisional -- ok &lt;75&deg;C, warn 75-88&deg;C, bad &ge;88&deg;C (Ryzen 5 5600X ~90&deg;C Tjmax) -- sin validar bajo una sesión 6dof real, revisar antes del próximo demo day</div>
+      </div>
+      <div class="card"><h2>System</h2>
+        <div class="row"><span>cpu</span><span>${cpu.model || '?'}${cpu.cores ? ' (' + cpu.cores + 'c/' + (cpu.threads||'?') + 't)' : ''}</span></div>
+        <div class="row"><span>governor</span><span>${cpu.governor || '?'}</span></div>
+      </div>
+      <div class="card"><h2>RAM</h2>${ramHtml}</div>
+    `;
+    const dotCpu = document.getElementById('dot-cpu');
+    if (dotCpu) dotCpu.hidden = !cpuTempFault;
+
     document.getElementById('ts').textContent = 'updated ' + d.generated_at;
   } catch(e) {
-    document.getElementById('grid').innerHTML = '<div class="card bad">fetch failed: ' + e + '</div>';
+    const msg = '<div class="card bad">fetch failed: ' + e + '</div>';
+    ['grid-headset', 'grid-gpu', 'grid-cpu'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = msg;
+    });
   }
   setTimeout(tick, 6000);
 }
+// ---- Instrument-bank tab switching (2026-09-05): pure attribute toggling, no re-fetch --
+// tick() above keeps writing into all three panels regardless of which is visible. ----
+const TAB_IDS = ['headset', 'gpu', 'cpu'];
+function selectTab(id, opts) {
+  opts = opts || {};
+  TAB_IDS.forEach(t => {
+    const btn = document.getElementById('tab-' + t);
+    const panel = document.getElementById('panel-' + t);
+    const active = t === id;
+    if (btn) { btn.setAttribute('aria-selected', active ? 'true' : 'false'); btn.tabIndex = active ? 0 : -1; }
+    if (panel) panel.hidden = !active;
+  });
+  if (!opts.skipSave) {
+    try { localStorage.setItem('iashur-dashboard-tab', id); } catch(e) {}
+  }
+}
+function initTabs() {
+  let initial = 'headset';
+  try { initial = localStorage.getItem('iashur-dashboard-tab') || 'headset'; } catch(e) {}
+  if (TAB_IDS.indexOf(initial) === -1) initial = 'headset';
+  selectTab(initial, {skipSave: true});
+  TAB_IDS.forEach((id, i) => {
+    const btn = document.getElementById('tab-' + id);
+    if (!btn) return;
+    btn.addEventListener('click', () => selectTab(id));
+    btn.addEventListener('keydown', (e) => {
+      let ni = null;
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') ni = (i + 1) % TAB_IDS.length;
+      else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') ni = (i - 1 + TAB_IDS.length) % TAB_IDS.length;
+      else if (e.key === 'Home') ni = 0;
+      else if (e.key === 'End') ni = TAB_IDS.length - 1;
+      if (ni != null) {
+        e.preventDefault();
+        selectTab(TAB_IDS[ni]);
+        const nb = document.getElementById('tab-' + TAB_IDS[ni]);
+        if (nb) nb.focus();
+      }
+    });
+  });
+}
+initTabs();
 // ---- Demo round / playlist -------------------------------------------------
 async function refreshPlaylistBuild() {
   try {
@@ -1906,7 +2107,11 @@ async function tickPlaylist() {
 setInterval(tickPlaylist, 2000);
 refreshPlaylistBuild();
 tickPlaylist();
-// ---- Command centre: per-user settings + fixed headset props ----------------
+// ---- Profile strip: per-user settings + fixed headset props -----------------
+// Split in two (2026-09-05): the always-visible strip (active user + brightness +
+// language -- fast/clean switching, the very top of the page) vs the collapsed
+// "edit profile" access-panel (per-user height/dof/mapping/notes, read rarely, plus
+// the read-only "fixed spec plate" -- hardware facts, not user data).
 async function refreshUserCenter() {
   try {
     const d = await (await fetch('/api/users', {cache:'no-store'})).json();
@@ -1917,27 +2122,32 @@ async function refreshUserCenter() {
     // re-apply and bail out when it actually differs from what's showing now.
     const wantLang = u.lang || currentLang;
     if (wantLang !== currentLang) { applyLang(wantLang); return; }
-    const el = document.getElementById('user-center');
     const names = Object.keys(d.users || {});
     const opts = names.map(n => `<option value="${n}" ${n===d.active?'selected':''}>${n}</option>`).join('');
     const gain = (+(d.brightness_live!=null?d.brightness_live:(u.brightness!=null?u.brightness:1))).toFixed(2);
     const esc = s => (s||'').replace(/"/g,'&quot;');
-    const fixedRows = Object.entries(d.fixed||{}).map(([k,v]) =>
-      `<div class="row"><span>${k}</span><span class="dim">${v}</span></div>`).join('');
     const langOpts = ['en','es','ru'].map(l => `<option value="${l}" ${l===currentLang?'selected':''}>${l.toUpperCase()}</option>`).join('');
-    el.innerHTML = `
-      <div class="row" style="gap:8px"><span><b>${t('cc_active_user')}</b></span>
-        <select id="uc-user" onchange="userSelect(this.value)">${opts}</select>
-        <input id="uc-new" placeholder="${t('cc_new_user_ph')}" style="width:130px">
-        <button onclick="userAdd()">${t('cc_add_btn')}</button>
-        <span style="margin-left:auto">${t('cc_lang')}</span>
-        <select id="cc-lang" onchange="applyLangAndSave(this.value)">${langOpts}</select></div>
-      <div style="margin-top:10px"><b>${t('cc_adjustable')}</b></div>
-      <div class="row"><span>${t('cc_brightness')}</span>
-        <input type="range" min="0.5" max="2.5" step="0.05" value="${gain}" id="uc-bri"
-               oninput="document.getElementById('uc-bri-v').textContent=(+this.value).toFixed(2)+'x'"
-               onchange="setBrightness(this.value)" style="width:220px">
-        <span id="uc-bri-v" class="ok">${gain}x</span></div>
+
+    const stripEl = document.getElementById('profile-strip-body');
+    stripEl.innerHTML = `
+      <label>${t('cc_active_user')}</label>
+      <select id="active-user" onchange="userSelect(this.value)">${opts}</select>
+      <input id="uc-new" placeholder="${t('cc_new_user_ph')}" style="width:110px">
+      <button onclick="userAdd()">${t('cc_add_btn')}</button>
+      <label style="margin-left:6px">${t('cc_brightness')}</label>
+      <input type="range" min="0.5" max="2.5" step="0.05" value="${gain}" id="uc-bri"
+             oninput="document.getElementById('uc-bri-v').textContent=(+this.value).toFixed(2)+'x'"
+             onchange="setBrightness(this.value)" style="width:150px">
+      <span id="uc-bri-v" class="ok">${gain}x</span>
+      <label style="margin-left:6px">${t('cc_lang')}</label>
+      <select id="cc-lang" onchange="applyLangAndSave(this.value)">${langOpts}</select>
+    `;
+
+    const fixedRows = Object.entries(d.fixed||{}).map(([k,v]) =>
+      `<div class="row"><span>${k}</span><span>${v}</span></div>`).join('');
+    const editEl = document.getElementById('profile-edit-body');
+    editEl.innerHTML = `
+      <div style="margin-top:4px"><b>${t('cc_adjustable')}</b></div>
       <div class="row"><span>${t('cc_height')}</span>
         <input id="uc-height" type="number" step="0.01" min="1.0" max="2.2" value="${u.height_m||1.7}" style="width:80px"></div>
       <div class="row"><span>${t('cc_dof')}</span>
@@ -1946,8 +2156,13 @@ async function refreshUserCenter() {
       <div class="row"><span>${t('cc_notes')}</span><input id="uc-notes" value="${esc(u.notes)}" style="width:260px"></div>
       <div style="margin-top:6px"><button onclick="userSave()">${t('cc_save_btn')}</button>
         <span id="uc-msg" class="dim" style="font-size:12px"></span></div>
-      <div style="margin-top:12px"><b>${t('cc_fixed')}</b></div>${fixedRows}`;
-  } catch(e) { document.getElementById('user-center').textContent = 'error: '+e; }
+      <div class="fixed-plate">
+        <div style="margin-bottom:4px"><b>${t('cc_fixed')}</b></div>${fixedRows}
+      </div>`;
+  } catch(e) {
+    const stripEl = document.getElementById('profile-strip-body');
+    if (stripEl) stripEl.textContent = 'error: '+e;
+  }
 }
 async function userSelect(name) { await fetch('/api/user/select?name='+encodeURIComponent(name), {method:'POST'}); refreshUserCenter(); }
 function userAdd() {
@@ -1956,7 +2171,7 @@ function userAdd() {
 }
 async function setBrightness(g) { await fetch('/api/brightness?gain='+encodeURIComponent(g), {method:'POST'}); }
 async function userSave() {
-  const name = document.getElementById('uc-user').value;
+  const name = document.getElementById('active-user').value;
   const body = JSON.stringify({ name: name,
     height_m: parseFloat(document.getElementById('uc-height').value)||1.7,
     dof: document.getElementById('uc-dof').value,
