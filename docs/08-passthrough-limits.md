@@ -353,3 +353,130 @@ A real worn test. What to check, specifically:
 - If ~1fps reads as clearly too slow: raising `WMR_CAMERA_SNAPSHOT_THROTTLE` (or making it an
   env-configurable value instead of a compile-time constant) is the next lever, cross-checked
   against the dashboard feature it was originally tuned for so raising it doesn't regress that.
+
+## Booth dead-time audit: bounding the black/blank window between demo content (2026-09-05)
+
+Operator's ask, direct quote: "para la demo tendria que siempre haber video directamente en
+lugar de fondo negro... como hacemos para acotar la ventana del tiempo muerto entre renders?"
+— for the booth, there should always be live video visible instead of black, and we should
+bound the dead-time window between renders. This section traces where black/blank actually
+happens, with real measured numbers, not estimates.
+
+### 1. Cold-start latency, measured live (today's `passthrough-fast` cycle, 15:36-15:37)
+
+Chained from real timestamps captured during today's own passthrough test cycle (no synthetic
+benchmark):
+
+- **Pre-monado phase** (already measured/documented, T050 in `docs/22`, not re-derived here):
+  `panel.py activate` -> DP connector actually flips to `connected` in ~0.5s on 3 clean
+  back-to-back runs, or ~6s right after a prior failed attempt. `jack-in-wayland.sh` also pays
+  a fixed `WMR_DISPLAY_INIT_SLEEP_SECONDS=2` wait here.
+- **`monado-service` start -> "Socket ready"**: `jack-in-wayland.prev.log`'s mtime (the log
+  rotation happens right as the new `monado-service` process starts) reads
+  `2026-09-05 15:36:31.623`; `/tmp/jackin-passthrough-fast.log`'s mtime (its last line is
+  "Socket ready") reads `2026-09-05 15:36:45.675`. **Measured: 14.05s**, covering DRM lease
+  grant, `wayland-direct` compositor backend init, 4320x2160@90Hz mode set, and idle-blank
+  suppression, attempt 1/3 (no retries needed this run).
+- **App-side, once monado/lease is already warm**: `ps -o lstart` for the live `hello_xr`
+  process (pid 405854) reports exec at `15:37:34`; its own first OpenXR log line
+  (`xrCreateInstance`) is stamped `15:37:35.053` (~1.0s — dynamic linking + Vulkan instance
+  creation); the full `XR_SESSION_STATE` chain IDLE->READY->SYNCHRONIZED->VISIBLE->FOCUSED
+  completes at `15:37:35.359`, i.e. **~305ms** after instance creation. So once monado/the
+  lease are already up, an app reaches FOCUSED/visible in **~1.3s from process launch** — this
+  leg is not the problem.
+- **Realistic scripted cold total** (no human gap): ~2s (fixed sleep) + ~0.5-6s (DP flip) +
+  14.05s (measured compositor/lease pipeline) + ~1.3s (app to FOCUSED) **≈ 18-24s** from
+  `jack-in-wayland.sh up` to first real pixel, dominated by the 14s compositor/lease step.
+- Caveat: today's actual manual test had a 49s *human* gap between "Socket ready" and the
+  `hello_xr` launch (operator typing the launch command by hand) — not a system number, but it
+  flags that whoever/whatever triggers the app matters: `vr-launcher.py` launching immediately
+  removes this gap for real demo titles.
+
+### 2. Teardown/relaunch transitions — the actually dangerous gap
+
+This is where the booth risk concentrates, not cold start:
+
+- Already confirmed live minutes before this investigation: a `-t 300` client timeout expiring
+  mid-wear with no new client immediately taking the lease leaves the panel
+  **backlight-on-but-blank** — `docs/22`'s step-0 discriminator describes exactly this state
+  ("the panel auto-powers-off if no real video signal follows fast enough" after a logo flash),
+  not a hardware fault.
+- `docs/22` (2026-09-05 night entry) and `docs/102` both independently document that Monado's
+  compositor does **not** automatically re-offer a dropped/withdrawn DP lease to a new client —
+  recovery needs an explicit `monado-service` kill + `rm` the IPC socket + fresh `up`, i.e. the
+  full ~18-24s cold pipeline from item 1 again.
+- `docs/102` also measured the teardown side: `jack-in-wayland.sh down` needed the SIGKILL
+  escalation ("still running after 10s, escalating to SIGKILL") whenever a real OpenXR client
+  was still attached — confirmed as normal behavior in that doc, independent of the specific
+  relaunch-race bug it was chasing.
+- Net: a full `down`->`up` title switch, worst *normal* case, costs **~10s (teardown SIGKILL
+  wait) + ~18-24s (fresh compositor/lease) ≈ 28-34s** of blank/backlight-only panel. And if
+  nobody notices, it is **unbounded, not just slow** — `docs/22` documents this exact
+  stale-lease state persisting until an operator manually intervenes.
+- Read `~/vr/vr-launcher.py`: it brings up Monado via `jack-in-wayland.sh` then routes to
+  whichever demo title was selected. There is currently **no fallback/always-on layer** in that
+  routing — a title's exit (clean or timeout) just ends the session and leaves whatever state
+  teardown left the panel in.
+
+### 3. The passthrough viewer's own black margins (v0, `-p flat -w 100`)
+
+Real geometry, not a visual guess:
+
+- `projection360.cpp`'s Flat-mode math: `halfFovX = tan(SCREEN_FOV/2)`,
+  `halfFovY = halfFovX / perEyeAspect`, where `perEyeAspect` is the *camera frame's own* aspect
+  ratio (640x480 = 1.333). With `SCREEN_FOV=100`: horizontal fill = 100°, vertical fill =
+  `2*atan(tan(50deg)/1.333)` ≈ **83.6°**.
+- Real physical per-eye FOV, logged live by `wmr_hmd_create` this session (radians converted):
+  eye0 ≈ 93.2°H x 92.7°V, eye1 ≈ 93.3°H x 92.7°V.
+- Net: horizontally the flat quad (100°) already meets/slightly exceeds the physical FOV
+  (93.2-93.3°) — **no black margin left/right**. Vertically it under-fills: 83.6° vs ~92.7°
+  physical, leaving **~9° total (~4.5° top + ~4.5° bottom, ~10% of the vertical field) as
+  black letterbox bars**.
+- Camera calibration (fx≈270.8, image width 640, from `camera-calibration.json`) implies the
+  real fisheye lens's own native horizontal FOV ≈ `2*atan(320/270.8)` ≈ **99.5°** — i.e. the
+  current `w=100` setting is already an honest, non-stretched match to the real lens; the
+  vertical letterbox exists because the source is 4:3 and the headset's per-eye field is
+  closer to 1:1, not because of an arbitrary choice.
+- Pushing to a full dome (`HalfEquirect180`/`Equirect360`) would stretch the real ~93-100°
+  image by roughly **1.8-2x** to cover 180-360° — a real, flagged accuracy tradeoff (the room
+  would appear roughly twice as wide as it actually is), **not recommended** for this use case.
+- Cheaper option: raising `HELLO_XR_SCREEN_FOV` to ~108-110° would close the vertical
+  letterbox at a much smaller ~9-11% linear stretch (109/99.5) beyond the lens's own native
+  FOV, with horizontal already tolerating a similar small overfill today. One-line env change,
+  worth doing, but secondary to item 2 below — it doesn't touch the actual dead-time window.
+
+### 4. Other black sources checked (not re-litigating the open bugs, just relevance)
+
+- **GNOME desktop idle-blank** (`idle-delay=60s`): this is the desktop monitor, not the HMD
+  panel. Correctly suppressed on `up` ("Idle-blank suppressed for this session.") and restored
+  on `down` ("Idle-blank restored (60s)."), both confirmed live today in
+  `/tmp/jackin-passthrough-fast.log` and `/tmp/jackin-down.log`. Not a wearer-facing risk.
+- **`presence.conf` / `PRESENCE_ENABLE`**: currently `0` deliberately (`docs/98`/`101`/`103`'s
+  restore bug is unresolved, confirmed broken 0-for-2 as of 2026-09-05 night). While `0` it
+  cannot blank the panel during wear. Flag for the booth specifically: re-enabling it before
+  that restore bug is fixed would add a **second, independent** black-during-wear mechanism on
+  top of whatever teardown gap remains from item 2 — worth keeping `PRESENCE_ENABLE=0` for the
+  booth on its own merits, regardless of when the general fix lands.
+
+### Recommendation, ranked
+
+1. **(Primary)** Give `vr-launcher.py` an always-on fallback: the instant a demo title's
+   OpenXR client exits (clean or timeout), immediately relaunch the v0 passthrough viewer
+   (`hello_xr` + `camera0.pgm`, `HELLO_XR_FIXED_POSE=1`) as the default "between things" layer,
+   instead of leaving the panel on whatever state teardown left it in. This converts today's
+   actual failure mode — an *unbounded*, operator-dependent black window — into a *bounded*
+   ~28-34s worst-case relaunch (measured in item 2), with nothing left to chance.
+2. **(Follow-on, bigger win)** Investigate whether Monado's compositor can hand the DRM lease
+   to a second client without a full `monado-service` kill+restart. Today it demonstrably
+   cannot (`docs/22`'s stale-lease finding), which is why every title switch pays the full
+   ~18-24s cold-compositor cost on top of the ~10s teardown wait. If that's fixable, the
+   fallback's own relaunch gap would drop from ~28-34s toward the ~1.3s app-level number from
+   item 1 — worth scoping as a separate Monado-level change, not blocking on it for now.
+3. **(Cheap, secondary)** Bump `HELLO_XR_SCREEN_FOV` from 100 to ~108-110 to remove the ~10%
+   vertical letterbox, at a modest additional ~9% linear stretch beyond the lens's own native
+   FOV. Does not touch the dead-time problem, just tightens the passthrough's own coverage. Do
+   **not** move to a 180°/360° dome mode for this camera — that would roughly double the
+   apparent size of everything in view.
+4. Keep `PRESENCE_ENABLE=0` for the booth explicitly until the restore bug (`docs/98`/`101`/
+   `103`) is fixed — re-enabling it early would add a second black-during-wear mechanism on top
+   of whatever the fallback above still leaves unbounded.
