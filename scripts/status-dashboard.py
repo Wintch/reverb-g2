@@ -249,7 +249,7 @@ CAMERA_MAX_AGE_S = 8  # older than this -> stale (tracking stopped/3dof/no sessi
 _CAMERA_JPG_RE = re.compile(r'^/api/camera(\d+)\.jpg')
 
 try:
-    from PIL import Image
+    from PIL import Image, ImageOps
     _HAVE_PIL = True
 except ImportError:
     _HAVE_PIL = False
@@ -268,6 +268,11 @@ def capture_camera_jpeg(index, max_w=CAMERA_MAX_W, quality=CAMERA_QUALITY):
         try:
             with Image.open(path) as im:
                 im = im.convert("L")
+                # WMR SLAM tracking cameras run at low exposure/gain by design (feature
+                # detection, not photography) -- raw frames average ~7% brightness, reading as
+                # solid black at a glance. Stretch for DISPLAY only, never touches the raw .pgm
+                # or the real camera exposure/gain used for tracking.
+                im = ImageOps.autocontrast(im)
                 if max_w and im.width > max_w:
                     ratio = max_w / im.width
                     im = im.resize((max_w, max(1, round(im.height * ratio))))
@@ -281,7 +286,7 @@ def capture_camera_jpeg(index, max_w=CAMERA_MAX_W, quality=CAMERA_QUALITY):
     # capture_jpeg() above -- already confirmed installed and working on this box.
     try:
         r = subprocess.run(
-            ["convert", path, "-resize", f"{max_w}x", "-quality", str(quality), "jpg:-"],
+            ["convert", path, "-auto-level", "-resize", f"{max_w}x", "-quality", str(quality), "jpg:-"],
             capture_output=True, timeout=10)
         if r.returncode != 0 or not r.stdout:
             return None
