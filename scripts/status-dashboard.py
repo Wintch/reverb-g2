@@ -1255,6 +1255,19 @@ PAGE = """<!doctype html>
                  font-size:11px; color:var(--ink-dim); margin-bottom:4px; }
   .vital canvas { width:100%; height:56px; display:block; background:var(--bg); border-radius:4px; }
   .vital-value { font-family:var(--font-mono); font-size:14px; color:var(--ink); margin-top:5px; }
+
+  /* ---- Hairline grid (2026-09-05): the "seamless data grid" technique from
+     pmadminka_rework's admin.css (.live/.usage classes) -- the container paints --line
+     as its own background, cells sit with a 1px gap and their own solid background, so
+     a crisp hairline appears between cells with no doubled borders. Palette/fonts stay
+     Night Panel's own -- only the structural technique was borrowed. */
+  .hgrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(84px,1fr)); gap:1px;
+           background:var(--line); border:1px solid var(--line); border-radius:var(--radius);
+           overflow:hidden; margin-top:6px; }
+  .hgrid .cell { background:var(--surface-2); padding:7px 9px; }
+  .hgrid .cell .k { font-family:var(--font-display); font-size:9px; text-transform:uppercase;
+                    letter-spacing:.14em; color:var(--ink-dim); }
+  .hgrid .cell .v { font-family:var(--font-mono); font-size:13px; color:var(--ink); margin-top:3px; }
 </style></head>
 <body>
 <div id="attn"></div>
@@ -1820,15 +1833,16 @@ setInterval(refreshCameras, 2000);
 refreshCameras();
 function cameraExpgainHtml(ce) {
   if (!ce) return '<span class="dim">exposure/gain: no data yet</span>';
-  const parts = [];
+  const cells = [];
   for (let i = 0; i < CAMERA_COUNT; i++) {
     const c = (ce.cams || {})['cam' + i];
-    if (c) parts.push(`cam${i} ${c.exposure_us != null ? c.exposure_us + 'us' : '?'}/${c.gain != null ? c.gain : '?'}`);
+    const v = (c && c.exposure_us != null && c.gain != null) ? `${c.exposure_us}us / ${c.gain}` : '--';
+    cells.push(`<div class="cell"><div class="k">cam${i}</div><div class="v">${v}</div></div>`);
   }
   const staleNote = ce.stale ? ' <span class="warn">(stale)</span>' : '';
   const dropped = ce.dropped_frames != null ? ce.dropped_frames : '?';
-  return `<span>${parts.join(' &middot; ') || 'exposure/gain: no data yet'}</span>${staleNote}`
-    + `<div style="margin-top:2px">dropped frames (total): ${dropped}</div>`;
+  return `<div class="hgrid">${cells.join('')}</div>`
+    + `<div class="dim" style="margin-top:4px">dropped frames (total): ${dropped}${staleNote}</div>`;
 }
 // ---- Vitals: hand-rolled canvas sparklines (2026-09-05) -----------------------------
 // FPS / HMD temp / camera dropped-frame rate -- a technician's TREND view of a live
