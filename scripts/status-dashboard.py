@@ -4,6 +4,7 @@ Binds to 127.0.0.1 only. Never writes to any device (no panel.py calls).
 First slice per the 2026-08-21 kiosk gap analysis -- run by hand, not wired
 into the boot path yet.
 """
+import io
 import json
 import os
 import re
@@ -232,6 +233,61 @@ def capture_jpeg(max_w=PREVIEW_MAX_W, quality=PREVIEW_QUALITY):
             os.remove(tmp)
         except OSError:
             pass
+
+
+# ---- Tracking-camera live preview (2026-09-05) ----
+# wmr_camera.c (monado, WMR_CAMERA_SNAPSHOT env, default on) dumps one throttled (~1fps) raw 8-bit
+# grayscale PGM per SLAM-tracking camera to ~/vr/cameraN.pgm -- but ONLY while the cameras are
+# actually streaming, i.e. 6dof or ctrl tracking mode (rig_telemetry.tracking_mode(); 3dof has no
+# cameras at all, see jack-in-wayland.sh's TRACKING_ENV). Same split as the HMD-temperature
+# snapshot feature shipped earlier today: cheap raw dump in C, the real JPEG encoding happens
+# here, in Python, only when a browser actually requests a frame -- never continuously.
+CAMERA_COUNT = 4  # HP Reverb G2: 4 tracking cameras (see wmr_camera.c's compute_frame_size comment)
+CAMERA_MAX_W = 640
+CAMERA_QUALITY = 60
+CAMERA_MAX_AGE_S = 8  # older than this -> stale (tracking stopped/3dof/no session), don't serve a frozen frame
+_CAMERA_JPG_RE = re.compile(r'^/api/camera(\d+)\.jpg')
+
+try:
+    from PIL import Image
+    _HAVE_PIL = True
+except ImportError:
+    _HAVE_PIL = False
+
+
+def capture_camera_jpeg(index, max_w=CAMERA_MAX_W, quality=CAMERA_QUALITY):
+    path = os.path.join(os.path.expanduser("~"), "vr", f"camera{index}.pgm")
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    if time.time() - st.st_mtime > CAMERA_MAX_AGE_S:
+        return None
+
+    if _HAVE_PIL:
+        try:
+            with Image.open(path) as im:
+                im = im.convert("L")
+                if max_w and im.width > max_w:
+                    ratio = max_w / im.width
+                    im = im.resize((max_w, max(1, round(im.height * ratio))))
+                buf = io.BytesIO()
+                im.save(buf, format="JPEG", quality=quality)
+                return buf.getvalue()
+        except Exception:
+            return None
+
+    # Fallback (no Pillow available): shell out to ImageMagick, same subprocess style as
+    # capture_jpeg() above -- already confirmed installed and working on this box.
+    try:
+        r = subprocess.run(
+            ["convert", path, "-resize", f"{max_w}x", "-quality", str(quality), "jpg:-"],
+            capture_output=True, timeout=10)
+        if r.returncode != 0 or not r.stdout:
+            return None
+        return r.stdout
+    except Exception:
+        return None
 
 
 def git_head():
@@ -1079,6 +1135,13 @@ PAGE = """<!doctype html>
   #screen-note { font-size:12px; }
   #screen-empty { font-size:13px; padding:22px 0; text-align:center; }
   #pl-msg { font-size:12px; margin-top:6px; }
+
+  .camera-grid { display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-top:8px; }
+  @media (max-width:480px) { .camera-grid { grid-template-columns:1fr; } }
+  .camera-thumb { position:relative; }
+  .camera-thumb img { width:100%; border-radius:4px; background:var(--bg); display:block; }
+  .camera-thumb .camera-label { position:absolute; top:2px; left:4px; font-family:var(--font-mono);
+    font-size:10px; color:#fff; text-shadow:0 0 3px #000, 0 0 3px #000; }
 </style></head>
 <body>
 <div id="attn"></div>
@@ -1160,6 +1223,11 @@ PAGE = """<!doctype html>
       <div class="row"><span></span><span><button onclick="savePresence()">Guardar</button></span></div>
       <div class="dim" id="presence-msg" style="font-size:12px"></div>
       <div class="dim" style="font-size:12px;margin-top:4px">se aplica en el próximo 'jack-in down/up' -- nunca en caliente, Monado cachea la variable al arrancar (takes effect on the next jack-in down/up, never live)</div>
+    </div>
+    <div class="card" id="camera-card">
+      <h2>Tracking cameras</h2>
+      <div id="camera-imgs" class="camera-grid"></div>
+      <div id="camera-note" class="dim" style="font-size:12px"></div>
     </div>
   </div>
 </details>
@@ -1361,6 +1429,10 @@ function updateCompositorToggle(running) {
 }
 let audioDragging = false;   // a per-device volume slider is being dragged right now
 document.addEventListener('mouseup', () => audioDragging = false);
+// Read by refreshCameras() (its own independent poll loop, like refreshScreen()) -- set by
+// tick() every /api/status refresh so the camera card doesn't need its own status fetch.
+let lastSessionActive = false;
+let lastTrackingMode = null; // '3dof' | '6dof' | 'ctrl' | null (no session)
 
 async function applyAudioOutputs() {
   const checked = [...document.querySelectorAll('#audio-devices input[type=checkbox][data-name]')]
@@ -1481,6 +1553,52 @@ function refreshScreen() {
 }
 setInterval(refreshScreen, 2000);
 refreshScreen();
+// Tracking-camera live preview (2026-09-05): up to CAMERA_COUNT thumbnails, one per WMR tracking
+// camera (see wmr_camera.c's throttled snapshot dump + status-dashboard.py's
+// capture_camera_jpeg()). Its own independent poll loop, same cache-busting + onload/onerror-swap
+// technique as refreshScreen() above so a slow/missing frame never flashes a broken-image icon.
+// Gated on lastTrackingMode/lastSessionActive (set by tick() from /api/status, not re-fetched
+// here): 3dof and "no session" show an explanatory note instead of empty <img> tags, since the
+// WMR tracking cameras are only powered on for 6dof/ctrl tracking (jack-in-wayland.sh's
+// WMR_SLAM/WMR_CAMERAS env -- 3dof sets neither).
+const CAMERA_COUNT = 4; // HP Reverb G2: 4 tracking cameras -- keep in sync with CAMERA_COUNT in status-dashboard.py
+let cameraImgsBuilt = false;
+function refreshCameras() {
+  const wrap = document.getElementById('camera-imgs');
+  const note = document.getElementById('camera-note');
+  if (!lastSessionActive) {
+    wrap.style.display = 'none';
+    note.textContent = 'no session running -- start a 6dof or ctrl demo to see live camera frames';
+    return;
+  }
+  if (lastTrackingMode === '3dof') {
+    wrap.style.display = 'none';
+    note.textContent = '3dof session -- cameras are off (needs 6dof or ctrl tracking mode)';
+    return;
+  }
+  wrap.style.display = 'grid';
+  note.textContent = '';
+  if (!cameraImgsBuilt) {
+    wrap.innerHTML = '';
+    for (let i = 0; i < CAMERA_COUNT; i++) {
+      const cell = document.createElement('div');
+      cell.className = 'camera-thumb';
+      cell.innerHTML = `<img id="cam-img-${i}" alt="camera ${i}" style="display:none">` +
+        `<span class="camera-label">cam${i}</span>`;
+      wrap.appendChild(cell);
+    }
+    cameraImgsBuilt = true;
+  }
+  for (let i = 0; i < CAMERA_COUNT; i++) {
+    const img = document.getElementById('cam-img-' + i);
+    const probe = new Image();
+    probe.onload = () => { img.src = probe.src; img.style.display = 'block'; };
+    probe.onerror = () => { img.style.display = 'none'; };
+    probe.src = '/api/camera' + i + '.jpg?t=' + Date.now();
+  }
+}
+setInterval(refreshCameras, 2000);
+refreshCameras();
 function gpuPowerHtml(p) {
   if (!p) return '<div class="pwr-wrap"><span class="dim">power data unavailable</span></div>';
   const pct = Math.max(0, Math.min(100, (p.draw_w / p.max_limit_w) * 100));
@@ -1559,6 +1677,8 @@ async function tick() {
     // actual session (docs/22, T048/T049). Only treat these as alarming
     // when a session IS supposed to be active (monado running).
     const sessionActive = d.monado.running;
+    lastSessionActive = sessionActive;
+    lastTrackingMode = sessionActive ? d.tracking : null;
     updateCompositorToggle(sessionActive);
     renderAudioDevices(d.audio);
     renderPresenceSettings(d.presence);
@@ -1844,6 +1964,20 @@ class Handler(BaseHTTPRequestHandler):
             img = capture_jpeg()
             if img is None:
                 self.send_response(204)  # no window to preview right now
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(img)))
+            self.end_headers()
+            self.wfile.write(img)
+        elif self.path.startswith("/api/camera") and self.path.endswith(".jpg"):
+            m = _CAMERA_JPG_RE.match(self.path)
+            idx = int(m.group(1)) if m else -1
+            img = capture_camera_jpeg(idx) if 0 <= idx < CAMERA_COUNT else None
+            if img is None:
+                self.send_response(204)  # stale/missing frame, or index out of range
                 self.end_headers()
                 return
             self.send_response(200)
