@@ -1,0 +1,15 @@
+# Staged systemd drop-in (NOT YET INSTALLED -- requires root)
+#
+# Install with:
+#   sudo mkdir -p /etc/systemd/system/sddm.service.d
+#   sudo cp 99-sddm-silent-session-failure-plymouth-vt-race.md.staged-dropin \
+#       /etc/systemd/system/sddm.service.d/99-plymouth-ordering.conf
+#   sudo systemctl daemon-reload
+# (daemon-reload does not restart sddm; the fix only takes effect on
+# the NEXT boot. Do not restart sddm.service to test this while the
+# rig is in active use -- verify on a legitimate reboot/maintenance
+# window instead.)
+#
+# ---- drop-in content below this line ----
+[Unit]
+After=plymouth-quit-wait.service
