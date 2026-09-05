@@ -1238,7 +1238,7 @@ PAGE = """<!doctype html>
   .camera-grid { display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-top:8px; }
   @media (max-width:480px) { .camera-grid { grid-template-columns:1fr; } }
   .camera-thumb { position:relative; }
-  .camera-thumb img { width:100%; border-radius:4px; background:var(--bg); display:block; }
+  .camera-thumb img { width:100%; aspect-ratio:4/3; border-radius:4px; background:var(--bg); display:block; object-fit:cover; }
   .camera-thumb .camera-label { position:absolute; top:2px; left:4px; font-family:var(--font-mono);
     font-size:10px; color:#fff; text-shadow:0 0 3px #000, 0 0 3px #000; }
 
