@@ -480,3 +480,123 @@ Real geometry, not a visual guess:
 4. Keep `PRESENCE_ENABLE=0` for the booth explicitly until the restore bug (`docs/98`/`101`/
    `103`) is fixed — re-enabling it early would add a second black-during-wear mechanism on top
    of whatever the fallback above still leaves unbounded.
+
+## 2026-09-05: "Fake pacer fell behind" burst investigation (the felt tirón)
+
+During one of today's later v0 passthrough tests (90fps camera-snapshot dump rate +
+`WMR_CTRL_EXPOSURE_FOLLOW_SLAM`, both in `~/vr/monado/src/xrt/drivers/wmr/wmr_camera.c`,
+still uncommitted as of this writing), the wearer felt one noticeable, singular jolt during
+an otherwise smooth 90Hz session. A grep of that session's log found zero matches for the
+new exposure-sync code but thousands of `WARN [predict_next_frame_present_time] Fake pacer
+fell behind` lines, arriving in bursts. `jack-in-wayland.log` gets truncated fresh on every
+`up`, so that exact session's log is gone — this write-up is from a fresh same-tool
+(`hello_xr` + `HELLO_XR_VIDEO360=camera0.pgm`, `ctrl` tracking mode) session captured live
+today under the same conditions, not the original bytes. Rig was live with someone else's
+bounded (`timeout 900`) test the whole time this was investigated; nothing here touched
+`monado-service` or its config, this is a read of `~/vr/jack-in-wayland.log` plus the Monado
+source.
+
+**What "Fake pacer" is.** `u_pacing_compositor_fake.c` is Monado's software-only frame-pacing
+fallback, used whenever the compositor has no real display feedback
+(`VK_GOOGLE_display_timing`) — which is every NVIDIA Linux session, i.e. this whole rig,
+DRM-lease/`wayland-direct` or not, and every demo title, not just passthrough. It free-runs
+a `last_present_time_ns` anchor forward by one `frame_period_ns` (90Hz → 11.111ms, confirmed
+below) per frame. `predict_next_frame_present_time()` logs the WARN when the compositor's own
+deadline (`now + comp_time`) has already passed that naive next slot: it snaps the anchor
+forward by however many whole periods it takes to catch up, and nothing ever pulls it back
+the other way — a real fix (feeding `VK_KHR_present_wait` completion times back in as ground
+truth, only accepting forward re-anchors) is patch `0041`
+(`f24b56701`, "Feed present-wait completion times to the fake pacer") and **is already merged**
+into this checkout, on top of instrumentation-only patch `0038` (`f5eb16971`, adds this exact
+WARN + running counter) — both from 2026-08-13. This is not new or unowned: see
+`patches/monado/README.md` (0038/0041/0042/0092) and `docs/44` for the related HID-side
+history. A single-period jump usually means one genuinely late/rescheduled frame; a
+multi-period jump in one line means the compositor's own loop was stalled for that many whole
+periods at once.
+
+**Burst timing, real numbers.** The log carries no wall-clock prefix, but the WARN's own
+`new anchor <ns>` field is a monotonic ns clock that tracks real elapsed time whether it
+advances by ordinary frames or by a catch-up jump, so anchor deltas stand in for real time
+between events. Extracted all 1440+ WARN lines from today's live capture:
+
+- `frame_period_ns` (measured from anchor deltas on the ~1350 events where exactly 1 period
+  was jumped): **median 11.111008 ms**, min 11.053 ms — matches 90Hz (1/90s = 11.111 ms)
+  exactly.
+- Grouping events with a 200ms real-time gap threshold gives **56 distinct bursts** over
+  ~7.2 minutes, separated by quiet gaps from ~200ms up to **41.4 seconds** — this is the
+  "bursts with long quiet gaps" pattern the earlier grep noticed, now with real numbers.
+- Several bursts are *sustained*, not just a couple of stray late frames: e.g. lines 539-720
+  (182 WARN events over 2066.6ms) and lines 1868-2055 (187 events over 2066.6ms) — i.e. for a
+  solid ~2 seconds, essentially **every single frame** ran exactly one period late, a real
+  near-half-rate stretch, not a one-off.
+- Overall rate today: ~1440 events / 7.2 min ≈ **200 events/min**.
+
+**What actually correlates with the biggest single-event jumps (12-67+ periods in one
+line, i.e. 130ms-750ms snapped in a single step — well within human perception for a
+"jolt").** These line up directly, in the same log, with the WMR HID read thread stalling:
+
+```
+INFO [receive_imu_sample] IMU sample arrived 229.4 ms late against hw2mono ... (burst #6)
+WARN [wmr_run_thread] run loop: hololens_sensors_read_packets blocked 229.8 ms
+INFO [receive_imu_sample] IMU arrival back to normal after 22 late samples ...
+WARN [predict_next_frame_present_time] Fake pacer fell behind: jumped 61 period(s) forward ...
+```
+
+and again with a 252ms and a 514ms blocked-read event immediately preceding smaller jumps.
+`control_read_packets` and `hololens_sensors_read_packets` share one thread and `wh->hid_lock`
+(`docs/44`) — when that shared HID loop blocks for hundreds of ms, both the IMU stream and,
+apparently, the compositor's own frame timing feel it. **This exact HID-blocking mechanism
+was already root-caused and fixed once** (docs/44, 2026-08-17): a "companion storm" made
+patch `0049`'s backoff sleep *inside* the shared loop, starving hololens/IMU reads; patch
+`0055` (`6aa1fbd92`, merged) fixed it with a deadline-skip instead of a sleep, later refined
+further (`40740c867`, `277780820`). Those fixes are in this checkout. Seeing the same
+`hololens_sensors_read_packets blocked` symptom recur today at similar magnitude (200-500ms)
+is therefore **not evidence the fake pacer or the companion-storm bug is broken again** — it's
+more consistent with the separately-tracked **G2 USB port fault** (visor-end contact fault +
+USB-C orientation fault, PC-end reconnect is the known fix lever) than with a software
+regression. Not re-investigated further here; flagging the cross-reference is the actionable
+part.
+
+**Scope verdict: general mechanism, elevated rate in this specific test path.** `docs/104`
+(2026-08-30, Dali 6DoF anchor-guard investigation) independently measured this exact same
+"Fake pacer fell behind" line during a **real demo-title 6DoF session** at a flat **5-15
+events/min** the whole session, and used it to *rule out* compositor/GPU pacing as the driver
+of an unrelated tracking-reset-rate climb. That is today's passthrough/video360 test running
+**~15-40x hotter** than a normal booth session. So:
+
+- The mechanism itself (fake pacer, no real vblank feedback on NVIDIA) is **general** — it
+  runs under every title on this rig, always has, and is already instrumented/tracked
+  (`0038`/`0041`/`0042`/`0092`, `docs/44`, `docs/80`, `docs/104`). Nothing here contradicts
+  that prior work.
+- The **rate** is specific to this ad hoc `hello_xr` + `.pgm`-file-mtime-polling passthrough
+  path: it has no real video clock, so its frame-submission cadence is inherently irregular
+  compared to a game's render loop, which plausibly explains most of the elevated baseline
+  single-period-jump rate (the sustained ~2s all-frames-late runs). Today's snapshot-dump-rate
+  bump (~1fps → ~90fps in `wmr_camera.c`, adding per-frame disk I/O) is a plausible secondary
+  contributor to scheduling jitter but is **not confirmed** from this data — flagged as a
+  hypothesis only, worth a quick A/B (dump rate back to ~1fps, same test, compare event rate)
+  if passthrough development continues.
+
+**Verdict on the felt tirón.** Almost certainly the fake-pacer WARN spam itself is *not* the
+cause when isolated to single-period jumps (11ms, imperceptible) — that's background noise,
+consistent with `docs/104`'s use of it as a null signal. The most plausible actual cause is
+one of the **large multi-period single-jump events** (61-277 periods = 0.7-3s snapped in one
+step) or a **sustained ~2s near-half-rate run**, both of which are real, perceptible-scale
+disruptions, and the large ones trace directly to WMR HID read-thread stalls that are already
+a known, separately-tracked hardware issue (G2 USB port fault), not a new compositor bug.
+
+**Recommendation.** No code change here — the compositor-side fix for the one thing that
+*was* a real bug in this subsystem (present-wait feedback, `0041`) is already merged, and the
+remaining large jumps trace to a hardware fault already on record, not to a gap in the pacer
+itself. Concretely:
+
+1. Don't chase this further on the compositor side; it's shared code with high blast radius
+   and the diagnosis doesn't point there.
+2. If the tirón recurs during a **real booth title** (not this dev tool), grep that session's
+   `jack-in-wayland.log` for `hololens_sensors_read_packets blocked` before anything else —
+   per the standing rule to check live data against known-fault patterns, that's the fastest
+   way to confirm/rule out the USB fault as the proximate cause.
+3. If passthrough/video360 development continues, treat the `.pgm`-mtime-poll cadence as
+   inherently jitter-prone (it's not a real video clock) rather than expecting pacer-side
+   numbers to look like a normal render loop's; the ~90fps snapshot-dump-rate A/B above is a
+   cheap way to confirm or rule out today's own patch as a secondary contributor.
