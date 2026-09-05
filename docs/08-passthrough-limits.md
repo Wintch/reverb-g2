@@ -706,3 +706,99 @@ blank-window problem (see the dead-time investigation section above) is recommen
 implemented; a full worn re-test specifically isolating whether the "tirones" are felt more or
 less often than before today's changes has not been done (today's checks were all "does this
 look wrong right now", not a controlled before/after count).
+
+## 2026-09-05 (night): floor grid height -- the eye-height mechanism already existed
+
+Follow-up to the floor grid added earlier tonight (previous section's cube-vs-floor-grid work).
+A live wearer reported the grid rendering visibly above the real floor. The first fix attempt
+(same session, before this write-up) live-recalibrated floor height from the wearer's own head
+pose at the first plausible frame, minus a **hardcoded, guessed** 1.6m eye-to-floor constant
+(`HELLO_XR_FLOOR_EYE_TO_FLOOR_M`, env-overridable). The user caught this immediately: *"acordate
+que ya tenemos altura en el usuario. Revisa bien la documentacion."* -- this project already has
+a proper per-wearer eye-height mechanism, used elsewhere, and the guess should never have been
+added. Re-investigated from scratch before touching code again.
+
+### The real mechanism (already existed, already correct)
+
+Monado's WMR "legacy" space overseer (`b_space_overseer_legacy_setup`, `target_builder_helpers.c`)
+places the **Stage** reference space a fixed distance below **Local** (Local's own origin being
+wherever the HMD's pose was at the moment tracking was established) -- 1.6m by default, i.e. it
+assumes the wearer's eyes are exactly 1.6m up at that moment. `XRT_TRACKING_ORIGIN_OFFSET_Y`
+(applied to every tracking origin, any type, in `u_builder_helpers.c`) corrects that assumption:
+
+```
+offset = (real eye height) - 1.6
+```
+
+`jack-in-wayland.sh` (both copies -- `~/vr/` and `scripts/`, identical, see the "Eye height /
+floor calibration (2026-08-12, T163)" block) computes this from `VR_POSTURE`
+(standing/seated) and `EYE_HEIGHT_STANDING_M`/`EYE_HEIGHT_SEATED_M`, read from `~/vr/vr-profile.conf`
+(env vars win over the file, same "ambient wins" convention as everywhere else in that script).
+That profile is not a guess -- it's tape-measured, and was itself corrected once already:
+
+```
+EYE_HEIGHT_STANDING_M=1.70   # T223, 2026-08-19 -- replaces an earlier 1.76 that was flagged
+EYE_HEIGHT_SEATED_M=1.35     #                     as possibly stature, not eye height
+```
+
+(docs/58's T223 addendum + docs/59 §"take the wearer's head/eye height into account" are the
+paper trail; docs/57 is the earlier, now-superseded dead end that tried to find a stored
+"user height" on the Windows side and found none -- Windows models it as a derived
+floor-relative origin offset too, not a stored scalar.)
+
+**Confirmed live**, not just read in the script: the currently-running `monado-service`
+(pid 475377, launched 16:14:56 tonight, well before the floor-grid work started) already
+carries `XRT_TRACKING_ORIGIN_OFFSET_Y=0.100` in its own environment (`/proc/475377/environ`) --
+exactly `1.70 - 1.6`, i.e. the T223-measured standing value, correctly applied by
+`jack-in-wayland.sh` days before today's session even started. **Stage's own Y=0 is already the
+calibrated real floor for this wearer.** Nothing in hello_xr needed to re-derive it.
+
+### What was wrong with the guessed-constant fix
+
+The hack (`m_floorYCalibrated`/`m_floorCalibratedY` in `openxr_program.cpp`) threw away that
+already-correct Stage origin and recomputed floor height from `headY - 1.6` using the live
+wearer's head pose. For *this* wearer (standing, real eye height 1.70m) that reintroduces
+**exactly the 10cm error T223 measured and fixed** -- the same flat-1.6m assumption the profile
+file exists specifically to replace, now baked back in via a different code path. It would have
+silently disagreed with Stage by 10cm even on a run where the "proper" mechanism was working
+perfectly, and reads worse for a seated wearer (1.35m real vs 1.6m assumed -- 25cm off).
+
+### Fix applied
+
+Removed the hack entirely. `PushFloorGrid` now takes `stageLocation.pose` unmodified, as the
+code did before tonight's calibration detour -- no live recalibration, no guessed constant,
+no `HELLO_XR_FLOOR_EYE_TO_FLOOR_M`. Commit `937b1d1` (branch `lab`, pushed to `wintch`), bundled
+with the (already-written, previously uncommitted) v0 floor grid itself and a small related
+cleanup: cube suppression for `HELLO_XR_FIXED_POSE` moved from `graphicsplugin_vulkan.cpp` (a
+passthrough-specific flag check in the renderer) to the source in `openxr_program.cpp` (which
+simply no longer pushes controller/reference cubes in passthrough mode at all, pushing the
+floor grid instead) -- the renderer now just draws whatever is in the cubes vector, nothing
+passthrough-specific left in it.
+
+Rebuilt (`cmake --build . --target hello_xr`, clean) and relaunched detached
+(`/tmp/passthrough-floorfix-verify.log`) against the same already-correctly-calibrated
+`monado-service`: no "floor grid: calibrated..." log line (confirms the hack's code path is
+gone), no new startup errors. **Not yet re-confirmed by a live wearer** -- nobody was actively
+using the rig at fix time (tty1 idle 5h+), so this is a code-correctness verification only, not
+a "does it look right on a real head" one.
+
+### So why did the wearer see it too high, if Stage was already correct?
+
+Genuinely open, and worth flagging rather than guessing further. The one solid, code-read lead:
+`recenter_local_spaces` (`b_space_overseer.c`, exposed as `monado-ctl -c`) is explicitly scoped
+to **Local and local_floor only** ("Can we do a recenter of the local and local_floor spaces" --
+the function's own comment) -- it never touches Stage. Stage's transform is set up once, at
+whatever moment Monado establishes the tracking origin (roughly: wherever/however the HMD was
+posed at first valid tracking), and nothing at runtime corrects it afterward. If the headset
+was resting on a desk, tilted, or otherwise not at the assumed reference posture at that one
+moment -- rather than worn and upright -- Stage's floor will be off by exactly that amount, and
+no amount of a correctly-measured `EYE_HEIGHT_STANDING_M` fixes it, because the offset only
+corrects the *assumed distance*, not *where it's measured from*. This matches this project's own
+existing "headset-on-desk-until-loaded" operator convention noted elsewhere (Dalí/Aircar 6dof
+work) and is the most likely real explanation, but it has not been confirmed against the actual
+session that produced the original "too high" complaint (no log evidence pinned down which
+specific monado-service launch that wearer was under, or the HMD's pose at that launch's
+tracking-origin moment). **Next step for whoever picks this up**: watch for the complaint to
+recur on a fresh `jack-in down`/`up` where the headset is known to be resting on the desk (not
+worn) when Monado starts tracking, versus one where it's donned first -- that A/B would confirm
+or rule this out directly, without touching hello_xr again.
