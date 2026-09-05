@@ -1233,6 +1233,10 @@ PAGE = """<!doctype html>
       <h2>Tracking cameras</h2>
       <div id="camera-imgs" class="camera-grid"></div>
       <div id="camera-note" class="dim" style="font-size:12px"></div>
+      <div class="row" style="margin-top:6px">
+        <span>brillo (vista web)</span>
+        <span><input type="range" id="camera-brightness" min="0.5" max="3" step="0.1" value="1" style="vertical-align:middle"> <span id="camera-brightness-val" class="dim">1.0x</span></span>
+      </div>
     </div>
   </div>
 </details>
@@ -1568,6 +1572,33 @@ refreshScreen();
 // WMR_SLAM/WMR_CAMERAS env -- 3dof sets neither).
 const CAMERA_COUNT = 4; // HP Reverb G2: 4 tracking cameras -- keep in sync with CAMERA_COUNT in status-dashboard.py
 let cameraImgsBuilt = false;
+// Client-side-only brightness slider (2026-09-05): a CSS filter() multiplier layered on top of
+// the server-side autocontrast already baked into capture_camera_jpeg() -- no server round trip,
+// instant feedback while dragging. Persisted per-browser in localStorage (this is a shared booth
+// page with no per-user account system for camera preview prefs, unlike the headset brightness
+// gain which IS saved per active user profile via /api/brightness -- separate concern, see the
+// user's own framing: "uno para web, uno para casco proximamente").
+let cameraBrightness = 1;
+try {
+  const _savedCamBrightness = localStorage.getItem("camBrightness");
+  if (_savedCamBrightness) cameraBrightness = parseFloat(_savedCamBrightness);
+} catch (e) {}
+const camBrightnessSlider = document.getElementById("camera-brightness");
+const camBrightnessLabel = document.getElementById("camera-brightness-val");
+function applyCameraBrightness() {
+  camBrightnessLabel.textContent = cameraBrightness.toFixed(1) + "x";
+  for (let i = 0; i < CAMERA_COUNT; i++) {
+    const img = document.getElementById("cam-img-" + i);
+    if (img) img.style.filter = "brightness(" + cameraBrightness + ")";
+  }
+}
+camBrightnessSlider.value = cameraBrightness;
+applyCameraBrightness();
+camBrightnessSlider.addEventListener("input", () => {
+  cameraBrightness = parseFloat(camBrightnessSlider.value);
+  try { localStorage.setItem("camBrightness", cameraBrightness); } catch (e) {}
+  applyCameraBrightness();
+});
 function refreshCameras() {
   const wrap = document.getElementById('camera-imgs');
   const note = document.getElementById('camera-note');
@@ -1597,7 +1628,7 @@ function refreshCameras() {
   for (let i = 0; i < CAMERA_COUNT; i++) {
     const img = document.getElementById('cam-img-' + i);
     const probe = new Image();
-    probe.onload = () => { img.src = probe.src; img.style.display = 'block'; };
+    probe.onload = () => { img.src = probe.src; img.style.display = 'block'; img.style.filter = 'brightness(' + cameraBrightness + ')'; };
     probe.onerror = () => { img.style.display = 'none'; };
     probe.src = '/api/camera' + i + '.jpg?t=' + Date.now();
   }
