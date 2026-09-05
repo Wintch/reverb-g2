@@ -2539,7 +2539,17 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(img)))
             self.end_headers()
             self.wfile.write(img)
-        elif self.path.startswith("/api/camera") and self.path.endswith(".jpg"):
+        elif self.path.startswith("/api/camera") and _CAMERA_JPG_RE.match(self.path):
+            # NB: matched with the regex above, not self.path.endswith(".jpg") -- the frontend's
+            # refreshCameras() always calls this with a cache-busting "?t=<timestamp>" suffix
+            # (same as refreshScreen()/capture_jpeg()), so self.path never literally ends in
+            # ".jpg" in real use. That endswith() check used to make this branch fall through to
+            # the catch-all handler below, silently serving the full dashboard HTML page as if it
+            # were the image response (still HTTP 200, so no visible error) -- the <img>/probe then
+            # fails to decode it and the thumbnail just stays hidden, showing through to the dark
+            # card background, which reads as "black" rather than a clear placeholder. Found
+            # 2026-09-05 by curling the endpoint with and without the "?t=" query string and
+            # diffing content-type/size (text/html 91750B vs image/jpeg 27363B for the same frame).
             m = _CAMERA_JPG_RE.match(self.path)
             idx = int(m.group(1)) if m else -1
             img = capture_camera_jpeg(idx) if 0 <= idx < CAMERA_COUNT else None
