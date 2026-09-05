@@ -937,6 +937,19 @@ def user_center():
             "users": d["users"], "brightness_live": gain}
 
 
+def _safe_telemetry(fn):
+    """Extra defensive wrapper for the newer, not-yet-fully-confirmed rig_telemetry
+    readers (camera_expgain/perf_metrics/camera_calibration/hmd_status, 2026-09-05):
+    those functions already catch their own parse errors and return None, but this
+    is a second layer so a surprise bug in one of them (a shape none of us has seen
+    live yet) degrades that one card to "no data yet" instead of ever taking down
+    build_status() -- and therefore the whole /api/status endpoint -- for everyone."""
+    try:
+        return fn()
+    except Exception:
+        return None
+
+
 def build_status():
     monado = monado_running()
     specs = rig_telemetry.machine_specs()
@@ -953,6 +966,16 @@ def build_status():
         "gpu_power": gpu_power(),
         "power_mode": rig_telemetry.power_mode(),
         "hmd_temperature": rig_telemetry.hmd_temperature(),
+        # Driver-exposed data wired in 2026-09-05 for the Vitals section + Tracking
+        # cameras / HMD status cards -- all from files a parallel task (different
+        # repo, no access here) is adding alongside the one that already existed
+        # (camera-expgain.json). Every one of these degrades to None/"no data yet"
+        # rather than raising -- see rig_telemetry's own docstrings and _safe_telemetry
+        # above for why the extra wrapper layer is worth it here specifically.
+        "camera_expgain": _safe_telemetry(rig_telemetry.camera_expgain),
+        "perf_metrics": _safe_telemetry(rig_telemetry.perf_metrics),
+        "camera_calibration": _safe_telemetry(rig_telemetry.camera_calibration),
+        "hmd_status": _safe_telemetry(rig_telemetry.hmd_status),
         "cpu_live": rig_telemetry.cpu_telemetry(),
         "presence": rig_telemetry.presence_settings(),
         "audio": audio_status(),
@@ -1047,6 +1070,12 @@ PAGE = """<!doctype html>
   .status-dot.ok::before { background:var(--ok); box-shadow:0 0 6px var(--ok-glow); }
   .status-dot.warn::before { background:var(--warn); }
   .status-dot.bad::before { background:var(--bad); box-shadow:0 0 6px var(--bad-glow); }
+  /* Same specificity gotcha the .fault-dot[hidden] rule below already documents: this
+     class sets its own `display:inline-flex`, a normal author rule, which always wins
+     over the browser's normal UA `[hidden]{display:none}` regardless of selector
+     specificity (author origin beats user-agent origin). Needed for #dot-audio
+     (2026-09-05, audio UI hidden at the user's request -- see AUDIO_UI_HIDDEN below). */
+  .status-dot[hidden] { display:none; }
 
   #actions-row { display:flex; flex-wrap:wrap; gap:18px; align-items:center; margin-bottom:10px; }
   .action-group { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding-left:14px; border-left:1px solid var(--line); }
@@ -1212,6 +1241,20 @@ PAGE = """<!doctype html>
   .camera-thumb img { width:100%; border-radius:4px; background:var(--bg); display:block; }
   .camera-thumb .camera-label { position:absolute; top:2px; left:4px; font-family:var(--font-mono);
     font-size:10px; color:#fff; text-shadow:0 0 3px #000, 0 0 3px #000; }
+
+  /* ---- Vitals (2026-09-05): a technician's TREND view of the live session -- FPS,
+     HMD temp, camera dropped-frame rate -- explicitly NOT a log/table (the user's own
+     framing: "no como log, sino como un flow prolijo"). Hand-rolled <canvas> sparklines,
+     vanilla JS, no charting library (this kiosk has no guaranteed internet -- same
+     reasoning already used elsewhere in this file for zero web fonts). One steel-blue
+     --accent line, dim gridlines, mono labels -- consistent with every other numeric
+     readout on this page. */
+  .vitals-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-top:8px; }
+  @media (max-width:720px) { .vitals-grid { grid-template-columns:1fr; } }
+  .vital-label { font-family:var(--font-display); text-transform:uppercase; letter-spacing:.05em;
+                 font-size:11px; color:var(--ink-dim); margin-bottom:4px; }
+  .vital canvas { width:100%; height:56px; display:block; background:var(--bg); border-radius:4px; }
+  .vital-value { font-family:var(--font-mono); font-size:14px; color:var(--ink); margin-top:5px; }
 </style></head>
 <body>
 <div id="attn"></div>
@@ -1224,7 +1267,10 @@ PAGE = """<!doctype html>
   <h1 class="wordmark"><span data-i18n="h1">iashur</span><small data-i18n="h1_sub">HP Reverb G2 lab status</small></h1>
   <div class="status-strip" id="status-dots">
     <span class="status-dot" id="dot-session"><span data-i18n="dot_session">SESSION</span></span>
-    <span class="status-dot" id="dot-audio"><span data-i18n="dot_audio">AUDIO</span></span>
+    <!-- Audio UI hidden at the user's request (2026-09-05) -- audio_status()/the
+         /api/audio-outputs endpoint/hmd-audio.sh are all left working underneath,
+         only this dot is not rendered. See AUDIO_UI note near renderAudioDevices(). -->
+    <span class="status-dot" id="dot-audio" hidden><span data-i18n="dot_audio">AUDIO</span></span>
     <span class="status-dot" id="dot-hw"><span data-i18n="dot_hw">HARDWARE</span></span>
     <span class="status-dot" id="dot-hub"><span data-i18n="dot_hub">HUB</span></span>
   </div>
@@ -1242,19 +1288,61 @@ PAGE = """<!doctype html>
 </div>
 <div id="action-msg"></div>
 <div class="glance-grid">
-  <div class="card">
-    <h2><span data-i18n="preview_h2">Headset preview</span><span class="sub" id="screen-note"></span></h2>
-    <img id="screen" class="preview-img" alt="no preview">
-    <div id="screen-empty" class="dim" data-i18n="preview_empty">no window to preview (start a game/player)</div>
+  <div class="stack">
+    <div class="card">
+      <h2><span data-i18n="preview_h2">Headset preview</span><span class="sub" id="screen-note"></span></h2>
+      <img id="screen" class="preview-img" alt="no preview">
+      <div id="screen-empty" class="dim" data-i18n="preview_empty">no window to preview (start a game/player)</div>
+    </div>
+    <!-- Tracking cameras: MOVED here from inside the tabbed #panel-headset (2026-09-05,
+         "vista previa dejala siempre, al igual que las vistas en miniatura de las
+         camaras") -- both this and the Headset preview card above must stay visible
+         regardless of which Headset/GPU/CPU instrument-bank tab is selected, so this
+         whole card now lives in the untabbed operator-tray tier instead. -->
+    <div class="card" id="camera-card">
+      <h2>Tracking cameras</h2>
+      <div id="camera-imgs" class="camera-grid"></div>
+      <div id="camera-note" class="dim" style="font-size:12px"></div>
+      <div id="camera-expgain" class="dim" style="font-size:12px;margin-top:6px"></div>
+      <div class="row" style="margin-top:6px">
+        <span>brillo (vista web)</span>
+        <span><input type="range" id="camera-brightness" min="0.5" max="3" step="0.1" value="1" style="vertical-align:middle"> <span id="camera-brightness-val" class="dim">1.0x</span></span>
+      </div>
+    </div>
   </div>
   <div class="stack">
     <div class="card session-card">
       <h2 data-i18n="session_h2">Session</h2>
       <div id="session-rows">loading...</div>
     </div>
-    <div class="card">
+    <!-- Audio outputs card: HIDDEN at the user's request (2026-09-05) -- audio_status(),
+         /api/audio-outputs and hmd-audio.sh integration are all left working underneath
+         (may be needed again later), only this card is not rendered. tick() still writes
+         into #audio-devices every cycle (renderAudioDevices/audioCls etc) -- harmless
+         against a hidden card, and simpler than scattering conditionals through tick(). -->
+    <div class="card" id="audio-card" hidden>
       <h2 data-i18n="audio_h2">Audio outputs -- check one, another, or several (duplicate); per-device volume</h2>
       <div id="audio-devices">loading audio devices...</div>
+    </div>
+  </div>
+</div>
+<div class="card" style="margin-bottom:14px">
+  <h2 data-i18n="vitals_h2">Vitals -- live session trend (technician view, not a log)</h2>
+  <div class="vitals-grid">
+    <div class="vital">
+      <div class="vital-label">FPS</div>
+      <canvas id="vital-fps"></canvas>
+      <div class="vital-value" id="vital-fps-val">no data yet</div>
+    </div>
+    <div class="vital">
+      <div class="vital-label">HMD temp (est.)</div>
+      <canvas id="vital-temp"></canvas>
+      <div class="vital-value" id="vital-temp-val">no data yet</div>
+    </div>
+    <div class="vital">
+      <div class="vital-label">Camera dropped-frame rate</div>
+      <canvas id="vital-drop"></canvas>
+      <div class="vital-value" id="vital-drop-val">no data yet</div>
     </div>
   </div>
 </div>
@@ -1273,7 +1361,9 @@ PAGE = """<!doctype html>
   <div class="guide">
     <h2 style="margin-top:0" data-i18n="guide_h2">Operator guide (standing, every guest)</h2>
     <ul>
-      <li data-i18n="guide_1"><b>Audio</b>: the "audio" toggle above must read <b>headset</b> before handing over (130%). If sound vanishes mid-session the stream got orphaned by a USB re-enumeration -- click "Audio -&gt; headset" again, it re-routes live.</li>
+      <!-- Hidden with the rest of the audio UI (2026-09-05) -- not deleted, the string stays
+           in I18N below in case audio surfaces again later. -->
+      <li data-i18n="guide_1" hidden><b>Audio</b>: the "audio" toggle above must read <b>headset</b> before handing over (130%). If sound vanishes mid-session the stream got orphaned by a USB re-enumeration -- click "Audio -&gt; headset" again, it re-routes live.</li>
       <li data-i18n="guide_2"><b>Window focus</b>: the game's desktop window must be <b>focused</b> or Wine drops gamepad + audio (only head tracking keeps working). If a guest says "no sound / pad dead", click the game window first, don't debug.</li>
       <li data-i18n="guide_3"><b>Fast head turns (6dof only)</b>: yaw is the weak axis -- a quick side-to-side look drifts the seat. Tell the guest <b>"press A"</b> the moment you see it, don't wait for them to notice.</li>
       <li data-i18n="guide_4"><b>Light</b>: no automated low-light warning exists. Dim room = tracking runaways in the first ~75 s. Check the room before each 6dof session.</li>
@@ -1306,16 +1396,15 @@ PAGE = """<!doctype html>
       <div class="dim" id="presence-msg" style="font-size:12px"></div>
       <div class="dim" style="font-size:12px;margin-top:4px">se aplica en el próximo 'jack-in down/up' -- nunca en caliente, Monado cachea la variable al arrancar (takes effect on the next jack-in down/up, never live)</div>
     </div>
-    <div class="card" id="camera-card">
-      <h2>Tracking cameras</h2>
-      <div id="camera-imgs" class="camera-grid"></div>
-      <div id="camera-note" class="dim" style="font-size:12px"></div>
-      <div class="row" style="margin-top:6px">
-        <span>brillo (vista web)</span>
-        <span><input type="range" id="camera-brightness" min="0.5" max="3" step="0.1" value="1" style="vertical-align:middle"> <span id="camera-brightness-val" class="dim">1.0x</span></span>
-      </div>
-    </div>
   </div>
+  <!-- Camera calibration: static, one-time per-camera intrinsics/pose reference data --
+       "does this camera look miscalibrated" for a technician, not something to watch
+       live, so per docs/87's own tiering this is access-panel (dense/collapsed), not
+       the operator-tray tier the live camera preview above was promoted to. -->
+  <details class="access-panel" id="camera-calibration-panel">
+    <summary><span>Camera calibration (raw reference)</span></summary>
+    <pre id="camera-calibration-body">no data yet</pre>
+  </details>
 </div>
 <div id="panel-gpu" class="tab-panel-body" role="tabpanel" aria-labelledby="tab-gpu" hidden>
   <div class="grid" id="grid-gpu">loading...</div>
@@ -1343,6 +1432,7 @@ const I18N = {
     preview_h2: "Headset preview",
     preview_empty: "no window to preview (start a game/player)",
     audio_h2: "Audio outputs -- check one, another, or several (duplicate); per-device volume",
+    vitals_h2: "Vitals -- live session trend (technician view, not a log)",
     cc_h2: "Command centre -- headset & user",
     playlist_h2: "Demo round (playlist) -- sequence with \\"next title\\" voice cue + clean teardown between each",
     demos_h2: "Demos -- one button per title + head-tracking mode (only \\"approved\\" goes to guests)",
@@ -1375,6 +1465,7 @@ const I18N = {
     preview_h2: "Vista previa del casco",
     preview_empty: "no hay ventana para previsualizar (arrancá un juego/player)",
     audio_h2: "Salidas de audio -- marcá una, otra, o varias (duplicado); volumen por dispositivo",
+    vitals_h2: "Vitales -- tendencia en vivo de la sesión (vista técnica, no un log)",
     cc_h2: "Centro de comando -- casco & usuario",
     playlist_h2: "Ronda de demo (playlist) -- secuencia con voz \\"próximo título\\" + teardown limpio entre cada uno",
     demos_h2: "Demos -- un botón por título + modo de head-tracking (solo \\"approved\\" se muestra a invitados)",
@@ -1407,6 +1498,7 @@ const I18N = {
     preview_h2: "Предпросмотр с гарнитуры",
     preview_empty: "нет окна для предпросмотра (запустите игру/плеер)",
     audio_h2: "Аудиовыходы -- отметьте один, другой или несколько (дублирование); громкость по устройству",
+    vitals_h2: "Показатели -- тренд сессии в реальном времени (вид для техника, не лог)",
     cc_h2: "Панель управления -- гарнитура и пользователь",
     playlist_h2: "Демо-раунд (плейлист) -- последовательность с голосовым объявлением «следующий тайтл» + чистое завершение между показами",
     demos_h2: "Демо -- одна кнопка на тайтл + режим head-tracking (гостям показываются только «approved»)",
@@ -1466,6 +1558,11 @@ async function applyLangAndSave(lang) {
 // compositor-up/down are handled by the dedicated toggle button below, not
 // listed among the generic one-shot action buttons.
 const COMPOSITOR_ACTION_IDS = new Set(['compositor-up', 'compositor-down']);
+// Audio UI hidden at the user's request (2026-09-05): these 3 buttons were already
+// excluded from loadActions()'s generic render (see the `continue` below) before this
+// pass, so no change was needed here to hide them -- kept as its own named set (not
+// deleted) since the ACTIONS/audio_status()/hmd-audio.sh backend plumbing underneath
+// is intentionally left working in case audio surfaces again later.
 const AUDIO_ACTION_IDS = new Set(['audio-headset', 'audio-external', 'audio-both']);
 
 async function loadActions() {
@@ -1721,6 +1818,130 @@ function refreshCameras() {
 }
 setInterval(refreshCameras, 2000);
 refreshCameras();
+function cameraExpgainHtml(ce) {
+  if (!ce) return '<span class="dim">exposure/gain: no data yet</span>';
+  const parts = [];
+  for (let i = 0; i < CAMERA_COUNT; i++) {
+    const c = (ce.cams || {})['cam' + i];
+    if (c) parts.push(`cam${i} ${c.exposure_us != null ? c.exposure_us + 'us' : '?'}/${c.gain != null ? c.gain : '?'}`);
+  }
+  const staleNote = ce.stale ? ' <span class="warn">(stale)</span>' : '';
+  const dropped = ce.dropped_frames != null ? ce.dropped_frames : '?';
+  return `<span>${parts.join(' &middot; ') || 'exposure/gain: no data yet'}</span>${staleNote}`
+    + `<div style="margin-top:2px">dropped frames (total): ${dropped}</div>`;
+}
+// ---- Vitals: hand-rolled canvas sparklines (2026-09-05) -----------------------------
+// FPS / HMD temp / camera dropped-frame rate -- a technician's TREND view of a live
+// session, explicitly NOT a raw log/table (the user's own framing: "no como log, sino
+// como un flow prolijo"). No charting library: this kiosk has no guaranteed internet
+// (same reasoning docs/87 already used for zero web fonts), and 3 scalar time series is
+// little enough code that a dependency buys nothing. Each metric keeps a small
+// in-memory ring buffer client-side and redraws every tick() (~6s cadence -> ~6 min
+// window at VITALS_BUFFER=60).
+const VITALS_BUFFER = 60;
+const vitals = {
+  fps:  { buf: [], canvas: null, ctx: null, valEl: null, opts: { min: 0 } },
+  temp: { buf: [], canvas: null, ctx: null, valEl: null, opts: {} },
+  drop: { buf: [], canvas: null, ctx: null, valEl: null, opts: { min: 0 } },
+};
+function initVitals() {
+  for (const [key, v] of Object.entries(vitals)) {
+    v.canvas = document.getElementById('vital-' + key);
+    v.valEl = document.getElementById('vital-' + key + '-val');
+    if (v.canvas) v.ctx = v.canvas.getContext('2d');
+  }
+}
+function pushVital(key, value) {
+  const v = vitals[key];
+  if (!v) return;
+  v.buf.push(value);
+  if (v.buf.length > VITALS_BUFFER) v.buf.shift();
+}
+function resizeVitalCanvas(v) {
+  if (!v.canvas) return;
+  const rect = v.canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.max(1, Math.round(rect.width * dpr));
+  const h = Math.max(1, Math.round(rect.height * dpr));
+  if (v.canvas.width !== w || v.canvas.height !== h) { v.canvas.width = w; v.canvas.height = h; }
+}
+function drawSparkline(v) {
+  if (!v.ctx || !v.canvas) return;
+  const ctx = v.ctx, w = v.canvas.width, h = v.canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  ctx.strokeStyle = 'rgba(163,167,172,.25)'; // --ink-dim, low alpha -- gridlines only
+  ctx.lineWidth = 1;
+  for (let i = 1; i < 3; i++) {
+    const y = Math.round((h / 3) * i) + 0.5;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+  }
+  const nums = v.buf.filter(x => x != null);
+  if (nums.length < 2) return; // not enough points yet -- gridlines only, no false line
+  const min = v.opts.min != null ? v.opts.min : Math.min(...nums);
+  const max = v.opts.max != null ? v.opts.max : Math.max(...nums);
+  const span = (max - min) || 1;
+  ctx.strokeStyle = '#7c93a6'; // --accent -- canvas can't read CSS custom properties directly
+  ctx.lineWidth = 1.5 * (window.devicePixelRatio || 1);
+  ctx.beginPath();
+  let started = false;
+  v.buf.forEach((val, i) => {
+    const x = (i / (VITALS_BUFFER - 1)) * w;
+    if (val == null) { started = false; return; }
+    const y = h - ((val - min) / span) * h;
+    if (!started) { ctx.moveTo(x, y); started = true; } else { ctx.lineTo(x, y); }
+  });
+  ctx.stroke();
+}
+initVitals();
+window.addEventListener('resize', () => {
+  for (const v of Object.values(vitals)) { resizeVitalCanvas(v); drawSparkline(v); }
+});
+// Camera dropped-frames RATE (2026-09-05): camera-expgain.json's dropped_frames is a
+// cumulative counter -- the Vitals chart wants a rate, so this diffs consecutive
+// samples client-side (frames / elapsed-seconds), same idea as rig_telemetry's own
+// cpu_telemetry() diffing two /proc/stat samples server-side. A negative delta (the
+// counter reset -- e.g. monado restarted) or the very first sample (nothing to diff
+// against yet) both report "no rate yet" rather than a nonsense number.
+let _lastDroppedSample = null; // {count, tMs}
+function computeDroppedRate(ce) {
+  if (!ce || ce.dropped_frames == null) { _lastDroppedSample = null; return null; }
+  const nowMs = Date.now(), cur = ce.dropped_frames;
+  if (_lastDroppedSample == null) { _lastDroppedSample = { count: cur, tMs: nowMs }; return null; }
+  const dCount = cur - _lastDroppedSample.count;
+  const dSec = (nowMs - _lastDroppedSample.tMs) / 1000;
+  _lastDroppedSample = { count: cur, tMs: nowMs };
+  if (dSec <= 0 || dCount < 0) return null;
+  return dCount / dSec;
+}
+function updateVitals(d) {
+  const perf = d.perf_metrics;
+  if (perf && perf.fps != null && !perf.stale) {
+    pushVital('fps', perf.fps);
+    vitals.fps.valEl.textContent = perf.fps.toFixed(1) + ' fps';
+  } else {
+    pushVital('fps', null);
+    vitals.fps.valEl.textContent = perf && perf.stale ? 'stale' : 'no data yet';
+  }
+  const therm = d.hmd_temperature;
+  if (therm && !therm.stale && therm.celsius_est && therm.celsius_est.length) {
+    const avg = therm.celsius_est.reduce((a, b) => a + b, 0) / therm.celsius_est.length;
+    pushVital('temp', avg);
+    vitals.temp.valEl.textContent = avg.toFixed(1) + '°C (avg of ' + therm.celsius_est.length + ')';
+  } else {
+    pushVital('temp', null);
+    vitals.temp.valEl.textContent = therm && therm.stale ? 'stale' : 'no data yet';
+  }
+  const ce = d.camera_expgain;
+  const dropRate = computeDroppedRate(ce);
+  if (dropRate != null) {
+    pushVital('drop', dropRate);
+    vitals.drop.valEl.textContent = dropRate.toFixed(2) + ' /s';
+  } else {
+    pushVital('drop', null);
+    vitals.drop.valEl.textContent = ce ? 'collecting...' : 'no data yet';
+  }
+  for (const v of Object.values(vitals)) { resizeVitalCanvas(v); drawSparkline(v); }
+}
 function gpuPowerHtml(p) {
   if (!p) return '<div class="pwr-wrap"><span class="dim">power data unavailable</span></div>';
   const pct = Math.max(0, Math.min(100, (p.draw_w / p.max_limit_w) * 100));
@@ -1804,6 +2025,13 @@ async function tick() {
     updateCompositorToggle(sessionActive);
     renderAudioDevices(d.audio);
     renderPresenceSettings(d.presence);
+    const cameraExpgainEl = document.getElementById('camera-expgain');
+    if (cameraExpgainEl) cameraExpgainEl.innerHTML = cameraExpgainHtml(d.camera_expgain);
+    const calBody = document.getElementById('camera-calibration-body');
+    if (calBody) calBody.textContent = d.camera_calibration
+      ? JSON.stringify(d.camera_calibration, null, 2)
+      : 'no data yet -- camera-calibration.json not present';
+    updateVitals(d);
     const usbRows = Object.entries(d.usb.devices).map(([id, v]) =>
       `<div class="row"><span>${v.label}</span><span class="${v.present?'ok':'bad'}">${v.present?'OK':'MISSING'} (${id})</span></div>`
     ).join('');
@@ -1848,8 +2076,23 @@ async function tick() {
       return '<span class="dim">?</span>';
     }
     const ctrlNeedsCycle = ctrl.left === false || ctrl.right === false;
+    // fw_serial/imu_zeroed (2026-09-05, hmd-status.json -- see rig_telemetry.hmd_status):
+    // extends this SAME controllers row rather than a second controller section, per
+    // the task's own instruction. left/right presence above still comes from
+    // controller_status() (libmonado) -- this is additional per-controller detail from
+    // a different, newer source, shown only when that source actually has it.
+    const hmdStatus = d.hmd_status || {};
+    const hsCtrl = hmdStatus.controllers || {};
+    function ctrlExtra(hand) {
+      const c = hsCtrl[hand];
+      if (!c) return '';
+      const bits = [];
+      if (c.fw_serial) bits.push('fw ' + c.fw_serial);
+      if (c.imu_zeroed != null) bits.push('imu_zeroed ' + (c.imu_zeroed ? 'yes' : 'no'));
+      return bits.length ? ` <span class="dim">(${bits.join(', ')})</span>` : '';
+    }
     const controllersRow = sessionActive
-      ? `<div class="row"><span>controllers (joysticks)</span><span>${ctrl.error ? `<span class="dim">${ctrl.error}</span>` : `L ${ctrlSpan(ctrl.left)} &middot; R ${ctrlSpan(ctrl.right)}`}${ctrlNeedsCycle ? ' <span class="warn">-- power on, then jack-in down/up (no live hotplug)</span>' : ''}</span></div>`
+      ? `<div class="row"><span>controllers (joysticks)</span><span>${ctrl.error ? `<span class="dim">${ctrl.error}</span>` : `L ${ctrlSpan(ctrl.left)}${ctrlExtra('left')} &middot; R ${ctrlSpan(ctrl.right)}${ctrlExtra('right')}`}${ctrlNeedsCycle ? ' <span class="warn">-- power on, then jack-in down/up (no live hotplug)</span>' : ''}</span></div>`
       : `<div class="row"><span>controllers (joysticks)</span><span class="dim">n/a -- no session running</span></div>`;
     const audio = d.audio || {};
     const audioCls = audio.route === 'headset' ? 'ok' : 'warn';
@@ -1914,6 +2157,10 @@ async function tick() {
       </div>
       <div class="card"><h2>HMD thermal</h2>${hmdThermalHtml(d.hmd_temperature)}</div>
       <div class="card"><h2>vr device</h2><div class="row"><span>present</span><span class="${d.vr_device?'ok':'dim'}">${d.vr_device ? 'yes' : 'no'}</span></div></div>
+      <div class="card"><h2>HMD status (raw)</h2>
+        <div class="row"><span>device_status_raw</span><span class="dim" style="font-family:var(--font-mono)">${hmdStatus.device_status_raw_hex || 'no data yet'}</span></div>
+        <div class="dim" style="font-size:11px;margin-top:4px">undecoded, diagnostic reference only -- no meaning assigned to these bytes (yet)</div>
+      </div>
     `;
     const dotHeadset = document.getElementById('dot-headset');
     if (dotHeadset) dotHeadset.hidden = !hwFault;

@@ -113,6 +113,170 @@ def hmd_temperature():
     }
 
 
+def camera_expgain():
+    """~/vr/camera-expgain.json -- per-camera exposure_us/gain + one dropped_frames
+    counter + ts, written by wmr_camera.c. Confirmed live shape (2026-09-05):
+    {"cam0": {"exposure_us": int, "gain": int}, ..., "cam3": {...},
+     "dropped_frames": int, "ts": epoch}. An optional "controller_tracking" key may
+    also be present (not seen in a real sample yet) -- carried through as-is if so,
+    never invented.
+
+    Everything is read defensively field-by-field: this file is written by a process
+    outside this dashboard's control and can be missing (not shipped on this box yet),
+    transiently absent mid-write, or shaped slightly differently than expected --
+    None on any problem, same "just means no data yet" contract as hmd_temperature(),
+    never an exception the caller has to handle.
+    """
+    path = Path.home() / "vr" / "camera-expgain.json"
+    try:
+        raw = json.loads(path.read_text())
+        if not isinstance(raw, dict):
+            return None
+    except Exception:
+        return None
+
+    cams = {}
+    for i in range(4):
+        c = raw.get(f"cam{i}")
+        if not isinstance(c, dict):
+            continue
+        exposure_us = c.get("exposure_us")
+        gain = c.get("gain")
+        cams[f"cam{i}"] = {
+            "exposure_us": exposure_us if isinstance(exposure_us, (int, float)) else None,
+            "gain": gain if isinstance(gain, (int, float)) else None,
+        }
+
+    dropped_frames = raw.get("dropped_frames")
+    if not isinstance(dropped_frames, (int, float)):
+        dropped_frames = None
+
+    ts = raw.get("ts")
+    age_s = round(time.time() - ts, 1) if isinstance(ts, (int, float)) else None
+
+    result = {
+        "cams": cams,
+        "dropped_frames": dropped_frames,
+        "ts": ts,
+        "age_s": age_s,
+        "stale": age_s is not None and age_s > 10,
+    }
+    if "controller_tracking" in raw:
+        result["controller_tracking"] = raw["controller_tracking"]
+    return result
+
+
+def perf_metrics():
+    """~/vr/perf-metrics.json -- fps + frame_time_ms, feeding the dashboard's Vitals
+    section (2026-09-05). NEW file, added by a parallel in-flight task this repo has
+    no access to -- expected shape roughly {"fps": float, "frame_time_ms": float OR
+    {"min":.., "avg":.., "max":..}, "ts": epoch}, NOT yet confirmed against a real
+    write on this box. Every field is read defensively (isinstance-checked, never
+    assumed) precisely because the shape is still unconfirmed and the file may not
+    exist yet, may appear mid-session, or may be mid-write when read -- None on any
+    problem, same "no data yet" contract as every other optional-file reader here.
+    """
+    path = Path.home() / "vr" / "perf-metrics.json"
+    try:
+        raw = json.loads(path.read_text())
+        if not isinstance(raw, dict):
+            return None
+    except Exception:
+        return None
+
+    fps = raw.get("fps")
+    fps = float(fps) if isinstance(fps, (int, float)) else None
+
+    ft = raw.get("frame_time_ms")
+    frame_time_ms_avg = None
+    if isinstance(ft, (int, float)):
+        frame_time_ms_avg = float(ft)
+    elif isinstance(ft, dict):
+        avg = ft.get("avg")
+        if isinstance(avg, (int, float)):
+            frame_time_ms_avg = float(avg)
+
+    ts = raw.get("ts")
+    age_s = round(time.time() - ts, 1) if isinstance(ts, (int, float)) else None
+
+    return {
+        "fps": fps,
+        "frame_time_ms_avg": frame_time_ms_avg,
+        "ts": ts,
+        "age_s": age_s,
+        "stale": age_s is not None and age_s > 10,
+    }
+
+
+def camera_calibration():
+    """~/vr/camera-calibration.json -- one-time per-camera intrinsics/pose dump (fx/fy/
+    cx/cy/k1-6/p1/p2/pose per the plan), fed by the same parallel in-flight task as
+    perf_metrics()/hmd_status(). Static reference data for a technician ("does this
+    camera look miscalibrated"), not something polled for live changes.
+
+    Deliberately returns the raw parsed dict as-is (just type-checked to be a dict)
+    rather than picking out specific fields -- the exact key layout hasn't been
+    confirmed against a real write on this box yet, and this is display-only
+    reference data (see the access-panel card), so passing it through generically
+    survives whatever shape the real writer ships without a second patch here.
+    None if the file is missing, unparseable, or not a JSON object.
+    """
+    path = Path.home() / "vr" / "camera-calibration.json"
+    try:
+        raw = json.loads(path.read_text())
+        return raw if isinstance(raw, dict) else None
+    except Exception:
+        return None
+
+
+def hmd_status():
+    """~/vr/hmd-status.json -- device_status_raw (undecoded diagnostic byte array) +
+    per-controller fw_serial/imu_zeroed, fed by the same parallel in-flight task as
+    perf_metrics()/camera_calibration(). NEW, shape unconfirmed against a real write
+    on this box -- every field isinstance-checked.
+
+    device_status_raw is surfaced ONLY as a hex string (see the dashboard card's
+    "undecoded, diagnostic reference only" label) -- no meaning is assigned to any
+    bit/byte here or by the caller; inventing a decode for bytes nobody has confirmed
+    is worse than showing nothing.
+    """
+    path = Path.home() / "vr" / "hmd-status.json"
+    try:
+        raw = json.loads(path.read_text())
+        if not isinstance(raw, dict):
+            return None
+    except Exception:
+        return None
+
+    status_raw = raw.get("device_status_raw")
+    hexstr = None
+    if isinstance(status_raw, list) and status_raw and all(isinstance(b, int) for b in status_raw):
+        hexstr = " ".join(f"{b & 0xFF:02x}" for b in status_raw)
+
+    controllers = {}
+    raw_ctrls = raw.get("controllers")
+    if isinstance(raw_ctrls, dict):
+        for hand in ("left", "right"):
+            c = raw_ctrls.get(hand)
+            if isinstance(c, dict):
+                fw_serial = c.get("fw_serial")
+                imu_zeroed = c.get("imu_zeroed")
+                controllers[hand] = {
+                    "fw_serial": fw_serial if isinstance(fw_serial, str) else None,
+                    "imu_zeroed": imu_zeroed if isinstance(imu_zeroed, bool) else None,
+                }
+
+    ts = raw.get("ts")
+    age_s = round(time.time() - ts, 1) if isinstance(ts, (int, float)) else None
+
+    return {
+        "device_status_raw_hex": hexstr,
+        "controllers": controllers,
+        "ts": ts,
+        "age_s": age_s,
+    }
+
+
 def presence_settings():
     """~/vr/presence.conf -- the auto-standby opt-in + timeout, adjustable from the
     dashboard (status-dashboard.py's /api/presence/save). Same trivial KEY=VALUE parser
