@@ -307,3 +307,29 @@ them (gated off by default and/or log/CSV/offline-dump only, never live). This
 round's driver-side work was scoped only to perf/calibration/HMD-status/controller
 fields already requested, not to closing the gap analysis's list -- those remain a
 separate, later piece of work.
+
+## Live validation, 2026-09-05 night (real wearer, real Aircar 6dof session)
+
+Everything above got genuine end-to-end validation for the first time this same night, across
+several relaunches during an otherwise eventful hardware-troubleshooting session (see
+`docs/22-cable-connector-diagnosis.md`'s 2026-09-05 entry and the presence/thermal memory for the
+hardware/driver side of that same night):
+
+- `perf-metrics.json` -> Vitals FPS chart: real 90.0-90.005 fps observed live, not synthetic.
+- `hmd-status.json` controller fields: real per-controller `fw_serial` values observed
+  (`A85K7410630182L` / `a85k641053004dr`), confirming these are genuine per-unit serials, not the
+  placeholder literal `base.serial` is still hardcoded to elsewhere.
+- `camera-calibration.json`: real per-camera fisheye intrinsics observed (plausible fx/fy/k1-k6
+  values), not placeholder/zero data.
+- Tracking-camera JPEGs: pulled one down and visually confirmed real room content (not noise or a
+  broken image).
+
+**The camera-thumb layout bug needed a second, deeper fix.** The first attempt (this doc's own
+build round, aspect-ratio on the `<img>` element) did not actually work -- confirmed live, all 4
+camera labels still rendered stacked in the same spot instead of one per thumbnail. Root cause: the
+`<img>` is created with inline `style="display:none"` and only flips to `display:block` once its
+own probe `Image()` has loaded over the network; a `display:none` element reserves zero layout
+space no matter what aspect-ratio it declares, so `.camera-thumb` (the grid cell around it)
+collapsed regardless. Fix (commit `c44f2d8`): move the `aspect-ratio:4/3` onto `.camera-thumb`
+itself, which reserves space independent of the child image's display state. Confirmed live: each
+label now sits correctly in its own grid cell even before any image has loaded.

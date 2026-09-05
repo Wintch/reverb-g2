@@ -1223,3 +1223,41 @@ reference RTX 3060 Ti's 200 W TGP — +20% at the factory default, +25% headroom
 (driver, `dmesg`, `glxinfo`), so the exact Gigabyte SKU (e.g. GAMING OC PRO) is inferred from the
 subsystem ID + power-limit profile, not confirmed by name string. VBIOS `94.04.38.40.BD`, GPU part
 number `2486-200-A1`.
+
+## 2026-09-05 night: step 4 (DP-dead) re-confirmed live, plus a stale-DRM-lease follow-on
+
+During a live troubleshooting session (real wearer, repeated Aircar 6dof relaunches), the exact
+step-4 signature appeared: all three DP connectors `disconnected`, USB a healthy 5/5,
+`scripts/hmd-connector.sh` returned empty, and `./scripts/panel.py activate` produced **no logo at
+all** (the step-0 discriminator was already run clean beforehand, ruling out standby). The assistant
+initially recommended the wrong fixes — a USB-C orientation flip and a PC-end USB reconnect — from
+a compressed summary of this doc rather than reading it directly; both are explicitly ruled out
+above for a genuine DP-dead symptom and, as expected, neither changed anything (confirmed: USB
+stayed 5/5 across several PC-end unplug/replug cycles, DP stayed `disconnected` throughout).
+
+**The documented fix (visor-end connector reseat) worked immediately once actually applied**: the
+very next `panel.py activate` produced the HP logo. This is exactly the step-0 discriminator
+("logo visible" = panel alive, DP was just waiting on activation) — which briefly created a new
+point of confusion: the logo flashed then the panel went dark again (expected per step 0 point 2,
+the panel auto-powers-off if no real video signal follows fast enough), which on its own doesn't
+distinguish "fixed, just needs jack-in-wayland.sh" from "still broken." Re-running
+`jack-in-wayland.sh` right after resolved it.
+
+**New follow-on bug, not previously documented in this file**: after the reseat, a stale
+`jack-in-wayland.sh` failure marker from the earlier (genuinely broken) attempts blocked all
+further launches ("Refusing to launch: the previous attempt failed") until explicitly cleared with
+`--force up` — this marker mechanism (T074/T183) exists specifically to stop blind relaunch loops
+from making a marginal connector worse, and worked as designed; `down` never touches it. Separately,
+later the same session, a manual `panel.py activate` (run independently of Monado, mid-session,
+after an unrelated presence-driven blank) again produced the HP logo while `/sys/class/drm/card*-
+DP-*` stayed `disconnected` — this is the **stale DRM lease** case from step 4 point 4 above, not a
+hardware fault: Monado's own compositor doesn't re-lease a DP connector just because the physical
+panel woke up via a HID command it didn't issue itself. Fix applied: kill `monado-service` + `rm -f
+/run/user/1000/monado_comp_ipc` + relaunch fresh — confirmed this resolves it, re-running
+`panel.py activate` alone does not.
+
+**Reinforces the existing "Do NOT" list above, now with a live counter-example the same night**:
+neither the orientation flip nor a PC-end reconnect fixed anything for either of the two DP-dead-
+looking symptoms encountered (the real hardware fault, and the later stale-lease false alarm) —
+only the visor-end reseat (real fault) and the kill+socket-remove+relaunch (stale lease) did,
+exactly as this document already said they would.
