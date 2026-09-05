@@ -600,3 +600,62 @@ itself. Concretely:
    inherently jitter-prone (it's not a real video clock) rather than expecting pacer-side
    numbers to look like a normal render loop's; the ~90fps snapshot-dump-rate A/B above is a
    cheap way to confirm or rule out today's own patch as a secondary contributor.
+
+
+## 2026-09-05 (evening): redraw/latency on fast head turns, and a real poll-rate bug
+
+Live wearer feedback after the exposure-follow-SLAM fix (previous section): overall much
+smoother, but "se siente un redraw al girar rapido y una latencia... especialmente mirando los
+pies y caminar al mismo tiempo. Mirando adelante, girando lentamente es bastante solido." Also
+noted: SteamVR games feel less disorienting at similar latency because they render a stable
+virtual horizon/floor as a reference; raw camera passthrough has no such anchor.
+
+`HELLO_XR_FIXED_POSE=1` already renders the pano quad at a constant (identity) orientation
+regardless of real head orientation, so there is no projection/geometry artifact from turning --
+confirmed by re-reading `graphicsplugin_vulkan.cpp`'s pano-draw code. The redraw on fast turns is
+therefore pure temporal latency in the capture-to-display pipeline, not a rendering bug.
+
+**Real bug found and fixed**: `hello_xr`'s `PollCameraLoop()` (`video360.cpp`) only checked
+`camera0.pgm`'s mtime every 33ms (~30Hz), hardcoded, regardless of how fast the driver actually
+dumps frames -- so even after raising the driver-side dump rate to ~90fps earlier the same
+session (`WMR_CAMERA_SNAPSHOT_RATE_DIVISOR=1` plus dumping from the controller-tracking frame
+branch too, see the previous section and the paired monado commit), the true OBSERVED framerate
+in the headset was very likely still capped around ~30fps -- only the staleness of whichever
+frame each 33ms tick happened to catch was improving, not the frame rate itself. Lowered
+`kPollInterval` to 4ms (monado commit `d2377a180`, OpenXR-SDK-Source commit `bd8a472`).
+
+**A second, independent bug in the same area**: `impl.wantStats` (gates all
+`HELLO_XR_VIDEO_STATS`-based logging) was only ever assigned in `Open()`'s file/ffmpeg-mode code
+path, *after* camera mode's early `return true;` a few lines up -- so `HELLO_XR_VIDEO_STATS=1` had
+silently never taken effect in passthrough/camera mode at all, no matter how many times it was set
+on the command line. Confirmed via a temporary always-on debug log before finding the real cause;
+fixed by moving the assignment to the top of `Open()`, before the mode branch.
+
+**New instrumentation, real numbers, not guesses**: the driver's `wmr_camera_dump_snapshot_pgm()`
+now also writes a `camera<N>.pgm.ts` sidecar (`os_monotonic_get_ns()`, i.e. `CLOCK_MONOTONIC`, at
+write time -- deliberately NOT the device's own HoloLens-tick timestamps, which are a separate,
+uncalibrated clock domain and would give a meaningless diff against a reader process's own
+`clock_gettime(CLOCK_MONOTONIC)`, safe to compare across processes on the same host). `hello_xr`
+reads this sidecar on every frame it picks up and logs a per-second min/mean/max.
+
+Live measurement immediately after both fixes (idle rig, `ctrl` tracking mode, no controllers
+moving):
+
+```
+video360: camera pipeline staleness (write-to-poll) over 90 samples: min 0.5ms mean 2.7ms max 11.7ms
+video360: camera pipeline staleness (write-to-poll) over 84 samples: min 0.5ms mean 3.1ms max 48.2ms
+video360: camera pipeline staleness (write-to-poll) over 90 samples: min 0.5ms mean 2.5ms max 5.8ms
+```
+
+~90 samples/second confirms the true observed rate now matches the ~90fps driver-side dump (the
+poll-rate fix is doing its job). The write-to-poll segment itself is small: a few ms typically,
+one outlier near 48ms. **This rules out the disk-write/poll bridge as the dominant source of the
+felt redraw** -- it was the leading suspect going in, and the data says otherwise. The remaining
+latency (camera exposure integration time itself, and the poll-to-decode-to-render-to-present
+chain after this measurement point) is not yet measured and is the next place to look if the
+redraw is still felt after this fix is worn-tested.
+
+**Not yet done**: a live worn re-test of the true higher observed framerate (the previous "felt
+smoother" reports were all made while still capped near 30fps observed, despite the driver
+already dumping at ~90fps) -- this fix may itself be a further improvement, separate from
+whatever the exposure and render-chain latency turns out to be.
