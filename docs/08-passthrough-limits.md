@@ -659,3 +659,50 @@ redraw is still felt after this fix is worn-tested.
 smoother" reports were all made while still capped near 30fps observed, despite the driver
 already dumping at ~90fps) -- this fix may itself be a further improvement, separate from
 whatever the exposure and render-chain latency turns out to be.
+
+
+## 2026-09-05 (later evening): cube z-fighting fix, and the poll-rate fix's own verdict
+
+Live wearer re-test after the poll-rate fix (previous section, `kPollInterval` 33ms -> 4ms) and
+the two independent bugs fixed alongside it (`wantStats` never set in camera mode; the write-to-
+poll latency instrumentation itself). Two new reports:
+
+- **"Los cubos de colores estan con zfight contra video."** hello_xr's original tracked-pose
+  cubes (one per controller, plus reference-space markers -- see the existing comment above the
+  draw call in `graphicsplugin_vulkan.cpp`) were drawing on top of the passthrough image and
+  z-fighting against it, since both are opaque geometry at similar apparent depth. These cubes
+  are hello_xr's built-in controller-tracking instrument (useful for the 6DoF/constellation work
+  elsewhere in this project) but meaningless for a raw camera-passthrough demo. **Fixed**: added
+  `suppressCubesForPassthrough = getenv("HELLO_XR_FIXED_POSE") != nullptr` to the existing
+  test-pattern cube-suppression check, reusing the same flag that already marks a session as
+  live passthrough rather than ordinary 360/flat video (commit `16bf593`).
+
+- **"A veces pega tirones importantes."** Checked live: `Fake pacer fell behind` sits at 3609
+  accumulated this session -- consistent with the same mechanism root-caused earlier the same day
+  (this doc, the "Fake pacer" investigation section): a general Monado compositor fallback, with
+  the large jumps tied to the already-tracked G2 USB port fault (docs/22), not something the
+  poll-rate change introduced. Not re-investigated deeper this round (light check only, wearer
+  active) -- no new evidence it's worse than before, no evidence it's better either.
+
+- **Overall verdict after all of today's passthrough fixes, in the wearer's own words: "salvo
+  esos tirones se ve perfecto."** With the cube fix in, and modulo the pre-existing/hardware-
+  linked pacer jolts, the v0 monocular passthrough (~90fps observed, unified exposure, no
+  geometry artifacts, no z-fighting) is now a genuinely solid experience end to end.
+
+**Full list of what changed today, across three repos, in order**:
+1. `monado` `d2377a180` -- `WMR_CAMERA_SNAPSHOT_RATE_DIVISOR` (1fps -> 90fps dump rate, both SLAM
+   and controller-tracking frame types), `WMR_CTRL_EXPOSURE_FOLLOW_SLAM` (fixes the two-frame-
+   type exposure mismatch flicker), `camera<N>.pgm.ts` latency sidecar.
+2. `OpenXR-SDK-Source` `bd8a472` -- `PollCameraLoop()` poll interval 33ms -> 4ms (the real
+   framerate-cap bug), `impl.wantStats` fixed to actually apply in camera mode, write-to-poll
+   latency logging.
+3. `OpenXR-SDK-Source` `16bf593` -- suppress controller/reference cubes in passthrough mode.
+4. `reverb-g2` docs -- this file, dated sections throughout the day.
+
+**Still open, for whoever picks this up next**: camera exposure integration time and the
+poll-to-decode-to-render-to-present chain are not yet measured (only the write-to-poll segment
+is, and it's small); the `vr-launcher.py` always-on passthrough fallback for the demo-booth
+blank-window problem (see the dead-time investigation section above) is recommended but not
+implemented; a full worn re-test specifically isolating whether the "tirones" are felt more or
+less often than before today's changes has not been done (today's checks were all "does this
+look wrong right now", not a controlled before/after count).
