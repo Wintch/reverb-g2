@@ -525,6 +525,63 @@ ACTIONS["test-591360-anchor"] = {
                      "'Tracker diverged ... from the session anchor' y el yaw delta de cada reset."},
 }
 
+# 2026-09-05 (docs/100): the Aircar/Cyberpilot head-prediction recipe (SLAM_PREDICTION_TYPE=2 +
+# SLAM_PRED_FREEZE_POSITION=1 + SLAM_PRED_NECK_ARM_MM + SLAM_CORRECTION_SPREAD_MS) has NEVER been
+# tried on Dali. The earlier "gate-591360-P2" test above is a DIFFERENT axis entirely (Basalt's
+# backend landmark/recall config, SLAM_CONFIG=P2.toml) and was rejected for a reason unrelated to
+# this recipe (raw VIO/landmark starvation while standing, not a prediction-knob question) -- do
+# not read that gate's failure as evidence against this. Values below start conservative, not
+# copied blindly: neck-arm 100mm matches Aircar's own tuned value (a roughly fixed neck-pivot-to-
+# eye anatomy, not seated/standing-dependent -- see docs/100 for the full reasoning), spread 50ms
+# matches Cyberpilot's untested-conservative choice, NOT Aircar's title-specific 25ms (only ever
+# validated worn on Aircar itself). Env-only, layers on top of Dali's already-approved anchor +
+# quat-check base (ambient env wins over TITLE_PROFILES by design) -- does not touch the approved
+# demo button or TITLE_PROFILES["591360"]. UNVALIDATED, needs a worn A/B (docs/100).
+ACTIONS["test-591360-predict"] = {
+    "label": "🧪 Dalí 6dof + receta de predicción Aircar [sin validar]",
+    "cmd": ["python3", f"{HOME}/vr/vr-launcher.py", "1", "6dof"],
+    "cwd": f"{HOME}/vr",
+    "env": {"VR_LAUNCH_APPID": "591360", "U_PACING_APP_LOG": "debug", "VIT_COLLAPSE_LOG": "1",
+            "SLAM_PREDICTION_TYPE": "2", "SLAM_PRED_FREEZE_POSITION": "1",
+            "SLAM_PRED_NECK_ARM_MM": "100", "SLAM_CORRECTION_SPREAD_MS": "50",
+            "VR_DEMO_RECORD": "1", "VR_DEMO_COMMENT": "Dali 6dof prediction-recipe test (unvalidated, docs/100)"},
+    "demo": {"title": "Dalí + receta de predicción (prueba)", "tracking": "6dof", "status": "testing",
+             "note": "SIN VALIDAR (docs/100, 2026-09-05): suma a la base aprobada de Dali (anchor 300cm + "
+                     "quat-check) los knobs de prediccion de cabeza de Aircar/Cyberpilot (TYPE=2 + FREEZE + "
+                     "NECK_ARM=100mm + SPREAD=50ms), nunca antes probados en Dali -- la compuerta P2 previa "
+                     "es OTRO eje (backend de Basalt) y no mide esto. Objetivo: ver si mejora el 'redraw' de "
+                     "cabeza (el mismo mecanismo de docs/80) en un titulo standing/gaze-dwell, no solo en la "
+                     "cabina sentada de Aircar. Protocolo: luz encendida (light-preflight.sh), casco quieto en "
+                     "la mesa hasta que cargue, comparar contra el boton aprobado con la misma rutina (mirar "
+                     "alrededor, inclinarse, giros lentos y rapidos), y preguntar puntualmente por el "
+                     "'redraw'/'se acomoda' al girar rapido -- no solo por el drift en metros."},
+}
+
+# 2026-09-05 (docs/100): the 2026-09-03 GPU swap dropped the card's max draw 250 W -> 210 W
+# (docs/92). Dali's approved sign-off (DEMO_LAUNCHES note above) explicitly needed the OLD card's
+# full 250 W to avoid 79/85 fps dips; a quick unworn sample on the new card already showed
+# ~200/210 W (95 %) with ~1 % of frames >11 ms late (a full dropped frame at 90 Hz), and a live
+# worn session the same day reported a sustained ~75 fps read (avg ~4.9 ms late against the
+# 11.11 ms/90 Hz period -- not just occasional spikes). docs/96 already shows supersampling ABOVE
+# 100 % buys nothing on Dali (it is app-render-capped around 60 fps, reprojected to 90 by the
+# compositor) -- this tests the other direction, BELOW 100 %, to see if it buys back compositor-
+# side headroom under the new, lower power ceiling. Cheap, reversible, zero code. UNVALIDATED.
+ACTIONS["test-591360-scale85"] = {
+    "label": "🧪 Dalí 6dof · escala 85% [sin validar]",
+    "cmd": ["python3", f"{HOME}/vr/vr-launcher.py", "1", "6dof"],
+    "cwd": f"{HOME}/vr",
+    "env": {"VR_LAUNCH_APPID": "591360", "U_PACING_APP_LOG": "debug", "VIT_COLLAPSE_LOG": "1",
+            "XRT_COMPOSITOR_SCALE_PERCENTAGE": "85",
+            "VR_DEMO_RECORD": "1", "VR_DEMO_COMMENT": "Dali 6dof render scale 85% test (unvalidated, docs/100)"},
+    "demo": {"title": "Dalí escala 85% (prueba)", "tracking": "6dof", "status": "testing",
+             "note": "SIN VALIDAR (docs/100, 2026-09-05): baja XRT_COMPOSITOR_SCALE_PERCENTAGE de 100 a 85 "
+                     "para probar si compra margen de GPU bajo el nuevo techo de 210 W de la RTX 3060 Ti LHR "
+                     "post-swap (docs/92). Medir con frame-pacing.sh bajo uso real (puesto, no menu/idle) y "
+                     "comparar el % de frames tarde contra el boton aprobado a escala 100. Si no reduce las "
+                     "frames tarde, el 100 % sigue siendo el piso real (el techo esta en otro lado -- termico, "
+                     "clocks -- no en resolucion) y este eje de potencia queda cerrado para esta tarjeta."},
+}
+
 # JQ_ENV = the Aircar profile as of 2026-08-28 ~18:45 -03 (docs/80 "JQ", NEXT-STEP's START
 # HERE): P2 backend + averaged correction + mid-exposure stamp + queues at depth 1, horizon 50,
 # clamp 150, spread 25. Module-level so the JQ button below and every round-7 button that
