@@ -862,3 +862,75 @@ backlight flash. This is the first fully clean, driver-fixed blank -> restore cy
 manual intervention validated after both fixes landed.
 
 Commit: `c6775c41a` on `~/vr/monado` branch `lab-full` (not pushed).
+
+## 2026-09-06 (later still) -- voice gender selector, shared speak.sh, audio_guide_enabled toggle, and a new unconditional "casco puesto" alert
+
+Four related additions to the presence-sound-alert stack, all live-reported asks in the same
+conversation as the language/Piper work above.
+
+**"Leftover Spanish" report, investigated, not reproduced.** The user reported still hearing
+Spanish after switching their active profile to "niko" (lang: ru). Traced every path: `jq -r
+'.users[.active].lang'` against the real file correctly returned `ru`; every alert state in
+`phrase_for()` has a `ru` line; Piper's `ru_RU-irina-medium.onnx` synthesizes real Russian text
+cleanly (`piper -m ru_RU-irina-medium.onnx`, exit 0, non-trivial WAV output, verified directly).
+No code bug found. Most likely explanation: the report came from before (or right at the boundary
+of) the profile switch, when "AVGwmn" (lang: es) was still active and correctly speaking Spanish --
+not a bug in the language mechanism. Left as-is; flag if it recurs with a confirmed-post-switch
+timestamp.
+
+**Voice gender selector.** The single voice-per-language design (davefx/irina/lessac) meant gender
+was accidental and inconsistent across languages -- the user noticed and asked for a selector.
+Fetched three additional Piper voice models from `rhasspy/piper-voices` on Hugging Face into
+`~/vr/tts-voices/`: `es_ES-sharvard-medium` (a multi-speaker model, M=0/F=1 per its own
+`speaker_id_map` in the repo's `voices.json` -- used here only for speaker 1/female, since davefx
+already covers male Spanish as its own dedicated model), `ru_RU-denis-medium` (male), and
+`en_US-amy-medium` (female). New per-profile field `voice_gender` (male/female, default "male" --
+matches what davefx/lessac already were; ru profiles get an explicit `voice_gender` at migration
+time so an existing "irina" experience doesn't silently change). Explicit values set per the live
+user's request: `niko` -> female, `AVGwmn` and `default` -> male. UI: a new M/F dropdown in the
+dashboard's per-user edit panel, same pattern as the existing resting-delay dropdown (saved via
+`userSave()`, not live-applied -- these three fields are read fresh from `user-profiles.json`
+directly by `speak.sh` on every alert, same as `lang` already was, so no separate live-file/apply
+step is needed the way `resting_alert_delay_ms` needed one).
+
+**Shared `speak.sh`.** The live coordinating session had been calling `espeak-ng -v es-419 "..."`
+directly over ssh all day for ad-hoc operator narration ("Atención, ponete el casco") --
+hardcoded, ignoring whatever profile was actually active. Extracted ALL voice-selection logic
+(`active_lang`, `active_voice_gender`, `audio_guide_enabled`, the Piper/espeak-ng fallback chain)
+out of `presence-sound-alert.sh` into a new standalone `~/vr/speak.sh` (mirrored, as always, to
+`~/Documents/reverb-g2/scripts/speak.sh`). Two calling conventions from the one file: executed
+directly for ad-hoc use (`~/vr/speak.sh "phrase text"` -- the live session should use this from now
+on instead of raw `espeak-ng` calls) or sourced as a library (`presence-sound-alert.sh` now does
+`source "$VR/speak.sh"` and its `say_state()` just resolves `phrase_for(state, lang)` then calls
+the shared `speak()`). One source of truth; `presence-sound-alert.sh` no longer duplicates any
+TTS/voice logic at all. Note `speak.sh` does not translate -- it only picks which voice speaks; the
+caller is responsible for composing the phrase in a language that matches the active profile.
+
+**`audio_guide_enabled` toggle.** New per-profile boolean (default `true`), same migration/UI
+pattern as `voice_gender`. `speak()` checks it first and returns immediately -- a genuine no-op,
+no synthesis attempt at all -- when false for the active profile, rather than a muted-but-still-
+running call. Set explicitly `true` for all three existing profiles per the user's request ("dejalo
+activado para ambos") -- this is a toggle that exists for future use, nothing is currently silenced.
+
+**New unconditional "casco puesto" alert.** The user pointed out a live asymmetry: "casco en la
+mesa" fires on every doff, but nothing fired on a plain don unless it happened to follow a genuine
+auto-standby blank (which speaks "casco encendido" instead). Added a new state, `worn`, fired on
+every single `User presence: WORN` log line unconditionally (`en`: "headset on head", `es`: "casco
+puesto", `ru`: "шлем надет"), through the same `phrase_for`/`say_state`/language/gender/toggle
+machinery as everything else -- not a one-off. "casco encendido" is UNCHANGED and still fires
+separately for the specific genuine-restore case; the two now coexist deliberately, answering
+different questions ("did I just put it on, period" vs. "did that just wake the panel from a real
+standby").
+
+**Verified**: `bash -n` on both scripts, `python3 -m py_compile` on `status-dashboard.py` plus a
+live curl of `/api/users` after a real `systemctl --user restart status-dashboard.service` (not
+just the source compiling); `voice_model_spec()` resolves all 6 lang×gender combinations to the
+right model file (multi-speaker `--speaker 1` included); `phrase_for(worn, *)` returns the right
+text in all three languages; a `bash -x` trace of `speak.sh` confirms the full chain (the
+`audio_guide_enabled` check, model resolution, the actual `piper` invocation, `paplay`) executes
+for niko's now-female/ru profile; the `audio_guide_enabled=false` gate produces zero synthesis
+attempts, confirmed by toggling it via the real API and back. **Not validated**: nobody has heard
+any of this live yet -- no physical audio access this round, same caveat as the Piper work above.
+
+Committed on `~/Documents/reverb-g2` (branch `main`, NOT pushed): `scripts/presence-sound-alert.sh`,
+`scripts/speak.sh` (new), `scripts/status-dashboard.py`.

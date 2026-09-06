@@ -914,7 +914,8 @@ DEFAULT_USERS = {
     "users": {
         "default": {"height_m": 1.70, "dof": "3dof", "brightness": 1.0,
                     "mapping": "Xbox pad; A recentre", "notes": "", "lang": "es",
-                    "resting_alert_delay_ms": 0},
+                    "resting_alert_delay_ms": 0, "voice_gender": "male",
+                    "audio_guide_enabled": True},
     },
 }
 
@@ -925,11 +926,20 @@ def load_users():
     try:
         d = json.load(open(USER_PROFILES_FILE))
         assert isinstance(d.get("users"), dict) and d.get("active")
-        # Migration: profiles saved before "lang" existed default to "es", same reasoning
-        # as DEFAULT_USERS above -- don't silently change an existing operator's language.
+        # Migration: profiles saved before "lang"/"voice_gender" existed default to "es"/
+        # "male", same reasoning as DEFAULT_USERS above -- don't silently change an
+        # existing operator's language or alert voice. "male" matches what every
+        # profile's single-voice-per-language TTS model actually was before this field
+        # existed (es_ES-davefx and en_US-lessac are male voices; only ru_RU-irina,
+        # female, was the odd one out -- profiles already using ru get "male" here too,
+        # a real behavior change for them alone, but there is no way to distinguish "was
+        # depending on irina's voice" from "never touched voice at all" after the fact;
+        # set voice_gender explicitly if that matters for a given profile).
         for u in d["users"].values():
             u.setdefault("lang", "es")
             u.setdefault("resting_alert_delay_ms", 0)
+            u.setdefault("voice_gender", "male")
+            u.setdefault("audio_guide_enabled", True)
         return d
     except Exception:
         return json.loads(json.dumps(DEFAULT_USERS))
@@ -1541,6 +1551,7 @@ const I18N = {
     cc_adjustable: "Adjustable (per user)", cc_brightness: "brightness", cc_height: "height (m)",
     cc_dof: "preferred DoF", cc_mapping: "controller mapping", cc_notes: "notes",
     cc_resting_delay: "\"resting\" alert delay",
+    cc_voice_gender: "alert voice", cc_audio_guide: "audio guide",
     cc_save_btn: "Save user", cc_fixed: "Fixed (not changeable on this headset)", cc_lang: "language",
     cc_edit_profile: "edit profile",
     pl_name_label: "Name:", pl_name_default: "Demo round",
@@ -1575,6 +1586,7 @@ const I18N = {
     cc_adjustable: "Ajustable (por usuario)", cc_brightness: "brillo", cc_height: "altura (m)",
     cc_dof: "DoF preferido", cc_mapping: "mapeo de controles", cc_notes: "notas",
     cc_resting_delay: "demora aviso \"en la mesa\"",
+    cc_voice_gender: "voz del aviso", cc_audio_guide: "guía de audio",
     cc_save_btn: "Guardar usuario", cc_fixed: "Fijo (no modificable en este casco)", cc_lang: "idioma",
     cc_edit_profile: "editar perfil",
     pl_name_label: "Nombre:", pl_name_default: "Ronda demo",
@@ -1609,6 +1621,7 @@ const I18N = {
     cc_adjustable: "Настраиваемое (по пользователю)", cc_brightness: "яркость", cc_height: "рост (м)",
     cc_dof: "предпочитаемый DoF", cc_mapping: "раскладка контроллеров", cc_notes: "заметки",
     cc_resting_delay: "задержка \"на столе\"",
+    cc_voice_gender: "голос оповещений", cc_audio_guide: "аудио-гид",
     cc_save_btn: "Сохранить пользователя", cc_fixed: "Фиксировано (нельзя изменить на этой гарнитуре)", cc_lang: "язык",
     cc_edit_profile: "редактировать профиль",
     pl_name_label: "Название:", pl_name_default: "Демо-раунд",
@@ -2503,6 +2516,13 @@ async function refreshUserCenter() {
           [[0,'0 (instantáneo)'],[60000,'1 min'],[120000,'2 min'],[180000,'3 min'],[600000,'10 min']]
             .map(([v,l]) => `<option value="${v}" ${(u.resting_alert_delay_ms||0)===v?'selected':''}>${l}</option>`).join('')
         }</select></div>
+      <div class="row"><span>${t('cc_voice_gender')}</span>
+        <select id="uc-voice-gender">
+          <option value="male" ${(u.voice_gender||'male')==='male'?'selected':''}>M</option>
+          <option value="female" ${(u.voice_gender||'male')==='female'?'selected':''}>F</option>
+        </select></div>
+      <div class="row"><span>${t('cc_audio_guide')}</span>
+        <input type="checkbox" id="uc-audio-guide" ${u.audio_guide_enabled!==false?'checked':''}></div>
       <div style="margin-top:6px"><button onclick="userSave()">${t('cc_save_btn')}</button>
         <span id="uc-msg" class="dim" style="font-size:12px"></span></div>
       <div class="fixed-plate">
@@ -2527,6 +2547,8 @@ async function userSave() {
     brightness: parseFloat(document.getElementById('uc-bri').value)||1.0,
     mapping: document.getElementById('uc-map').value, notes: document.getElementById('uc-notes').value,
     resting_alert_delay_ms: parseInt(document.getElementById('uc-resting-delay').value)||0,
+    voice_gender: document.getElementById('uc-voice-gender').value,
+    audio_guide_enabled: document.getElementById('uc-audio-guide').checked,
     lang: currentLang });
   const d = await (await fetch('/api/user/save', {method:'POST', body})).json();
   document.getElementById('uc-msg').textContent = (d.ok?'guardado ':'FALLO ')+d.message;
@@ -2738,7 +2760,7 @@ class Handler(BaseHTTPRequestHandler):
                 d = load_users()
                 u = d["users"].get(name, {})
                 for k in ("height_m", "dof", "brightness", "mapping", "notes", "lang",
-                          "resting_alert_delay_ms"):
+                          "resting_alert_delay_ms", "voice_gender", "audio_guide_enabled"):
                     if k in p:
                         u[k] = p[k]
                 d["users"][name] = u

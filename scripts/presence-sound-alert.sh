@@ -9,16 +9,20 @@
 #     (presence.conf PRESENCE_ENABLE). Needs an active OpenXR client to ever fire --
 #     see wmr_hmd_update_inputs()'s doc comment; monado-service alone, with no app,
 #     never evaluates presence at all.
-#   - "casco en la mesa": the debounced NOT-WORN commit itself (WMR_USER_PRESENCE_DOFF_MS,
-#     ~1s after a real doff) -- long before the SCREENOFF_MS grace period (120000ms in
-#     production) actually blanks the panel. Added 2026-09-06 for continuous state
-#     awareness ("bien detallado con audio"), not just the two endpoint events.
-#     Deliberately NOT mirrored on the WORN commit: that log line also fires on every
-#     ordinary don while the panel was never blanked (ANY doff-then-redon inside the
-#     SCREENOFF_MS window), which would double up with "casco encendido" in the one case
-#     that matters (redonning after a real blank) while adding noise to the far more
-#     common case (a quick doff/redon that never blanked at all).
-#     This step's OWN timing is configurable, separate from SCREENOFF_MS -- first instance
+#   - "casco en la mesa" / "casco puesto": the debounced NOT-WORN / WORN commits
+#     (WMR_USER_PRESENCE_DOFF_MS / _DON_MS, ~1s / ~250ms after a real doff/don) -- fire on
+#     EVERY commit, unconditionally, long before (or entirely independent of) the
+#     SCREENOFF_MS grace period (120000ms in production) that actually blanks/restores the
+#     panel. Added 2026-09-06 for continuous state awareness ("bien detallado con audio",
+#     "reaccionamos inmediatamente"), not just the two auto-standby endpoint events below.
+#     "casco puesto" was added AFTER "casco en la mesa" the same day, once the user pointed
+#     out the asymmetry live: they heard "en la mesa" on every doff but nothing at all on a
+#     plain don unless it happened to follow a genuine blank (which speaks "casco
+#     encendido" instead, see below). The two WORN-side alerts answer different questions
+#     and both stay: "casco puesto" is "did I just put it on, period" (every single WORN
+#     commit); "casco encendido" is "did that just wake the panel from a real standby"
+#     (only the genuine restore case, gated on screen_off_by_presence in the driver).
+#     "casco en la mesa"'s OWN timing is configurable, separate from SCREENOFF_MS -- first instance
 #     of the "each step gets its own delay" staged-sequence design the user asked for
 #     2026-09-06, building it one step at a time rather than all at once. The delay is
 #     PER-USER (status-dashboard.py's user-center "resting_alert_delay_ms" field, same
@@ -59,18 +63,15 @@
 #   needed to pick up a profile switch" philosophy as the resting-alert delay above.
 #   Falls back to "es" (this project's long-standing default) if the file is missing,
 #   corrupt, or the jq lookup otherwise fails -- unit-tested against all three. See
-#   phrase_for() for the EN/ES/RU text and active_lang() for the lookup.
+#   phrase_for() for the EN/ES/RU text.
 #
-#   TTS ENGINE: tries Piper (neural TTS, ~/vr/tts-venv + ~/vr/tts-voices, one voice model
-#   per language) first for a genuinely more natural voice than espeak-ng's formant
-#   synthesis; falls back to espeak-ng if the venv/model for the needed language is
-#   missing, or if piper's own synthesis fails for any reason -- espeak-ng ships with
-#   Debian and needs no network/download, so it's the one engine that can never be
-#   unavailable. Piper costs real latency (~0.9s per short phrase on this machine,
-#   dominated by loading a ~60MB ONNX model fresh each call -- there is no persistent
-#   piper daemon here, deliberately, to avoid a standing process on a shared lab machine)
-#   versus espeak-ng's ~7ms -- judged an acceptable trade for an ambient status narration
-#   that nothing else is waiting on. See say_state() for the fallback chain.
+#   VOICE, TTS ENGINE, AND THE audio_guide_enabled GATE (2026-09-06) all live in
+#   speak.sh, sourced below -- NOT duplicated here. That file is also directly callable
+#   on its own (`~/vr/speak.sh "some phrase"`) for ad-hoc narration outside this script
+#   (e.g. the live coordinating session summoning the operator), so both paths share one
+#   source of truth for which voice speaks and whether anything should speak at all. Read
+#   speak.sh's own header for the full story (Piper-vs-espeak-ng fallback, per-language-
+#   and-gender voice models, the audio_guide_enabled no-op gate).
 #
 #   ./presence-sound-alert.sh &     run in the background alongside a jack-in session
 #
@@ -81,23 +82,9 @@ set -u
 VR="$HOME/vr"
 LOG="$VR/jack-in-wayland.log"
 RESTING_ALERT_DELAY_FILE="$VR/logs/presence-resting-alert-delay-ms"
-USER_PROFILES_FILE="$VR/logs/user-profiles.json"
 
-TTS_VENV_PIPER="$VR/tts-venv/bin/piper"
-TTS_VOICES="$VR/tts-voices"
-ESPEAK_VOICE_ES="es-419"
-
-# Active operator's language (en/es/ru), read fresh every call -- never cached, so a
-# profile switch on the dashboard applies to the very next alert. jq's own stderr is
-# discarded and a failed/empty lookup falls through to "es" below.
-active_lang() {
-	local l
-	l="$(jq -r '.users[.active].lang // "es"' "$USER_PROFILES_FILE" 2>/dev/null)"
-	case "$l" in
-	en | es | ru) printf '%s' "$l" ;;
-	*) printf 'es' ;;
-	esac
-}
+# shellcheck source=speak.sh
+source "$VR/speak.sh"
 
 # state:lang -> spoken text. Falls through to the Spanish phrase for any state/lang pair
 # not explicitly listed (keeps this table short -- only add a language's line once its
@@ -114,6 +101,9 @@ phrase_for() {
 	resting:en) echo "headset down" ;;
 	resting:ru) echo "шлем на столе" ;;
 	resting:*) echo "casco en la mesa" ;;
+	worn:en) echo "headset on head" ;;
+	worn:ru) echo "шлем надет" ;;
+	worn:*) echo "casco puesto" ;;
 	monado_up:en) echo "monado up" ;;
 	monado_up:ru) echo "монадо запущен" ;;
 	monado_up:*) echo "monado arriba" ;;
@@ -135,43 +125,14 @@ phrase_for() {
 	esac
 }
 
-# Speaks phrase_for(state, active_lang()). Piper first (natural neural voice, one model
-# per language); falls back to espeak-ng (instant, always installed) if the venv/model for
-# this language is missing or piper's own synthesis fails.
+# Resolves phrase_for(state, active_lang()) and hands it to speak.sh's shared speak()
+# (voice selection, Piper/espeak-ng fallback, and the audio_guide_enabled gate all live
+# there now -- see the sourced speak.sh for the full story).
 say_state() {
-	local state="$1" lang phrase voice_model
+	local state="$1" lang phrase
 	lang="$(active_lang)"
 	phrase="$(phrase_for "$state" "$lang")"
-	[ -n "$phrase" ] || return
-	export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-
-	case "$lang" in
-	en) voice_model="$TTS_VOICES/en_US-lessac-medium.onnx" ;;
-	ru) voice_model="$TTS_VOICES/ru_RU-irina-medium.onnx" ;;
-	*) voice_model="$TTS_VOICES/es_ES-davefx-medium.onnx" ;;
-	esac
-
-	if [ -x "$TTS_VENV_PIPER" ] && [ -f "$voice_model" ]; then
-		local wav
-		wav="$(mktemp /tmp/presence-alert-XXXXXX.wav)"
-		if printf '%s' "$phrase" | "$TTS_VENV_PIPER" -m "$voice_model" -f "$wav" >/dev/null 2>&1 \
-			&& [ -s "$wav" ] && paplay "$wav" >/dev/null 2>&1; then
-			rm -f "$wav"
-			return
-		fi
-		rm -f "$wav"
-	fi
-
-	# Fallback: espeak-ng. Only "es"/"en" map cleanly to its own voice list on this
-	# install; ru falls back to the es-419 voice rather than a wrong/missing espeak
-	# voice -- acceptable since this path only runs if piper (which HAS a real ru
-	# voice) is unavailable in the first place.
-	local espeak_voice
-	case "$lang" in
-	en) espeak_voice="en-us" ;;
-	*) espeak_voice="$ESPEAK_VOICE_ES" ;;
-	esac
-	espeak-ng -v "$espeak_voice" "$phrase" >/dev/null 2>&1
+	speak "$phrase"
 }
 
 # Ambient env var wins (ad-hoc testing override); else the per-user dashboard preset file,
@@ -218,6 +179,7 @@ tail -n0 -F "$LOG" 2>/dev/null | while IFS= read -r line; do
 			kill "$resting_alert_pid" 2>/dev/null
 			resting_alert_pid=""
 		fi
+		say_state worn
 		;;
 	*"MONADO_MARKER: up"*)
 		say_state monado_up
