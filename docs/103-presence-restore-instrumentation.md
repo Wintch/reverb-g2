@@ -553,3 +553,101 @@ against both -- recorded here so a future session doesn't re-run the same analys
   every app launch/exit, including internal Steam/wrapper transitions -- far noisier than the
   once-per-launch-cycle Monado lifecycle marker above, and not what "estado de monado" actually
   meant (the launcher's lifecycle, not every app's).
+
+## 2026-09-06 ~14:55-15:15 -03 — hardware-wear concern: sequence mapped, IMU idea evaluated and rejected, one more alert added, a dev-vs-booth timing question left open
+
+The user raised a real, different concern from anything above: they own exactly ONE Reverb G2 (their
+only test unit), and today's testing kept the panel lit through repeated deliberate doffs while
+verifying the new alert states. They asked to map the sequence and reduce needless screen-on time,
+and separately reopened an earlier-floated idea (IMU/movement-based detection, "casco en las
+manos"/"casco puesto", instant reaction) under this new, concrete justification -- worth an honest
+re-check, not a repeat of the earlier "low value" answer given before the hardware-wear stake was on
+the table.
+
+### The sequence, with real numbers pulled from `wmr_hmd.c` and today's own log
+
+Constants (`WMR_USER_PRESENCE_DON_MS`/`DOFF_MS`, `DEBUG_GET_ONCE_NUM_OPTION` defaults, lines 142-143;
+`~/vr/presence.conf`'s real deployed `PRESENCE_SCREENOFF_MS`):
+
+```
+DON_MS      = 250     (ms of continuous "worn" reading before commit)
+DOFF_MS     = 1000    (ms of continuous "not worn" reading before commit)
+SCREENOFF_MS= 120000  (ms of continuous committed NOT WORN before the panel physically blanks)
+REASSERT_MS = 15000   (default re-arm interval while blanked, keeps RESTORE working)
+```
+
+Confirmed against real lines from today's `~/vr/jack-in-wayland.log`:
+```
+User presence: WORN     (raw proximity sensor value 1, held 255 ms)   -- matches DON_MS=250 + slop
+User presence: NOT WORN (raw proximity sensor value 0, held 1011 ms)  -- matches DOFF_MS=1000 + slop
+```
+
+Timeline from a real doff to the panel physically going dark:
+```
+t=0        headset removed, raw proximity flips to 0
+t=~1.0s    NOT WORN commits (DOFF_MS debounce) -- not_worn_since_ns starts here
+t=~121.0s  panel physically blanks (SCREENOFF_MS grace period elapses)
+```
+And back on:
+```
+t=0        headset donned again, raw proximity flips to 1
+t=~0.25s   WORN commits (DON_MS debounce) -- if blanked, screen_enable_func(true) fires immediately
+```
+
+**The number that matters: of the ~121 seconds a doffed, forgotten headset stays lit, ~120 of them
+are the SCREENOFF_MS grace period, and ~1 is detection debounce.** Detection latency is roughly
+0.8% of the total needless-on-time; the grace period is the other 99.2%.
+
+### Verdict on IMU/movement detection: doesn't move the needle, don't build it
+
+Re-examined against the ACTUAL stated goal (protect the one physical panel from needless on-time),
+not just against "is it fast enough" as asked the first time. The proximity sensor already commits a
+real doff in ~1 second -- a movement sensor could, at absolute best, shave a fraction of that single
+second by reacting to the pick-up gesture instead of waiting for the proximity debounce. It cannot
+touch the other 120 seconds at all, because that delay is a deliberate grace period, not a detection
+limitation -- there's nothing left to detect faster once NOT WORN has already committed. Building an
+IMU classifier (fragile: "moving while worn" and "moving while being carried/set down" look similar
+in raw accelerometer variance, needing real tuning against live data to avoid false triggers) to
+chase 1 second out of a 121-second problem is solving the wrong stage of the pipeline. **Verdict:
+don't build it.** The actual lever is `SCREENOFF_MS` itself, and who gets to use which value when --
+see below.
+
+### Dev-vs-booth `SCREENOFF_MS`: a concrete proposal, left for a decision (values NOT changed)
+
+`~/vr/presence.conf`'s real `PRESENCE_SCREENOFF_MS=120000` is production-shaped: a booth visitor
+handing the headset to the next person, or briefly setting it down mid-demo, shouldn't force a cold
+re-warm every time. But today's OWN testing pattern -- pick up, check something, set down, repeat,
+many times in a session -- is exactly the pattern that 2-minute grace period is wrong for: every one
+of today's brief checks kept the panel fully lit for up to 2 minutes afterward, on the only unit
+there is.
+
+The mechanism to run a different value already exists and needed no new code: `jack-in-wayland.sh`
+gives an ambient `WMR_USER_PRESENCE_SCREENOFF_MS` env var precedence over `presence.conf` (this is
+exactly how today's whole investigation ran its own tests, e.g. the `WMR_PRESENCE_DIAG=1` launches).
+Proposed dev-checking value: **`WMR_USER_PRESENCE_SCREENOFF_MS=5000`** (5s) -- comfortably above the
+1s DOFF_MS debounce floor (no risk of the blank fighting the debounce), and a **~95.8% reduction** in
+needless lit-panel time versus the real 120000ms value for exactly this kind of repeated brief-check
+session. A more conservative **10000ms (10s)** alternative is a **~91.7%** reduction and leaves a
+little more margin before a "set it down to adjust something, pick it back up in a few seconds"
+mid-test gesture triggers a blank/reassert-flash cycle. Left as an open choice, not applied --
+`presence.conf`'s real value is untouched, and this is a call for the user to make (e.g. a habit of
+exporting the var before casual `jack-in-wayland.sh up` sessions, or a documented convenience wrapper
+later, if wanted).
+
+### New alert added: "casco en la mesa" -- immediate doff feedback, ahead of the 120s countdown
+
+Requested explicitly ("tiene que ser instantaneo... bien detallado con audio"): continuous state
+awareness, not just the two endpoint events. Hooked on the SAME `User presence: NOT WORN` line shown
+above (already logged today, zero driver changes) -- `presence-sound-alert.sh` now speaks "casco en
+la mesa" the instant a doff commits (~1s after a real removal), well before "casco apagado" fires
+~120s later. Deliberately NOT mirrored on the `WORN` commit line: that one also logs on every
+ordinary redon that never blanked the panel at all (any doff-then-redon inside the SCREENOFF_MS
+window), which would (a) double up with "casco encendido" in the one case that matters -- redonning
+after a real blank -- while (b) adding noise to the far more common case of a quick check that never
+came close to blanking.
+
+Deployed to both `~/vr/presence-sound-alert.sh` and `~/Documents/reverb-g2/scripts/presence-sound-
+alert.sh` (kept identical, `bash -n` clean), running process restarted to pick it up.
+**Not live-audio-confirmed by a human this round** -- this was implemented and deployed without
+physical access to the headset; the log-line hook is the same proven mechanism the other four states
+already use, but "casco en la mesa" itself has not yet been heard and confirmed live.

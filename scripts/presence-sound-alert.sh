@@ -9,6 +9,15 @@
 #     (presence.conf PRESENCE_ENABLE). Needs an active OpenXR client to ever fire --
 #     see wmr_hmd_update_inputs()'s doc comment; monado-service alone, with no app,
 #     never evaluates presence at all.
+#   - "casco en la mesa": the debounced NOT-WORN commit itself (WMR_USER_PRESENCE_DOFF_MS,
+#     ~1s after a real doff) -- fires the instant a removal is detected, long before the
+#     SCREENOFF_MS grace period (120000ms in production) actually blanks the panel. Added
+#     2026-09-06 for continuous state awareness ("bien detallado con audio"), not just the
+#     two endpoint events. Deliberately NOT mirrored on the WORN commit: that log line also
+#     fires on every ordinary don while the panel was never blanked (ANY doff-then-redon
+#     inside the SCREENOFF_MS window), which would double up with "casco encendido" in the
+#     one case that matters (redonning after a real blank) while adding noise to the far
+#     more common case (a quick doff/redon that never blanked at all).
 #   - "monado arriba" / "monado abajo": the MONADO_MARKER lines jack-in-wayland.sh
 #     appends to $LOG on a successful 'up' and on 'down'. Added after a live incident
 #     the same day where a test round produced zero alerts simply because the service
@@ -50,6 +59,9 @@ tail -n0 -F "$LOG" 2>/dev/null | while IFS= read -r line; do
 		;;
 	*"panel restored from auto-standby"*)
 		say "casco encendido"
+		;;
+	*"User presence: NOT WORN"*)
+		say "casco en la mesa"
 		;;
 	*"MONADO_MARKER: up"*)
 		say "monado arriba"
