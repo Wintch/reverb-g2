@@ -219,3 +219,34 @@ specifically on `screen_off_by_presence` being true (exactly the state where the
 push channel is now confirmed dead) -- rather than a blind fixed-interval poll everywhere,
 which would cost more without addressing a state where the passive channel still works fine.
 Not implemented this session; `PRESENCE_ENABLE` stays `0`.
+
+## 2026-09-06 ~12:30 -03 -- CORRECTION to the "fix path already exists" claim above: it does NOT
+
+Before implementing the periodic-repoll idea this doc proposed, read the actual code comment
+around `wmr_hmd.c`'s reconnect-triggered resync (~line 1029-1040) directly -- it says the exact
+opposite of what this doc assumed. **Patch 0090 (T244, 2026-08-21) already tried a feature-report
+read of the proximity/IPD value and found it does NOT work**: the device simply does not answer
+that query, and the attempt blocks for **1.4-5.0 seconds** (the usbhid control-transfer timeout)
+**inside the shared run loop that also reads IMU and camera data** -- every attempt stalled the
+IMU/camera streams long enough to relocate the wearer (a real, measured regression, which is why
+the read is gated behind `WMR_COMPANION_RECONNECT_RESYNC=1`, off by default, described in the
+code itself as "the lesser evil" to leave presence stale rather than pay that cost).
+
+**This means the plan in the 2026-09-06 ~11:52 entry above ("generalize into a periodic poll
+gated on screen_off_by_presence") is not viable as written** -- it would reintroduce exactly the
+blocking-read regression 0090 already found and disabled, just gated on a different condition.
+Not corrected by moving the poll to a less-frequent cadence either: the device not answering at
+all means every attempt still pays the full multi-second timeout.
+
+**Open question, not yet resolved**: whether ANY software-side proximity re-sync is possible
+given the device appears to ignore on-demand queries entirely, not just rarely. Candidate
+directions for next time, neither tried yet: (a) re-confirm this is still true today (T244 is 2+
+weeks old) with a single, isolated, wearer-warned manual read rather than trusting old data
+blindly; (b) investigate whether `screen_enable_func` (already called on companion reconnect to
+restore the panel) has any side effect on getting the companion chip to resume its own
+change-driven proximity reporting, which would make screen-reassertion the right trigger instead
+of a raw feature-report poll; (c) sidestep the proximity channel's post-blank failure entirely by
+using a DIFFERENT signal to gate a RESTORE *attempt* -- e.g. real IMU motion (already read
+continuously, unaffected by this bug) as a proxy for "probably being picked up/worn again",
+triggering a screen re-assert speculatively rather than waiting on a proximity edge that may
+never come.
