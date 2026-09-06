@@ -1,5 +1,5 @@
 #!/bin/bash
-# presence-sound-alert.sh -- speaks short Spanish phrases for operator-relevant state
+# presence-sound-alert.sh -- speaks short phrases for operator-relevant state
 # transitions, so a booth operator gets audible feedback without watching a screen.
 # Read-only: tails the log, never launches or kills anything, and never blocks
 # jack-in-wayland.sh's own startup.
@@ -44,12 +44,33 @@
 #     `application_name: '...'` (ipc_handle_instance_describe_client). Several of these
 #     fire per real launch before the actual app -- 'libmonado' (jack-in-wayland.sh's own
 #     post-launch validation probe), 'steam' and 'wineopenxr test instance' (wrapper
-#     handshaking) -- GAME_NAME_MAP below stays silent on those by omission, so only the
+#     handshaking) -- the case arm below stays silent on those by omission, so only the
 #     last, real one gets spoken. Raw names are inconsistent (an Unreal build gives its
 #     full binary path, e.g. 'AirCar/Binaries/Win64/AirCar-Win64-Shipping') so known names
 #     are normalized to a short spoken word; anything unrecognized falls back to "testing"
 #     rather than reading a raw path aloud -- add a case here once a new title's real
-#     application_name is confirmed live, don't guess ahead of that.
+#     application_name is confirmed live, don't guess ahead of that. Proper-noun game
+#     names (superhot, aircar) are NOT translated per language -- only the generic
+#     descriptive labels (player/testing/benchmark) are.
+#
+#   LANGUAGE (2026-09-06): every phrase above is spoken in the ACTIVE operator's language
+#   (status-dashboard.py's per-user "lang" field, en/es/ru), read fresh from
+#   USER_PROFILES_FILE on every single alert via jq -- same "never cached, no restart
+#   needed to pick up a profile switch" philosophy as the resting-alert delay above.
+#   Falls back to "es" (this project's long-standing default) if the file is missing,
+#   corrupt, or the jq lookup otherwise fails -- unit-tested against all three. See
+#   phrase_for() for the EN/ES/RU text and active_lang() for the lookup.
+#
+#   TTS ENGINE: tries Piper (neural TTS, ~/vr/tts-venv + ~/vr/tts-voices, one voice model
+#   per language) first for a genuinely more natural voice than espeak-ng's formant
+#   synthesis; falls back to espeak-ng if the venv/model for the needed language is
+#   missing, or if piper's own synthesis fails for any reason -- espeak-ng ships with
+#   Debian and needs no network/download, so it's the one engine that can never be
+#   unavailable. Piper costs real latency (~0.9s per short phrase on this machine,
+#   dominated by loading a ~60MB ONNX model fresh each call -- there is no persistent
+#   piper daemon here, deliberately, to avoid a standing process on a shared lab machine)
+#   versus espeak-ng's ~7ms -- judged an acceptable trade for an ambient status narration
+#   that nothing else is waiting on. See say_state() for the fallback chain.
 #
 #   ./presence-sound-alert.sh &     run in the background alongside a jack-in session
 #
@@ -59,11 +80,98 @@ set -u
 
 VR="$HOME/vr"
 LOG="$VR/jack-in-wayland.log"
-VOICE="es-419"
 RESTING_ALERT_DELAY_FILE="$VR/logs/presence-resting-alert-delay-ms"
+USER_PROFILES_FILE="$VR/logs/user-profiles.json"
 
-say() {
-	XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}" espeak-ng -v "$VOICE" "$1" >/dev/null 2>&1
+TTS_VENV_PIPER="$VR/tts-venv/bin/piper"
+TTS_VOICES="$VR/tts-voices"
+ESPEAK_VOICE_ES="es-419"
+
+# Active operator's language (en/es/ru), read fresh every call -- never cached, so a
+# profile switch on the dashboard applies to the very next alert. jq's own stderr is
+# discarded and a failed/empty lookup falls through to "es" below.
+active_lang() {
+	local l
+	l="$(jq -r '.users[.active].lang // "es"' "$USER_PROFILES_FILE" 2>/dev/null)"
+	case "$l" in
+	en | es | ru) printf '%s' "$l" ;;
+	*) printf 'es' ;;
+	esac
+}
+
+# state:lang -> spoken text. Falls through to the Spanish phrase for any state/lang pair
+# not explicitly listed (keeps this table short -- only add a language's line once its
+# phrasing has actually been thought through, not as a placeholder).
+phrase_for() {
+	local state="$1" lang="$2"
+	case "$state:$lang" in
+	blanked:en) echo "headset off" ;;
+	blanked:ru) echo "шлем выключен" ;;
+	blanked:*) echo "casco apagado" ;;
+	restored:en) echo "headset on" ;;
+	restored:ru) echo "шлем включён" ;;
+	restored:*) echo "casco encendido" ;;
+	resting:en) echo "headset down" ;;
+	resting:ru) echo "шлем на столе" ;;
+	resting:*) echo "casco en la mesa" ;;
+	monado_up:en) echo "monado up" ;;
+	monado_up:ru) echo "монадо запущен" ;;
+	monado_up:*) echo "monado arriba" ;;
+	monado_down:en) echo "monado down" ;;
+	monado_down:ru) echo "монадо остановлен" ;;
+	monado_down:*) echo "monado abajo" ;;
+	controller_missing:en) echo "turn on the controllers and restart monado" ;;
+	controller_missing:ru) echo "включите контроллеры и перезапустите монадо" ;;
+	controller_missing:*) echo "encendé los joysticks y reiniciá monado" ;;
+	game_player:ru) echo "плеер" ;;
+	game_player:*) echo "player" ;;
+	game_benchmark:ru) echo "бенчмарк" ;;
+	game_benchmark:*) echo "benchmark" ;;
+	game_testing:en) echo "testing" ;;
+	game_testing:ru) echo "тест" ;;
+	game_testing:*) echo "testing" ;;
+	game_superhot:*) echo "superhot" ;;
+	game_aircar:*) echo "aircar" ;;
+	esac
+}
+
+# Speaks phrase_for(state, active_lang()). Piper first (natural neural voice, one model
+# per language); falls back to espeak-ng (instant, always installed) if the venv/model for
+# this language is missing or piper's own synthesis fails.
+say_state() {
+	local state="$1" lang phrase voice_model
+	lang="$(active_lang)"
+	phrase="$(phrase_for "$state" "$lang")"
+	[ -n "$phrase" ] || return
+	export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+
+	case "$lang" in
+	en) voice_model="$TTS_VOICES/en_US-lessac-medium.onnx" ;;
+	ru) voice_model="$TTS_VOICES/ru_RU-irina-medium.onnx" ;;
+	*) voice_model="$TTS_VOICES/es_ES-davefx-medium.onnx" ;;
+	esac
+
+	if [ -x "$TTS_VENV_PIPER" ] && [ -f "$voice_model" ]; then
+		local wav
+		wav="$(mktemp /tmp/presence-alert-XXXXXX.wav)"
+		if printf '%s' "$phrase" | "$TTS_VENV_PIPER" -m "$voice_model" -f "$wav" >/dev/null 2>&1 \
+			&& [ -s "$wav" ] && paplay "$wav" >/dev/null 2>&1; then
+			rm -f "$wav"
+			return
+		fi
+		rm -f "$wav"
+	fi
+
+	# Fallback: espeak-ng. Only "es"/"en" map cleanly to its own voice list on this
+	# install; ru falls back to the es-419 voice rather than a wrong/missing espeak
+	# voice -- acceptable since this path only runs if piper (which HAS a real ru
+	# voice) is unavailable in the first place.
+	local espeak_voice
+	case "$lang" in
+	en) espeak_voice="en-us" ;;
+	*) espeak_voice="$ESPEAK_VOICE_ES" ;;
+	esac
+	espeak-ng -v "$espeak_voice" "$phrase" >/dev/null 2>&1
 }
 
 # Ambient env var wins (ad-hoc testing override); else the per-user dashboard preset file,
@@ -88,21 +196,21 @@ echo "presence-sound-alert: watching $LOG"
 tail -n0 -F "$LOG" 2>/dev/null | while IFS= read -r line; do
 	case "$line" in
 	*"panel blanked by auto-standby"*)
-		say "casco apagado"
+		say_state blanked
 		;;
 	*"panel restored from auto-standby"*)
-		say "casco encendido"
+		say_state restored
 		;;
 	*"User presence: NOT WORN"*)
 		delay_ms="$(resting_alert_delay_ms)"
 		if [ "$delay_ms" -gt 0 ]; then
 			(
 				sleep "$(awk "BEGIN{printf \"%.3f\", $delay_ms/1000}")"
-				say "casco en la mesa"
+				say_state resting
 			) &
 			resting_alert_pid=$!
 		else
-			say "casco en la mesa"
+			say_state resting
 		fi
 		;;
 	*"User presence: WORN"*)
@@ -112,34 +220,34 @@ tail -n0 -F "$LOG" 2>/dev/null | while IFS= read -r line; do
 		fi
 		;;
 	*"MONADO_MARKER: up"*)
-		say "monado arriba"
+		say_state monado_up
 		;;
 	*"MONADO_MARKER: down"*)
-		say "monado abajo"
+		say_state monado_down
 		;;
 	*"Failed to request controller status from HMD"*)
-		say "encendé los joysticks y reiniciá monado"
+		say_state controller_missing
 		;;
 	*"application_name:"*)
 		name="${line#*\'}"
 		name="${name%\'*}"
 		case "$name" in
 		HelloXR)
-			say "player"
+			say_state game_player
 			;;
 		SUPERHOTVR)
-			say "superhot"
+			say_state game_superhot
 			;;
 		AirCar*)
-			say "aircar"
+			say_state game_aircar
 			;;
 		OpenVRBenchmark)
-			say "benchmark"
+			say_state game_benchmark
 			;;
 		libmonado | steam | "wineopenxr test instance" | "")
 			;; # wrapper/probe noise, not a real session -- stay silent
 		*)
-			say "testing"
+			say_state game_testing
 			;;
 		esac
 		;;

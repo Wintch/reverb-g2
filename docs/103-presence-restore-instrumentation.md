@@ -780,3 +780,51 @@ natural next physical test whenever the user is available for one.
 
 Committed on `~/vr/monado` (branch `lab-full`, NOT pushed -- personal-branch pushes go to the `wintch`
 remote only, never `origin`, and this task didn't push at all): `wmr_hmd.h`, `wmr_hmd.c`.
+
+## 2026-09-06 (later) -- multi-language alerts + a more natural TTS voice
+
+User asked for two things: speak in whichever language the active operator has selected (not
+hardcoded Spanish), and investigate a less robotic-sounding TTS engine than `espeak-ng`.
+
+**Language**: reused the per-operator `lang` field already living in `status-dashboard.py`'s
+`USER_PROFILES_FILE` (`~/vr/logs/user-profiles.json`, `{"active": "<name>", "users": {"<name>":
+{..., "lang": "en"|"es"|"ru"}}}`) rather than inventing a second config surface -- `jq -r
+'.users[.active].lang // "es"'` reads it fresh on every single alert (same "never cached, no
+restart needed" philosophy as the resting-alert-delay file), falling back to `"es"` (this
+project's long-standing default) if the file is missing, corrupt, or `jq` fails for any reason.
+Unit-tested both failure cases directly. A small `state:lang -> phrase` table (`phrase_for()`)
+covers every existing alert state in EN/ES/RU; proper-noun game names (superhot, aircar) are NOT
+translated, only the generic labels (player/testing/benchmark) are. Russian phrases were written
+carefully (correct grammatical gender/case on the short-form participles -- "шлем выключен" /
+"шлем включён" / "шлем на столе", etc.) but have not been confirmed by a native ear or a live
+speaker test -- flagging that honestly rather than claiming certainty neither a script author nor
+this session's tooling can verify.
+
+**TTS engine**: investigated Piper (rhasspy/piper, local neural TTS, ONNX-based) as the natural-
+sounding candidate. Note: Debian's own `piper` apt package is an unrelated gaming-peripheral
+config GUI, not this -- installed the real thing via `pip` inside a dedicated venv
+(`~/vr/tts-venv`, required by Debian trixie's PEP 668 externally-managed-environment guard, no
+`--break-system-packages` used). Pulled one "medium" quality voice model per language from
+`huggingface.co/rhasspy/piper-voices` into `~/vr/tts-voices/` (en_US-lessac, es_ES-davefx,
+ru_RU-irina; ~63MB each, ~181MB total, +197MB for the venv -- disk went 83% -> 84%, negligible
+against 34G free). Measured synthesis latency for a short phrase: Piper ~0.9s wall-clock
+(dominated by loading the ONNX model fresh each invocation -- no persistent Piper daemon exists
+here, deliberately, to avoid a standing process on a shared lab machine) versus `espeak-ng`'s
+~7ms. Verdict: **switched to Piper as the primary engine**, on the judgment that a genuinely more
+natural voice is worth ~0.9s of lag for an ambient status narration nothing else is blocked on --
+`say_state()` falls back to `espeak-ng` automatically if the venv/model for the needed language is
+missing or Piper's own synthesis fails, so the alert system can never go silent outright.
+`espeak-ng`'s own voice list has no clean Russian equivalent tested here, so the fallback path
+maps `ru` to the existing `es-419` voice rather than guessing at an untested one -- acceptable
+since that path only runs if Piper (which DOES have a real Russian voice) is already unavailable.
+
+**Validated**: `phrase_for()`/`active_lang()` unit-tested in isolation (all three languages, plus
+missing-file/corrupt-file fallback) by sourcing the script's functions without its tail loop.
+Full `say_state()` chain smoke-tested end-to-end (jq lookup -> phrase -> Piper synthesis -> WAV ->
+`paplay`) with exit code 0, and the `espeak-ng` fallback path separately exercised by pointing
+`TTS_VENV_PIPER` at a nonexistent path. **Not validated**: nobody has actually heard any of this
+live -- no physical access to the headset/speakers this round. Whether Piper's voices sound
+genuinely better in practice, whether the Russian grammar reads naturally out loud, and whether
+~0.9s of lag is noticeable/annoying in real use are all open until a live listen happens.
+
+Committed on `~/Documents/reverb-g2` (branch `main`, NOT pushed): `scripts/presence-sound-alert.sh`.
