@@ -186,3 +186,79 @@ without a real reboot (the failure is boot-time-only and intermittent, so
 even installing it doesn't prove anything until it's been observed across a
 few cold boots). Do this on the next legitimate maintenance window, not as a
 live experiment while the rig is in demo/dev use.
+
+## 2026-09-06 ~11:05 -03 — first real reboot test of the staged fix: PARTIAL, not proven closed
+
+User rebooted the rig to test fix #1 (see the staged drop-in above). `systemctl cat sddm.service`
+confirms the drop-in loaded correctly (`After=plymouth-quit-wait.service` present in the merged
+unit). Precise timestamps (`journalctl -o short-precise`):
+
+```
+11:05:34.034750  plymouth-quit-wait.service finished
+11:05:34.036531  getty@tty2.service started   (+1.8ms)
+11:05:34.037322  sddm.service started         (+0.8ms after that)
+```
+
+**Result: the autologin session still failed on the first attempt.** sddm's first display came up
+on **VT 2** (not VT 1), and the autologin flow for `iam` failed: `Auth: sddm-helper exited with 5`
+immediately after "Session started true" -- this is the same silent-failure shape this doc
+describes, just manifesting on a different VT than earlier occurrences. sddm then fell back to its
+greeter on VT 3, which came up fine; a human then had to click through the login screen manually
+(38s later, "Message received from greeter: Login"), landing the real session on VT 1. Desktop
+(gnome-shell) is healthy right now -- this was not a hard failure, just autologin-fails-once,
+falls back to a manual login screen, same net effect as before for an unattended boot (nobody
+there to click through it silently succeeds instead).
+
+**Reassessment of "why VT2, not VT1"**: no `MinimumVT`/`ReserveVT` config found anywhere
+(`/etc/sddm.conf.d/*`, `/etc/systemd/logind.conf` -- `ReserveVT` is commented out, default). The
+getty@tty2/sddm sub-millisecond race above is real and matches this doc's own previously-deferred
+second collision vector (getty@tty2 not being a stock default) -- but getty@tty2 targets VT2
+specifically, and there's no direct mechanism found yet by which it would push sddm's own VT
+picker away from VT1 onto VT2. **Leading theory, not confirmed**: fix #1 only guarantees the
+*systemd unit* `plymouth-quit-wait.service` has finished before sddm *starts* -- it does not
+guarantee the kernel has actually finished handing VT1 back from Plymouth's framebuffer console at
+that exact instant (a sub-millisecond gap between systemd unit reports finished and kernel VT1
+
+## 2026-09-06 ~11:05 -03 — first real reboot test of the staged fix: PARTIAL, not proven closed
+
+User rebooted the rig to test fix #1 (see the staged drop-in above). `systemctl cat sddm.service`
+confirms the drop-in loaded correctly (`After=plymouth-quit-wait.service` present in the merged
+unit). Precise timestamps (`journalctl -o short-precise`):
+
+```
+11:05:34.034750  plymouth-quit-wait.service finished
+11:05:34.036531  getty@tty2.service started   (+1.8ms)
+11:05:34.037322  sddm.service started         (+0.8ms after that)
+```
+
+**Result: the autologin session still failed on the first attempt.** sddm's first display came up
+on **VT 2** (not VT 1), and the autologin flow for `iam` failed: `Auth: sddm-helper exited with 5`
+immediately after "Session started true" -- this is the same silent-failure shape this doc
+describes, just manifesting on a different VT than earlier occurrences. sddm then fell back to its
+greeter on VT 3, which came up fine; a human then had to click through the login screen manually
+(38s later, "Message received from greeter: Login"), landing the real session on VT 1. Desktop
+(gnome-shell) is healthy right now -- this was not a hard failure, just autologin-fails-once,
+falls back to a manual login screen, same net effect as before for an unattended boot (nobody
+there to click through it silently succeeds instead).
+
+**Reassessment of "why VT2, not VT1"**: no `MinimumVT`/`ReserveVT` config found anywhere
+(`/etc/sddm.conf.d/*`, `/etc/systemd/logind.conf` -- `ReserveVT` is commented out, default). The
+getty@tty2/sddm sub-millisecond race above is real and matches this doc's own previously-deferred
+second collision vector (getty@tty2 not being a stock default) -- but getty@tty2 targets VT2
+specifically, and there's no direct mechanism found yet by which it would push sddm's own VT
+picker away from VT1 onto VT2. **Leading theory, not confirmed**: fix #1 only guarantees the
+*systemd unit* `plymouth-quit-wait.service` has finished before sddm *starts* -- it does not
+guarantee the kernel has actually finished handing VT1 back from Plymouth's framebuffer console at
+that exact instant (a sub-millisecond gap between "systemd unit reports finished" and "kernel VT1
+ownership actually released" would produce exactly this symptom: sddm's own free-VT scan sees VT1
+as still busy and picks VT2). Not instrumented directly this boot -- would need a kernel-level VT
+ownership trace to confirm.
+
+**n=1.** This is one data point, not a verdict either way -- fix #1 may still meaningfully reduce
+the failure *rate* even if it didn't prevent this specific boot's occurrence, or the real remaining
+race may be closer to the kernel-VT-handback theory above than to getty@tty2. Per this doc's own
+original caution: "even installing it doesn't prove anything until it's been observed across a few
+cold boots." **Not yet done**: fix #2 (disable `getty@tty2.service`) -- the "idle root shell"
+caveat that deferred it is now moot (fresh boot, nobody on tty2 currently), so it's unblocked if
+the user wants to try it as an additional data point, though the mechanism connecting it to the
+VT1-skip specifically is still unconfirmed, not proven.
