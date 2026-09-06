@@ -828,3 +828,37 @@ genuinely better in practice, whether the Russian grammar reads naturally out lo
 ~0.9s of lag is noticeable/annoying in real use are all open until a live listen happens.
 
 Committed on `~/Documents/reverb-g2` (branch `main`, NOT pushed): `scripts/presence-sound-alert.sh`.
+
+## 2026-09-06 (later still) -- restore silently failed once after the presence_tick refactor; root-caused to the shared-handle send, fixed by reusing the fresh-fd reassert path
+
+Right after validating the presence_tick threading fix (previous section) with a real player
+running, one restore attempt logged `panel restored from auto-standby` -- `HID_SEND` returned
+success, no WARN/ERROR anywhere near it -- but the wearer saw no backlight at all. Re-tested the
+underlying HID command in isolation with `panel.py off` / `panel.py activate` (identical
+`{0x04,0x00}`/`{0x04,0x01}` commands, run manually, no driver involved): `off` genuinely darkened
+the panel, but a bare `activate` (full handshake, ending in the same screen-on send) *also*
+sometimes failed to bring it back after being off for a stretch -- reproducing the exact shape of
+bug this whole investigation started with.
+
+Root cause: the restore branch in `wmr_hmd_presence_tick()` still called
+`wh->hmd_desc->screen_enable_func(wh, true)` directly -- sending the screen-on command over the
+**shared** `wh->hid_control_dev` handle. This is the exact handle this same investigation already
+found unreliable earlier the same day (the ~4-5s `hid_lock`-contention bug, the reason
+`wmr_hmd_reassert_reverb_fresh_fd()` exists at all) -- the periodic keep-alive while blanked was
+already switched to a fresh fd, but the actual restore-on-don call was never moved off the old
+shared-handle path, because until now it had appeared to work reliably across every earlier live
+test. It isn't reliable; it had just not failed visibly yet in a small sample.
+
+Fix: the restore branch now calls `wh->hmd_desc->reassert_func(wh)` -- the *same* proven fresh-fd
+function already used for the periodic keep-alive -- instead of the bare `screen_enable_func`.
+Falls back to `screen_enable_func` only if a family has no `reassert_func` (Odyssey+). No behavior
+change for the blank path or for families without the Reverb's companion quirk.
+
+**Live-validated**: full rebuild (same 2 pre-existing unrelated warnings as the presence_tick
+commit, nothing new), fresh `jack-in-wayland.sh` launch, a genuine 120s auto-blank (not the
+false-positive "panel already on from initial launch activation" case caught and explicitly ruled
+out first), then donning: wearer confirmed real video content was already showing, not just a
+backlight flash. This is the first fully clean, driver-fixed blank -> restore cycle with zero
+manual intervention validated after both fixes landed.
+
+Commit: `c6775c41a` on `~/vr/monado` branch `lab-full` (not pushed).
