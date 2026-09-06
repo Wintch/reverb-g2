@@ -916,3 +916,272 @@ instead of "does it look right on a real head":
 monitor bezel, to close the loop this task asked for.
 
 Committed to `~/vr/OpenXR-SDK-Source` (branch `lab`), pushed to `wintch`.
+
+## 2026-09-05 (night): floor grid orientation -- two rendering conventions, one screen
+
+A live wearer reported the synthetic floor grid rotating independently of the passthrough
+video: "el piso gira un poco a su manera, no esta en sincronia con lo que veo, mas alla de la
+altura" -- the height was separately confirmed correct just before this (see the floorY log
+added the same session, commit `e6cec9b`), so this is a distinct bug, not the same one again.
+
+### Root cause: the video and the cube pipeline don't share a reference frame
+
+Two rendering techniques are in play, and only one of them knows about `HELLO_XR_FIXED_POSE`:
+
+- **The passthrough video** (`graphicsplugin_vulkan.cpp`'s fullscreen ray-cast, feeding
+  `frag.glsl`): when `HELLO_XR_FIXED_POSE` is set, `pose.orientation` is forced to identity
+  before it's used to build the video's `viewRotation` push constant. The screen-to-texture
+  mapping (`dir = normalize(mat3(viewRotation) * vec3(xv, yv, -1))`) is therefore a
+  frame-to-frame CONSTANT function of screen position alone, never rotated by the real head
+  orientation. That's deliberate and correct for a camera bolted to the headset: the camera's
+  own physical rotation already bakes head-turning into the live frame it captures, so
+  rotating the sampling ray by head orientation again would double-count it.
+- **The synthetic floor grid** (`openxr_program.cpp`'s `PushFloorGrid`, drawn via the ordinary
+  cube pipeline) is populated once per frame from the real `stageLocation.pose` and then
+  rendered by `graphicsplugin_vulkan.cpp`'s cube-drawing block, whose view matrix was built
+  from `layerView.pose.orientation` -- the real, live-tracked head orientation, completely
+  unaware of `HELLO_XR_FIXED_POSE`. That's the ordinary, correct way to draw world-anchored VR
+  geometry, but it's a different convention than the video's frozen one.
+
+In passthrough mode the cubes vector is only ever the floor grid (controller/reference cubes
+are suppressed at the source as of `16bf593`), so this mismatch was exactly the grid visibly
+swimming against the video as the wearer's head turned -- the video's screen mapping never
+moves, the grid's did, at a rate with no reason to match the video's own fisheye FOV/mounting.
+
+### Fix
+
+Build the cube view matrix from `pose` (the same already-overridden, recenter-aware pose
+variable `RenderView` already computes for the video, a dozen lines earlier) instead of
+`layerView.pose`, but only when `HELLO_XR_FIXED_POSE` is set -- explicitly re-gated rather than
+relying on `pose == layerView.pose` whenever it's unset, because the recenter-yaw block that
+feeds `pose` is not itself gated on `HELLO_XR_FIXED_POSE`: without the explicit gate, pressing
+recenter while watching an ordinary 360/180 video would also yaw the debug cubes, which is
+outside this bug's scope. With the gate, the only observable change is: passthrough mode's
+floor grid stops tracking live head orientation, matching the video's own frozen convention.
+Every other mode this renderer draws (ordinary pano/photo/video and its controller/
+reference-space cubes) is byte-for-byte unchanged.
+
+Touched file: `graphicsplugin_vulkan.cpp` only (the cube view-matrix block, plus a gated
+diagnostic log next to it). `openxr_program.cpp`'s `PushFloorGrid` and the `Cube` pipeline
+itself are untouched -- this is purely about which pose the existing pipeline is fed.
+
+### Verification
+
+Rebuilt clean (`ninja hello_xr`, no warnings). Not confirmed live by a wearer this pass, per
+this project's standing rule to minimize wear-test iterations -- verified instead by:
+
+1. **A standalone Python cross-check**, a literal index-for-index port of `xr_linear.h`'s exact
+   matrix math (`CreateTranslationRotationScale`, `InvertRigidBody`, `CreateProjectionFov`,
+   `TransformVector4f` -- not a re-derivation of the same assumptions in a different language).
+   Projected a floor-grid point 2m ahead, at the confirmed `floorY = -1.70`, at synthetic head
+   yaws of 0/45/90 degrees: the OLD (pre-fix) path's NDC position swings wildly across that
+   sweep (spread > 1e15 units by 90 degrees, as the point crosses behind the camera) --
+   reproducing the reported swim numerically -- while the NEW path's NDC position is bit-for-
+   bit identical (spread `0.0000000000`) at all three yaws.
+2. **A runtime diagnostic** (gated the same way as the fix, once a second): logs the real live
+   head/eye orientation next to the one actually fed to the cube view (now frame-to-frame
+   constant under `HELLO_XR_FIXED_POSE`) and where the grid's first cube lands in NDC --
+   available for the next live session to confirm `usedViewQ`/NDC stay constant while
+   `realHeadQ` moves, without needing to re-derive anything by eye.
+
+Committed to `~/vr/OpenXR-SDK-Source` (branch `lab`) as `574a9cf` (plus `e6cec9b` for the
+floorY log mentioned above). Not yet pushed to `wintch`.
+
+## 2026-09-05 (later still): the fix above over-corrected, the real fix, z-fighting's real cause, a v0 room box, controller pose-hold, and a hard verdict on 6DoF
+
+The `574a9cf` fix above shipped, got relaunched, and a live wearer reported the opposite problem
+within minutes: **"ahora esta completamente atado al casco, no al piso real"** -- the grid had
+gone from swimming independently to not moving at all, glued to the screen like a fixed HUD
+element. The runtime diagnostic added alongside that fix confirmed it numerically before anyone
+even had to look again: `usedViewQ` sat at identity for the entire session while `realHeadQ`
+visibly moved (`(+0.057,-0.000,-0.003,+0.998)` -> `(+0.041,+0.464,-0.038,+0.884)`, ~56 degrees of
+real yaw) and the logged NDC position never changed. Freezing orientation fixed the swim by
+construction -- there was nothing left to swim -- but a floor that never moves on screen isn't a
+floor either.
+
+### The actual fix: real orientation, through the video's own camera model
+
+Both `574a9cf` (real orientation, standard OpenXR projection) and its predecessor (frozen
+orientation, matching the video) were wrong in different ways. The video's screen mapping is a
+plain affine tangent map (`xv,yv` from `layerView.fov`, exactly what `XrMatrix4x4f_CreateProjectionFov`
+already builds) -- `Cam0Distort` only changes *which raw pixel* supplies a screen position's
+color, it never touches `gl_Position`. So a synthetic point transformed through that same tangent
+basis lands exactly where a real object at that position would appear in the corrected video, no
+distortion math needed on the grid at all. The real, missed detail: the video's `pose` block
+applies a recenter-yaw correction that the ORIGINAL (first, swimming) cube path never applied at
+all -- `PushPoseGizmo`/cube rendering read `layerView.pose` raw. Any session where recenter had
+ever been pressed (most of them) meant the grid's "forward" silently diverged from the video's
+recentered "forward" by a constant offset, on top of real head rotation -- which is what actually
+produced "swims independently," not just "frozen vs live" as originally framed.
+
+Fix: real, live `layerView.pose.orientation` (not frozen), with the SAME recenter-yaw composition
+the video's `pose` block already applies (factored so the two can't drift apart again), through
+the SAME projection matrix (`layerView.fov`) the video uses, with the SAME digital-zoom scaling
+(`screen /= zoom` in `frag.glsl` maps to scaling `gridView`'s x/y rows before projection --
+direction matters: the design's first draft had this backwards, caught and fixed before landing).
+
+**A second bug found and fixed during implementation, not by the original design pass:** the
+design's proposed shortcut ("compose one quaternion, then invert the whole rigid body") is only
+correct when the real head orientation is pure yaw -- confirmed by re-deriving
+`XrQuaternionf_Multiply`'s actual convention (a reversed Hamilton product) against the codebase's
+own known-correct `XrQuaternionf_RotateVector3f`. With real pitch/roll plus a non-zero
+recenter-yaw, the shortcut diverges from the correct three-separate-matrix-multiply construction
+by up to **145.6 NDC units** at yaw=90/pitch=30/recenterYaw=30 -- a real, visible bug that a
+yaw-only sweep would never have caught, and very likely would have hit in practice after the
+first recenter press of almost any session.
+
+### Verification (design -> implement -> independent adversarial re-derivation)
+
+- Implementer's own sweep: 216 points (3 distances x 6 yaws x 6 pitches x 2 recenter values),
+  confirmed nonzero motion (delta 0.9312 NDC units between yaw 0 and 45 at any distance, vs
+  574a9cf's exact-zero), bounded (max finite |NDC| = 22.841 across realistic angles, vs the
+  original bug's >1e15), and smooth/monotonic in both yaw and pitch independently.
+- Independent adversarial pass (a second agent, working from primary sources only -- `xr_linear.h`,
+  `frag.glsl`, the real calibration JSON -- not from the first agent's script): re-derived the
+  same transform symbolically, confirmed it is an *exact* inverse of the video's own screen
+  mapping (not an approximation), built a fully independent second numeric implementation that
+  never constructs `gridView`/`recenterInvMat` at all, and got agreement to <=1.3e-10 across 1280
+  independently-chosen test points including roll (never isolated in the first pass). Explicitly
+  re-hunted all three known failure modes (zero-motion, explosion, recenter-desync) and refuted
+  each with its own evidence, including one recenter-invariant test where the adversarial agent's
+  own first attempt had the wrong sign -- caught by cross-checking against the implementer's
+  printed table, fixed, then passed cleanly (worth recording: even the adversarial check needed
+  its own self-check).
+- Cam0Distort's own coefficients were independently re-verified against a full 6-term Fisheye624
+  polynomial (not just k1-k3) against the real logged eye0 FOV (51.5 deg temporal / 41.7 deg
+  nasal), landing at ~44.1-44.6 degrees raw-sensor coverage -- corroborating the design's decision
+  to skip distortion math on the grid entirely.
+
+Committed `f4cb82f` (`graphicsplugin_vulkan.cpp`, the cube view-matrix block), branch `lab`. Live
+relaunch confirmed the new `floorgrid:` log line shows a genuinely live `realHeadQ` (not frozen)
+immediately after relaunch.
+
+### z-fighting's real cause, finally fixed (not just avoided)
+
+Re-enabling controller gizmos in passthrough mode (the user asked to see real controller
+position again) immediately reproduced the z-fighting bug from earlier in the day -- except this
+time the actual mechanism got found instead of worked around. `vulkan_utils.h`'s
+`Pipeline::CreateGraphics` hardcoded `depthWriteEnable = VK_TRUE` for **every** pipeline it
+builds, with no way to differentiate the fullscreen photo/video pass from the cube pass. The
+photo/video vertex shader draws with a hardcoded clip-space `gl_Position = vec4(oNdc, 0.0, 1.0)`
+-- under this codebase's Vulkan projection convention (near maps to NDC 0, far to NDC 1,
+confirmed from `xr_linear.h`'s own offset term), that 0.0 is the *nearest possible depth*,
+nearer than any real cube geometry (computed: real cube NDC-depth for 0.3-10m hand distances is
+~0.83-0.995 under this near/far). With depth *write* enabled, the video pass stamped that 0.0
+across the entire screen every frame, and the cube pass's own `LESS` depth test could never pass
+regardless of draw order -- the background unconditionally defeated real geometry. Fixed by
+threading a `depthWriteEnable` parameter through `Pipeline::Create()`, set `false` for the
+photo/video pipeline only, left at its existing default (`true`) for the cube pipeline. Depth
+*test* stays on for the photo/video pass -- harmless, since it always draws first each frame
+against a freshly-cleared far value and therefore always passes. Independently re-verified by a
+second agent reading the actual post-fix source and forcing its own rebuild. Commit `ff15e1d`.
+
+### Controller gizmos: don't render Monado's placeholder pin, and hold the last real pose on dropout
+
+Two more real bugs surfaced live, in sequence, once controllers were actually watched closely:
+
+1. **"cubos de colores enormes"** (huge colored cubes): the gizmo-render condition only checked
+   `XR_SPACE_LOCATION_POSITION_VALID_BIT`, not `_TRACKED_BIT`. An untracked controller is still
+   "valid" -- Monado pins it at a fixed placeholder offset from the tracking origin -- and in
+   `ctrl` mode that placeholder is the tracking origin itself, i.e. exactly where the wearer's
+   own (also-pinned) head is. Rendering that placeholder put a normal-sized gizmo cube right at
+   the camera, filling the view from point-blank range. Fixed by also requiring
+   `_POSITION_TRACKED_BIT` before rendering a hand's gizmo at all.
+2. **"si se pierden, adivina que siguen donde estaban, hasta que no tengas data nueva"** -- the
+   user's own framing, matching SteamVR's known behavior on tracking loss. Added two small
+   per-hand members (`m_lastKnownHandPose`, `m_hasLastKnownHandPose`): on any genuinely tracked
+   frame, cache the pose; on a dropout, reuse the cached pose instead of hiding the gizmo or
+   falling back to Monado's placeholder. If a hand has never once been tracked this session there
+   is nothing to hold, so it stays hidden until it is. Scoped to this hello_xr codebase only --
+   other titles run through SteamVR/xrizer, a separate runtime this project doesn't control.
+
+Both uncommitted as of this writing (isolated in the working tree, not yet reviewed/committed).
+
+### v0 room box: gray walls, white floor, sized to the real room
+
+The user gave the room's real dimensions directly while wearing the headset: 2.30m x 2.81m
+footprint, 2.50m ceiling -- and asked for a deliberately simple placeholder ("hacelo todo griz,
+piso blanco, para arrancar con un algo"), explicitly distinct from the more sophisticated
+walk-the-perimeter capture tool planned for OpenXRdesk later. `PushFloorGrid`'s old 7x7 line-grid
+was replaced by `PushRoomBox`: one solid white floor slab and four solid gray wall slabs, reusing
+the identical Stage-space positioning call and the now-correct view-matrix reprojection above --
+only the geometry and coloring changed. Solid coloring needed a small, purely additive extension:
+two new `Cube::GizmoAxis` sentinel values (-2 = gray, -3 = white) handled in `cube_vert.glsl`,
+with zero push-constant layout change (confirmed: `cubePush` is 68 bytes, the shared pipeline
+layout's push-constant range is a spec-guaranteed-minimum 128 bytes, so there was room to spare
+without touching the struct at all). The room-to-tracking-origin alignment is **not calibrated**
+-- no walk-the-perimeter has been done -- so this v0 treats the tracking origin as the room's
+geometric center (walls at X=+-1.15m, Z=+-1.405m), explicitly flagged in the code as an
+approximation to replace once real perimeter capture exists. Independently re-verified (geometry
+recomputed from scratch, push-constant math re-derived, confirmed zero change to the
+view-matrix/reprojection code from the fixes above). Committed `70e6330`.
+
+### The room felt "15 degrees off and a meter too high," then both controllers looked wrong, then the framerate collapsed -- three different real causes, not one
+
+A single wear-test surfaced three distinct, real problems in quick succession, each chased down
+with actual data instead of another guess:
+
+1. **Reported ~15 degree yaw + ~1m height misalignment** after ~4.5 hours of continuous 3DOF
+   tracking. `floorY` was independently re-confirmed exactly correct (`-1.700`, matching the
+   tape-measured eye height) via the live log -- ruling out a calibration bug. 3DOF's orientation
+   is pure gyro integration with no visual correction, and this rig has no magnetometer -- yaw
+   drift over hours is an expected limitation, not a code defect. Position is pinned wherever
+   3DOF's tracking origin started, so standing anywhere else in the (small, 2.3x2.8m) room adds
+   an apparent height/position error too -- also expected, not a bug.
+2. **Restarting to clear the drift accidentally disabled the cameras entirely**
+   (`jack-in-wayland.sh`'s plain "3dof" tracking mode sets `WMR_SLAM=0 WMR_CAMERAS=0` --
+   confirmed via `Camera streaming disabled (WMR_CAMERAS=0), running orientation-only` in the
+   log) -- the session's earlier working camera feed had `WMR_CAMERAS=1` set by an since-summarized
+   turn this session has no direct record of. Found via a stale `camera0.pgm` (3+ minutes with no
+   write) and fixed by discovering `ctrl` mode (`WMR_SLAM=0 WMR_CAMERAS=1` -- cameras on, Basalt
+   off, controller constellation tracking instead) is the actual right mode for this feature:
+   real camera feed AND real controller position, zero SLAM-divergence risk.
+3. **Enabling 6DoF (to test whether real head position would fix the height complaint) collapsed
+   the camera snapshot rate from ~90 samples/sec to ~3** (`video360`'s own "camera pipeline
+   staleness" log, which counts real samples per ~1s window) -- felt live as severe disorientation
+   ("un giro en torno a un eje que no veo"). Switching back to `ctrl` mode restored full rate
+   immediately.
+
+### Basalt/6DoF: investigated properly, verdict is "not viable today, but doesn't need to be"
+
+Given (3) above and this project's own older, undifferentiated "Basalt diverges" note (docs/08's
+own July/August history, citing "ch. 03 and 06" -- a citation that turned out to be loose, ch.03
+has no SLAM content at all), a two-angle investigation was dispatched:
+
+- **The throughput collapse is CPU-scheduling contention, not a software queue/lock.**
+  `wmr_cam_usb_thread` ("WMR: USB-Camera") is not `SCHED_FIFO`-elevated (only "WMR: USB-HMD" is);
+  Basalt's 4 CPU-heavy worker threads (this rig's "denser detection" config) starve it of
+  scheduling slots under the ~4-5 load average this session ran at, so real USB camera transfers
+  are dropped at the kernel/hardware level before the driver's frame callback ever runs. Basalt's
+  own frontend queue is deliberately non-blocking (drop-oldest, specifically so a slow consumer
+  can't stall the camera thread) -- ruled out as the cause.
+- **The original "diverges" note was very likely a stale build artifact**: the ~3 deg
+  stationary-jitter finding it cites (2026-08-04) predates Basalt ever successfully compiling on
+  this machine that same week; a same-week rebuild measured 0.001-0.006 deg, indistinguishable
+  from 3DOF's own jitter floor. The REAL, still-open problem is different and more serious:
+  genuine positional VIO divergence under real motion (a live session tripped a 3m anchor-guard
+  reset 191 times in 28 minutes), presently masked only by a reset-to-last-known-pose guard with
+  a 2-second blind window, correlated with camera/IMU clock alignment -- documented across
+  docs/80, 100, 104, not fixed at the root, a genuine multi-week-open engineering problem.
+- **Verdict: head-SLAM 6DoF is not viable for head tracking today.** Not a quick fix -- one
+  candidate (SCHED_FIFO-elevate the camera thread, mirroring the HMD thread) is small and worth
+  trying in a spare slot, but doesn't touch the drift problem, which needs a dedicated session.
+- **The actual unblock for room-mapping: controller constellation tracking (`ctrl` mode) is a
+  completely separate pipeline from Basalt** -- full camera rate, no SLAM competing for CPU/USB,
+  and the controller's own real 6DoF position route was already validated months ago
+  ([[project_g2_controller_6dof]]). A first walk-the-perimeter attempt using the controller as
+  the tracked point (not the head) is viable right now, fully decoupled from the Basalt mess --
+  this directly unblocks OpenXRdesk's near-term room-boundary goal (see that project's own memory
+  for the fuller writeup) without waiting on any SLAM fix.
+
+### Session wrap: a CPU spike that wasn't a runaway, and residue cleanup
+
+`monado-service` briefly showed 370% cumulative CPU in `ps aux` after this session's rapid
+3dof->6dof->3dof->ctrl mode-cycling plus three concurrent Workflow-driven agents doing real
+SSH/build work -- a per-thread `top -H` snapshot immediately after showed every thread at 0%, and
+load average was already dropping (5.5 -> 3.9 within a minute), confirming this was accumulated
+historical load from the rapid restarts, not an ongoing runaway process. Session ended with an
+explicit residue audit (git status in every repo touched, process check, scratchpad cleanup) --
+see [[feedback_session_residue_hygiene]] for the reusable checklist this produced. Live stack torn
+down cleanly (`jack-in-wayland.sh down`, verified no stray monado-service/hello_xr processes, no
+stray GPU compute handles) at the user's request to pause and consolidate.
