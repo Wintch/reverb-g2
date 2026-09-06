@@ -412,3 +412,31 @@ reassert call actually lasts (the periodic 15s re-arm sidesteps needing to know 
 cost of the recurring logo-flash); no tuning of the flash-vs-freshness tradeoff via a longer or
 adaptive interval; SCREENOFF_MS was left at its short 15000ms test value for this whole
 investigation, not reset to whatever the real deployed default should be for the demo-day booth.
+
+## 2026-09-06 ~13:40-13:52 -03 — enabled for real, validated through the actual deployed config path, plus an audible operator alert
+
+Everything above was tested with `WMR_USER_PRESENCE`/`WMR_USER_PRESENCE_SCREENOFF_MS` set as
+manual ambient env vars, not through `~/vr/presence.conf` the way a real `jack-in-wayland.sh`
+launch actually works. Closed that gap:
+
+- `~/vr/presence.conf`'s `PRESENCE_ENABLE` flipped `0` -> `1` (untracked, per-box file, not in
+  this repo) now that both directions are live-validated. `PRESENCE_SCREENOFF_MS` left at its
+  existing real value, `120000` (2 minutes) -- notably different from this whole investigation's
+  15000ms test value, so a real blank takes a lot longer to arrive than every test above.
+- New `scripts/presence-sound-alert.sh`: tails `jack-in-wayland.log`, speaks "casco apagado" /
+  "casco encendido" (`espeak-ng -v es-419`) on the blank/restore log lines. Read-only, never
+  launches or kills anything, survives a `monado-service` restart (`tail -F` re-opens the log
+  by name through the truncation `jack-in-wayland.sh`'s own `>` redirect does on each launch).
+  Requested so a booth operator gets audible confirmation without watching a screen.
+- **Live-tested through the real path**: plain `jack-in-wayland.sh up 1 3dof` (no manual env
+  overrides), confirmed via `/proc/<pid>/environ` that it correctly resolved
+  `WMR_USER_PRESENCE=1` / `WMR_USER_PRESENCE_SCREENOFF_MS=120000` from `presence.conf`. Blank
+  fired at the real 2-minute mark with "casco apagado" confirmed audible live by the wearer;
+  donning immediately after produced `restored from auto-standby` with "casco encendido" also
+  confirmed audible, button-press-timed via `joy-marker.py` (13:49:45 don -> 13:49:57 doff).
+
+This closes the loop from "fixed and validated with test-only flags" to "the feature a real
+booth session actually uses is enabled and makes noise a human can act on." Not done: no long
+soak with the real 2-minute interval to see how the recurring HP-logo flash (see the driver
+comment in `wmr_hmd_reassert_reverb_fresh_fd`) reads over an extended idle stretch; the sound
+alert has no volume/mute control of its own beyond the machine's normal mixer.
