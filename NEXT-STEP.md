@@ -1,5 +1,40 @@
 # Next step
 
+> ## START HERE (2026-09-06 ~12:10 -03 -- SDDM/keyring fix applied, VR-off state verified clean,
+> a headless keyring-blank script hit a real snag; new multi-user idea captured for later)
+>
+> **Applied (docs/106)**: sddm-autologin PAM keyring line + getty@tty2 disabled + sddm.service
+> hardened against it. **Not yet reboot-tested with these 3 combined** -- do that next legitimate
+> reboot, check journalctl -b -u sddm.service lands on VT1 first try.
+>
+> **Keyring blank-password: applied 2026-09-06 ~12:10, not yet fully proven**, via
+> `scripts/blank-login-keyring.py` (hit two snags first: no `$DISPLAY`/session bus when run as
+> root -- fixed by auto-detecting the bus off the live `gnome-shell` process and refusing to
+> run as the wrong user; must run as `iam` specifically). `login.keyring` mtime confirms the
+> change landed, D-Bus reports `Locked: 0` right now -- but that alone doesn't prove blank vs.
+> "unlocked earlier this session with the real password." The real proof (auto-unlocks with
+> zero prompt on a fresh login) is still pending the same reboot test as the SDDM fix; a
+> quicker live lock/unlock-with-empty-secret round-trip via D-Bus would also confirm it without
+> waiting for a reboot, not yet done, offered to the user. Note this was applied despite the
+> user's own live reconsideration (disk is already LUKS-encrypted, covering the powered-off
+> threat model; blanking the keyring only adds protection against a live/unlocked-system
+> process reading it) -- if revisited, the keyring can be re-encrypted with a real password the
+> same way, no data lost.
+>
+> **VR-off state verified genuinely clean** after headset power-off: USB 0/5, DRM all
+> disconnected, no stray processes. One false alarm along the way (`vr-state.sh` transiently
+> saw `monado-service` UP due to its own `pgrep -f` matching THIS session's diagnostic SSH
+> commands' text -- not a real respawn) and one permanently-stale, low-priority `vr-state.sh`
+> quirk (its "openxr session OPEN" line is a cumulative log count since file creation, not a
+> live check -- ignore it, trust `monado-service` UP/DOWN + USB/DRM instead).
+>
+> **New idea, not scoped**: separate a `davinci` user account from the VR/gaming one:
+> needs 2 simultaneous autologin-capable accounts for Moonlight/Sunshine to work right.
+> Read docs/106 section 1 first before touching autologin again if this gets picked up --
+> a second autologin account interacts with everything just fixed above.
+>
+> Full detail: docs/106-autologin-keyring-and-multiuser-plan.md.
+
 > ## START HERE (2026-09-06 ~11:00 -03 -- community/comms session connected remotely, no wearer
 > available; this banner had gone stale since 2026-08-30 even though docs/96-105 landed 2026-09-04/05
 > with real findings -- keep this banner current going forward, don't let numbered docs outrun it)
