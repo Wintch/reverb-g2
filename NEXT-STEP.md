@@ -1,5 +1,40 @@
 # Next step
 
+> ## START HERE (2026-09-06 ~11:00 -03 -- community/comms session connected remotely, no wearer
+> available; this banner had gone stale since 2026-08-30 even though docs/96-105 landed 2026-09-04/05
+> with real findings -- keep this banner current going forward, don't let numbered docs outrun it)
+>
+> **What actually happened 09-04/09-05 that this banner never reflected** (see each doc directly,
+> not summarized further here): SDDM/Plymouth VT-handoff boot race root-caused (docs/99, fix staged,
+> needs sudo+reboot -- not this session's to run non-interactively); presence-screenoff DRM-lease
+> bypass found and fixed+validated live (docs/101); a second, distinct DRM-lease-loss trigger found,
+> not yet reproduced/explained (docs/100/102); presence RESTORE still broken, instrumentation built
+> but not deployed live (docs/103); Dali anchor-guard runaway NOT explained by the 6.12.107
+> kernel/DKMS rebuild, demo-591360-6dof booth button still not cleared for unattended use (docs/104);
+> QR/AprilTag wall-marker idea scoped, cheap experiment recommended, not yet tried (docs/105);
+> **head-SLAM 6DoF verdict: not viable for head tracking today** (CPU-scheduling contention +
+> genuine VIO drift) -- controller-only constellation tracking (ctrl mode) is the real unblock for
+> OpenXRdesk's room-boundary goal, fully decoupled from the Basalt mess (docs/08).
+>
+> **Done this session (no wearer, so scoped to what doesn't need one)**: `wmr_camera.c`'s USB thread
+> elevated to SCHED_FIFO (mirrors the existing HMD-thread pattern), build clean, live-verified in
+> 6dof mode (headset on the desk), committed `cd46eb8eb` -- see docs/08's new 2026-09-06 section.
+> Does NOT touch the VIO drift problem. SDDM fix install was requested but needs an interactive sudo
+> password this session doesn't have -- still pending the user running it directly.
+>
+> **New, separate finding, not yet acted on**: 10 stray `[[wiki-link]]`-style references (the
+> cross-session memory system's own linking syntax) leaked into 6 *public, git-tracked* files --
+> NEXT-STEP.md (x2, now removed by this same edit -- see git diff), docs/08, docs/22, docs/29 (x2),
+> docs/51 (x2), docs/53 (x2). Harmless (inert bracketed text to a GitHub reader) but a real
+> doc-quality leak worth a cleanup pass, possibly folded into the existing
+> privacy/quality repo-audit sweep rather than fixed piecemeal.
+>
+> **Needs a wearer, in rough priority order**: (1) presence RESTORE diagnostic don/doff/re-don with
+> `WMR_PRESENCE_DIAG=1` (docs/103); (2) Dali's full ~28min re-test with a deliberate fast-yaw
+> component before the booth button can be trusted unattended again (docs/104); (3) try the QR wall
+> marker for the v0 passthrough viewer (docs/105, ~30 min, no code); (4) reboot to verify the SDDM
+> fix across a few cold boots, once installed.
+
 > ## START HERE (2026-08-30 ~06:30 -03 — 0009 auto-recentre: Aircar 6dof VALIDATED by the wearer
 > (both sides), baked into the 6dof booth buttons; Aircar 3dof cockpit does NOT follow it — game-side)
 >
@@ -1256,7 +1291,7 @@
 > yet stress-tested.** `os_thread_helper_stop_and_wait(&cam->usb_thread)` added to
 > `wmr_camera_stop()` in `~/vr/monado` (branch `lab-full`, uncommitted as of this writing — the
 > monado tree is a separate git repo from this one, upstream-bound via the existing MR relationship,
-> see [[project-monado-upstreaming]]-equivalent context, do not push without deciding on the MR
+> see the Monado-upstreaming-equivalent context, do not push without deciding on the MR
 > path first). One real session (compositor up, one game launched and cleanly stopped via
 > `game-stop.py`) produced zero teardown crashes, but that's not the repeated-restart stress test
 > the fix actually needs before calling it validated.
@@ -1274,7 +1309,7 @@
 >
 > **Sunshine + Moonlight remote access installed and paired** (`v2026.516.143833`,
 > `sunshine-debian-trixie-amd64.deb`), admin credentials in `~/.config/reverb-g2-tokens/
-> sunshine-admin.token` on the everyday-system side, per [[feedback-secret-hygiene]]. Solves the
+> sunshine-admin.token` on the everyday-system side, per the secret-hygiene rule. Solves the
 > "manos remotas" need for anything GUI-shaped (Steam dialogs, error windows) that plain SSH
 > couldn't show. User-facing ideas noted but explicitly deferred (not started): a web version of
 > this so technical staff can stay on LAN, a spectator/safety monitor mirroring the wearer's camera

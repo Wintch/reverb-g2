@@ -1185,3 +1185,24 @@ explicit residue audit (git status in every repo touched, process check, scratch
 see [[feedback_session_residue_hygiene]] for the reusable checklist this produced. Live stack torn
 down cleanly (`jack-in-wayland.sh down`, verified no stray monado-service/hello_xr processes, no
 stray GPU compute handles) at the user's request to pause and consolidate.
+
+## 2026-09-06 — SCHED_FIFO candidate from this doc's own recommendation, applied and committed
+
+Tried the small candidate this doc flagged as 'worth trying in a spare slot': elevated
+`wmr_cam_usb_thread` ('WMR: USB-Camera') to SCHED_FIFO, mirroring `wmr_hmd.c`'s existing
+'WMR: USB-HMD' elevation (opt out via `WMR_CAMERA_THREAD_NO_RT=1`). No wearer available this
+session, so this is a mechanism-level verification only, not a measurement of the actual
+dropped-camera-frame rate under real load:
+
+- Builds clean, 0 new warnings.
+- Live in 6dof mode (headset on the desk, Basalt active): log confirms the priority raise, a
+  new SCHED_FIFO thread appears in /proc alongside USB-HMD/compositor/VBlank, camera/SLAM
+  pipeline unaffected (calibration send, clock-skew tracking, pose output all normal). One
+  tracker-diverged reset occurred during this run -- the same pre-existing, unrelated VIO drift
+  issue this doc and docs/100/104 already document, not a regression from this change.
+- Committed on `lab-full`: `cd46eb8eb`.
+
+**Still open, per this doc's own verdict above**: this does not touch the genuine positional
+VIO divergence, which needs a dedicated session. Whether SCHED_FIFO alone measurably reduces
+dropped frames under the ~4-5 load average this doc describes has not been measured -- needs a
+live/worn 6dof session with the denser-detection config under real motion to actually count.
