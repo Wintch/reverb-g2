@@ -440,3 +440,116 @@ booth session actually uses is enabled and makes noise a human can act on." Not 
 soak with the real 2-minute interval to see how the recurring HP-logo flash (see the driver
 comment in `wmr_hmd_reassert_reverb_fresh_fd`) reads over an extended idle stretch; the sound
 alert has no volume/mute control of its own beyond the machine's normal mixer.
+
+## 2026-09-06 ~14:15-14:45 -03 — two more failed live rounds (neither user error), a real operational constraint found, and three new operator-alert states
+
+### Round 1: zero alerts, ~11s don/doff -- root cause was `update_inputs` never running at all
+
+A fresh live test (new `monado-service` launch, `PRESENCE_ENABLE=1` for real this time, not a
+manual env override) produced no sound at all. `joy-markers.log` showed a don at 14:19:11.936 and
+a doff at 14:19:22.528 -- only 11s apart, nowhere near the real 120000ms `PRESENCE_SCREENOFF_MS`,
+so on its own that would just mean "too early to expect anything." But `jack-in-wayland.log`
+showed something worse: **zero** `User presence: WORN`/`NOT WORN` commit lines anywhere in the
+whole log, across nearly 7 minutes of elapsed real time after the doff.
+
+Root cause, confirmed with `WMR_PRESENCE_DIAG=1` (an existing env var already wired into
+`wmr_hmd_update_inputs()`, logging a `PRESENCE-DIAG heartbeat: update_inputs calls=N
+raw_packets=N raw_proximity=X candidate=X committed=X screen_off_by_presence=X
+last_packet_age_ms=N` line roughly every 2s): with `monado-service` up and no OpenXR client
+connected, **that heartbeat never appears at all** -- `update_inputs()`, which contains the
+entire presence/auto-standby state machine, is only invoked by the OpenXR runtime while some
+client has an active session syncing frames. The moment `hello_xr` (launched via `play360.sh`)
+connected, heartbeats started immediately (`calls=1` at `last_packet_age_ms=77019`, climbing at
+roughly frame rate).
+
+**This is a real, previously-undocumented operational constraint, not a bug in today's fix**:
+auto-standby silently does nothing -- no blank, no restore, no log line, no sound -- for as long
+as no VR app is actively running. A booth session always has a game running while a visitor is
+between donnings, so this matches real usage, but it is exactly the kind of gap that reads as
+"the feature stopped working" to a future debugging session that forgets it. **Flagging clearly:
+if presence heartbeats/transitions ever go missing again, check for an active OpenXR client
+before suspecting the driver.**
+
+### Round 2: heartbeats started, then stopped -- test client exited before the real threshold
+
+Relaunched with `play360.sh -p flat -t 60 -q <video>` to drive the client loop. Heartbeats
+climbed (`calls=1085` -> `calls=5241` across the observed window) but then stopped appearing
+entirely, well before 120s of NOT-WORN could accumulate: the 60s `-t` duration meant `hello_xr`
+exited at 14:31:25, and while the compositor's own idle loop appears to keep `update_inputs`
+ticking for some grace period after a client disconnects, it eventually goes fully idle too and
+stops calling it. Fixed by relaunching `play360.sh -p flat -t 600 -q <video>` (10 minutes) to
+comfortably outlast the real 2-minute window.
+
+### Round 3: full real cycle, fully automatic, second independent confirmation
+
+With a sustained `hello_xr` session, the cycle completed with zero manual intervention:
+`User presence: panel blanked by auto-standby (120000 ms NOT WORN)` fired at the real 2-minute
+mark, "casco apagado" was heard live, the user donned (button-press-timed via `joy-marker.py`,
+14:39:05.730 -> 14:39:14.610), `User presence: panel restored from auto-standby` fired, and
+"casco encendido" was heard live and confirmed. This is a second, independent live confirmation
+of the real deployed path (the first is documented in the section above, earlier the same day),
+this time specifically proving the fix also survives a fresh `monado-service` relaunch with a
+different sustaining client.
+
+### Three new operator-alert states, added to `presence-sound-alert.sh` / `jack-in-wayland.sh`
+
+All three approved live by the user, implemented, `bash -n`-checked, and deployed to both the
+git-tracked (`scripts/`) and runtime (`~/vr/`) copies.
+
+1. **`MONADO_MARKER: up` / `MONADO_MARKER: down`** -- `jack-in-wayland.sh` now appends one of
+   these two lines to `$LOG`: right after `rm -f "$FAIL_MARKER"` in the `up` success path, and in
+   the `down` teardown path guarded by `[ -f "$LOG" ]` (down must never create or truncate the
+   log, per its existing "left untouched" contract -- this only appends, and only if a log
+   already exists). `presence-sound-alert.sh` speaks "monado arriba" / "monado abajo" on these.
+   Directly motivated by Round 1 above: gives the operator a spoken confirmation that the runtime
+   is genuinely up, distinct from "nothing happened because nothing is listening."
+
+2. **Controller-missing nudge** -- keyed off the existing `WMR_WARN(wh, "Failed to request
+   controller status from HMD")` line in `wmr_hmd.c` (fires once per launch attempt, at HMD
+   creation). `presence-sound-alert.sh` speaks "encendé los joysticks y reiniciá monado" on it.
+   **Design pivot worth recording**: the original plan (from an earlier design-proposal fork the
+   same session) was a PRE-launch controller-presence gate in `jack-in-wayland.sh`, checking via
+   `bluetoothctl` before calling `up`. Live investigation found `bluetoothctl devices` hangs
+   indefinitely under a non-interactive SSH invocation with no output (`timeout 5`/`timeout 8`
+   both had to kill it, repeatedly, even with stdin fully redirected from `/dev/null`) --
+   `systemctl is-active bluetooth` reports the system Bluetooth service as `inactive` on this
+   rig, and the WMR motion controllers evidently pair through the headset's own onboard radio,
+   relayed to the host over USB (matching Monado's own "request controller status from **HMD**"
+   wording), not through the host's Bluetooth stack at all. `bluetoothctl` was therefore never
+   going to work for this check, hang or no hang. Pivoted to the simpler, already-flagged-as-
+   acceptable-fallback shape: a post-launch nudge off Monado's own ground-truth log line, exactly
+   matching what the user originally asked for ("asi podes proceder a reiniciar monado para que
+   lo tome").
+
+3. **Game-name-on-connect** -- `presence-sound-alert.sh` now parses every
+   `application_name: '...'` line Monado logs on client connect
+   (`ipc_handle_instance_describe_client`) and speaks a short normalized name instead of a raw
+   string. Real values grep-confirmed from historical `~/vr/*.log` files (not all live-tested
+   this session): `libmonado` (`jack-in-wayland.sh`'s own post-launch validation probe), `steam`
+   and `wineopenxr test instance` (wrapper/handshake noise -- several of these typically precede
+   the real app per launch), `HelloXR` (this project's custom hello_xr build, doubling as
+   `play360.sh`'s video player and as diagnostic tooling), `SUPERHOTVR`, and
+   `AirCar/Binaries/Win64/AirCar-Win64-Shipping` (a raw Unreal binary path). Mapping: `HelloXR` ->
+   "player", `SUPERHOTVR` -> "superhot", `AirCar*` -> "aircar", `OpenVRBenchmark` -> "benchmark"
+   (grep-confirmed string, not live-tested this session), `libmonado`/`steam`/`wineopenxr test
+   instance`/empty -> silent (deliberately not spoken -- these are per-launch noise, not the real
+   session), anything else unrecognized -> "testing" fallback rather than reading a raw ugly
+   binary path aloud. Extraction is plain bash parameter expansion (`${line#*\'}` /
+   `${name%\'*}`), unit-tested in isolation before deploying.
+   **Deliberately incomplete**: this mapping does NOT cover the rest of the project's confirmed
+   VR library (Dreams of Dali, Night Cafe, I Expect You To Die, Hellblade, etc. from the earlier
+   library-audit work) -- only names actually grep-confirmed in a real historical log got an
+   entry. Add more only once each title's real `application_name` is confirmed live; don't guess
+   ahead of that.
+
+### Decision recorded: two other proposed states, deliberately NOT built
+
+An earlier design-proposal fork the same session considered two more additions and recommended
+against both -- recorded here so a future session doesn't re-run the same analysis:
+- A distinct **"standby"** cue at the moment doffing is *detected* (before the 120s blank timer
+  completes): likely noisy and redundant with "casco apagado" every time someone briefly takes
+  the headset off mid-session. Skip unless a concrete use case shows up.
+- A generic **OpenXR session on/off** alert keyed on `BEGIN_SESSION`/`END_SESSION`: those fire on
+  every app launch/exit, including internal Steam/wrapper transitions -- far noisier than the
+  once-per-launch-cycle Monado lifecycle marker above, and not what "estado de monado" actually
+  meant (the launcher's lifecycle, not every app's).

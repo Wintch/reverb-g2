@@ -1,5 +1,40 @@
 # Next step
 
+> ## START HERE (2026-09-06 ~14:45 -03 -- presence auto-standby has a real operational caveat
+> now documented, plus 3 new spoken operator-alert states: Monado up/down, controller-missing,
+> and game-name-on-connect -- docs/103's final section has the full story)
+>
+> **Important caveat found live, not a bug**: auto-standby (blank + restore) does ABSOLUTELY
+> NOTHING while no OpenXR app is actively running -- `wmr_hmd_update_inputs()`, which holds the
+> entire presence state machine, is only called while a client has a live session syncing
+> frames. `monado-service` up with no app connected looks fine but silently evaluates nothing:
+> no heartbeat, no WORN/NOT WORN transitions, no blank, no restore. Confirmed with
+> `WMR_PRESENCE_DIAG=1`. If presence ever looks dead again, check for a running app FIRST.
+> Real booth usage (a game always running between visitors) is unaffected by this.
+>
+> **New in `presence-sound-alert.sh`** (all three requested live, implemented, deployed to both
+> `scripts/` and `~/vr/`):
+> - "monado arriba" / "monado abajo" on new `MONADO_MARKER: up`/`down` lines
+>   `jack-in-wayland.sh` now writes to the log on a successful launch / on teardown.
+> - "encendé los joysticks y reiniciá monado" on Monado's own existing "Failed to request
+>   controller status from HMD" warning (a post-launch nudge, not a pre-launch gate --
+>   `bluetoothctl` turned out to hang forever in this SSH context AND to be the wrong tool
+>   anyway, since the WMR controllers pair through the HMD's own radio over USB, not the host's
+>   Bluetooth stack, which is `inactive` on this rig).
+> - The real game/app name on connect (parses Monado's own `application_name: '...'` log line),
+>   normalized: HelloXR->"player", SUPERHOTVR->"superhot", AirCar*->"aircar",
+>   OpenVRBenchmark->"benchmark", libmonado/steam/wineopenxr-probe->silent, anything else
+>   unrecognized->"testing". Deliberately not exhaustive of the full game library -- add an
+>   entry only once a title's real name is confirmed live.
+>
+> **Decided against** (recorded so it isn't re-litigated): a separate "standby" cue at doffing
+> detection (redundant/noisy with "casco apagado"), and a generic OpenXR session on/off alert
+> (BEGIN_SESSION/END_SESSION fires on every app transition, far too noisy).
+>
+> Two live-test rounds failed before this landed, for real reasons (not user error) -- see
+> docs/103's final section for the full blow-by-blow (zero presence heartbeats with no app
+> running; a too-short 60s test client exiting before the real 120s threshold).
+
 > ## START HERE (2026-09-06 ~13:52 -03 -- presence auto-standby RESTORE fixed, ENABLED FOR REAL,
 > and now has an audible operator alert -- docs/103 has the full story, this is the closed loop)
 >

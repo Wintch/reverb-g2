@@ -218,6 +218,10 @@ if [ "$ACTION" = down ]; then
     # left untouched on purpose -- a session that just failed is exactly the one you don't
     # want a teardown silently erasing.
     echo "Socket removed ($SOCKET). $LOG left untouched."
+    # Lifecycle marker for presence-sound-alert.sh (docs/103, 2026-09-06): appended, never
+    # truncates -- consistent with "$LOG left untouched" above. Only written if a previous
+    # 'up' actually created the log; a 'down' with nothing to tear down stays silent.
+    [ -f "$LOG" ] && echo "MONADO_MARKER: down" >> "$LOG"
     # --- Idle-blank restore (2026-08-22) -------------------------------------------------
     # Mirror image of the suppression set below at launch: the desktop's own idle-blank
     # (idle-delay=60s, no lock, no suspend -- set up 2026-08-22 for the "reduced light" idle
@@ -954,6 +958,12 @@ if [ "$SUCCESS" = 1 ]; then
     # The ONLY thing that clears the marker: a launch that actually reached a usable
     # compositor. Not an attempt, not a teardown, not the passage of time.
     rm -f "$FAIL_MARKER"
+    # Lifecycle marker for presence-sound-alert.sh (docs/103, 2026-09-06): a spoken
+    # confirmation that the runtime itself is live, distinct from the panel-blank/restore
+    # markers already handled there. Motivated by a live incident the same day: a wearer-test
+    # round produced zero presence alerts simply because monado-service was up with no app
+    # driving it, which read as a silent failure until diagnosed -- this closes that gap.
+    echo "MONADO_MARKER: up" >> "$LOG"
     # --- Idle-blank suppression (2026-08-22) ---------------------------------------------
     # The desktop's own idle-blank (idle-delay=60s, set up 2026-08-22 for the "reduced
     # light" idle mode) tracks keyboard/mouse only -- it has no idea a VR session is live.
