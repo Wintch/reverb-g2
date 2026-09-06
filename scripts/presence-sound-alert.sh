@@ -57,6 +57,33 @@
 #     names (superhot, aircar) are NOT translated per language -- only the generic
 #     descriptive labels (player/testing/benchmark) are.
 #
+#   PARTIAL-DIM BRIGHTNESS MITIGATION (2026-09-06, docs/103 addendum): the same two
+#   commit lines that drive "casco en la mesa"/"casco puesto" above ALSO now drop/restore
+#   a purely-cosmetic, rendering-side brightness gain -- dim_panel() on every debounced
+#   NOT WORN commit, undim_panel() on every debounced WORN commit. This is orthogonal to
+#   (and much cheaper/faster than) the real HID panel blank/restore covered by "casco
+#   apagado"/"casco encendido" above, which only fires after the much longer SCREENOFF_MS
+#   wait (up to 30 min) -- the dim reacts within the ~1s/~250ms DOFF_MS/DON_MS debounce
+#   itself, the user's own framing being "raise it back on presence and lower it a bit as
+#   soon as it's taken off... if it's not worn, nobody's there." Reuses the EXACT live-file
+#   mechanism status-dashboard.py's own brightness slider already writes
+#   ($VR/logs/xrizer-brightness, BRIGHTNESS_FILE below, polled ~every 30 frames by
+#   xrizer's patched compositor.rs) -- no new IPC, no driver change needed. Deliberately
+#   NOT wired into the C driver: this script already has jq access to the ACTIVE
+#   operator's own saved brightness baseline (USER_PROFILES_FILE's "brightness" field,
+#   the same value status-dashboard.py's slider writes there), so it can restore to
+#   exactly what the operator asked for instead of a driver-hardcoded number that would
+#   silently clobber a custom setting on every doff/don cycle. Also rides the SAME
+#   packet-confirm-count hardening as the audible "casco puesto" alert (WMR_USER_PRESENCE_
+#   DON_CONFIRM_PACKETS, wmr_hmd.c) -- both react to the driver's already-debounced
+#   `committed` transitions, not the raw candidate, so neither is exposed to the single-
+#   stray-packet noise bug that motivated that fix. Known gap: if the operator adjusts the
+#   dashboard slider WHILE the panel is already dimmed (headset genuinely resting), that
+#   write lands at full requested brightness, not the dimmed fraction, until the next real
+#   doff -- rare (nobody is watching the panel to judge brightness while it's resting) and
+#   self-corrects on the next NOT WORN commit, so left as a known limitation rather than
+#   fixed here.
+#
 #   LANGUAGE (2026-09-06): every phrase above is spoken in the ACTIVE operator's language
 #   (status-dashboard.py's per-user "lang" field, en/es/ru), read fresh from
 #   USER_PROFILES_FILE on every single alert via jq -- same "never cached, no restart
@@ -82,9 +109,47 @@ set -u
 VR="$HOME/vr"
 LOG="$VR/jack-in-wayland.log"
 RESTING_ALERT_DELAY_FILE="$VR/logs/presence-resting-alert-delay-ms"
+# Same path status-dashboard.py's BRIGHTNESS_FILE writes -- see this script's own header,
+# "PARTIAL-DIM BRIGHTNESS MITIGATION", for why the write happens here instead of in the
+# C driver.
+BRIGHTNESS_FILE="$VR/logs/xrizer-brightness"
+# Fraction of the operator's own saved brightness baseline applied while genuinely NOT
+# WORN. Chosen as a visible-but-not-jarring partial dim (not full black, which would look
+# indistinguishable from a real crash/blank to anyone glancing at a spectator feed) --
+# untuned against a live wearer, revisit if 0.35 reads as too subtle or too dark.
+RESTING_DIM_FACTOR="0.35"
 
 # shellcheck source=speak.sh
 source "$VR/speak.sh"
+
+# Active operator's saved brightness baseline (status-dashboard.py user-center's
+# "brightness" field, the same value its slider writes to BRIGHTNESS_FILE), read fresh via
+# jq every call -- same fresh-per-call contract as speak.sh's active_lang()/
+# active_voice_gender(). Falls back to 1.0 (passthrough gain) on a missing/corrupt file or
+# a non-numeric field, matching every other per-profile fail-open default in this script.
+active_brightness() {
+	local v
+	v="$(jq -r '.users[.active].brightness // 1.0' "$USER_PROFILES_FILE" 2>/dev/null)"
+	case "$v" in
+	'' | *[!0-9.]*) printf '1.0' ;;
+	*) printf '%s' "$v" ;;
+	esac
+}
+
+# Writes RESTING_DIM_FACTOR of the operator's own baseline -- called on every debounced
+# NOT WORN commit (see the case arm below), independent of and much sooner than the
+# SCREENOFF_MS-gated HID blank.
+dim_panel() {
+	awk "BEGIN{printf \"%.3f\\n\", $(active_brightness) * $RESTING_DIM_FACTOR}" >"$BRIGHTNESS_FILE" 2>/dev/null
+}
+
+# Restores the operator's own undimmed baseline -- called on every debounced WORN commit.
+# Reads the baseline fresh rather than remembering the pre-dim value, so a brightness
+# change made by the operator while away (rare, see this script's header) is honored on
+# the very next don rather than reverting to whatever was in effect before the dim.
+undim_panel() {
+	awk "BEGIN{printf \"%.3f\\n\", $(active_brightness)}" >"$BRIGHTNESS_FILE" 2>/dev/null
+}
 
 # state:lang -> spoken text. Falls through to the Spanish phrase for any state/lang pair
 # not explicitly listed (keeps this table short -- only add a language's line once its
@@ -163,6 +228,7 @@ tail -n0 -F "$LOG" 2>/dev/null | while IFS= read -r line; do
 		say_state restored
 		;;
 	*"User presence: NOT WORN"*)
+		dim_panel
 		delay_ms="$(resting_alert_delay_ms)"
 		if [ "$delay_ms" -gt 0 ]; then
 			(
@@ -175,6 +241,7 @@ tail -n0 -F "$LOG" 2>/dev/null | while IFS= read -r line; do
 		fi
 		;;
 	*"User presence: WORN"*)
+		undim_panel
 		if [ -n "$resting_alert_pid" ]; then
 			kill "$resting_alert_pid" 2>/dev/null
 			resting_alert_pid=""

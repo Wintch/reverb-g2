@@ -934,3 +934,222 @@ any of this live yet -- no physical audio access this round, same caveat as the 
 
 Committed on `~/Documents/reverb-g2` (branch `main`, NOT pushed): `scripts/presence-sound-alert.sh`,
 `scripts/speak.sh` (new), `scripts/status-dashboard.py`.
+
+## 2026-09-06 ~18:15-18:40 -03 -- the "panel keeps relighting itself" report: root-caused to a debounce-design gap (single stray packet, not a HID/DRM problem), fixed, plus a software-only brightness-dim mitigation
+
+Separate task, separate framing from everything above: the user reported the panel "always on,
+always with video" despite every log line up to this point saying auto-standby was doing the right
+thing. Explicitly code-analysis-only (no live hardware touch, no `monado-service` launch, no live
+test) -- this rig is the operator's only physical unit and they asked to protect it while this got
+thought through. Root cause and fix below were built and reasoned from `~/vr/jack-in-wayland.log`
+(already captured, not reproduced live this round) plus a full read of `wmr_hmd_presence_tick()`.
+
+### Root cause, confirmed independently against the raw log (not taken on faith)
+
+Grepped `jack-in-wayland.log` for `PRESENCE-DIAG raw packet`, `User presence:`, `blanked by
+auto-standby`, and `restored from auto-standby` rather than trusting the prior framing of this bug
+at face value. Every one of the 4 blank->relight cycles in the captured session shows the identical
+shape (line numbers from the log as fetched this session):
+
+```
+551: User presence: panel blanked by auto-standby (120000 ms NOT WORN)
+569: PRESENCE-DIAG raw packet #2: proximity=0 ipd=750        <- companion still reporting NOT WORN
+593: PRESENCE-DIAG raw packet #3: proximity=1 ipd=725        <- ONE packet flips to "worn"
+594: User presence: WORN (raw proximity sensor value 1, held 253 ms)
+596: User presence: panel restored from auto-standby
+603: PRESENCE-DIAG raw packet #4: proximity=0 ipd=688        <- next packet already says NOT WORN again
+604: User presence: NOT WORN (raw proximity sensor value 0, held 1001 ms)
+```
+
+The headset was resting untouched on the desk the entire time (confirmed by the task framing this
+came from, and consistent with every WORN stretch lasting only as long as it takes the NEXT
+irregular packet to arrive and flip the byte back). This pattern repeats exactly 4 times across the
+whole log (blanks at lines 551, 685, 862, 968 in the fetched copy; each followed by a WORN commit off
+a single packet, "held 253 ms" every time -- 253 ms above DON_MS=250 ms is the tick-scheduling slop,
+not evidence of anything). In the second cycle (`packet #5` -> WORN -> `packet #6` -> NOT WORN,
+lines 614-619), the very next packet after the one that triggered WORN already disagreed with it,
+and it STILL arrived only ~1 s later, after WORN had already committed and already fired a real
+restore -- i.e. even the "next" packet, when one came at all, was already too late to prevent the
+false commit.
+
+**Root cause**: `WMR_USER_PRESENCE_DON_MS`/`WMR_USER_PRESENCE_DOFF_MS` are wall-clock windows
+measured against `candidate_since_ns` -- time since the raw candidate value last *changed* -- not a
+count of how many times it has been independently *reported*. `wmr_hmd_presence_tick()` runs once
+per iteration of the always-on read thread, gated on `WMR_USER_PRESENCE=1` (see `presence_enabled`
+in `wmr_hmd.h`) but otherwise independent of any OpenXR client (that part was already fixed in the
+"always evaluate" commit, `754beed30`, and is not the bug here). The companion's own
+`WMR_CONTROL_MSG_IPD_VALUE` packet -- the only thing that ever writes `wh->proximity_sensor` --
+arrives irregularly: 2 s to 100+ s apart in this log, measured directly off the `PRESENCE-DIAG raw
+packet #N` sequence numbers and the heartbeat's own `last_packet_age_ms` field (e.g. line 549 shows
+`last_packet_age_ms=102439`, 102 s since the previous packet, immediately before the first false
+WORN commit). Meanwhile every tick in between two real packets just re-reads the same static,
+unconfirmed byte. So a single stray/noisy packet flipping that byte to 1 satisfies the entire
+`DON_MS` wall-clock window in a fraction of a second of REAL time, with zero corroborating evidence
+that the reading is real -- and, worse for auto-standby specifically, this WORN commit doesn't just
+look "invisible" the way the struct's own asymmetry comment assumes (a spurious resume used to only
+matter to an OpenXR app's pause state) -- it actively undoes a real, working panel blank.
+
+**Read-thread rate, corrected**: the task that prompted this investigation stated the tick rate as
+"~750 Hz observed". Rather than repeat that figure into new code comments unverified, measured it
+directly from this exact log: `PRESENCE-DIAG heartbeat` lines carry a `diag_update_inputs_calls`
+counter incremented every tick, and fire on a fixed ~2 s interval independent of any packet. The
+delta between consecutive heartbeats is essentially constant at ~506-508 calls (312 of 344 deltas in
+the whole log are exactly 506), giving **~250 Hz**, not ~750 Hz -- about 3x off. This also lines up
+exactly with something already documented elsewhere in this same file: `hololens_sensors_decode_packet()`'s
+own comment already says "~250 Hz" for the IMU/sensor packet rate (`wmr_hmd.h` line ~178,
+`IMU_FREQUENCY=1000` split into `IMU_SAMPLES_PER_PACKET=4`-sample packets = 250 packets/s), which is
+almost certainly the dominant HID report driving the read thread's loop iteration rate. Doesn't
+change the fix's validity at all (the mechanism -- one packet is not corroboration -- holds
+regardless of whether the tick rate is 250 Hz or 750 Hz), but the code comments now cite the
+measured number and how it was derived instead of repeating an unverified one.
+
+**This is not the HID/DRM bug from earlier the same day.** The blank and restore HID commands
+themselves work correctly and reliably (that was `c44ba4a23`/`754beed30`/`c6775c41a` and the
+screen-off-fresh-fd commit below) -- every "panel blanked by auto-standby" / "panel restored from
+auto-standby" pair in this log is a REAL blank followed by a REAL restore. The bug is entirely in
+*when* a restore is triggered: a debounce that is time-based against a static last-known value,
+never confirmation-based against independent samples.
+
+### Housekeeping found along the way: an already-tested, uncommitted fix, committed as its own commit
+
+Before touching anything, `git status` on `~/vr/monado` showed uncommitted changes to `wmr_hmd.c`/
+`wmr_hmd.h` on top of `c6775c41a` (the restore-fresh-fd commit). Diffed it rather than assuming: it
+adds `wmr_hmd_screen_off_reverb_fresh_fd()`, a mirror image of the existing
+`wmr_hmd_reassert_reverb_fresh_fd()` -- sends the screen-off command over its own brand-new hidraw
+fd instead of the shared `wh->hid_control_dev` handle, for the same reason restore was already moved
+off that handle (proven unreliable, ~4-5 s `hid_lock` contention, sends that report success without
+landing). Confirmed this is exactly the binary that produced the log analyzed above: every `Sent
+screen-off (fresh fd)` line in the log (e.g. line 550) comes from this function. Complete,
+self-consistent, already live-tested by virtue of having produced this exact log -- just never
+committed. Committed it as its own focused commit (`d07872fd9`, "wmr: send auto-standby's screen-off
+over a fresh fd too") BEFORE layering the debounce fix on top, so the two unrelated changes don't end
+up conflated in one commit, matching this repo's own established one-fix-per-commit granularity (see
+the `git log` for `wmr_hmd.c` this same day). Flagging this explicitly since it wasn't part of this
+task's own scope -- it was sitting in the working tree, already proven, and leaving it uncommitted
+indefinitely felt like the wrong outcome once found and understood.
+
+### The fix: `WMR_USER_PRESENCE_DON_CONFIRM_PACKETS`
+
+Commit `41626b6e2` on `lab-full`. Adds a packet-count confirmation requirement on top of (not
+instead of) the existing wall-clock debounce, gated to the WORN direction only:
+
+- Two new fields on the `presence` struct (`wmr_hmd.h`): `candidate_confirm_count` (how many
+  independent packets have reported the current candidate value; reset to 1 whenever the raw
+  candidate flips -- the flipping packet is confirmation #1) and
+  `candidate_last_counted_update_ns` (the `presence.last_update_ns` value already counted, so a tick
+  that finds no new packet since the last count does not double-count itself as evidence).
+- "Independent" is detected via `presence.last_update_ns`, which `control_ipd_value_decode()`
+  already updates on every decoded packet regardless of whether the value changed (its own existing
+  comment: "Arrival time, not change time"). A tick only increments `candidate_confirm_count` when
+  `last_update_ns` has advanced past what was last counted -- i.e. a genuinely new packet arrived,
+  not just another ~250 Hz re-read of the same still-unconfirmed byte.
+- The WORN commit condition now requires BOTH `held_ns >= DON_MS` (unchanged) AND
+  `candidate_confirm_count >= WMR_USER_PRESENCE_DON_CONFIRM_PACKETS` (new, default 2,
+  env-overridable, floored to 1 -- 1 reproduces the exact pre-fix, time-only behavior for anyone who
+  wants it back).
+- **Deliberately NOT applied to `WMR_USER_PRESENCE_DOFF_MS`** (leaving WORN). Checked the log
+  specifically for this before deciding: every NOT WORN commit in the captured session is also a
+  single packet (e.g. line 604, `held 1001 ms` off `packet #4` alone) -- but the log never contains a
+  genuine WORN stretch at all (the headset was never actually touched in it), so there is no live
+  evidence either way of a matching noise-flip-to-0-while-worn failure mode. The struct's own
+  long-standing asymmetry reasoning ("entering worn is cheap to get wrong... leaving it is
+  expensive") already argues for leaving that direction alone absent proof it needs the same
+  treatment -- tighten it too if a live test ever shows a spurious doff mid-session.
+- The commit log line now also prints the confirming-packet count, so a future live session can see
+  directly how many packets a real don actually produces before commit, without needing a rebuild.
+
+**Open trade-off, flagged for a human, not resolved here**: with `DON_CONFIRM_PACKETS=2` and packets
+arriving as irregularly as this log shows (2 s to 100+ s apart), a REAL don could occasionally take
+much longer than the old 250 ms to register if the second confirming packet happens to be slow to
+arrive -- in the worst case, tens of seconds. This wasn't tunable against real donning-gesture data
+this round (no live test), only against a resting-desk session. If a live test later shows real dons
+routinely producing multiple packets within a second or two of an actual donning gesture (plausible
+-- the sensor may sample faster while something is actually near it -- but not confirmed), 2 is
+comfortably cheap; if real dons are just as sparse as this resting session's noise, 2 may need
+retuning or a bounded fallback (e.g. "OR held_ns exceeds some much larger ceiling") added later.
+Left as an open question rather than guessed at.
+
+### Software-only mitigation: partial brightness dim on every doff/don, independent of the HID path
+
+The user's own framing (translated): "raise it back on presence and lower it a bit as soon as it's
+taken off -- the point is not to trigger heavy standby modes or waste cycles, just save what we
+reasonably can; if it's not worn, nobody's there." Implemented as a cheap, near-instant,
+purely-cosmetic rendering-side gain drop -- explicitly NOT a substitute for the real HID
+blank/restore above, which remains the actual power-saving standby after the full `SCREENOFF_MS`
+wait; this is a much faster, much cheaper, always-on companion to it.
+
+**Where it hooks in, and why there, not the raw candidate.** Triggered off the SAME two log lines
+`presence-sound-alert.sh` already tails for the "casco en la mesa"/"casco puesto" audible alerts:
+`User presence: NOT WORN` (the debounced DOFF commit, ~1 s after a real doff) and `User presence:
+WORN` (the debounced DON commit, ~250 ms after a real don, now additionally hardened by
+`DON_CONFIRM_PACKETS` above). NOT triggered off the raw candidate -- doing that would expose the dim
+to the exact same single-packet noise bug this task just fixed for the real standby path, just
+relocated to a different symptom (a panel that visibly flickers dim/bright every time a stray packet
+passes through, instead of one that silently relights). Reacting to the already-debounced,
+already-packet-confirmed `committed` transition means this mitigation inherits the fix above for
+free, with no separate hardening needed.
+
+**Where it does NOT hook in: no C driver change.** Considered writing directly from
+`wmr_hmd_presence_tick()` (the task's own suggestion pointed at `hololens_sensors_decode_packet()`'s
+existing `~/vr/hmd-temperature.json` atomic tmp+rename write as the precedent to follow) but rejected
+it after checking what `status-dashboard.py`'s brightness slider actually does: `BRIGHTNESS_FILE`
+(`$HOME/vr/logs/xrizer-brightness`, polled ~every 30 frames by `xrizer`'s patched `compositor.rs`,
+`patches/xrizer/0007-...`) holds the OPERATOR'S OWN chosen gain (`user-profiles.json`'s per-user
+`brightness` field, 0-4x, `set_brightness_gain()` keeps both in sync). A C-driver write would have to
+either hardcode a restore value (silently clobbering a custom brightness setting on every doff/don
+cycle) or duplicate JSON-profile-reading logic in C for no real benefit -- the driver has no reason to
+know about per-operator dashboard preferences. `presence-sound-alert.sh` already has exactly the jq
+access needed (`speak.sh`'s `active_lang()`/`active_voice_gender()` are the established pattern) and
+is already tailing the log line that should trigger this, live, with no new process. So the fix lives
+entirely in `presence-sound-alert.sh`: two new functions, `active_brightness()` (reads
+`.users[.active].brightness // 1.0` via jq, same fail-open-to-1.0 pattern as every other per-profile
+reader in this script) and `dim_panel()`/`undim_panel()` (write `RESTING_DIM_FACTOR * baseline` /
+`baseline` to `BRIGHTNESS_FILE`), called from the existing `NOT WORN`/`WORN` case arms.
+
+**Dim factor**: `RESTING_DIM_FACTOR=0.35` -- a visible-but-not-jarring partial dim, not full black
+(full black could read as a crash to anyone watching a spectator feed, and the user's own framing was
+"lower it a bit", not "blank it" -- that's what the real HID path is for). Untuned against a live
+wearer; revisit if it reads as too subtle or too dark once someone can actually look at it worn.
+
+**Known, accepted gap**: if the operator adjusts the dashboard brightness slider WHILE the panel is
+already dimmed (headset genuinely resting), `set_brightness_gain()` writes the newly requested value
+at FULL brightness, not the dimmed fraction, until the next real doff -- because the dashboard has no
+idea a dim is currently in effect. Harmless in practice (nobody is watching the panel to judge
+brightness while it's resting on a desk) and self-corrects on the very next `NOT WORN` commit; not
+worth a cross-process "is currently dimmed" flag for a purely cosmetic feature.
+
+### Build
+
+Full rebuild both times (`cd ~/vr/monado/build && cmake --build .`, default target, not a partial
+one -- confirmed with a follow-up no-op build showing `ninja: no work to do.` both times): clean
+except the same two pre-existing, unrelated warnings the task described in advance (`control_read_packets`
+sign-compare, `PRESENCE_STALE_NS` integer-overflow) -- nothing new introduced by either change.
+
+### Not done this round, flagged for a future session with physical/Windows access
+
+The user's own separate idea, explicitly not executed here: a real USB packet capture of genuine
+Windows/WMR Portal runtime behavior against the same G2 (dual-boot, or a Windows machine with the
+same headset) to see how many confirming samples -- or what actual debounce -- Windows requires
+before committing "worn". Would directly answer the open trade-off flagged above (whether 2 confirming
+packets is cheap or expensive relative to how a real donning gesture actually behaves) instead of
+guessing from a resting-desk session alone. Needs physical hardware access and a Windows boot; not
+something this pass could do, and explicitly out of scope for a code-analysis-only task.
+
+### Live-test checklist for a future session (NOT run this round)
+
+1. `WMR_PRESENCE_DIAG=1 WMR_USER_PRESENCE=1 WMR_USER_PRESENCE_SCREENOFF_MS=<short value for
+   iteration>` (do not touch `~/vr/presence.conf`'s production value per this task's own
+   instruction), then a genuine doff, a long enough wait for a real blank, and specifically leaving
+   the headset UNTOUCHED afterward for several minutes -- the exact scenario that produced the false
+   relights -- to confirm they no longer happen.
+2. A genuine, deliberate don, timed, to see how many real packets and how much wall time it actually
+   takes to commit WORN under `DON_CONFIRM_PACKETS=2` -- this is the number needed to resolve the
+   open trade-off above.
+3. Listen for the two dim/undim transitions alongside the existing "casco en la mesa"/"casco puesto"
+   audio, and glance at the panel through a spectator view (or briefly don it) to confirm the partial
+   dim is visible but not alarming at `RESTING_DIM_FACTOR=0.35`.
+
+Committed on `~/vr/monado` (branch `lab-full`, remote `wintch` NOT pushed): `d07872fd9` (pre-existing
+screen-off-fresh-fd work, found uncommitted and completed) and `41626b6e2` (this section's debounce
+fix). Committed on `~/Documents/reverb-g2` (branch `main`, NOT pushed): `scripts/presence-sound-alert.sh`
+(brightness dim/undim hooks + updated state-comment header) and this file.
