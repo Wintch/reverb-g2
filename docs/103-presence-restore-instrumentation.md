@@ -719,3 +719,64 @@ actually drives a real "casco en la mesa" -- the underlying log-line hook is ide
 fired successfully minutes earlier, and the shell function was unit-tested in isolation, but a live
 confirmation of the file-driven path specifically is still open for whenever the next physical test
 happens.
+
+## 2026-09-06 ~17:00-17:20 -03 — root-caused and fixed: presence evaluation was fully dormant with no OpenXR client connected
+
+A live test cycle right after the per-user preset work above surfaced something worse than a missed
+alert. The user donned the headset and reported "sin video, solo backlight" -- and directly disputed
+an earlier status report of mine that the panel was blanked, from direct physical observation: "ahi
+esta! el panel quedo prendido! como sabes que se apago?" That earlier report was wrong -- it was read
+from a `PRESENCE-DIAG heartbeat` line that had already stopped updating, not a live re-check. Corrected
+that mistake by re-verifying from fresh log state instead of defending the stale answer.
+
+**Root cause, confirmed from the log timeline, not guessed**: `wmr_hmd_update_inputs()` -- which owned
+the ENTIRE presence decision (debounce, commit, the `SCREENOFF_MS` countdown, blank, restore, the
+periodic reassert) -- is only ever called by the OpenXR runtime while a client has an active
+frame-synced session. The log showed a real doff commit, a real 120s-later blank (`panel blanked by
+auto-standby`), and then *nothing* -- no further `WORN`/`NOT WORN` commit, no restore, even though the
+user physically donned it afterward and `PRESENCE-DIAG raw packet` lines kept arriving (proximity data
+was always live). The client (`hello_xr`) had already exited by then, so the whole decision layer went
+dormant: a panel lit at that moment just stays lit indefinitely, with zero auto-protection, until a
+manual `jack-in-wayland.sh down` (confirmed separately, live, to work correctly -- Monado's own SIGTERM
+clean-path handler does screen-off the panel properly; that part was never broken). This defeats
+auto-standby for exactly the case it exists to protect: casual dev checking, where a game usually isn't
+continuously running.
+
+**Fix**: moved the whole decision (now `wmr_hmd_presence_tick()`) out of `wmr_hmd_update_inputs()` and
+into `wmr_run_thread()` -- the driver's own always-on, client-independent background thread that already
+calls `control_read_packets()` (the very function that feeds `wh->proximity_sensor` in the first place)
+every iteration, and already runs `wmr_hmd_send_controller_keepalives()` client-independently as
+precedent for exactly this shape. `wmr_hmd_update_inputs()` now only reads the already-decided
+`wh->presence.committed` and reports it to the XRT input system for `XR_EXT_user_presence` -- it
+decides nothing anymore. A new `wh->presence_lock` mutex (same pattern as the existing
+`controller_status_lock`) protects the fields the tick function owns, since they're now written by the
+read thread and read by the OpenXR runtime thread. No debounce window, screenoff delay, or reassert
+interval changed -- only *which thread, and whether a client is required* changed.
+
+Full build (`cmake --build .`, all 42 targets, matching this project's own established lesson about
+partial builds leaving `libopenxr_monado.so` stale) compiled clean -- two warnings, both pre-existing
+and unrelated to this change (one in `control_read_packets`, a sign-compare; one an `int` overflow on
+`30 * U_TIME_1S_IN_NS` that was already present verbatim in the code being moved, not introduced by
+this patch). Left both alone, out of scope for this fix.
+
+**Live-validated the actual failure mode, with zero OpenXR client connected at any point**:
+`jack-in-wayland.sh up` with `WMR_PRESENCE_DIAG=1` and a 15s test `SCREENOFF_MS`, no app launched
+afterward. `PRESENCE-DIAG heartbeat` now logs under `[wmr_hmd_presence_tick]` (not
+`[wmr_hmd_update_inputs]`) and climbed continuously (`calls=4988 -> 5494 -> 6000` in a few seconds) with
+zero clients ever connected (`pgrep hello_xr|play360` empty throughout), and `panel blanked by
+auto-standby (15000 ms NOT WORN)` fired for real at the test threshold -- the exact scenario that
+produced silence and a stuck-lit panel before this fix. Zero `run loop: ... blocked` warnings appeared
+(the read thread's own stall watchdog, unaffected by the new mutex/tick cost). Separately smoke-tested
+the still-client-gated path: a brief real `hello_xr` session connected and disconnected cleanly with no
+errors, confirming `wmr_hmd_update_inputs()`'s slimmed-down read-only role still works when an app IS
+present.
+
+**Not verified** (same residual gap this whole investigation already flagged once today): the actual
+physical backlight state was not re-confirmed by a wearer for this specific round -- no physical access
+this session. Log/heartbeat state is the strongest evidence available and is now internally consistent
+end to end (raw packets -> tick -> commit -> screenoff timer -> blank, all with zero client dependency),
+but a live "does the panel actually go dark with nobody touching anything for 2+ minutes" check is the
+natural next physical test whenever the user is available for one.
+
+Committed on `~/vr/monado` (branch `lab-full`, NOT pushed -- personal-branch pushes go to the `wintch`
+remote only, never `origin`, and this task didn't push at all): `wmr_hmd.h`, `wmr_hmd.c`.
