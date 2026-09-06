@@ -1,7 +1,15 @@
 # Next step
 
-> ## START HERE (2026-09-06 ~12:10 -03 -- SDDM/keyring fix applied, VR-off state verified clean,
-> a headless keyring-blank script hit a real snag; new multi-user idea captured for later)
+> ## START HERE (2026-09-06 ~12:20 -03 -- SDDM autologin VT-race fix AND keyring blank-password
+> BOTH CONFIRMED WORKING on a real reboot; VR-off state verified clean; new multi-user idea
+> captured for later)
+>
+> **Real reboot test, 12:18 boot**: autologin succeeded cleanly, first try, no VT-race failure at
+> all (still lands on VT2, unexplained but harmless now, no crash/greeter-fallback this time).
+> Keyring confirmed genuinely unlocked (`Locked: 0` via D-Bus) on a fresh boot nobody touched by
+> hand -- the "gkr-pam: couldn't unlock" log line is expected noise (autologin has no password to
+> try), not a failure. Both today's fixes are DONE, not just applied. Full detail: docs/106's
+> final section.
 >
 > **Applied (docs/106)**: sddm-autologin PAM keyring line + getty@tty2 disabled + sddm.service
 > hardened against it. **Not yet reboot-tested with these 3 combined** -- do that next legitimate

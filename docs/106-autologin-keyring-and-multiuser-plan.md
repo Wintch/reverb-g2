@@ -108,3 +108,42 @@ allocation, `sddm.conf.d`'s `[Autologin]` block currently hardcoded to `User=iam
 this up should re-read this doc's section 1 first, since a second autologin account needs its
 own equivalent `sddm-autologin` PAM treatment and its own VT, and could reopen or interact with
 the same VT-allocation race class documented in `docs/99`.
+
+## 2026-09-06 ~12:18 -03 — real reboot test: BOTH fixes confirmed working end to end
+
+Genuine fresh reboot (uptime 3 min, boot at 12:18, confirmed via `who -b` -- the previous
+"reboot" check earlier had found the machine still on its 11:05 boot, no new boot had actually
+happened yet at that point; this one is real).
+
+**SDDM autologin (section 1's fix): clean success, no failure at all.** `journalctl -b 0 -u
+sddm.service` shows a single, uninterrupted attempt: authenticate -> session opened -> Wayland
+session starting -> `Session started true` -> gnome-session up. No `sddm-helper exited with 5`,
+no fallback to the greeter, no manual login needed -- the exact failure from the first test
+(docs/99, 2026-09-06 ~11:05) did not recur. Note: sddm still picks **VT 2** (not VT1) on this
+boot -- the underlying "why VT2" question from docs/99 remains unexplained -- but this no longer
+matters: whatever used to race and fail on that VT now just works. `getty@tty2.service` confirmed
+disabled+inactive throughout.
+
+**Keyring blank-password (section 2): confirmed live, real proof this time, not just
+circumstantial.** The boot log shows `sddm-helper[...]: gkr-pam: couldn't unlock the login
+keyring` -- expected noise, not a failure: `pam_gnome_keyring`'s own unlock attempt has no
+password to work with in an autologin flow (same reason its `auth` phase would be a no-op,
+per the original research), so it correctly reports it couldn't do anything -- but that's not
+the mechanism that actually matters here. Queried the collection directly over D-Bus right
+after this fresh boot, before anyone manually touched anything: **`Locked: 0`**. A locked,
+real-password keyring would read `Locked: 1` until something supplies the right password;
+reading `0` on a session nobody has unlocked by hand is direct proof the keyring is genuinely
+passwordless and auto-opens on its own now.
+
+**Net result: both of today's fixes are done and verified, not just applied.** The original
+complaint (repeated keyring "cancel" prompts blocking an unattended autologin boot, needed for
+the monitoring web dashboard to come up on its own) is resolved on both fronts -- the session
+starts reliably, and the keyring no longer has anything to prompt for.
+
+**Remaining open items, unrelated to this fix being done**: (1) why sddm picks VT2 instead of
+VT1 is still unexplained (cosmetic/curiosity at this point, not a problem); (2) the
+davinci/multi-user idea (section 4) is still just an idea, unscoped; (3) if the user later
+decides the blank-keyring tradeoff (section 2's LUKS-already-encrypts-the-disk reconsideration)
+isn't worth it after all, `scripts/blank-login-keyring.py`'s same `ChangeWithMasterPassword`
+mechanism can set a real password back (current="" empty, new=<a real password>) -- not written
+as a ready-made "re-lock" script, but the same tool covers it with different arguments.
