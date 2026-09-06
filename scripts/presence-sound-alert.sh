@@ -10,14 +10,21 @@
 #     see wmr_hmd_update_inputs()'s doc comment; monado-service alone, with no app,
 #     never evaluates presence at all.
 #   - "casco en la mesa": the debounced NOT-WORN commit itself (WMR_USER_PRESENCE_DOFF_MS,
-#     ~1s after a real doff) -- fires the instant a removal is detected, long before the
-#     SCREENOFF_MS grace period (120000ms in production) actually blanks the panel. Added
-#     2026-09-06 for continuous state awareness ("bien detallado con audio"), not just the
-#     two endpoint events. Deliberately NOT mirrored on the WORN commit: that log line also
-#     fires on every ordinary don while the panel was never blanked (ANY doff-then-redon
-#     inside the SCREENOFF_MS window), which would double up with "casco encendido" in the
-#     one case that matters (redonning after a real blank) while adding noise to the far
-#     more common case (a quick doff/redon that never blanked at all).
+#     ~1s after a real doff) -- long before the SCREENOFF_MS grace period (120000ms in
+#     production) actually blanks the panel. Added 2026-09-06 for continuous state
+#     awareness ("bien detallado con audio"), not just the two endpoint events.
+#     Deliberately NOT mirrored on the WORN commit: that log line also fires on every
+#     ordinary don while the panel was never blanked (ANY doff-then-redon inside the
+#     SCREENOFF_MS window), which would double up with "casco encendido" in the one case
+#     that matters (redonning after a real blank) while adding noise to the far more
+#     common case (a quick doff/redon that never blanked at all).
+#     PRESENCE_RESTING_ALERT_DELAY_MS (default 0 = instant, matching the original
+#     behavior) makes this step's OWN timing configurable, separate from SCREENOFF_MS --
+#     first instance of the "each step gets its own delay" staged-sequence design the user
+#     asked for 2026-09-06, building it one step at a time rather than all at once. A
+#     nonzero delay speaks in a background subshell so it never blocks the tail loop from
+#     seeing later lines, and is CANCELLED if a WORN commit (redonning) arrives before it
+#     fires -- announcing "en la mesa" after you've already put it back on would be wrong.
 #   - "monado arriba" / "monado abajo": the MONADO_MARKER lines jack-in-wayland.sh
 #     appends to $LOG on a successful 'up' and on 'down'. Added after a live incident
 #     the same day where a test round produced zero alerts simply because the service
@@ -46,10 +53,13 @@ set -u
 VR="$HOME/vr"
 LOG="$VR/jack-in-wayland.log"
 VOICE="es-419"
+RESTING_ALERT_DELAY_MS="${PRESENCE_RESTING_ALERT_DELAY_MS:-0}"
 
 say() {
 	XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}" espeak-ng -v "$VOICE" "$1" >/dev/null 2>&1
 }
+
+resting_alert_pid=""
 
 echo "presence-sound-alert: watching $LOG"
 tail -n0 -F "$LOG" 2>/dev/null | while IFS= read -r line; do
@@ -61,7 +71,21 @@ tail -n0 -F "$LOG" 2>/dev/null | while IFS= read -r line; do
 		say "casco encendido"
 		;;
 	*"User presence: NOT WORN"*)
-		say "casco en la mesa"
+		if [ "$RESTING_ALERT_DELAY_MS" -gt 0 ]; then
+			(
+				sleep "$(awk "BEGIN{printf \"%.3f\", $RESTING_ALERT_DELAY_MS/1000}")"
+				say "casco en la mesa"
+			) &
+			resting_alert_pid=$!
+		else
+			say "casco en la mesa"
+		fi
+		;;
+	*"User presence: WORN"*)
+		if [ -n "$resting_alert_pid" ]; then
+			kill "$resting_alert_pid" 2>/dev/null
+			resting_alert_pid=""
+		fi
 		;;
 	*"MONADO_MARKER: up"*)
 		say "monado arriba"
