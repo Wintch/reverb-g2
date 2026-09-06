@@ -1,36 +1,31 @@
 # Next step
 
-> ## START HERE (2026-09-06 ~13:35 -03 -- presence auto-standby RESTORE fixed for real,
-> committed and live-validated -- docs/103 has the full 5-failed-attempts-then-root-cause story)
+> ## START HERE (2026-09-06 ~13:52 -03 -- presence auto-standby RESTORE fixed, ENABLED FOR REAL,
+> and now has an audible operator alert -- docs/103 has the full story, this is the closed loop)
 >
-> The bug where the panel never turns back on after auto-standby blank is FIXED, in the
-> `monado` checkout (`~/vr/monado`, branch `lab-full`, commit `c44ba4a23`), not just
-> instrumented. Root cause: RESTORE needs the companion's proximity channel "woken up" by a
-> full replica of `scripts/panel.py activate()` -- the 0x50 handshake, the identification
-> reads, AND the trailing screen-on command, all sent on ONE fresh hidraw file descriptor,
-> closed at the end. Every earlier automated attempt (5 of them, live-tested) split that one
-> atomic sequence across two different handles/times and never reproduced the effect, even
-> though the handshake bytes themselves were always correct (confirmed byte-for-byte against
-> `panel.py`'s own printed output).
+> The bug where the panel never turns back on after auto-standby blank is FIXED (`monado`,
+> branch `lab-full`, commit `c44ba4a23` -- root cause was `panel.py activate()`'s full
+> handshake+reads+screen-on sequence needing to run on ONE fresh hidraw fd, not split across
+> two handles/times like every one of 5 earlier automated attempts did), AND is now actually
+> turned on for real use: `~/vr/presence.conf`'s `PRESENCE_ENABLE=1` (was `0`), live-tested
+> through the genuine `jack-in-wayland.sh up 1 3dof` launch path (no manual env overrides) at
+> its real `PRESENCE_SCREENOFF_MS=120000` (2 min) timeout -- blank and restore both fired
+> correctly, confirmed via `/proc/<pid>/environ` the config was actually picked up.
 >
-> `wmr_hmd_reassert_reverb_fresh_fd()` now runs this full sequence once at blank time and then
-> every `WMR_PRESENCE_REASSERT_INTERVAL_MS` (default 15s) for as long as the panel stays
-> blanked, opt-out via `WMR_PRESENCE_RESTORE_REASSERT=0`. **Known, accepted tradeoff**: this
-> means a brief HP-logo flash every ~15s while a blanked headset sits idle (e.g. between demo
-> visitors) -- confirmed live to be a brief flash, not a sustained lit panel, but not yet tuned
-> or measured for how long the "wake" actually needs to last.
+> **New**: `scripts/presence-sound-alert.sh` (committed) speaks "casco apagado" / "casco
+> encendido" (`espeak-ng -v es-419`) on those same blank/restore events, since the headset sits
+> a few meters from the operator at a booth. Both phrases confirmed audible live. Read-only,
+> tails `jack-in-wayland.log`, survives a `monado-service` restart.
 >
-> **Live-validated 2026-09-06**: 3 consecutive fully automatic `blank -> WORN -> restored from
-> auto-standby -> NOT WORN` cycles, zero manual intervention, on top of 3/3 manual
-> `panel.py activate`-before-donning successes and 2/2 no-reassert control failures that
-> confirmed the underlying effect was real before any driver code was trusted. This is the
-> first time in this project's history RESTORE has ever fired automatically.
->
-> **Not done this session**: how long one reassert's "wake" effect lasts (the periodic re-arm
-> sidesteps needing to know, at the cost of the recurring flash); tuning the
-> flash-vs-freshness interval; resetting `WMR_USER_PRESENCE_SCREENOFF_MS` from its short
-> 15000ms test value to whatever the real demo-day default should be. Full blow-by-blow of all
-> 5 failed attempts and the byte-for-byte root-cause diff: docs/103's final section.
+> **Known, accepted tradeoff, not yet tuned**: `wmr_hmd_reassert_reverb_fresh_fd()` re-arms
+> every `WMR_PRESENCE_REASSERT_INTERVAL_MS` (default 15s) while blanked, and each call genuinely
+> flashes the HP logo briefly (confirmed live, not a sustained lit panel) -- a guest standing
+> near an idle blanked headset at the real 2-minute timeout would see this roughly every 15s
+> during that wait. **Not done**: no long soak at the real 2-minute interval to see how that
+> recurring flash reads over an extended idle stretch; no measurement of how long one reassert's
+> wake effect actually lasts (would allow a longer/adaptive interval instead of a flat 15s).
+> Full blow-by-blow of all 5 failed automated attempts, the byte-for-byte root-cause diff, and
+> the real-config validation: docs/103's final two sections.
 
 > ## START HERE (2026-09-06 ~12:20 -03 -- SDDM autologin VT-race fix AND keyring blank-password
 > BOTH CONFIRMED WORKING on a real reboot; VR-off state verified clean; new multi-user idea
