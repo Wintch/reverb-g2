@@ -651,3 +651,71 @@ alert.sh` (kept identical, `bash -n` clean), running process restarted to pick i
 **Not live-audio-confirmed by a human this round** -- this was implemented and deployed without
 physical access to the headset; the log-line hook is the same proven mechanism the other four states
 already use, but "casco en la mesa" itself has not yet been heard and confirmed live.
+
+## 2026-09-06 ~15:15-15:22 -03 — "casco en la mesa" live-confirmed; resting-alert delay becomes a per-user dashboard preset
+
+The 30s `PRESENCE_RESTING_ALERT_DELAY_MS` test from the previous section (set via ambient env var)
+**was subsequently live-confirmed** by the user: a fresh doff, ~30s wait, "casco en la mesa" heard
+and confirmed ("si necesitas mi input por teclado, avisame... Sisi, escuche"). The earlier "not yet
+heard" caveat is resolved.
+
+### Per-user preset: `status-dashboard.py`'s user-center is a real per-operator-identity system
+
+Investigated before building anything, per the user's ask ("agregalo al preset por persona"): this
+dashboard already has a genuine per-user profile mechanism, not just a single shared config file
+wearing a "per-user" label. `USER_PROFILES_FILE` (`~/vr/logs/user-profiles.json`) holds a dict of
+named profiles (`height_m`, `dof`, `brightness`, `mapping`, `notes`, `lang`), one `"active"` pointer,
+selectable via `/api/user/select` and edited via the user-center card's "Guardar usuario" button
+(`/api/user/save`). This is a DIFFERENT mechanism from `presence.conf` (`PRESENCE_ENABLE`/
+`PRESENCE_SCREENOFF_MS`), which is genuinely a single machine-wide file with no per-person concept at
+all -- both exist side by side today, doing different jobs. The resting-alert delay is a personal
+comfort preference (how much warning before "en la mesa"), so it belongs with `lang`/`brightness`/
+`height_m` in the per-user profile, not bolted onto `presence.conf`.
+
+**Built**: a new `resting_alert_delay_ms` field alongside the existing per-user fields.
+- `DEFAULT_USERS` and the `load_users()` migration both default it to `0` (instant, matching
+  today's original/safe behavior) -- existing saved profiles get it via `u.setdefault(...)`, same
+  pattern already used for `lang`'s own migration.
+- New `set_resting_alert_delay_ms()` (clamped `[0, 600000]` -- 600000ms/10min is the top preset
+  offered) writes `~/vr/logs/presence-resting-alert-delay-ms`, a plain-text live file in the same
+  spirit as `BRIGHTNESS_FILE`/`set_brightness_gain()`. Called from `/api/user/select` (switching
+  active user applies their delay immediately) and from `/api/user/save` when the saved profile IS
+  the active one (brightness gets this for free via its own live slider's `oninput`; this field has
+  no such slider, so Save has to trigger it directly or it would silently do nothing until the next
+  user-switch).
+- User-center UI: a new `<select id="uc-resting-delay">` row (labelled via new `cc_resting_delay`
+  i18n key, all three languages) offering **0 (instantáneo) / 1 min / 2 min / 3 min / 10 min** --
+  the exact preset ladder requested ("puede ser minuto, dos, 3, 10"), plus the 0/instant option to
+  keep the safe default reachable from the UI.
+- `presence-sound-alert.sh` no longer treats the delay as a value read once at process start:
+  `resting_alert_delay_ms()` now reads `RESTING_ALERT_DELAY_FILE` **fresh on every single doff commit**
+  (ambient `PRESENCE_RESTING_ALERT_DELAY_MS` still overrides it first, for quick ad-hoc testing the
+  way it was used before the dashboard preset existed). This means switching the active user's preset
+  takes effect on the very next doff with **no script restart needed** -- notably better than
+  `presence.conf`'s own `PRESENCE_ENABLE`/`SCREENOFF_MS`, which explicitly need a `jack-in down`+`up`
+  because Monado caches its env var on first read.
+
+**Verified, not just syntax-checked** (per this project's own standing lesson about PAGE-style string
+templating -- a source-only check missed a live-breaking backslash-escape bug once already): restarted
+`status-dashboard.service` (systemd --user), then `curl localhost:8765/` and confirmed the rendered
+page actually contains the new `<select id="uc-resting-delay">`, and `curl localhost:8765/api/users`
+confirmed both the `"default"` profile AND the real active profile (`AVGwmn`) carry the migrated
+`"resting_alert_delay_ms": 0` field. `python3 -m py_compile` was run too, but treated as necessary, not
+sufficient. `bash -n` on the shell script, plus an isolated unit test of the new
+`resting_alert_delay_ms()` shell function against no-file / valid-file / corrupt-file / env-override
+inputs, all before deploying live.
+
+**Live value preserved across the restart on purpose**: the running `presence-sound-alert.sh` process
+had `PRESENCE_RESTING_ALERT_DELAY_MS=30000` set as an ambient env var (today's just-confirmed live
+test). Restarting it to pick up the new file-reading code would have silently dropped back to the
+file's default (0) had the file been left empty -- instead, the real active user's profile was set to
+`resting_alert_delay_ms: 30000` via the actual `/api/user/save` endpoint BEFORE restarting, so the
+just-validated 30-second behavior carries over unchanged through the file-based path instead of
+regressing. `presence-sound-alert.sh` was killed and relaunched clean; confirmed alive and watching
+the log afterward.
+
+Not done: no live doff was performed to prove the FILE path itself (as opposed to the env-var path)
+actually drives a real "casco en la mesa" -- the underlying log-line hook is identical to what already
+fired successfully minutes earlier, and the shell function was unit-tested in isolation, but a live
+confirmation of the file-driven path specifically is still open for whenever the next physical test
+happens.

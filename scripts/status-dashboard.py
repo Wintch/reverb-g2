@@ -878,6 +878,13 @@ def playlist_status():
 # ---- Per-user command centre: fixed headset props + adjustable per-user settings ----
 USER_PROFILES_FILE = f"{HOME}/vr/logs/user-profiles.json"
 BRIGHTNESS_FILE = f"{HOME}/vr/logs/xrizer-brightness"
+# "casco en la mesa" delay (2026-09-06): how long presence-sound-alert.sh waits after a
+# doff commits before speaking, per active user -- same live-file pattern as
+# BRIGHTNESS_FILE/set_brightness_gain, read fresh by the shell script on each doff rather
+# than cached, so switching the active user here takes effect on the very next doff with
+# no restart needed (unlike PRESENCE_CONF_FILE below, which needs a jack-in down/up).
+RESTING_ALERT_DELAY_FILE = f"{HOME}/vr/logs/presence-resting-alert-delay-ms"
+RESTING_ALERT_DELAY_MAX_MS = 600000  # 10 min -- the top preset offered in the UI
 
 # Auto-standby opt-in + timeout (2026-09-04) -- read by rig_telemetry.presence_settings(),
 # written here. Same per-box conf file jack-in-wayland.sh sources at launch
@@ -906,7 +913,8 @@ DEFAULT_USERS = {
     "active": "default",
     "users": {
         "default": {"height_m": 1.70, "dof": "3dof", "brightness": 1.0,
-                    "mapping": "Xbox pad; A recentre", "notes": "", "lang": "es"},
+                    "mapping": "Xbox pad; A recentre", "notes": "", "lang": "es",
+                    "resting_alert_delay_ms": 0},
     },
 }
 
@@ -921,6 +929,7 @@ def load_users():
         # as DEFAULT_USERS above -- don't silently change an existing operator's language.
         for u in d["users"].values():
             u.setdefault("lang", "es")
+            u.setdefault("resting_alert_delay_ms", 0)
         return d
     except Exception:
         return json.loads(json.dumps(DEFAULT_USERS))
@@ -944,6 +953,22 @@ def set_brightness_gain(gain):
     with open(BRIGHTNESS_FILE, "w") as f:
         f.write(f"{g:.3f}\n")
     return True, f"brillo -> {g:.2f}x (live si hay juego con el xrizer nuevo)"
+
+
+def set_resting_alert_delay_ms(delay_ms):
+    """Write the per-user "casco en la mesa" delay presence-sound-alert.sh reads fresh on
+    each doff commit. Same live-file pattern as set_brightness_gain/BRIGHTNESS_FILE --
+    unlike PRESENCE_CONF_FILE (PRESENCE_ENABLE/PRESENCE_SCREENOFF_MS, jack-in-wide, needs
+    a relaunch to apply), this one is picked up by the shell script's next doff event with
+    no restart, since the script re-reads the file at the moment it needs the value."""
+    try:
+        d = max(0, min(RESTING_ALERT_DELAY_MAX_MS, int(delay_ms)))
+    except (TypeError, ValueError):
+        return False, "resting_alert_delay_ms must be an integer"
+    os.makedirs(f"{HOME}/vr/logs", exist_ok=True)
+    with open(RESTING_ALERT_DELAY_FILE, "w") as f:
+        f.write(f"{d}\n")
+    return True, f"aviso 'en la mesa' -> {d} ms"
 
 
 def save_presence_settings(enable_raw, screenoff_ms_raw):
@@ -1515,6 +1540,7 @@ const I18N = {
     cc_active_user: "Active user", cc_new_user_ph: "new user", cc_add_btn: "+ add",
     cc_adjustable: "Adjustable (per user)", cc_brightness: "brightness", cc_height: "height (m)",
     cc_dof: "preferred DoF", cc_mapping: "controller mapping", cc_notes: "notes",
+    cc_resting_delay: "\"resting\" alert delay",
     cc_save_btn: "Save user", cc_fixed: "Fixed (not changeable on this headset)", cc_lang: "language",
     cc_edit_profile: "edit profile",
     pl_name_label: "Name:", pl_name_default: "Demo round",
@@ -1548,6 +1574,7 @@ const I18N = {
     cc_active_user: "Usuario activo", cc_new_user_ph: "nuevo usuario", cc_add_btn: "+ agregar",
     cc_adjustable: "Ajustable (por usuario)", cc_brightness: "brillo", cc_height: "altura (m)",
     cc_dof: "DoF preferido", cc_mapping: "mapeo de controles", cc_notes: "notas",
+    cc_resting_delay: "demora aviso \"en la mesa\"",
     cc_save_btn: "Guardar usuario", cc_fixed: "Fijo (no modificable en este casco)", cc_lang: "idioma",
     cc_edit_profile: "editar perfil",
     pl_name_label: "Nombre:", pl_name_default: "Ronda demo",
@@ -1581,6 +1608,7 @@ const I18N = {
     cc_active_user: "Активный пользователь", cc_new_user_ph: "новый пользователь", cc_add_btn: "+ добавить",
     cc_adjustable: "Настраиваемое (по пользователю)", cc_brightness: "яркость", cc_height: "рост (м)",
     cc_dof: "предпочитаемый DoF", cc_mapping: "раскладка контроллеров", cc_notes: "заметки",
+    cc_resting_delay: "задержка \"на столе\"",
     cc_save_btn: "Сохранить пользователя", cc_fixed: "Фиксировано (нельзя изменить на этой гарнитуре)", cc_lang: "язык",
     cc_edit_profile: "редактировать профиль",
     pl_name_label: "Название:", pl_name_default: "Демо-раунд",
@@ -2470,6 +2498,11 @@ async function refreshUserCenter() {
         <select id="uc-dof"><option ${u.dof==='3dof'?'selected':''}>3dof</option><option ${u.dof==='6dof'?'selected':''}>6dof</option></select></div>
       <div class="row"><span>${t('cc_mapping')}</span><input id="uc-map" value="${esc(u.mapping)}" style="width:260px"></div>
       <div class="row"><span>${t('cc_notes')}</span><input id="uc-notes" value="${esc(u.notes)}" style="width:260px"></div>
+      <div class="row"><span>${t('cc_resting_delay')}</span>
+        <select id="uc-resting-delay">${
+          [[0,'0 (instantáneo)'],[60000,'1 min'],[120000,'2 min'],[180000,'3 min'],[600000,'10 min']]
+            .map(([v,l]) => `<option value="${v}" ${(u.resting_alert_delay_ms||0)===v?'selected':''}>${l}</option>`).join('')
+        }</select></div>
       <div style="margin-top:6px"><button onclick="userSave()">${t('cc_save_btn')}</button>
         <span id="uc-msg" class="dim" style="font-size:12px"></span></div>
       <div class="fixed-plate">
@@ -2483,7 +2516,7 @@ async function refreshUserCenter() {
 async function userSelect(name) { await fetch('/api/user/select?name='+encodeURIComponent(name), {method:'POST'}); refreshUserCenter(); }
 function userAdd() {
   const n = (document.getElementById('uc-new').value||'').trim(); if (!n) return;
-  fetch('/api/user/save', {method:'POST', body: JSON.stringify({name:n, height_m:1.7, dof:'3dof', brightness:1.0, mapping:'', notes:'', lang:currentLang, make_active:true})}).then(()=>refreshUserCenter());
+  fetch('/api/user/save', {method:'POST', body: JSON.stringify({name:n, height_m:1.7, dof:'3dof', brightness:1.0, mapping:'', notes:'', lang:currentLang, resting_alert_delay_ms:0, make_active:true})}).then(()=>refreshUserCenter());
 }
 async function setBrightness(g) { await fetch('/api/brightness?gain='+encodeURIComponent(g), {method:'POST'}); }
 async function userSave() {
@@ -2493,6 +2526,7 @@ async function userSave() {
     dof: document.getElementById('uc-dof').value,
     brightness: parseFloat(document.getElementById('uc-bri').value)||1.0,
     mapping: document.getElementById('uc-map').value, notes: document.getElementById('uc-notes').value,
+    resting_alert_delay_ms: parseInt(document.getElementById('uc-resting-delay').value)||0,
     lang: currentLang });
   const d = await (await fetch('/api/user/save', {method:'POST', body})).json();
   document.getElementById('uc-msg').textContent = (d.ok?'guardado ':'FALLO ')+d.message;
@@ -2690,6 +2724,7 @@ class Handler(BaseHTTPRequestHandler):
                 d["active"] = name
                 save_users(d)
                 set_brightness_gain(d["users"][name].get("brightness", 1.0))
+                set_resting_alert_delay_ms(d["users"][name].get("resting_alert_delay_ms", 0))
                 self._json_post(True, f"usuario activo: {name}")
             else:
                 self._json_post(False, f"no existe el usuario '{name}'")
@@ -2702,13 +2737,20 @@ class Handler(BaseHTTPRequestHandler):
                 assert name
                 d = load_users()
                 u = d["users"].get(name, {})
-                for k in ("height_m", "dof", "brightness", "mapping", "notes", "lang"):
+                for k in ("height_m", "dof", "brightness", "mapping", "notes", "lang",
+                          "resting_alert_delay_ms"):
                     if k in p:
                         u[k] = p[k]
                 d["users"][name] = u
                 if p.get("make_active"):
                     d["active"] = name
                 save_users(d)
+                # brightness has its own live slider (oninput -> /api/brightness) that
+                # applies before Save is even clicked; resting_alert_delay_ms has no such
+                # slider, so apply it here whenever the saved profile is the active one --
+                # otherwise Save would silently do nothing until the next user/select.
+                if d["active"] == name:
+                    set_resting_alert_delay_ms(u.get("resting_alert_delay_ms", 0))
                 self._json_post(True, f"usuario '{name}' guardado")
             except Exception as e:
                 self._json_post(False, str(e))

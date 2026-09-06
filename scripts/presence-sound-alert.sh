@@ -18,13 +18,20 @@
 #     SCREENOFF_MS window), which would double up with "casco encendido" in the one case
 #     that matters (redonning after a real blank) while adding noise to the far more
 #     common case (a quick doff/redon that never blanked at all).
-#     PRESENCE_RESTING_ALERT_DELAY_MS (default 0 = instant, matching the original
-#     behavior) makes this step's OWN timing configurable, separate from SCREENOFF_MS --
-#     first instance of the "each step gets its own delay" staged-sequence design the user
-#     asked for 2026-09-06, building it one step at a time rather than all at once. A
-#     nonzero delay speaks in a background subshell so it never blocks the tail loop from
-#     seeing later lines, and is CANCELLED if a WORN commit (redonning) arrives before it
-#     fires -- announcing "en la mesa" after you've already put it back on would be wrong.
+#     This step's OWN timing is configurable, separate from SCREENOFF_MS -- first instance
+#     of the "each step gets its own delay" staged-sequence design the user asked for
+#     2026-09-06, building it one step at a time rather than all at once. The delay is
+#     PER-USER (status-dashboard.py's user-center "resting_alert_delay_ms" field, same
+#     preset pattern as brightness/lang/height): the dashboard writes it to
+#     RESTING_ALERT_DELAY_FILE on every user save/select, and this script re-reads that
+#     file FRESH on every single doff -- not once at startup -- so switching the active
+#     user applies to the very next doff with no restart needed (unlike PRESENCE_ENABLE/
+#     SCREENOFF_MS in presence.conf, which need a jack-in down/up). The ambient
+#     PRESENCE_RESTING_ALERT_DELAY_MS env var, if set, overrides the file -- kept for quick
+#     ad-hoc testing the way it was used before the dashboard preset existed. A nonzero
+#     delay speaks in a background subshell so it never blocks the tail loop from seeing
+#     later lines, and is CANCELLED if a WORN commit (redonning) arrives before it fires --
+#     announcing "en la mesa" after you've already put it back on would be wrong.
 #   - "monado arriba" / "monado abajo": the MONADO_MARKER lines jack-in-wayland.sh
 #     appends to $LOG on a successful 'up' and on 'down'. Added after a live incident
 #     the same day where a test round produced zero alerts simply because the service
@@ -53,10 +60,26 @@ set -u
 VR="$HOME/vr"
 LOG="$VR/jack-in-wayland.log"
 VOICE="es-419"
-RESTING_ALERT_DELAY_MS="${PRESENCE_RESTING_ALERT_DELAY_MS:-0}"
+RESTING_ALERT_DELAY_FILE="$VR/logs/presence-resting-alert-delay-ms"
 
 say() {
 	XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}" espeak-ng -v "$VOICE" "$1" >/dev/null 2>&1
+}
+
+# Ambient env var wins (ad-hoc testing override); else the per-user dashboard preset file,
+# read fresh so it's never stale; else 0 (instant, the original behavior). Sanitized to
+# digits-only so a missing/corrupt file can't break the "-gt 0" test below under set -u.
+resting_alert_delay_ms() {
+	if [ -n "${PRESENCE_RESTING_ALERT_DELAY_MS:-}" ]; then
+		printf '%s' "$PRESENCE_RESTING_ALERT_DELAY_MS"
+		return
+	fi
+	local v
+	v="$(cat "$RESTING_ALERT_DELAY_FILE" 2>/dev/null | tr -d '[:space:]')"
+	case "$v" in
+	'' | *[!0-9]*) printf '0' ;;
+	*) printf '%s' "$v" ;;
+	esac
 }
 
 resting_alert_pid=""
@@ -71,9 +94,10 @@ tail -n0 -F "$LOG" 2>/dev/null | while IFS= read -r line; do
 		say "casco encendido"
 		;;
 	*"User presence: NOT WORN"*)
-		if [ "$RESTING_ALERT_DELAY_MS" -gt 0 ]; then
+		delay_ms="$(resting_alert_delay_ms)"
+		if [ "$delay_ms" -gt 0 ]; then
 			(
-				sleep "$(awk "BEGIN{printf \"%.3f\", $RESTING_ALERT_DELAY_MS/1000}")"
+				sleep "$(awk "BEGIN{printf \"%.3f\", $delay_ms/1000}")"
 				say "casco en la mesa"
 			) &
 			resting_alert_pid=$!
