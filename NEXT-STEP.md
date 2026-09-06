@@ -1,5 +1,37 @@
 # Next step
 
+> ## START HERE (2026-09-06 ~13:35 -03 -- presence auto-standby RESTORE fixed for real,
+> committed and live-validated -- docs/103 has the full 5-failed-attempts-then-root-cause story)
+>
+> The bug where the panel never turns back on after auto-standby blank is FIXED, in the
+> `monado` checkout (`~/vr/monado`, branch `lab-full`, commit `c44ba4a23`), not just
+> instrumented. Root cause: RESTORE needs the companion's proximity channel "woken up" by a
+> full replica of `scripts/panel.py activate()` -- the 0x50 handshake, the identification
+> reads, AND the trailing screen-on command, all sent on ONE fresh hidraw file descriptor,
+> closed at the end. Every earlier automated attempt (5 of them, live-tested) split that one
+> atomic sequence across two different handles/times and never reproduced the effect, even
+> though the handshake bytes themselves were always correct (confirmed byte-for-byte against
+> `panel.py`'s own printed output).
+>
+> `wmr_hmd_reassert_reverb_fresh_fd()` now runs this full sequence once at blank time and then
+> every `WMR_PRESENCE_REASSERT_INTERVAL_MS` (default 15s) for as long as the panel stays
+> blanked, opt-out via `WMR_PRESENCE_RESTORE_REASSERT=0`. **Known, accepted tradeoff**: this
+> means a brief HP-logo flash every ~15s while a blanked headset sits idle (e.g. between demo
+> visitors) -- confirmed live to be a brief flash, not a sustained lit panel, but not yet tuned
+> or measured for how long the "wake" actually needs to last.
+>
+> **Live-validated 2026-09-06**: 3 consecutive fully automatic `blank -> WORN -> restored from
+> auto-standby -> NOT WORN` cycles, zero manual intervention, on top of 3/3 manual
+> `panel.py activate`-before-donning successes and 2/2 no-reassert control failures that
+> confirmed the underlying effect was real before any driver code was trusted. This is the
+> first time in this project's history RESTORE has ever fired automatically.
+>
+> **Not done this session**: how long one reassert's "wake" effect lasts (the periodic re-arm
+> sidesteps needing to know, at the cost of the recurring flash); tuning the
+> flash-vs-freshness interval; resetting `WMR_USER_PRESENCE_SCREENOFF_MS` from its short
+> 15000ms test value to whatever the real demo-day default should be. Full blow-by-blow of all
+> 5 failed attempts and the byte-for-byte root-cause diff: docs/103's final section.
+
 > ## START HERE (2026-09-06 ~12:20 -03 -- SDDM autologin VT-race fix AND keyring blank-password
 > BOTH CONFIRMED WORKING on a real reboot; VR-off state verified clean; new multi-user idea
 > captured for later)

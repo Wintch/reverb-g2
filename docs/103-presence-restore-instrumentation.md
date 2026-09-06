@@ -250,3 +250,165 @@ using a DIFFERENT signal to gate a RESTORE *attempt* -- e.g. real IMU motion (al
 continuously, unaffected by this bug) as a proxy for "probably being picked up/worn again",
 triggering a screen re-assert speculatively rather than waiting on a proximity edge that may
 never come.
+
+## 2026-09-06 ~12:25-12:35 -03 — a real, working fix found and A/B-confirmed: screen reassertion "wakes" the companion channel
+
+The two untried candidate directions from the previous correction entry were narrowed down to
+(b) first, since it needed zero code changes to test: does re-running `scripts/panel.py activate`
+(the existing, independent, HID-level screen-enable command -- NOT the proven-broken
+feature-report proximity read) while the panel is auto-standby-blanked have any effect on the
+companion channel's willingness to report the next real WORN transition?
+
+**Clean A/B result, 3 cycles total:**
+
+1. `panel.py activate` while NOT WORN, still blanked -> **no new proximity packet by itself**
+   (confirmed both times it was tried) -- this alone doesn't fake a WORN reading, it does
+   something else.
+2. Don immediately after -> **`panel restored from auto-standby` fires** (button-press-timed:
+   12:29:47.432 -> 12:30:01.852, don committed cleanly). Doff afterward re-blanks correctly too.
+3. **Control cycle, deliberately WITHOUT `panel.py activate`, same session, same blanked
+   state**: don/doff (12:33:13.974 -> 12:33:26.002, 12s) -> **zero new packets**, RESTORE fails
+   exactly as every prior test this session -- confirms the baseline failure is still live and
+   the fix isn't a session-wide fluke.
+4. `panel.py activate` again, then don again (12:34:25.144 -> 12:34:36.476) -> **`panel restored
+   from auto-standby` fires again**, second clean reproduction.
+
+**Net: 0/1 without the reassert, 2/2 with it, same session, same hardware, same blanked
+precondition each time.** This is a real, reproducible, practical fix candidate -- and a
+completely different, safer mechanism than the one already ruled out: `panel.py activate` sends
+the companion's existing screen-enable command (the same one `wmr_hmd_activate_reverb` and the
+reconnect-path already call, per the code read in the previous correction entry), NOT a
+feature-report read of the proximity/IPD value -- so it should not carry patch 0090's measured
+1.4-5.0s block-the-shared-run-loop cost. Each `panel.py activate` call in this test returned in
+well under a second.
+
+**Practical implication for a real fix**: instead of the broken idea (a periodic proximity
+feature-read poll), the fix is likely a periodic (or blank-triggered) call to the *existing*
+`screen_enable_func` while `screen_off_by_presence` is true -- something Monado's own driver
+already has direct access to (it's the same function `wmr_hmd_activate_reverb` and the
+reconnect-resync path call, `hmd_desc->screen_enable_func`), not an external script. Not yet
+wired into the driver as an automated fix -- this session only proved the *mechanism* works via
+the existing standalone `panel.py` tool, calling it manually each time. **Open question before
+wiring this in for real**: does calling `screen_enable_func` while genuinely NOT WORN cause any
+visible flash/backlight blip a real guest would notice (the wearer reported "HP on, backlight
+off" after the first manual activate -- a brief logo flash, not a sustained backlight-on state,
+which would be an acceptable tradeoff if confirmed consistent) -- worth a couple more observations
+before deciding how often to call it (once right when blank fires vs. a genuine periodic timer).
+
+## 2026-09-06 ~12:45-13:35 -03 — RESOLVED: automated fix implemented, root-caused through 3 layered bugs, live-validated
+
+The previous entry's "practical implication" (wire `screen_enable_func` into the blank/restore
+state machine) turned out to be the wrong level of the problem -- it took 5 consecutive failed
+live automated attempts, each disproving a specific hypothesis, before the real fix was found.
+Documented in full because every failed attempt narrowed the search in a genuinely useful way.
+
+### Attempt 1 -- reassert in the RESTORE branch, gated on `committed`: dead code
+
+First automated wiring called `hmd_desc->screen_enable_func` (later `reassert_func`) inside
+`if (wh->presence.committed) { if (screen_off_by_presence) { ... } }` -- mirroring where the
+existing (broken) restore logic already lived. **Live result: 0 new raw packets across 500+s of
+`update_inputs` calls, including a real don/doff cycle.** Root cause, found by re-reading the
+code before blaming the hardware again: `committed` can only ever become `true` from a *fresh*
+companion packet -- and the whole bug is that no fresh packet arrives once blanked. The call was
+provably unreachable in exactly the state it needed to fix.
+
+### Attempt 2 -- one-shot reassert at the blank transition: decays over time
+
+Moved the call to fire once, right when auto-standby blanks the panel (still NOT WORN). This
+matches the manual recipe's shape (activate, then don shortly after) and initially looked
+promising. **Live result: a real don ~100s after the one-shot reassert produced zero new
+packets** -- same as no reassert at all. The manual successes had a short (single-digit-seconds)
+gap between `activate` and donning; a 100s gap was not equivalent. The "wake" effect measurably
+decays with time, so a single call can't be relied on to still be in effect whenever the wearer
+actually returns.
+
+### Attempt 3 -- periodic re-arm (shared handle, `wh->hid_control_dev`), ~15s interval
+
+Fixed the decay problem by re-arming every `WMR_PRESENCE_REASSERT_INTERVAL_MS` (default 15000)
+for as long as the panel stays blanked, confirmed firing repeatedly and on schedule. **Live
+result: still 0 new packets** across a real don/doff, even after confirming (via reconstructed
+timestamps) the donning gesture happened comfortably outside any reassert's own blocking window.
+Ruled out "the wearer happened to don while a reassert was mid-flight and the shared HID
+endpoint was too busy to also carry the real proximity report."
+
+Also measured, independent of the above: each shared-handle reassert call blocked the shared
+IMU/camera run loop for **~4-5 seconds** (vs. sub-second for the same handshake run standalone
+via `scripts/panel.py`) -- almost certainly `wh->hid_lock` contention with that same thread's own
+continuous IMU reads. Not the reason RESTORE still failed, but a real, separate cost worth fixing
+regardless (a periodic ~30-40% duty-cycle stall on the shared thread, indefinitely, while idle).
+
+### Attempt 4 -- fresh, independent hidraw fd instead of the shared handle
+
+Hypothesis: `panel.py` succeeds as an independent process opening its own fd; maybe *reusing* an
+already-open, continuously-read handle (rather than the fd itself) is what differs. Added
+`wmr_hmd_reassert_reverb_fresh_fd()`: re-scans for the companion's hidraw path
+(`companion_find_hidraw_path`, already used by the reconnect path) and opens a brand-new
+`os_hid_device` for the handshake, closing it afterward -- no `wh->hid_lock` taken at all, since
+a separate fd needs no serialization with the shared one. **Measured: ~368ms per call, matching
+`panel.py`'s own timing almost exactly** -- confirms the ~4-5s cost above really was hid_lock
+contention, now gone. **But live result was still 0 new packets** through a real don/doff cycle.
+The fresh-fd hypothesis fixed a real performance problem but was not itself the missing
+ingredient for RESTORE.
+
+Two cheap non-wearer checks ruled out two more candidate explanations before spending a 6th
+physical cycle: (a) enumerated all `hidraw*` nodes matching the companion's VID:PID live -- only
+one exists, and both `panel.py`'s naive first-match and the driver's own ":1.0/" interface-
+preferring `companion_find_hidraw_path()` resolve to the *same* node, so "wrong USB interface"
+was not it; (b) ran `panel.py activate` manually and checked `journalctl -k` for the same window
+-- **zero kernel USB events**, so `activate()` does not cause a real re-enumeration either (only
+the separate `off` command is documented to do that, per `panel.py`'s own docstring).
+
+### Root cause, found by diffing byte-for-byte against `panel.py`'s own printed output
+
+Added temporary logging of every byte `wmr_hmd_reassert_reverb_fresh_fd()` actually read back
+(not just the ioctl return code) and compared directly against `panel.py activate`'s own printed
+hex dumps from an earlier manual run. The 0x50 loop responses and the 0x09/0x08/0x06
+identification reads **matched byte-for-byte** -- real, correct, changing device data, not
+garbage from a "successful-looking" but semantically empty ioctl. So the handshake and reads
+were never the problem.
+
+The difference was structural, not electrical: `panel.py activate()` sends the trailing
+screen-on command (`HIDIOCSFEATURE({0x04, 0x01})`) on the **same** open file descriptor, right
+after the identification reads, before closing it -- one atomic sequence, one connection. Every
+automated attempt above closed the fresh/shared fd after the handshake and reads, and left the
+screen-on send to the driver's *ordinary* `screen_enable_func`, called separately, on a
+*different* handle (`wh->hid_control_dev`), at a *different* time (real RESTORE, which by
+definition hadn't happened yet). Five attempts had all silently split one atomic sequence into
+two, on two different connections, at two different times -- and never reproduced the effect
+because of it.
+
+### The fix
+
+`wmr_hmd_reassert_reverb_fresh_fd()` (`src/xrt/drivers/wmr/wmr_hmd.c`) now replicates
+`panel.py activate()` exactly, in order, on one fresh fd: 300ms sleep, 4x (0x50 send + 0x50 get +
+10ms sleep), the three identification reads, **then the `{0x04, 0x01}` screen-on send**, then
+close. Wired as the Reverb family's `reassert_func` (new optional function pointer on
+`wmr_headset_descriptor`, NULL for Odyssey+). `wmr_hmd_update_inputs()` calls it once at the
+blank transition and then periodically (`WMR_PRESENCE_REASSERT_INTERVAL_MS`, default 15s) for as
+long as the panel stays blanked -- opt out with `WMR_PRESENCE_RESTORE_REASSERT=0`. Committed as
+`c44ba4a23` on `lab-full` in the `monado` checkout.
+
+**Known, accepted tradeoff**: every periodic re-arm briefly flashes the HP logo while blanked,
+since the screen-on command is genuinely sent to the panel each time (confirmed live, both
+manually and automatically, to be a brief flash rather than a sustained lit panel --
+`wh->hmd_screen_enable`/`screen_off_by_presence` are untouched by the fresh fd and still say
+"off", so nothing keeps compositing frames to it afterward). A guest at a booth idling near a
+blanked headset would see this flash roughly every 15s. Not measured or tuned further this
+session.
+
+### Live validation
+
+Manual treatment/control pairs (before any automated fix, confirming the underlying effect is
+real and not a small-sample fluke): **3/3 success with `panel.py activate` immediately before
+donning, 2/2 failure without it**, spread across two separate test sessions on either side of a
+`monado-service` restart. Automated fix, after the byte-for-byte root cause was found and
+corrected: **3 consecutive fully automatic `blank -> WORN -> restored from auto-standby ->
+NOT WORN` cycles, zero manual intervention**, the last one against the final cleaned-up (no
+diagnostic byte-dump logging) build. `raw_packets` incremented and `committed` correctly flipped
+both directions every time; doffing after a restore re-blanks correctly on schedule too.
+
+**Not done this session, left for later**: no measurement of how long the "wake" from one
+reassert call actually lasts (the periodic 15s re-arm sidesteps needing to know this, at the
+cost of the recurring logo-flash); no tuning of the flash-vs-freshness tradeoff via a longer or
+adaptive interval; SCREENOFF_MS was left at its short 15000ms test value for this whole
+investigation, not reset to whatever the real deployed default should be for the demo-day booth.
