@@ -1413,3 +1413,100 @@ render gain back and forth -- cosmetically wrong for a moment, but not a real ba
 cycle. That would make this whole confirm/timeout tradeoff much lower-stakes than it currently is
 under Monado's own HID-driven auto-standby, which is worth weighing before spending more effort
 tuning `WMR_USER_PRESENCE_DON_MOTION_RAD_S`/`_DON_CONFIRM_TIMEOUT_MS` further.
+
+## 2026-09-06 (later still) -- genuine Windows/Oasis standby, USB-level ground truth from real captures
+
+The user independently ran the real Windows Mixed Reality stack tonight -- Windows 11, SteamVR,
+and the "Oasis Driver for Windows Mixed Reality" (mbucchia's SteamVR replacement for Microsoft's
+own discontinued WMR portal, running natively on Windows, not the Linux/Wine "Ignition" port) --
+with the same physical G2 unit, and captured raw USB traffic with USBPcap/Wireshark across two
+tests: SteamVR's motion-based standby ("modo movimiento", `camera_apareo_standby.pcapng`, ~717s /
+485k packets / 2.4GB) and its proximity-based standby ("modo proximidad",
+`camera_apareo_standby_2_sensor.pcapng`, ~160s / 162k packets / 959MB). This section analyzes
+those captures directly (`tshark`) to answer the question raised earlier tonight: does real
+Windows standby actually toggle the companion's backlight over HID the way Monado's own
+auto-standby does, or is it doing something else -- motivated by the user's live observation that
+Steam's standby only blanks the rendered image (backlight visibly stays lit) and the panel only
+goes genuinely dark when SteamVR fully exits.
+
+**Method.** USB device addresses get reused across a capture this long as devices enumerate,
+disconnect, and re-enumerate (Windows recycles addresses), so filtering by `usb.device_address`
+alone across the whole file is unreliable -- confirmed directly: address 5 was the Realtek camera
+(`0x0bda:0x4c15`) at t=1s but the HP QHMD companion (`0x03f0:0x0580`) by t=285s. Cross-referenced
+every `usb.idVendor`/`usb.idProduct` sighting against its frame's timestamp and device address
+before trusting any address-scoped query. Our own driver's screen on/off command
+(`wmr_hmd_screen_off_reverb_fresh_fd`/`wmr_hmd_reassert_reverb_fresh_fd` in `wmr_hmd.c`) is sent
+as an HID **Feature report** via `os_hid_set_feature()` -- a `SET_REPORT` class control transfer
+(`bmRequestType 0x21`, `bRequest 9`) with `wValue` high byte `0x03` (ReportType=Feature). That
+exact shape is what was searched for first, since it is the most direct possible confirmation or
+refutation of "does Windows use the same command we do."
+
+**Finding 1 -- zero HID Feature-report SET_REPORT commands anywhere, in either capture.**
+`tshark -Y "usb.bmRequestType==0x21 && usb.setup.bRequest==9 && usb.setup.wValue>=0x0300 &&
+usb.setup.wValue<0x0400"` against the full motion-mode capture (485k packets) and the full
+proximity-mode capture (162k packets) both returned **zero matches**. Genuine `SET_REPORT` class
+requests do appear throughout both captures (e.g. an Output-type report, `wValue=0x0200`,
+`wLength=1`, single data byte `00`, most likely an Xbox controller rumble/LED write given the
+device present in this capture) -- so the HID class-request path itself is exercised normally by
+other devices, it is specifically the Feature-report shape that never appears. **This directly
+refutes the assumption this session's auto-standby work has been built on**: real Windows/Oasis
+standby is not sending the equivalent of our `{0x04,0x00}`/`{0x04,0x01}` Feature report at all,
+on any device, at any point in either capture.
+
+**Finding 2 -- the motion-mode capture shows the companion undergoing full USB re-enumeration,
+three times, not a simple in-band command.** Searching the whole file for `SET CONFIGURATION`
+requests (a mid-capture occurrence, after the initial t=0-1s startup enumeration of all 6
+devices, means something actually reset/reconnected at the USB level) found three clusters: at
+relative t~283-286s, ~317-320s, and ~365-368s. In the first cluster, the HP QHMD companion
+(`0x03f0:0x0580`, address 5 at that point) does a complete `GET DESCRIPTOR DEVICE` ->
+`GET DESCRIPTOR CONFIGURATION` (x2) -> `SET CONFIGURATION` -> `SET_IDLE` ->
+`GET DESCRIPTOR HID Report` sequence -- i.e. exactly what a device does when it is freshly
+plugged in or comes back from a real USB-level reset/power-cycle, not what happens when an
+already-open handle just receives one more command. About 0.8s later in the same cluster, the
+Microsoft HoloLens Sensors interface (`0x045e:0x0659`) does the identical full-enumeration
+sequence. The same shape repeats at the other two clusters. This is consistent with (though not
+independently proven to be) the multiple deliberate wake/standby attempts the user described
+making during this test ("por movimiento arranca igual" -- motion mode woke every time they
+tried) -- three clusters for what was likely several manual test cycles is plausible, but this
+capture alone does not carry an unambiguous "standby entered here, exactly" marker (the nearest
+available reference points, Steam screenshot filenames from the same session, land tens of
+seconds after the nearest cluster and don't pin the moment precisely) so which cluster
+corresponds to which specific user action is not claimed here with confidence -- only that this
+re-enumeration behavior happens, repeatedly, and looks nothing like a single HID command.
+
+**Finding 3 -- the proximity-mode capture shows no mid-capture re-enumeration at all.** The same
+`SET CONFIGURATION` search against the full 160s proximity-mode capture found only the initial
+t=0-1s startup enumeration of all 6 devices -- no later cluster. Combined with Finding 1 holding
+for this file too (zero Feature-report SET_REPORTs), this capture simply does not show *any*
+USB-level event that looks like a standby/wake transition, in either the "simple command" or
+"device reset" shape. Given the user's own note that proximity mode "arranca... seguro que en la
+segunda prueba" (proximity-mode wake was reliable only on the second attempt), it's plausible this
+particular 160s window didn't span a full standby-then-wake cycle at all, or that whatever
+Windows does for proximity-mode standby leaves no USB-level trace distinguishable from ordinary
+sensor traffic -- both are open possibilities, not resolved here.
+
+**What this does and doesn't establish.** It's now directly evidenced, not just user-observed,
+that Monado's entire auto-standby architecture (an in-band HID Feature-report toggle over the
+companion's control channel, the exact mechanism this whole investigation has been hardening
+today -- fresh-fd sends, keep-alive pokes, debounce redesign) has **no counterpart in what real
+Windows/Oasis actually does** in this capture. The strongest lead for what real Windows does
+instead is the observed USB re-enumeration pattern -- a real port-level reset/power-cycle -- which
+would be a categorically different, more invasive mechanism than anything built today, and would
+also cleanly explain the user's own observation that only a *full SteamVR exit* reliably darkens
+the backlight (a full exit very plausibly does trigger a genuine device power-down/reset, the same
+shape seen mid-capture here) while lighter standby mostly just blanks the render (a compositor-
+side operation, not a device-level one). This is consistent with, and strengthens, the
+already-noted case (see the brightness/render-side mitigation discussion earlier in this file) for
+treating a compositor-side render-black as the primary "worn but idle" mechanism rather than
+continuing to fight the HID-level toggle for that case -- reserving any real device-level
+power-cycle, if one is ever attempted, for genuine session start/end, matching what these captures
+suggest Windows itself does. **Not established**: that the re-enumeration clusters found here are
+*specifically* standby-triggered (versus some other retry/renegotiation this test's repeated
+manual attempts could also explain) -- a future capture bracketing a single, clearly time-marked
+standby-then-wake cycle (e.g. the tester speaking a timestamp aloud, or a screenshot taken at the
+exact moment of standby) would settle this with more confidence than what these two captures, made
+for a different immediate purpose, can support on their own.
+
+Raw extraction files (not committed, local scratch only): device/address timelines and the
+Feature-report/SET_CONFIGURATION query outputs used above are in the analyzing session's own
+scratchpad, not part of this repo.
