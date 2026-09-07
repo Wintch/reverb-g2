@@ -1510,3 +1510,300 @@ for a different immediate purpose, can support on their own.
 Raw extraction files (not committed, local scratch only): device/address timelines and the
 Feature-report/SET_CONFIGURATION query outputs used above are in the analyzing session's own
 scratchpad, not part of this repo.
+
+## 2026-09-06 (later still) -- a01003fb8's motion corroboration never even ran: motion promoted from candidate-corroborator to independent primary signal (code-analysis-only, not live-tested)
+
+Separate follow-up task, same night, explicitly framed as code/log/design work only -- no live
+hardware, no `monado-service` launch, no live test, no `sudo` -- because this rig is the user's only
+physical G2 and a human tester is actively using it live tonight. Confirmed live, immediately before
+this task started: a wearer donned the headset for over 5 minutes with the panel still
+auto-standby-blanked from a prior doff, unable to get a restore, and had to be un-blanked manually
+out-of-band (`scripts/panel.py activate`) as a stopgap.
+
+### Independently verifying the brief before designing anything
+
+Per this task's own standing instruction not to take a brief on faith, re-derived the failure
+directly from the live `~/vr/jack-in-wayland.log` on `iashur` (this was an ACTIVE, still-growing log
+at the time of reading -- `stat` showed the file's mtime within one second of `date`, and a
+`monado-service`/`hello_xr` pair was confirmed still running, read-only `pgrep`, nothing touched) and
+from `git log`/`git show a01003fb8` on `~/vr/monado` `lab-full`.
+
+**The core claim holds, with one factual correction worth recording.** The task's framing said
+`raw_packets` was "stuck at 1." The actual log shows two full, successful `via motion` WORN commits
+earlier in the SAME session (motion peaks 0.104 and 0.977 rad/s -- see below), each followed by a
+correctly-committed NOT WORN a few seconds later, each off a real, distinct proximity packet
+(`raw_packets` climbing 3 -> 4 -> 5 -> 6 through that stretch, not frozen at 1). The actual stuck
+point is AFTER packet #6 (the second NOT WORN commit) and the second `panel blanked by auto-standby`
+that follows it: from there, `raw_packets` freezes at exactly 6 and `PRESENCE-DIAG heartbeat` shows
+`raw_proximity=0 candidate=0 committed=0 screen_off_by_presence=1` completely unchanged for the rest
+of the captured window -- 228681 ms (3.8 real minutes) and still climbing at the moment of reading,
+confirmed by re-reading the log's tail a second time and seeing it still growing live. So the
+precise number in the brief ("stuck at 1") doesn't match the raw counter value, but the underlying
+claim -- a long, real, still-ongoing stretch with literally zero new proximity packets while the
+panel sits blanked -- is exactly what the log shows, just measured from packet #6 rather than #1.
+Recording this correction explicitly rather than silently using the "right" number without flagging
+that the brief's specific figure needed adjusting.
+
+**New data point beyond what the brief asked to confirm**: throughout that entire 228+ second stuck
+window, the periodic reassert poke (`WMR_PRESENCE_REASSERT_INTERVAL_MS`, firing every 15s per its own
+schedule, confirmed via repeated `Sent activation report (fresh fd)` / `presence auto-standby:
+reassert took ...` / `Sent screen-off (fresh fd)` triplets in the log) kept firing on schedule the
+whole time -- and NOT ONE of those pokes produced a new proximity packet. This directly complicates
+the earlier, more optimistic finding from the ~12:30 entry above ("screen reassertion wakes the
+companion channel," 2/2 success in a small manual A/B test): whatever effect that test measured, it
+is evidently not reliable enough to depend on as a general mechanism for restoring proximity
+delivery -- the channel can and does stay completely dark for many minutes even with periodic
+reasserts actively running against it the whole time. Not a contradiction of that earlier finding (it
+was a real, reproduced effect at the time), but a reminder that a 2/2 sample from one session doesn't
+generalize to "this always works," and this driver should not lean on it as a rescue mechanism going
+forward -- which is part of the motivation for this section's fix using a completely different
+signal instead.
+
+**Confirmed directly from `git show a01003fb8`, not assumed**: the fix is exactly as its own commit
+message describes -- `confirm_ok` (packets/motion/timeout) is computed entirely inside
+`if (wh->presence.candidate) { ... }`, which itself is inside
+`if (wh->presence.candidate != wh->presence.committed) { ... }`. Tracing this literally: if
+`wh->proximity_sensor` never changes from 0 (as tonight's confirmed stuck window shows), `raw_worn`
+is `false` on every tick, `wh->presence.candidate` never flips away from its already-committed value,
+the outer `if` never becomes true, and NOTHING inside it -- not the packet count, not the motion
+peak, not even the supposedly-unconditional hard timeout -- ever executes, for as long as the channel
+stays silent. This matches the task's own framing precisely: the previous fix could only ever help a
+candidate that already existed; it had no way to create one when the sole input that creates a
+candidate (the proximity byte) never moves.
+
+### Design: promote motion to an independent primary signal, not a bigger corroborator
+
+Read `wmr_hmd_presence_tick()` in full again, plus the `presence` struct in `wmr_hmd.h`, before
+designing anything (per this task's own hint not to invent new plumbing before checking what already
+exists). The same `wh->fusion.last_angular_velocity` a01003fb8 already reads (calibrated,
+`fusion.mutex`-protected, refreshed every tick regardless of proximity state) is still the only motion
+signal used -- no new sensor plumbing needed, same as before.
+
+**The mechanism, in one sentence**: a new `worn_signal` (computed once per tick, before the debounce
+block) replaces the raw proximity byte as the value that drives `wh->presence.candidate`, and
+`worn_signal` can now become true either because the proximity byte says so (unchanged) or because a
+sustained motion run is in progress AND the proximity channel has gone stale/silent long enough to no
+longer be trusted on its own.
+
+**Three cases, reasoned through explicitly** (matching the new code comment in `wmr_hmd.c`, restated
+here with the reasoning that led to each):
+
+1. **Raw byte says worn.** Always wins, unconditionally, whether the reading is fresh or a stale
+   last-known-worn value. This is also what makes the WORN-but-motionless case safe (see below): a
+   wearer who dons the headset via case 2, then goes still (watching content, reading), keeps
+   `raw_worn` at whatever the byte's last real value was -- if that value was ever `worn`, case 1
+   fires on every subsequent tick and case 2's own logic is never reached again for that wearer, so a
+   later motion lull cannot undo anything.
+
+2. **Raw byte says NOT worn (or has never reported anything at all) AND the channel has been
+   silent for `WMR_USER_PRESENCE_MOTION_RESCUE_STALE_MS` (default 30000ms) or longer.** Hand
+   authority to motion. If a sustained run is CURRENTLY in progress, assert worn -- this is the
+   actual rescue, and it is the only new way `worn_signal` can become true that raw proximity alone
+   would never have allowed. If no run is currently sustained, HOLD the existing `candidate` value
+   rather than forcing it false. This holding behavior is the single most important safety property
+   of the whole design and deserves its own explanation:
+
+   **Why motion-quiet must NOT independently commit NOT WORN, even though the task explicitly raised
+   this as an option to consider.** The DON case and the DOFF case are not mirror images of each
+   other, and treating them as if they were would be a mistake. For DON, "sustained real rotation is
+   happening" is a strong, low-false-positive signal -- it is genuinely difficult to put a headset on
+   a human head with no meaningful head/hand motion at all, so requiring motion to positively appear
+   is a safe bar to set. For DOFF, the proposed mirror rule would be "the ABSENCE of motion for a
+   while means not-worn" -- but a wearer who is genuinely wearing the headset and sitting still
+   (watching a 360 photo, reading in-VR text, a seated cockpit experience) produces exactly that same
+   absence of motion, for potentially very long stretches, while very much still wearing it. Building
+   a rule that treats stillness-while-worn the same as stillness-while-not-worn would turn ordinary,
+   calm VR usage into spurious doffs -- pausing the app and (per the existing brightness-dim
+   mitigation, and eventually the real HID blank after `SCREENOFF_MS`) dimming or blanking the panel
+   on someone who never took the headset off. This is a real, asymmetric risk that the DON case does
+   not share, and it is why case 2 above only ever pushes `worn_signal` toward `true`, never toward
+   `false` -- matching, rather than contradicting, this exact struct's own long-standing "fail toward
+   worn, never toward absent" philosophy already documented for the DON/DOFF debounce windows.
+
+3. **Raw byte says NOT worn AND the channel is fresh** (it has recently, actively reported the
+   opposite of what motion might be suggesting). Trust the live sensor. A channel that is
+   demonstrably alive and currently disagreeing with motion always wins -- motion is a fallback for
+   when the real sensor has nothing to say, not a competitor to it when it does.
+
+**What this means for the DOFF direction, concretely, re-examined against tonight's data
+specifically rather than carried over unquestioned (per this task's own explicit ask)**: DOFF's own
+commit path (`WMR_USER_PRESENCE_DOFF_MS`, pure wall-clock, unchanged since `41626b6e2`) is left
+completely untouched. The captured log from tonight still contains no genuine spurious mid-worn doff
+to point at, and the reasoning above (case 2's asymmetry) argues independently, not just from absence
+of evidence, that a motion-driven doff mechanism would be actively harmful to this driver's own goals
+rather than merely unproven. The honestly-disclosed cost of this decision: if the proximity channel
+goes silent WHILE genuinely worn (as opposed to while genuinely not-worn, tonight's confirmed case),
+and the wearer later removes the headset, `raw_worn` stays stuck at its last known `true` value (case
+1 above, same as pre-existing behavior, completely unaffected by tonight's change) and the driver has
+no way to learn about the real doff until/unless the channel starts talking again. This is not a new
+risk introduced tonight -- it already existed before this fix, for the identical reason (a doff
+signal is exactly as sparse and exactly as capable of never arriving as a don signal) -- and this fix
+does not make it any worse. It is also, per the earlier USBPcap-based finding in this same file
+(real Windows/Oasis showing no in-band HID standby command at all, and the case made there for
+treating a compositor-side render-black as the primary, lower-stakes "worn but idle" mechanism),
+arguably lower-stakes than it looks in isolation: a stuck-committed-WORN panel just means the
+render-side dim/HID-blank protections never engage, not that anything dangerous happens -- graceful
+degradation on the side that already has the existing brightness-dim mitigation as a backstop, not a
+wearer-facing hazard.
+
+### Why a hysteresis-style "motion run" rather than a peak or a leaky integrator
+
+Two more sophisticated alternatives were considered and rejected before settling on the implemented
+design (a "run" that starts when magnitude crosses threshold, tolerates gaps up to
+`WMR_USER_PRESENCE_MOTION_GAP_MS`, and is "sustained" once it has lasted
+`WMR_USER_PRESENCE_MOTION_SUSTAIN_MS`):
+
+- **A bare instantaneous peak, matching a01003fb8's own corroboration check.** Rejected because it
+  cannot tell a genuine multi-hundred-millisecond donning gesture apart from one hard knock on the
+  desk -- both can produce a single large `|angular velocity|` sample. a01003fb8's peak-based
+  corroboration is fine BECAUSE it already has independent evidence (a real proximity=1 packet); this
+  new path has no other evidence at all, so it needs a bar that reflects sustained handling, not one
+  high sample.
+- **A leaky-integrator "motion energy" accumulator** (`energy = energy * decay + magnitude * dt`,
+  thresholded on the accumulated value). Considered because it is naturally robust to brief dips
+  without an explicit gap-tolerance parameter, and is a common pattern for this class of problem.
+  Rejected specifically for THIS task, THIS session: with only two real donning-gesture data points
+  available (peak magnitudes 0.104 and 0.977 rad/s, no raw waveform, no duration), there is no way to
+  responsibly pick a decay time constant or an energy threshold from real data -- both would be
+  pure guesses with an extra layer of nonlinearity between the guess and its observable effect,
+  harder to reason about and to explain in review than a simple hold-time. Given this session's own
+  standing lesson about fixes that look correct on paper and fail live, the simpler, more legible
+  mechanism was preferred even though the leaky integrator is arguably the more "correct" long-run
+  design. Revisit once real sustained-motion waveform data exists from a live donning gesture.
+- **Reusing the existing `PRESENCE_STALE_NS` (30s) log-notice constant directly as the rescue gate**,
+  instead of a new, separate `WMR_USER_PRESENCE_MOTION_RESCUE_STALE_MS` tunable. Rejected to avoid
+  coupling a log-cadence constant to a behavior-changing gate -- retuning one for its own purpose
+  (e.g. quieting the stale-channel notice on a chattier future unit) should never silently also
+  retune when the motion rescue is allowed to engage. Both start at the same 30000ms value for the
+  same reason (well above normal packet latency, well below the multi-minute failure actually
+  observed), but are independent knobs going forward.
+
+### The fix, concretely (`~/vr/monado` `lab-full`, commit `510a6751c`)
+
+`wmr_hmd.h`: two new fields on `struct wmr_hmd::presence`, `motion_run_started_ns` (0 = no run in
+progress, else when the current run began) and `motion_last_above_ns` (the most recent tick's
+timestamp where magnitude was at/above threshold, used to detect a gap long enough to end the run).
+Both updated unconditionally on every tick, independent of candidate/committed/raw proximity, because
+they have to reflect real-world motion regardless of what the proximity channel is or isn't saying --
+that is the entire point.
+
+`wmr_hmd.c`: four new `DEBUG_GET_ONCE_*` tunables, each documented in place with its own reasoning
+(matching this file's established density) --
+
+- `WMR_USER_PRESENCE_MOTION_PRIMARY_RAD_S` (float, default **0.10**): reuses the exact same
+  `STILL_GYRO_RAD_S`-derived, live-log-grounded default a01003fb8 already established (this unit's
+  own `gyro_bias_auto` resting log: 0.011-0.016 rad/s, 6-9x below this threshold) -- kept as a
+  SEPARATE tunable from `WMR_USER_PRESENCE_DON_MOTION_RAD_S` on purpose, not merged, since the two
+  paths have different risk profiles (one already has independent proximity evidence, one doesn't)
+  and may need to diverge later.
+- `WMR_USER_PRESENCE_MOTION_SUSTAIN_MS` (default **500**): comfortably longer than an expected
+  sub-100-200ms bump/knock, comfortably shorter than a real donning gesture's expected
+  multi-hundred-ms-to-few-second duration. Reasoning from gesture shape, not from a measured
+  duration profile -- flagged as unvalidated below.
+- `WMR_USER_PRESENCE_MOTION_GAP_MS` (default **250**): tolerance for a single noisy dip below
+  threshold mid-gesture so it doesn't reset the whole sustain clock. A guess at "generous enough to
+  bridge a natural pause, short enough not to fuse two genuinely separate events" -- also unvalidated
+  against real sample-to-sample data.
+- `WMR_USER_PRESENCE_MOTION_RESCUE_STALE_MS` (default **30000**): see the rejected-alternatives
+  section above for why this is independent from `PRESENCE_STALE_NS` despite sharing its starting
+  value and its reasoning.
+
+All four follow this file's existing "0 or negative disables" convention; setting all four to 0
+reproduces `a01003fb8`'s behavior exactly, with zero change.
+
+**Worst-case latency bound, explicitly checked, not just assumed inherited**: once the rescue path
+flips `worn_signal` (and therefore `candidate`) to `true`, `candidate_motion_peak_rad_s` is seeded
+from that same tick's motion magnitude -- which, by construction, is already at or above
+`WMR_USER_PRESENCE_MOTION_PRIMARY_RAD_S`. Since that threshold defaults to the same numeric value as
+`WMR_USER_PRESENCE_DON_MOTION_RAD_S`, the existing `motion_ok` corroboration check
+(`a01003fb8`, unmodified) will very likely already be satisfied on the very same tick, so the commit
+lands `WMR_USER_PRESENCE_DON_MS` (250ms default) after the flip in the common case. In the worse
+case where the two thresholds have been tuned apart, the existing hard timeout
+(`WMR_USER_PRESENCE_DON_CONFIRM_TIMEOUT_MS`, default 4000ms, unmodified) still applies as an
+unconditional backstop regardless of which path caused the flip. No new way to hang was introduced --
+the fix re-enters and reuses `a01003fb8`'s own bound rather than duplicating or bypassing it, which
+was the explicit hard requirement carried forward from that commit.
+
+**Log line extended**, not replaced: `User presence: WORN (raw proximity sensor value 0 [stale],
+held 254 ms, 1 confirming packet(s), motion peak 0.31 rad/s, via motion)` -- the new `[stale]`/
+`[fresh]` tag alongside the existing `via packets`/`via motion`/`via timeout` reason lets a future
+live session read directly off the log whether a given commit came through the ordinary
+channel-healthy path (`[fresh]`, `via packets`) or the new rescue path (`[stale]`, `via motion`,
+which is the exact signature tonight's 5+ minute stuck don would have produced had this fix already
+been in place).
+
+### Build
+
+Full rebuild (`cd ~/vr/monado/build && cmake --build .`, default target, confirmed via a follow-up
+no-op build showing `ninja: no work to do.`): clean except the same two pre-existing, unrelated
+warnings this task described in advance (`control_read_packets` sign-compare, `PRESENCE_STALE_NS`
+integer-overflow) -- nothing new introduced.
+
+### What remains unverified without live hardware -- stated plainly, per this session's own standing lesson about overclaiming
+
+This session has been burned before tonight by fixes that looked correct on paper and failed live
+(`41626b6e2` itself was exactly this: a correct, reasoned fix for one bug that immediately exposed a
+worse one the moment a real wearer tried it). Nothing below should be read as more confident than it
+is:
+
+- **Whether a real donning gesture on this unit actually produces a "run" that clears
+  `WMR_USER_PRESENCE_MOTION_SUSTAIN_MS=500ms` of continuous-enough (within `MOTION_GAP_MS=250ms`
+  gaps) motion above `0.10 rad/s`.** The only real data available is two PEAK samples from earlier
+  tonight (0.104 and 0.977 rad/s) -- no waveform, no duration, no sample-to-sample gap pattern. The
+  0.104 rad/s sample in particular is barely above the 0.10 threshold; if that don's magnitude spent
+  much of its time hovering just below 0.10 with only a brief crossing, it is a genuine open question
+  whether that SPECIFIC gesture would have cleared a 500ms sustained-run requirement, or would have
+  had to fall through to the (still-safe, still-bounded, but slower) timeout path instead. This is
+  exactly the kind of thing only a live test with the new `[stale]`/`via motion` log fields can
+  answer.
+- **Whether `WMR_USER_PRESENCE_MOTION_GAP_MS=250ms` is the right tolerance for real gesture noise.**
+  Picked by reasoning about plausible gesture shape, not measured. Too short and a real gesture's
+  natural micro-pauses could fragment into multiple short runs that never individually reach
+  `MOTION_SUSTAIN_MS`; too long and two genuinely unrelated bumps could fuse into one false run --
+  neither failure mode has been observed, because neither has been tested live.
+- **Whether `WMR_USER_PRESENCE_MOTION_RESCUE_STALE_MS=30000` engages at the right moment in
+  practice.** Reasoned to sit well above normal packet latency and well below the observed
+  multi-minute failure, but "normal packet latency" itself was only measured across a handful of
+  transitions tonight (sub-second to ~100s+), not a large sample -- it's possible some genuinely
+  healthy stretches quietly exceed 30s between packets often enough that the rescue path engages more
+  routinely than intended (harmless if it does, since case 3 still lets a fresh, actively-contradicting
+  packet win, but worth knowing either way).
+- **Whether the ambient-vibration margin this design leans on (0.10 rad/s threshold vs. 0.011-0.016
+  rad/s measured resting noise) holds up against something more aggressive than a quiet desk** -- a
+  door slam, someone bumping the table hard, a nearby loud fan directly touching the surface the
+  headset rests on. Only calm-desk resting data exists; no stress test of this specific claim has
+  been run.
+- **Whether the new `[stale]`/`[fresh]` log tag and the `via` reason correctly and legibly tell the
+  full story on a real repeat of tonight's exact failure** -- i.e. whether a live redo of "leave the
+  channel dead for 5+ minutes, then genuinely don" now actually shows `[stale] ... via motion` within
+  roughly a second of the real donning gesture, as designed, rather than falling through to `via
+  timeout` at the 4-second mark (still correct and bounded, just slower) or, worse, not committing
+  correctly for some reason this pass's code reading did not catch.
+- **Lock-ordering and concurrency**, reasoned through by inspection only (no new lock was added; the
+  new fields are read/written under the same already-held `presence_lock`, and the existing
+  `fusion.mutex` acquisition for `motion_mag_rad_s` is unchanged from `a01003fb8`), not exercised
+  under a live thread-sanitizer or stress test.
+
+**Live-test checklist for the next session with physical access** (not run this round):
+
+1. Deliberately let the proximity channel go stale (leave the headset undonned long enough, or
+   reproduce tonight's blank-then-silence condition) with `WMR_PRESENCE_DIAG=1` on, then perform a
+   genuine, deliberate don. Watch for `[stale] ... via motion` in the `User presence: WORN` commit
+   line, appearing within roughly a second of the real gesture -- that is the design working exactly
+   as intended. `[stale] ... via timeout` means the motion path did not trip in time and
+   `MOTION_SUSTAIN_MS`/`MOTION_PRIMARY_RAD_S` likely need loosening.
+2. Repeat several times to build a real distribution of how long a genuine "run" lasts and how close
+   to `0.10 rad/s` it tends to hover, specifically to settle whether the 0.104 rad/s peak from
+   tonight is typical or an outlier -- use this to retune `MOTION_SUSTAIN_MS`/`MOTION_GAP_MS` if
+   needed.
+3. With the headset genuinely worn and the channel stale (i.e. presence committed via the new rescue
+   path), sit still for an extended period (watching static content) and confirm presence stays
+   committed WORN throughout -- this is the specific regression case 2's "hold, don't force" design
+   exists to prevent, and it deserves a direct live check, not just a code-reading argument.
+4. If a live test ever shows a genuine mid-worn doff getting stuck (proximity never reports it,
+   headset physically removed but presence stays committed WORN), revisit the DOFF-direction decision
+   above with that evidence in hand -- explicitly deferred here, not ruled out forever.
+
+Committed on `~/vr/monado` (branch `lab-full`, remote `wintch` NOT pushed): `510a6751c` ("wmr:
+promote IMU motion to an independent primary WORN signal, not just a candidate corroborator"),
+touching `wmr_hmd.c`/`wmr_hmd.h`.
