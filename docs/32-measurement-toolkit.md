@@ -209,3 +209,32 @@ block, so silencing the driver's 268 empty-poll log lines per second also silenc
 offline instrument in the project — and the stale file left behind looked exactly like a
 CSV writer dying mid-session, which was investigated as a regression before the environment
 was checked. `VR_POSE_CSVS=0` turns them off on their own now.
+
+## SLAM pose CSVs — the offline set (added 2026-09-07)
+
+`scripts/slam-analysis/` holds nine one-question tools that read the per-session pose CSVs any
+`VR_DEMO_RECORD=1` launch already writes to `~/vr/logs/demo-sessions/<run>/slam/`. Full table in
+that directorys README
+
+## SLAM pose CSVs — the offline set (added 2026-09-07)
+
+`scripts/slam-analysis/` holds nine one-question tools that read the per-session pose CSVs any
+`VR_DEMO_RECORD=1` launch already writes to `~/vr/logs/demo-sessions/<run>/slam/`. Full table in
+that directory's README; the investigation they were built for is
+[113](113-dali-redraw-is-pose-staleness.md).
+
+**What the set is blind to, and it cost most of a day to notice:** position drift and pose
+staleness are different failures, and on 2026-09-07 they moved in OPPOSITE directions — the arm
+that felt much better to the wearer had more drift and identical latency. `count-jumps.py`,
+`motion-norm.py`, `anchor-dist.py`, `pinning.py` and `yaxis.py` all measure POSITION and are blind
+to latency. A "redraw" complaint is a latency complaint: use `pose-latency.py`
+(`received_by_monado - frames_original_timestamp` from `timing.csv`), which is the same quantity
+`VIT_COLLAPSE_LOG=1` prints as `age_out_ms` but recorded per session instead of scraped from a log
+that most harnesses truncate.
+
+Second blindness, this one about the denominator: resets-per-minute is not comparable between
+sessions, because the anchor guard fires on fast motion and a livelier session earns more resets
+honestly. `motion-norm.py` exists to divide by path length and by time-above-1-m/s instead. And
+before reading any time trend as degradation, check the distance SPREAD — a 22-minute session that
+looked like it "degraded after 10 minutes" turned out to be one where the wearer stood still
+(~20 cm of spread) for the first ten.

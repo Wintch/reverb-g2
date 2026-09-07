@@ -1,5 +1,7 @@
 # 100 — Dreams of Dalí 6dof "redraw": does the Aircar recipe transfer, and is the new GPU a separate bottleneck
 
+> **Answered 2026-09-07 — see [113](113-dali-redraw-is-pose-staleness.md).** The redraw described here is pose staleness, not rendering: Basalt's optical flow was 200/200 frames over the 33 ms budget and `age_out_ms` compounded to a p50 of 100.8 ms. Detection density 30/3 → 30/2 brings it to 36.7 ms, and render scale 100 → 85 restores the fps lost to the 210 W cap. Both shipped in the booth profile.
+
 Trigger (2026-09-05): right after today's DP/lease bug got fixed and Dalí rendered correctly
 again, the wearer's verdict (translated) was *"Dalí's perfect. Of course, you can tell it doesn't
 render as smoothly as 3dof — the already-known redraw thing — investigate if we can make progress

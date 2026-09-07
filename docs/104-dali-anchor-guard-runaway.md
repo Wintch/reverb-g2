@@ -1,5 +1,7 @@
 # 104 — Dalí session-anchor guard runaway (2026-09-05): what's felt, is it a regression, and what to do next
 
+> **Follow-up 2026-09-07 — see [113](113-dali-redraw-is-pose-staleness.md).** A worn A/B of `SLAM_SESSION_ANCHOR_RADIUS_CM` (300 → 150) confirmed the felt jump *is* the radius, but halving it only trades few-big corrections for many-small ones, which the wearer reads as high-frequency jitter. The radius stays at 300. 113 also rules out, with data, the recall-cache leak and the `RESET_OFFSET_CARRY` pinning caveat as explanations for reset storms.
+
 Fulfills the forward reference `docs/100` left dangling ("see the next section below (the
 191-reset anchor-guard finding)"). Trigger: today's live 591360 session tripped
 `SLAM_SESSION_ANCHOR_RADIUS_CM=300` 191+ times in ~28 minutes, almost every reset a ~3.0-3.13 m
