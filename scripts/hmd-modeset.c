@@ -303,8 +303,14 @@ int main(int argc, char **argv)
 
 	struct fb fbs[2];
 	const char *how = "?";
-	if (fb_create(lease_fd, mode.hdisplay, mode.vdisplay, 0x00FF6000, &fbs[0], &how)) return 1;
-	if (fb_create(lease_fd, mode.hdisplay, mode.vdisplay, 0x000060FF, &fbs[1], &how)) return 1;
+	// Two colours alternating on every page-flip is a sync/lock-on test, NOT a flicker
+	// test: at 90 Hz it strobes at 45 Hz by construction. HMD_MODESET_SOLID=1 pins both
+	// buffers to white so a human verdict means something (same fix as hmd-vk's
+	// HMD_VK_SOLID; see docs/112).
+	uint32_t color_a = 0x00FF6000, color_b = 0x000060FF;
+	if (getenv("HMD_MODESET_SOLID")) { color_a = color_b = 0x00FFFFFF; }
+	if (fb_create(lease_fd, mode.hdisplay, mode.vdisplay, color_a, &fbs[0], &how)) return 1;
+	if (fb_create(lease_fd, mode.hdisplay, mode.vdisplay, color_b, &fbs[1], &how)) return 1;
 	printf("framebuffers: %s  (%ux%u pitch=%u)\n", how, mode.hdisplay, mode.vdisplay, fbs[0].pitch);
 
 	// --- modeset, and the panel IMMEDIATELY after ---
@@ -394,7 +400,7 @@ int main(int argc, char **argv)
 
 	while (now_s() - t0 < secs) {
 		if (!pending) {
-			cur ^= 1;
+			if (!getenv("HMD_MODESET_SOLID")) cur ^= 1;
 			int r;
 			if (atomic) {
 				drmModeAtomicReq *fr = drmModeAtomicAlloc();

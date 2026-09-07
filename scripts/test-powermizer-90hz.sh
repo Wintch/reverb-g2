@@ -34,6 +34,10 @@ fi
 
 command -v nvidia-settings >/dev/null 2>&1 || { echo "nvidia-settings not found" >&2; exit 1; }
 
+# Solid white, never the alternating default: line ~83 asks for a physical look right
+# after a success verdict, so the default pattern could make a genuinely working 90 Hz
+# mode be judged broken from its own strobe (docs/19, docs/112).
+export HMD_VK_SOLID=1
 BIN="$(ls -t "$REPO"/nv-report-*/build/hmd-vk 2>/dev/null | head -1)"
 [ -x "$BIN" ] || { echo "hmd-vk not built - see docs/16-lab-vblank.md" >&2; exit 1; }
 

@@ -1,5 +1,22 @@
 # 111 — Windows control test for the panel flicker: what to look at and what to capture
 
+> **DONE AND SUPERSEDED 2026-09-07 — see `docs/112`.**
+>
+> The Windows boot this brief calls for happened. Result: **Windows behaves identically to
+> Linux** — 90 Hz clean, 60 Hz flickers. Contrary to this brief's prediction, flicker at 60 Hz
+> on Windows does *not* mean the headset changed; it is factory backlight behaviour at a
+> non-native panel frequency.
+>
+> Two premises inherited from `docs/110` were also wrong and are retracted there: "the flicker
+> reproduces under `hmd-vk`" and "60 and 90 look identical on Linux" were both artifacts of
+> `hmd-vk`'s non-solid default pattern. The USBPcap this brief asked for was captured and is
+> analysed in `docs/112`; it shows Oasis sends nothing to the companion that
+> `scripts/panel.py activate` does not already send.
+>
+> One stale fact worth carrying forward: the HMD connector is **card0-DP-1** as of this session,
+> not DP-2 as written below. That name has drifted before (DP-1 → DP-3 → DP-1) — always resolve
+> it live with `scripts/hmd-connector.sh` rather than trusting any doc.
+
 Companion to `docs/110`, which records everything already ruled out on the Linux side. This is
 the operator brief for the decisive experiment.
 

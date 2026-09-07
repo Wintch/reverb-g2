@@ -99,7 +99,9 @@ run_mode() {   # $1 = Vulkan mode index, $2 = tag
         WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}" \
         HMD_PANEL_CMD="$REPO/scripts/panel.py activate" \
         HMD_PANEL_ON_CMD="$REPO/scripts/panel.py on" \
-        "$BUILD/hmd-vk" native "$idx" 25 > "$OUT/hmd-vk-$tag.log" 2>&1
+        # HMD_VK_SOLID=1 for consistency with every other hmd-vk caller (docs/112): the
+        # default pattern self-strobes, and a collected log may end up read by a human.
+        HMD_VK_SOLID=1 "$BUILD/hmd-vk" native "$idx" 25 > "$OUT/hmd-vk-$tag.log" 2>&1
     sleep 2
     kill "$DPID" 2>/dev/null
     echo 0 > "$DBG" 2>/dev/null

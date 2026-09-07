@@ -1,5 +1,26 @@
 # 110 — Panel flicker after the Oasis re-Unlock: what it is NOT
 
+> **SUPERSEDED 2026-09-07 — the central conclusion here is wrong. See `docs/112`.**
+>
+> The elimination table below rests in two places on an `hmd-vk` run that used the tool's
+> **default** pattern, which alternates colour every frame — a ~30 Hz strobe at 90 fps, by
+> construction. That is the instrument flickering, not the panel, and it is the same trap
+> already documented on 2026-08-06 (`docs/19`, commit `cc98bb0`). Specifically **retracted**:
+>
+> - *"the flicker reproduces under `hmd-vk`, pure Vulkan, so nothing of ours is in that path"* —
+>   never actually tested; the valid control needs `HMD_VK_SOLID=1`.
+> - *"flickers identically at 60 and at 90"* — the opposite is true. With `HMD_VK_SOLID=1`,
+>   **90 Hz is clean and 60 Hz flickers**, on Linux and on Windows alike.
+> - *"refresh-independent, host-software-independent"* — both inherited from the above.
+> - *"the measurement that would settle it was not obtainable"* — it was obtained; byte 18
+>   reads **8**, confirming patch 0004 works at runtime.
+> - the leading hypothesis, *"persistent state written into the headset by the Oasis re-Unlock"* —
+>   disproved by the Windows test this document called for.
+>
+> What the flicker actually was: 60 Hz is factory backlight behaviour at a non-native panel
+> frequency, and the real-content flicker was the **xrizer brightness gain at 1.25×** producing
+> temporal dithering. The USB, patch-stack and HID-activation rows below all still hold.
+
 **Status: unresolved.** This document records an elimination pass, not a fix. Its value is the
 list of hypotheses that are now closed with hard evidence, so the next session does not re-run
 them.

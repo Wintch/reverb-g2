@@ -844,6 +844,20 @@ fi
 if [ "${VR_MIN_PERIOD:-1}" = 1 ]; then
     PACING_ENV+=(U_PACING_APP_USE_MIN_FRAME_PERIOD=true)
 fi
+# Opt-in hook for VK_KHR_present_wait as the compositor's frame-completion path, instead of
+# the acquire-based one the fake pacer drives. This rig has never exercised it; the driver
+# reports present_wait: 1, and enabling it does silence the "Fake pacer fell behind" WARN.
+#
+# It is OFF by default because there is no known problem for it to solve. That WARN is a
+# benign, long-standing artifact of Monado + NVIDIA in direct mode -- present in healthy logs
+# since 2026-08-15, thousands of occurrences per session at a measured, correct 90 fps
+# (docs/96). The block that used to sit here blamed present_wait for a visible flicker; that
+# was wrong. The flicker had two unrelated causes, both settled on 2026-09-07 (docs/112):
+# hmd-vk's default test pattern alternates colour every frame, and the xrizer brightness gain
+# was at 1.25x. Silencing the WARN is a cosmetic change, not a fix -- do not treat it as one.
+if [ "${VR_PRESENT_WAIT:-0}" = 1 ]; then
+    PACING_ENV+=(XRT_COMPOSITOR_USE_PRESENT_WAIT=1)
+fi
 
 echo "Starting Monado (action $ACTION, mode $MODE, tracking $TRACKING) via DRM lease... log: $LOG"
 

@@ -122,6 +122,14 @@ HMD_OUTPUT="${HMD_OUTPUT:-DP-0}"
 # for (`XRT_COMPOSITOR_DESIRED_MODE=0 ./jack-in.sh 3dof`). This list used to pin it to 2
 # regardless of the environment, so the 90Hz test was silently running at 60Hz.
 DESIRED_MODE="${XRT_COMPOSITOR_DESIRED_MODE:-2}"
+if [ -z "${XRT_COMPOSITOR_DESIRED_MODE:-}" ]; then
+	# Mode 2 is 4320x2160@60, and 60 Hz flickers on this panel BY DESIGN -- factory
+	# backlight behaviour at a non-native frequency, confirmed identical on Windows
+	# (docs/112). Silently defaulting to it has already produced one false "is this a
+	# regression?" scare; say it out loud.
+	echo "WARNING: XRT_COMPOSITOR_DESIRED_MODE unset -> defaulting to mode 2 (4320x2160@60)," >&2
+	echo "         which flickers by design. Export XRT_COMPOSITOR_DESIRED_MODE=1 for 90 Hz." >&2
+fi
 COMMON_ENV=(
 	VIT_SYSTEM_LIBRARY_PATH="$BASALT_LIB"
 	XRT_COMPOSITOR_FORCE_NVIDIA_DISPLAY="${XRT_COMPOSITOR_FORCE_NVIDIA_DISPLAY:-HP Inc.}"

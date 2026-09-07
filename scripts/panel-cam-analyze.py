@@ -61,7 +61,16 @@ def main():
 
 	print(f"{len(rows)} frames, fps={fps}, start_epoch={start_epoch}")
 	flags = [r for r in rows if r["flag"]]
-	print(f"{len(flags)} frame(s) flagged (|delta luma| >= {a.threshold})\n")
+	print(f"{len(flags)} frame(s) flagged (|delta luma| >= {a.threshold})")
+	if flags:
+		# Said here, next to the flags themselves, because a reader acts on this list and
+		# may never open the docstring: a webcam hunting its own auto-exposure/white
+		# balance produces exactly this signature. panel-cam-capture.sh now pins both
+		# controls, but not every UVC device honours that. Same "the instrument makes the
+		# symptom" class of error as hmd-vk's alternating test pattern (docs/112).
+		print("  NOTE: a flag can be camera AE/AWB hunting rather than a panel event --")
+		print("        cross-check against panel-status.py before believing it.")
+	print()
 	for r in flags:
 		print(f"  frame {r['frame']:>5}  t={r['t_offset_s']:>6.2f}s  luma {r['mean_luma']:>6.1f}  "
 		      f"delta {r['delta_luma']:>+6.1f}  rgb=({r['mean_r']:.0f},{r['mean_g']:.0f},{r['mean_b']:.0f})")

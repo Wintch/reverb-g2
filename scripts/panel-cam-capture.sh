@@ -33,6 +33,13 @@ mkdir -p "$OUT"
 
 START_EPOCH="$(date +%s.%N)"
 echo "Capturing ${SECS}s @ ${FPS}fps from $DEVICE -> $OUT"
+# Pin exposure and white balance first: a webcam hunting its own AE/AWB produces
+# brightness and colour jumps that panel-cam-analyze.py will flag as panel events --
+# the same "the instrument makes the symptom" class of bug as hmd-vk's default
+# pattern (docs/112). Best-effort: not every UVC device exposes these controls.
+v4l2-ctl -d "$DEVICE" --set-ctrl=exposure_auto=1 2>/dev/null || true
+v4l2-ctl -d "$DEVICE" --set-ctrl=white_balance_temperature_auto=0 2>/dev/null || true
+
 ffmpeg -hide_banner -loglevel error \
 	-f v4l2 -input_format mjpeg -video_size 640x480 -framerate "$FPS" -i "$DEVICE" \
 	-t "$SECS" -q:v 3 "$OUT/frame_%05d.jpg"

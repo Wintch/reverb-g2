@@ -57,7 +57,11 @@ echo
 echo "=== TEST $ID: listening to the headset and presenting ==="
 setsid nohup ./scripts/panel-status.py 90 > "$S/status.txt" 2>&1 < /dev/null & disown
 sleep 2
-setsid nohup "$BUILD/hmd-vk" native "$MODE" 0 > "$S/vk.log" 2>&1 < /dev/null & disown
+# HMD_VK_SOLID=1 is mandatory here: this script prints "PUT ON THE HEADSET AND LOOK",
+# and hmd-vk's default pattern alternates colour every frame -- a ~30 Hz strobe at
+# 90 fps that is indistinguishable from panel flicker to the naked eye. It produced
+# false confirmations on 2026-08-06 (docs/19) and again on 2026-09-06 (docs/112).
+HMD_VK_SOLID=1 setsid nohup "$BUILD/hmd-vk" native "$MODE" 0 > "$S/vk.log" 2>&1 < /dev/null & disown
 
 sleep 25
 grep -E "NATIVE mode|fps presented" "$S/vk.log" | tail -2 | sed 's/^/  /'

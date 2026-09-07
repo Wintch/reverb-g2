@@ -35,7 +35,11 @@ LOG="${TMPDIR:-/tmp}/hmd-test-$$.txt"
 ./scripts/panel-status.py $((SECS + 8)) > "$LOG" 2>&1 &
 SNIFF=$!
 sleep 2
-timeout $((SECS + 16)) "$BIN" native "$MODE" "$SECS" > "${LOG}.vk" 2>&1
+# HMD_VK_SOLID=1: this script asks for a physical verdict, and hmd-vk's DEFAULT pattern
+# alternates colour every frame -- a ~30 Hz strobe at 90 fps that reads as panel flicker.
+# It caused false confirmations twice (docs/19, docs/112). Solid white is the only valid
+# pattern for any judgement made with human eyes.
+HMD_VK_SOLID=1 timeout $((SECS + 16)) "$BIN" native "$MODE" "$SECS" > "${LOG}.vk" 2>&1
 wait $SNIFF 2>/dev/null
 
 echo

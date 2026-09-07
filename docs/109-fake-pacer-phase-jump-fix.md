@@ -1,4 +1,16 @@
-# 109 — Fake pacer phase-jump storm: root cause found and fixed (2026-09-07)
+# 109 — Fake pacer phase-jump storm: investigated, WARN spam reduced, NOT fixed (2026-09-07)
+
+> **CORRECTION 2026-09-07 — this was NOT fixed. See `docs/112`.**
+>
+> A live retest with `63b71c926` applied still showed **~90 phase-jump periods per second**.
+> The commit reduced WARN log volume, by design of its own rate limiter; it did not change the
+> behaviour. Worse, the whole investigation was chasing a non-problem: "Fake pacer fell behind"
+> is a benign, long-standing artifact of Monado + NVIDIA in direct mode, present in healthy logs
+> since 2026-08-15 at thousands of occurrences per session while the compositor measures a
+> correct 90 fps (`docs/96` already called it exactly that). It was pursued because the wearer's
+> *"parecido a 60hz de refresh"* was read as a frame-rate claim, when it was a description of
+> what a flicker looked like. Treat everything below as an accurate record of the pacer's
+> internals and an inaccurate one of its importance.
 
 Follow-up to a diagnosis-only session earlier tonight. That phase read the whole
 `u_pacing_compositor_fake.c` state machine, instrumented it temporarily, and reproduced only a
