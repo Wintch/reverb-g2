@@ -289,7 +289,13 @@ TITLE_PROFILES = {
         # The util drop is consistent with the 1.96x pixel ratio if the app then ran ~90 fps.
         # Justified as the next thing to try, not validated: the 2026-08-26 worn approval was
         # at 140 % -- re-confirm worn and get Dali's first measured fps number.
-        "XRT_COMPOSITOR_SCALE_PERCENTAGE": "100",
+        # 2026-09-07: 100 -> 85, WORN-APPROVED. Context: the 3060 Ti swap put the booth on a
+        # 210 W cap, and at scale 100 Dali no longer reproduced its 250 W sign-off (2/8 20-s
+        # windows >= 89 fps vs 6/8 before; fps tracks time-at-cap through the clock). At 85:
+        # 7/8 windows >= 89 fps, spread 0.55 -- BETTER than the original 250 W approval.
+        # Wearer verdict, in-headset: "se juega muy bien, la resolucion no molesta tanto, lo
+        # podemos dejar asi". Reversible: put it back to 100 and the cap becomes the limit again.
+        "XRT_COMPOSITOR_SCALE_PERCENTAGE": "85",
         # 2026-08-29 (docs/80 "the thread finding"): the base control ran at jack-in-wayland.sh's
         # plain default of 4 SLAM threads (nobody set an override for Dali) while P2.toml
         # hardcodes num-threads=6. Per-stage split of the worn timing.csv: TRACKING (the one
@@ -310,6 +316,34 @@ TITLE_PROFILES = {
         # docs/80 "the recentre lever". No launcher knob involved.
         "SLAM_SESSION_ANCHOR_RADIUS_CM": "300",
         "SLAM_QUAT_NORM_CHECK": "1",
+        # 2026-09-07: Basalt optical-flow DETECTION density 30/3 -> 30/2 (grid unchanged, points
+        # per cell 3 -> 2). The wearer's long-standing "redraw" complaint on this title -- "con
+        # movimiento rapido se nota bastante", the thing that made 6dof feel like 3dof -- was
+        # measured, not guessed: it is pose STALENESS. The optical-flow stage was taking ~36 ms
+        # inside a 33 ms camera interval (200/200 frames over budget), so age_out_ms compounded
+        # to a p50 of 100.8 ms. At 30/2 the same worn measurement reads age_out p50 36.7 ms with
+        # 11/200 frames over budget. Wearer verdict: medium movement went from a constant redraw
+        # to "ahi se ve perfecto".
+        #
+        # The cost is landmarks: p50 69 -> 31 (light-preflight.sh, verdict still OK on both), and
+        # with half the evidence the one_euro filter damps a guard correction less -- the visible
+        # jump grew from 1.15 m to 1.53 m median. The wearer accepted that trade explicitly ("eso
+        # se compensa con que no hay un redraw constante"). Do NOT read the accompanying CPU
+        # figure (356 % -> 261 %) as a density win: the sweep's hand-written TOML also forced
+        # num-threads=4 against this profile's 6, so that number is confounded. The latency win
+        # is not -- fewer threads makes the tracking stage slower, so 36.7 ms was measured with a
+        # HANDICAP and 6 threads should do better still.
+        #
+        # UNWORN AS A COMBINATION, flagged deliberately: every worn run of 30/2 was at 4 threads.
+        # Promoted at 6 anyway because the two axes are independent stages -- density is detection
+        # (sequential) and threads are tracking (the tbb-parallel stage, 20.4 -> 12.4 ms at 6, see
+        # SLAM_THREADS above). Next worn session on this button is the confirmation; if it feels
+        # worse than the 2026-09-07 runs, drop SLAM_THREADS to 4 before touching the density.
+        #
+        # Selected through SLAM_G2_CONFIG_FILE rather than SLAM_CONFIG on purpose, so jack-in
+        # still generates the TOML and num-threads keeps following SLAM_THREADS. Reversible:
+        # delete this line to return to the shared basalt-g2-config.json (30/3).
+        "SLAM_G2_CONFIG_FILE": os.path.expanduser("~/vr/basalt-g2-config-d30x2.json"),
     },
     # Wolfenstein: Cyberpilot (1056970) -- seated mech cockpit; motion controllers
     # are REQUIRED, so constellation stays ON (unlike Aircar/Dali, which drop it).

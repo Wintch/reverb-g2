@@ -461,7 +461,12 @@ if [ "$TRACKING" = "6dof" ]; then
     # SLAM_THREADS= still overrides either way.
     SLAM_THREADS="${SLAM_THREADS:-4}"
 
-    G2_SLAM_JSON="$(dirname "${BASH_SOURCE[0]}")/basalt-g2-config.json"
+    # SLAM_G2_CONFIG_FILE swaps in a different Basalt pipeline JSON while still letting the
+    # TOML below be generated HERE, so num-threads keeps following SLAM_THREADS. Handing a
+    # ready-made TOML through SLAM_CONFIG instead silently freezes the thread count into it --
+    # that is exactly how the 2026-09-07 density sweep ended up running Basalt at 4 threads
+    # against a 6-thread baseline (see TITLE_PROFILES["591360"] in vr-launcher.py).
+    G2_SLAM_JSON="${SLAM_G2_CONFIG_FILE:-$(dirname "${BASH_SOURCE[0]}")/basalt-g2-config.json}"
     if [ "${SLAM_G2_CONFIG:-1}" = "1" ] && [ -z "${SLAM_CONFIG:-}" ] && [ -f "$G2_SLAM_JSON" ]; then
         G2_SLAM_TOML="${TMPDIR:-/tmp}/basalt-g2-$$.toml"
         cat > "$G2_SLAM_TOML" <<EOF
