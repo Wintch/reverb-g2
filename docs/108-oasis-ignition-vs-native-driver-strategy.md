@@ -158,3 +158,126 @@ None of these should trigger a context-switch away from finishing Path B's own s
 intensity, constellation robustness, native BT pairing, the DRM-lease compositor-level fix) — they
 should just be checked periodically and re-evaluated against this doc's section 4 reasoning if any
 of them change.
+
+---
+
+## Addendum, 2026-09-07 ~04:30 — first-hand verification, and what the flicker night settled
+
+Everything above was written the same day from secondary reporting. This section records what
+was then verified directly, and two things that changed the picture.
+
+### The announcement, verified first-hand
+
+Pulled straight from Steam's public news API (`ISteamNews/GetNewsForApp`, AppID `3824490`),
+not from a summary. Post dated **2026-09-06 19:33 UTC**, verbatim on the points that matter:
+
+> "Introducing support for running Oasis on Linux through Ignition. All credit goes to Bnuuy
+> Solutions for developing the Ignition project to run SteamVR Windows drivers on Linux and to
+> Supremium for writing missing USB support in Wine as well as bring-up support for Oasis.
+> **Linux support is for advanced users, as VR on Linux still requires a lot of fiddling.**"
+
+Setup is: switch Oasis to the **preview** branch, SteamVR to beta, install `70-wmr.rules` into
+udev, replug the headset.
+
+**On Wayland — this is the sentence that decides Path A's relevance to us today:**
+
+> "Configurations I have personally tested ... Ubuntu 24.04 + X11 + AMD GPU + HP Reverb G2 /
+> Ubuntu 24.04 + X11 + Nvidia GPU + Samsung Odyssey+ / SteamOS + X11 + Acer AH101 /
+> Samsung Odyssey+. **I had no success with Wayland, therefore I do not recommend using Oasis
+> with Wayland.**"
+
+All three tested configurations are X11, and on SteamOS the instructions require toggling
+Developer Mode and forcing "Use Legacy X11 Desktop Mode". Our entire operational stack is
+**Wayland + DRM lease** (`jack-in-wayland.sh`), which is not incidental — it is the launch path
+that made 90 Hz work here at all. So Path A is not a drop-in alternative for this rig today; it
+is a different launch architecture, not just a different driver.
+
+Two further limitations from the same post, both relevant to what this lab actually uses:
+
+> "Support for built-in Bluetooth receiver on Samsung Odyssey+, HP Reverb G1 and G2 is currently
+> not functional (being looked into). Use the Bluetooth receiver on your PC."
+
+> "I will offer very limited technical support."
+
+The built-in-BT gap is exactly the controller path this lab already has working natively. And
+the support posture matters for a booth: Path A's troubleshooting story is "read
+`vrserver.txt`/`vrcompositor.txt` and ask the community", where Path B's is code we can read and
+patch ourselves.
+
+### This announcement is what triggered the flicker investigation
+
+Oasis **auto-updated on the rig's Windows install on 2026-09-06** — the same day as this post.
+That update was the trigger for the entire panel-flicker arc: the operator re-ran Unlock after
+it, came back to Linux, saw a flicker, and the leading hypothesis for hours was that the new
+Oasis had written persistent state into the headset (`docs/110`, `docs/111`).
+
+**That hypothesis is dead, and Oasis is exonerated.** See `docs/112`: the flicker had two
+unrelated causes, neither of them the headset — `hmd-vk`'s own alternating test pattern, and the
+xrizer brightness gain at 1.25×. The headset's own `DEVICE_STATUS` under Linux came back
+**byte-for-byte identical** to a Windows capture of the same night (90 Hz, htotal 4420, vtotal
+2276, 8 bpc), and nothing in Oasis's changelog from 1.0.3 onward touches panel refresh, backlight
+duty or display timing.
+
+Worth stating plainly because it cuts both ways: an Oasis update did not break anything, **and**
+the fact that an unattended update on a machine this lab depends on could kick off a multi-hour
+investigation is its own finding. Path A means accepting a closed-source driver that updates
+itself on someone else's schedule.
+
+### The deadline that changes the stakes
+
+Microsoft's WMR deprecation is unchanged and now imminent: **consumer editions lose Mixed Reality
+Portal / WMR-for-SteamVR on 2026-11-01** — under two months out — commercial editions
+2027-11-01. No extension has been announced.
+
+After that date, Oasis is the only forward path for a G2 **on Windows too**, not just on Linux.
+That does not change Path B's value; it changes what "the Windows reference" means. This lab has
+repeatedly used Windows as the ground-truth control (most recently the USBPcap that settled the
+flicker question). That control has a shelf life, and re-provisioning a G2 on a fresh Windows
+install after November may itself require Oasis.
+
+**Concrete consequence worth acting on before November:** the Windows-side captures this project
+relies on are irreplaceable, and their only copy currently lives on an external SSD that is not
+attached to anything. `docs/32` now carries an inventory of them for that reason.
+
+### Ecosystem health, as an input to section 4's reasoning
+
+The upstream sweep that produced this addendum also measured how alive each path's dependencies
+are. This is uncomfortable reading for Path B and should be recorded honestly:
+
+| Dependency | Path | Last real activity |
+|---|---|---|
+| Ignition / Wine USB bring-up | A | **days** — actively shipping |
+| Oasis itself | A | 1.0.3 (2026-05-31) + the Linux post |
+| Monado `main` | B | days — 33 commits 08-31 → 09-05 |
+| xrizer | B | days, but nothing near the compositor path |
+| **Basalt** (mateosss fork — our 6DoF SLAM) | B | **2026-07-24**, 45 days |
+| **OpenComposite** | B | **2025-07-21**, over a year; our exact bug (#477) open 168 days with zero replies |
+| OpenVR Space Calibrator (all forks) | both | **2025-12-03**, ~9 months |
+
+Path A's stack is the one gaining momentum right now. Path B's *core* (Monado) is healthy, but
+two of its satellites are effectively dormant — and the Basalt recall-cache leak this lab bounded
+locally has not been upstreamed by anyone, including Faulto, who fixed it independently. Section
+4's conclusion still holds, but it should be read knowing that "we control our stack" also means
+"nobody else is maintaining parts of it."
+
+### Watch-list status
+
+Against section 5's four signals, one day on:
+
+1. **Wayland support** — no change; the post is one day old and still says what it says. Nothing
+   in `BnuuySolutions/Ignition` indicates an attempt.
+2. **The DRM-leasing question** — still unverified and still cheap to answer. Worth doing at some
+   point, since this rig already does DRM leasing successfully under Wayland for Monado, which
+   makes a blanket "Wayland doesn't work" suspicious rather than settled.
+3. **G2 built-in Bluetooth on Linux** — still "being looked into" per the post itself.
+4. **Community reports** — none yet found. Note that the post explicitly routes new users to
+   **LVRA**, which means a wave of first-time G2-on-Linux users is about to arrive there.
+
+**One consequence of point 4 that is arguably an obligation, not just a signal:** LVRA's hardware
+table still rates the Reverb G2 **Bronze**, described as *"experimental 6dof controllers,
+**60Hz-only on Nvidia**"*. That has been false since 2026-08-06, is fixed by a patch this lab
+root-caused, and is already published publicly on NVIDIA's own forum (thread 379240, post #3).
+New users arriving from this announcement will read a stale figure about exactly the thing this
+lab fixed. Correcting a factual error on a wiki is a different act from posting in a chat channel
+— see `feedback_community_post_hygiene` before doing anything, and note `project_lvra_wiki_correction`
+already has a pending thread with a maintainer that is still their court.
