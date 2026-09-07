@@ -2041,3 +2041,52 @@ active DRM lease kills it, confirmed in isolation regardless of which HID mechan
 fix (the `WMR_USER_PRESENCE_BLANK_PANEL` kill switch gates the action itself, not any particular
 delivery mechanism) -- only the specific claim about *why* `d07872fd9` mattered, which it turns out
 it does not, for this bug.
+
+## 2026-09-07 -- first real wearer test after the lease fix: both the fix AND the motion-primary
+## presence signal validate live, in the same session
+
+Full down/up cycle on `af290d0e3` (blank-panel kill switch, default OFF) + `510a6751c` (motion as
+independent primary WORN signal). Launched `jack-in-wayland.sh up 1 3dof`, then
+`play360.sh -t 21600 stereo3d-pack/out/dav2_demo` (a multi-clip playlist), real wearer donned and
+watched, exited cleanly via a controller button press partway through.
+
+**Lease fix holds under a real wearer, not just headless:** `grep -c "VK_ERROR_UNKNOWN\|Lease has
+been closed" jack-in-wayland.log` -> **0**. Sustained playback across multiple clip transitions
+(decoder re-inits for each file in the playlist -- exactly the kind of compositor churn that used to
+trip the bug), zero crashes.
+
+**The motion-as-primary-signal design (`510a6751c`) fired live for the first time tonight,
+correctly, exactly in the scenario it was built for:**
+```
+User presence: WORN (raw proximity sensor value 0 [stale], held 253 ms, 1 confirming packet(s),
+                motion peak 0.867 rad/s, via motion)
+User presence: NOT WORN (raw proximity sensor value 0 [fresh], held 1000 ms, ..., via n/a)
+User presence: WORN (raw proximity sensor value 1 [fresh], held 251 ms, ..., motion peak 1.106
+                rad/s, via motion)
+User presence: NOT WORN (raw proximity sensor value 0 [fresh], held 1000 ms, ...)
+User presence: WORN (raw proximity sensor value 1 [fresh], held 252 ms, ..., motion peak 0.860
+                rad/s, via motion)
+```
+Two of the three WORN commits happened while the proximity byte was silent/stale -- exactly the
+"proximity says nothing for 30s+" gap this design exists to cover -- and motion alone committed
+WORN in ~250ms both times, matching the design's `MOTION_SUSTAIN_MS`. No noise-relight, no
+multi-second hang. This is the first live evidence this design actually works, not just passes a
+headless/isolated check.
+
+**The "seemed like 60Hz" report is not a system bug -- it's the playlist's own source content.**
+`dav2_demo` mixes clips at native 23.98/24/25/30/60 fps (trailers and film-sourced footage cut at
+different frame rates), while Monado itself is running the panel at a fixed 90Hz the whole time
+(confirmed in the same `jack-in-wayland.log`: `found display mode 4320x2160@90.00`, unchanged for
+the whole session). Cutting from a 24fps clip to a 60fps clip inside the same VR session is a very
+noticeable perceptual jump -- more motion-smooth, less "cinematic judder" -- easy to misread as "the
+headset dropped to 60Hz" when it's actually the opposite: the panel is holding 90Hz steady and just
+faithfully displaying source material that itself varies. No action needed; worth choosing a
+same-framerate curated subset for any future user-facing perceptual comparison, so a framerate
+question is never conflated with content variety again.
+
+**Net effect of tonight's whole arc, end to end:** `754beed30` (harmless-looking presence-tick
+relocation) silently broke DRM lease recovery -> found via headless bisection, not live testing ->
+fixed by making the actually-dangerous action (`WMR_USER_PRESENCE_BLANK_PANEL`) opt-in rather than
+trying to make the danger itself safe -> the whole presence-detection stack built earlier tonight
+(packet debounce, motion corroboration+timeout, motion-as-primary-signal) got its first real wearer
+validation in this same session, clean.
