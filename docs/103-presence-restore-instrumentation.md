@@ -1373,3 +1373,43 @@ sudo), **nothing in this section has been run against real hardware**:
 Committed on `~/vr/monado` (branch `lab-full`, remote `wintch` NOT pushed): `a01003fb8`
 ("wmr: bound WORN-commit latency with IMU motion corroboration + timeout"), touching
 `wmr_hmd.c`/`wmr_hmd.h`.
+
+## 2026-09-06 (later still) -- adversarial review split on `a01003fb8`, the sharper reading kept
+
+Two independent reviewers checked `a01003fb8` (the motion-corroboration + timeout fix above) before
+it was treated as done. Both confirmed the worst-case latency bound is real and correctly implemented
+(no off-by-one, no overflow, no lock-order issue -- `presence_lock` -> `fusion.mutex` consistently,
+matching every other acquisition site in the file) and that it is NOT a regression against the
+keep-alive-poke re-blank fix (`911ef3c56`, zero overlap in the diff). They differed only on how to
+characterize the timeout path's known tradeoff, already disclosed above as "a weak noise filter":
+
+- Reviewer A called it "not a confirmed bug -- an already-disclosed tradeoff."
+- Reviewer B traced the actual consequence through to the hardware and called it a confirmed,
+  understated regression risk: `confirm_ok = packets_ok || motion_ok || timeout_ok` means
+  `timeout_ok` alone -- zero packet corroboration, zero motion -- is sufficient to commit WORN and
+  physically re-light the panel (the `screen_off_by_presence` branch at the restore call site).
+  Given tonight's own measured proximity-packet gaps (2 s - 100 s, one case 43 s before a
+  *contradicting* packet even arrived), a single noisy byte surviving uncontradicted for the full
+  4000 ms default is not a remote edge case on this specific unit -- it is a very plausible,
+  possibly common outcome, and when it happens the result is exactly tonight's original symptom
+  (the panel re-lighting itself with nobody wearing it), just delayed from ~250 ms to ~4000 ms
+  rather than eliminated. The doc's own item 3 in the "how to validate live" list already
+  anticipated this exact failure mode as something to watch for -- Reviewer B's point is that it
+  should be named as a real, likely-reachable risk going in, not discovered as a surprise later.
+
+**Keeping Reviewer B's framing as the operative one.** Nothing here invalidates the fix -- it is a
+genuine, verified ~16x hardening (250 ms -> 4000 ms before an uncorroborated single sample can
+commit), and per this investigation's own hard requirement a real don must never hang indefinitely,
+which this design satisfies. But "the panel can still relight itself from a single noisy byte with
+nobody wearing it" should be read as a live, expected-to-eventually-occur behavior of the current
+design, not a hypothetical corner case ruled out by today's work. The honest status is: **the
+day's original bug (instant relight from noise) is bounded, not eliminated.**
+
+This is also a direct argument for the parallel finding from tonight's genuine-Windows-standby
+packet captures (see the capture-analysis section, if present below/elsewhere in this doc): if
+real Windows/SteamVR standby turns out to be a pure compositor-side render-black with no HID
+backlight toggle at all, then a false WORN commit under that architecture would just flip a
+render gain back and forth -- cosmetically wrong for a moment, but not a real backlight power
+cycle. That would make this whole confirm/timeout tradeoff much lower-stakes than it currently is
+under Monado's own HID-driven auto-standby, which is worth weighing before spending more effort
+tuning `WMR_USER_PRESENCE_DON_MOTION_RAD_S`/`_DON_CONFIRM_TIMEOUT_MS` further.
