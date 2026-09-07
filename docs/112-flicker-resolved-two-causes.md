@@ -130,10 +130,11 @@ saying the default is *"NEVER for judging backlight flicker"*.
 
 That remedy did not hold, and the reason is worth stating plainly:
 
-> `grep -rn HMD_VK_SOLID scripts/` returns hits **only inside `hmd-vk.c` itself**. Not one
-> wrapper that runs `hmd-vk` and then asks a human to look ever set the flag — not
-> `verify-bpc.sh`, not `hmd-test.sh` (the *official* post-patch check, which
-> `apply-bpc-patch.sh` tells operators to run), not `test-powermizer-90hz.sh`.
+> Before the hardening in §6 below, `grep -rn HMD_VK_SOLID scripts/` returned hits **only
+> inside `hmd-vk.c` itself**. Not one wrapper that ran `hmd-vk` and then asked a human to
+> look ever set the flag — not `verify-bpc.sh`, not `hmd-test.sh` (the *official*
+> post-patch check, which `apply-bpc-patch.sh` tells operators to run), not
+> `test-powermizer-90hz.sh`. (Running that grep today returns six files — §6 is why.)
 
 The fix was real and was never adopted where it mattered. A warning comment inside a tool does
 not protect the operator who runs a wrapper around that tool. **A safe default would have;** an
@@ -152,15 +153,18 @@ declared the fake-pacer phase-jump storm *"root cause found and fixed"*. A live 
 that fix applied still showed ~90 phase-jump periods per second. It reduced WARN log volume, by
 design of its own rate limiter; it did not change the behaviour. The WARN itself is benign and
 long-standing — present in healthy logs since 2026-08-15, thousands per session at a measured,
-correct 90 fps (`docs/96`).
+correct 90 fps (`docs/96`, with the date and per-session counts in `docs/109`).
 
 ## 5. What held up
 
 - **NVIDIA patch 0004 works at runtime** — measured, not inferred (§2).
 - **HID activation is correct.** `scripts/panel.py activate` (report `0x50` SET then GET, then
-  `{0x04,0x01}`) is identical to what Oasis sends, verified against the same-night USBPcap.
-  Windows sends nothing else to the companion during panel bring-up — no persistence, duty-cycle
-  or brightness command exists to be missing.
+  `{0x04,0x01}`) is identical to what Oasis sends, verified against a same-night USBPcap of a
+  cold panel bring-up (`flicker.pcapng`, 699 MB, 267 s; companion `03f0:0580` at bus 2,
+  address 5). Beyond that sequence Windows sends the companion only `{0x04,0x00}` (screen off)
+  and the standard `SET_IDLE`. No persistence, duty-cycle or brightness command exists to be
+  missing. This closes the cold bring-up case the same way `docs/13` closed the live 60↔90
+  transition: there is no panel command, at either moment, that Monado does not already send.
 - **USB is clean from both sides.** 5/5 at correct speeds on the CPU-fed Matisse controller
   (PCI `07:00.3`), zero kernel errors. Windows *also* refuses to provision the headset on the
   A520 chipset controller (PCI `02:00.0`) — which confirms the `docs/22` CPU-vs-chipset rule
@@ -188,6 +192,12 @@ Nothing blocking. Two loose threads:
 
 - The Linux 4320x2160@**60** `DEVICE_STATUS` was not captured (only Windows@60 was). Not needed
   for the conclusion, but it would complete the table.
+- **The `0x03` DEBUG firmware-log channel (`docs/12` §6) was not examined in either
+  2026-09-07 capture.** `docs/09` records the Windows driver string
+  `left duty %d, right duty %d, frame timing %d` — exactly the kind of data this
+  investigation cared about — but nobody ran the firmware-log listener during either A/B.
+  Nothing points at it being relevant; nothing rules it out either. The captures live on an
+  external SSD that is currently disconnected.
 - Neither real-content session from 2026-09-06/07 has a headset-side capture tied to it —
   `jack-in-wayland.sh` rotates its log only one level deep, and both wearer sessions' logs were
   overwritten by the headless pacer runs that followed. The brightness-gain A/B explains the

@@ -80,15 +80,19 @@ you the port TYPES (the table above), and only a live census tells you the CONTR
 controller is what decides whether the headset works. Plug a mouse into each blue Type-A socket,
 run `usb-port-map.sh map`, and match ASUS's numbers to the `usbN-portM` names.
 
-### ⚠️ This chapter's port table was measured on a DIFFERENT board than the current lab machine
+### ⚠️ This chapter's port table describes ONE of the two test kits — check which one you are on
 
-### ⚠️ This chapter's port table was measured on a DIFFERENT board than the current lab machine
+This project runs **two host kits** and moves the headset between them on purpose to
+validate USB behaviour (see `docs/63`, "There are TWO test kits"):
 
-Written for a box whose xHCI controllers are `07:00.3` (Matisse/CPU) and `02:00.0` (A520
-chipset). The lab machine as of 2026-08-19 is an **ASUS TUF GAMING B450M-PLUS II**, whose
-controllers are **`09:00.3` (Matisse/CPU)** and **`02:00.0` (400 Series chipset)**. The port
-map is a property of the BOARD, so do not carry numbers between them — run
-`./scripts/usb-port-map.sh map`, which reads the live topology instead of trusting this table.
+- **dev / `iashur`** — Gigabyte A520M K V2 / Ryzen 5 5600X: CPU xHCI `07:00.3`, chipset `02:00.0` (A520)
+- **local** (the everyday box) — ASUS TUF B450M-PLUS II / Ryzen 5 3600: CPU xHCI `09:00.3`, chipset `02:00.0` (400-series)
+
+This chapter's table was measured on the `07:00.3` kit. The rule that holds on BOTH is
+"CPU-fed Matisse controller works, chipset controller fails" — only the address differs.
+A port map is a property of the board, so never carry port numbers between kits: run
+`./scripts/usb-port-map.sh map`, which reads the live topology, and
+`cat /sys/devices/virtual/dmi/id/board_name` to know which kit you are sitting at.
 
 ### Port-to-port reliability: the mechanism is the CONTROLLER, and it is now addressable (2026-08-19, T231)
 

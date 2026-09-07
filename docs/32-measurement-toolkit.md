@@ -94,6 +94,32 @@ another Windows capture session, check what previous ones already recorded.
 - Linux-side counterparts already captured: `~/vr/hid-mode{0,1,2}.txt` (usbmon per display
   mode) and `windows-kit/linux-reference.txt`.
 
+### Windows USBPcap captures — inventory (added 2026-09-07)
+
+No index of these existed before, which is how two irreplaceable files ended up recorded
+nowhere. They live under `Users/<operator>/Desktop/windows-kit2_dude/allinone/` on the
+**external SSD that iashur boots Windows from** — normally physically disconnected.
+
+| Capture | Date | Size | Mined for | Not yet mined |
+|---|---|---|---|---|
+| `flicker.pcapng` | 2026-09-07 | 699 MB, 165k pkts, 267 s | companion `03f0:0580` fully decoded: cold panel bring-up is only report `0x50` SET+GET, `{0x04,0x01}`/`{0x04,0x00}`, `SET_IDLE` | the `0x03` DEBUG firmware log on the HoloLens Sensors interface |
+| `aircar_90vs60_switch_windows_confirmed_fine.pcapng` | 2026-09-07 | 1002 MB | companion decoded across a live 90↔60 switch; gave the `DEVICE_STATUS` reference rows in `docs/112` §2 | same |
+| `camera_apareo_standby.pcapng`, `..._2_sensor.pcapng` | 2026-09-06 | 2.5 GB / 959 MB | — | everything |
+| `joystick_secuencia_wolf.pcapng` | 2026-08-25 | 3.1 GB | controller work | — |
+| `Allinone.pcapng`, `solo1/solo2.pcapng`, `run_60hz_*`, `run_90hz_*` | 2026-08-05 | assorted | the 60/90 comparison in `docs/13` | — |
+
+**Finding the companion in any of them:** it is bus 2, address 5 in both 2026-09-07 files.
+Locate it generically with
+`tshark -r F -Y "usb.idVendor == 0x03f0" -T fields -e usb.bus_id -e usb.device_address`,
+then filter `usb.bus_id == N && usb.device_address == M` and dump with `-x`. Note
+`usb.capdata` comes back empty for USBPcap files — slice the hex instead; the URB header
+length is the first little-endian u16.
+
+**If that SSD is reconnected, copy the two 2026-09-07 captures off it before anything else
+touches it.** Their only copy is on a drive not attached to any machine this project can
+reach, and they are the only recording of this headset's Windows behaviour after the Oasis
+auto-update.
+
 ## What we are missing, and what each would unlock
 
 | Missing | Unlocks | Cost |

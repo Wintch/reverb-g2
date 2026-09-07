@@ -103,7 +103,7 @@ everything a G2 demo could plausibly want to tune. Pure build/debug/platform tog
 
 | Var/mechanism | File:line | Default | Purpose | Used? | Dashboard? |
 |---|---|---|---|---|---|
-| `XRIZER_BRIGHTNESS_FILE` | compositor.rs:1670 | `$HOME/vr/logs/xrizer-brightness` | Path to the polled brightness-gain file | Yes | **Yes — but broken, see Part 2** |
+| `XRIZER_BRIGHTNESS_FILE` | compositor.rs:1670 | `$HOME/vr/logs/xrizer-brightness` | Path to the polled brightness-gain file | Yes | **Yes — works, but must stay at 1.0: any other value visibly dithers, `docs/112` §3** |
 | `XRIZER_RECENTER_HOLD_SECS` | input/legacy.rs:439 | 3.0s | Hold-menu-button global recenter duration | **No** | No | **Have, don't use** — hardcoded to the crate default everywhere |
 | `XRIZER_TRACKER_SERIALS` | input/devices.rs:422 | none | Semicolon-list of extra generic-tracker serials to expose to the game | **No** | No | Not relevant — no extra trackers in the booth |
 | `XRIZER_CUSTOM_BINDINGS_DIR` | input/action_manifest.rs:281 | none | Override the default action-binding search directory | **No** | No | Have, don't use |
@@ -115,7 +115,7 @@ everything a G2 demo could plausibly want to tune. Pure build/debug/platform tog
 ## 6. Already wired to the dashboard (`status-dashboard.py`)
 
 - **DoF** (3dof/6dof) — per-user preference, drives `WMR_SLAM`/`WMR_CAMERAS` via the launcher.
-- **Brightness** (`XRIZER_BRIGHTNESS_FILE` gain, 0-4x) — per-user, `/api/brightness` — **broken, see Part 2**.
+- **Brightness** (`XRIZER_BRIGHTNESS_FILE` gain, 0-4x) — per-user, `/api/brightness` — **works, but must stay at 1.0. Anything else pushes composited values between representable 8-bit levels and the driver dithers them temporally: visible flicker in bright areas, proven by a live A/B (`docs/112` §3).**
 - **Audio** (`hmd-audio.sh mute/unmute/set <0-150>%`) — sink-name lookup via `wpctl`, survives PipeWire re-numbering.
 - **Playlist** (`playlist-runner.py`) — ordered demo-round sequencing, not a per-frame calibration but a booth-operation control.
 

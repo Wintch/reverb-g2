@@ -29,8 +29,9 @@ USER_NAME="${HMD_USER:-${SUDO_USER:-}}"
 [ -z "$USER_NAME" ] && USER_NAME="$(logname 2>/dev/null || true)"
 [ -z "$USER_NAME" ] && USER_NAME="$(stat -c %U "$REPO" 2>/dev/null || true)"
 
-# The G2 panel's DRM connector, auto-detected by EDID fingerprint (DP-3 since the
-# 2026-09-03 GPU swap, was DP-1); fall back to the historical port if it can't be read.
+# The G2 panel's DRM connector, auto-detected by EDID fingerprint -- this connector has already gone DP-1 -> DP-3 -> DP-1, so never trust a port name
+# printed in a comment;
+# fall back to a plausible port only if the panel is asleep and it can't be read.
 HMD_CONN="$("$REPO/scripts/hmd-connector.sh" 2>/dev/null)"; HMD_CONN="${HMD_CONN:-card0-DP-1}"
 [ -z "$USER_NAME" ] && USER_NAME="$(loginctl list-sessions --no-legend 2>/dev/null | awk '$3!="root"{print $3; exit}')"
 if [ -z "$USER_NAME" ] || [ "$USER_NAME" = "root" ]; then

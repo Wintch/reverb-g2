@@ -1,5 +1,30 @@
 # Next step
 
+> ## START HERE (2026-09-07 ~04:00 -03 — the panel flicker is CLOSED; `docs/112` is the
+> one to read, and `docs/109`/`110`/`111` are superseded by it)
+>
+> **There was never a Linux-side panel bug.** Solid-white A/B: `4320x2160@90` is clean on
+> Linux *and* Windows; `@60` flickers on both — factory backlight behaviour at a non-native
+> panel frequency. Two separate causes had been mistaken for one panel fault:
+>
+> 1. **"Flickers at 90 Hz under pure Vulkan"** was `hmd-vk`'s DEFAULT test pattern, which
+>    alternates colour every frame (~30 Hz strobe at 90 fps). **Second time this trap fired**
+>    — first was 2026-08-06, `docs/19`. Every wrapper now sets `HMD_VK_SOLID=1`; see the new
+>    entry at the top of `docs/06`.
+> 2. **Real-content flicker** (Aircar, the video player) was the **xrizer brightness gain at
+>    1.25×** → temporal dithering. **Standing rule: never ship a gain other than 1.0**, and
+>    fix it in the user profile, not just the live file — the dashboard re-applies the
+>    profile on every user switch.
+>
+> Confirmed along the way: **NVIDIA patch 0004 works at runtime** (the headset's own
+> `DEVICE_STATUS` byte 18 reads 8), our HID activation is byte-equivalent to Oasis's, and
+> USB is clean on both kits. `docs/63` now documents that there are **two test kits** and
+> that a PCI address which doesn't match your box is probably the other kit, not a stale one.
+>
+> Loose threads, neither blocking: the Linux `@60` `DEVICE_STATUS` was never captured, and
+> the `0x03` DEBUG firmware-log channel — the one place backlight duty might be observable —
+> has still never been examined (`docs/12` §6).
+
 > ## START HERE (2026-09-06 ~14:45 -03 -- presence auto-standby has a real operational caveat
 > now documented, plus 3 new spoken operator-alert states: Monado up/down, controller-missing,
 > and game-name-on-connect -- docs/103's final section has the full story)

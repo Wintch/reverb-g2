@@ -109,6 +109,29 @@ function**: Reverb G1, Reverb G2, Odyssey and Odyssey+. Lenovo Explorer, Dell Vi
 AH100/AH101, Medion Erazer and Fujitsu have `NULL` — Monado doesn't know how to power on
 their panel. This is a real gap for any "universal driver" goal.
 
+**[OURS]** What the activation sequence's three identification reads actually return, read
+directly off the companion on Linux (2026-09-07) and cross-checked against a Windows
+USBPcap of the same unit:
+
+```
+GET_FEATURE 0x50 -> 50 01 | 01 03 01 02 | "QA85QAPV1" 00 | 07 00 |
+                    "QA85QBLV1" 00 | 32 31 | "QA85QDPV1" 00 ...
+                    Three OEM firmware bank identifiers. The byte pairs interleaved
+                    between them read naturally as versions (01 02 -> 1.2, 07 00 -> 7.0,
+                    32 31 -> 50.49) -- that pairing is an INFERENCE from the layout, not
+                    something confirmed against a vendor tool.
+GET_FEATURE 0x09 -> 09 22 <10-char ASCII serial> -- byte-identical to the string the device
+                    reports in its USB SerialNumber descriptor, i.e. NOT a separate
+                    identifier. (Per-unit value: see docs/22's known-good fingerprint;
+                    deliberately not repeated here, this repo is public.)
+GET_FEATURE 0x08 -> 08 20 <14 hex chars> -- the leading characters of the hardware UID that
+                    docs/22 records in full; this read truncates it, it is not a shorter
+                    second UID. Value withheld here for the same reason.
+```
+
+Windows sends exactly this same `0x50` SET-then-GET handshake before `{0x04,0x01}` and
+nothing else, so `scripts/panel.py activate` is byte-equivalent to Oasis's bring-up.
+
 ### 3.2 Power On / Off
 
 **[MONADO]** `wmr_hmd_screen_enable_reverb()`, `wmr_hmd.c:846`:
@@ -229,6 +252,19 @@ starts talking. Tool: `scripts/fwlog.py`.
 at 90 Hz** — it's noise from the controllers subsystem (`reqCmd 23` = `0x17
 CONTROLLER_STATUS`), and the control rules it out as a lead. The `DMA CMT ERR` that another
 user reported in Monado issue #332 **doesn't reproduce here**.
+
+---
+
+### Hypothesis Not Yet Checked: Backlight Duty Cycle
+
+**[OURS]** `HololensSensors.dll` carries the string
+`[%s] left duty %d, right duty %d, frame timing %d, panel ID %d`
+(`docs/09-oasis-driver-re.md`, from disassembly). Given this channel's format — ASCII, one
+line per event — that is exactly the shape of thing it could carry, and backlight duty is
+the one panel parameter this project has never been able to observe from the host.
+**It has not been checked.** Neither the captures behind this section nor the 2026-09-07
+flicker investigation (`docs/112`) had the firmware-log listener running during a live
+brightness or refresh change. Open lead, nothing more — but it is the best one left.
 
 ---
 

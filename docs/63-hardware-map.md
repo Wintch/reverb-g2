@@ -159,12 +159,50 @@ single-PSU row above as covering only this unit.
 
 | item | value | source |
 |---|---|---|
-| Board | **ASUS TUF GAMING B450M-PLUS II** | DMI + label |
-| Socket / chipset | AM4 / **B450** | ASUS techspec |
-| CPU | AMD Ryzen 5 3600 (Matisse) | `/proc/cpuinfo` |
-| USB controllers | **`09:00.3` Matisse (CPU)** — headset works; **`02:00.0` B450 chipset** — headset fails | live `lspci` |
-| Rear USB | 6 (2× USB2, USB-C, teal Gen2 Type-A, 2× Gen1 Type-A blue) | ASUS rear-panel diagram §1.2.2 |
-| The gap ASUS leaves | **which rear port is CPU vs chipset is NOT in the public spec** | — |
+| Board | **Gigabyte A520M K V2** | `board_vendor`/`board_name` in sysfs, 2026-09-07 |
+| Socket / chipset | AM4 / **A520** | live `lspci` |
+| CPU | **AMD Ryzen 5 5600X** (Matisse-class I/O die) | `/proc/cpuinfo`, 2026-09-07 |
+| GPU | **RTX 3060 Ti (GA104), 200 W default / 210 W max / 100 W floor** | `nvidia-smi --query-gpu=power.default_limit,power.max_limit,power.min_limit`, 2026-09-07 |
+| USB controllers | **`07:00.3` Matisse (CPU)** — headset works; **`02:00.0` A520 chipset** — headset fails | live `lspci`, 2026-09-07 |
+| Rear USB | 6 (2× USB2, USB-C, teal Gen2 Type-A, 2× Gen1 Type-A blue) | board-specific — re-derive after any board swap |
+| The gap the vendor leaves | which rear port is CPU vs chipset is not in the public spec | run `usb-port-map.sh map` |
+
+### There are TWO test kits, and both are current
+
+This is the single most important thing to know before reading any USB or PCI number in
+this repo. The headset is **deliberately moved between two host kits** to validate USB
+behaviour — a result that differs between them is a finding, not a fault. Neither kit
+supersedes the other, and neither row below is historical:
+
+| | **dev / `iashur`** | **local** (the everyday box) |
+|---|---|---|
+| Board | Gigabyte A520M K V2 | ASUS TUF GAMING B450M-PLUS II |
+| Chipset | A520 | B450 / 400-series |
+| CPU | Ryzen 5 5600X | Ryzen 5 3600 |
+| CPU (Matisse) xHCI — **headset works** | `07:00.3` | `09:00.3` |
+| Chipset xHCI — **headset fails** | `02:00.0` (A520) | `02:00.0` (400-series) |
+| Verified | live, 2026-09-07 | live, 2026-09-07 |
+
+Both columns are current. A number in this repo that does not match the box you are on is
+probably describing the other kit, not a stale record — check before "correcting" it.
+
+The constant across both kits — and the actual rule — is that the headset works on the
+**CPU-fed Matisse controller** and fails on the **chipset controller**. Only the PCI
+address of the good one changes. `docs/22`'s CPU-vs-chipset rule is therefore kit-
+independent; the address is not.
+
+**So: never hardcode a PCI address, and never assume which kit you are on.** Read it live:
+
+```
+cat /sys/devices/virtual/dmi/id/board_name     # which kit
+lspci -nn | grep -i usb                        # which controller is which
+nvidia-smi --query-gpu=name,power.max_limit --format=csv,noheader
+./scripts/hmd-connector.sh                     # which DRM connector (has drifted 3x)
+```
+
+Same for the DisplayPort connector name and the GPU wattage: both have already changed
+more than once. `lspci`, `nvidia-smi` and `hmd-connector.sh` are the only sources here that
+cannot go stale.
 
 This is a property of the BOARD, not the headset, and it is why `docs/00` + `usb-port-map.sh`
 carry a per-board ledger. The identity here is the reference; the live census is the map.

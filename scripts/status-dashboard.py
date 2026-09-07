@@ -2060,8 +2060,9 @@ function gpuPowerHtml(p) {
   const defaultPct = (p.default_limit_w / p.max_limit_w) * 100;
   // color ramps with draw relative to the FACTORY DEFAULT limit, not the
   // absolute max -- drawing right up to default is normal, past it is the
-  // signal worth flagging (this card is Gigabyte 240W default / 250W max,
-  // see docs/22's GPU-identity section).
+  // signal worth flagging (wattages are read live from nvidia-smi above -- do not
+  // hardcode this card's numbers here, they have already changed once: the current
+  // card is 200 W default / 210 W max, see docs/63).
   const ratio = p.draw_w / p.default_limit_w;
   const color = ratio > 0.95 ? '#d6483f' : (ratio > 0.7 ? '#d19a3d' : '#5fae6b');
   return `
@@ -2493,9 +2494,10 @@ async function refreshUserCenter() {
       <button onclick="userAdd()">${t('cc_add_btn')}</button>
       <label style="margin-left:6px">${t('cc_brightness')}</label>
       <input type="range" min="0.5" max="2.5" step="0.05" value="${gain}" id="uc-bri"
-             oninput="document.getElementById('uc-bri-v').textContent=(+this.value).toFixed(2)+'x'"
+             title="1.0 = clean. Any other value visibly dithers/flickers in bright areas on this headset (docs/112)."
+             oninput="document.getElementById('uc-bri-v').textContent=(+this.value).toFixed(2)+'x'; document.getElementById('uc-bri-v').className=(+this.value===1)?'ok':'warn'"
              onchange="setBrightness(this.value)" style="width:150px">
-      <span id="uc-bri-v" class="ok">${gain}x</span>
+      <span id="uc-bri-v" class="${(+gain===1)?'ok':'warn'}">${gain}x</span>
       <label style="margin-left:6px">${t('cc_lang')}</label>
       <select id="cc-lang" onchange="applyLangAndSave(this.value)">${langOpts}</select>
     `;

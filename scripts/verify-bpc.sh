@@ -43,7 +43,8 @@ echo
 echo "=== waking up the panel (the connector appears a few seconds later) ==="
 ./scripts/panel.py activate >/dev/null 2>&1
 # Wait for the G2 panel to appear on whatever DRM connector it lands on (auto-detected
-# by EDID fingerprint -- the port is DP-3 since the 2026-09-03 GPU swap, was DP-1).
+# by EDID fingerprint). Do NOT trust a connector name printed in a comment: this one
+# has already gone DP-1 -> DP-3 -> DP-1. scripts/hmd-connector.sh resolves it live.
 HMD_CONN=""
 for i in $(seq 1 8); do
     sleep 3

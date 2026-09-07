@@ -70,6 +70,15 @@ ceiling at HIGH+high-SS is genuine GPU compute saturation, not a power cap —
 
 ## 8. Brightness (xrizer patch 0007) — corrected verdict: it works
 
+> **CAVEAT ADDED 2026-09-07 — correct but incomplete. See `docs/112` §3.** The gain does
+> visibly change brightness, exactly as this section found. It also visibly **dithers** at
+> any value other than 1.0: `XR_KHR_composition_layer_color_scale_bias` multiplies the
+> composited RGB into values between representable 8-bit levels, and the driver alternates
+> adjacent levels frame to frame. A wearer reads that as fast flicker in bright areas, and
+> it cost a night of investigation before it was traced. Live A/B: 1.0 clean, 1.25 flickers,
+> 4.0 much worse. **Standing rule: never ship a gain other than 1.0 on this headset.** Read
+> this section as "the mechanism works as designed", not as "1.25x is safe to use".
+
 Wearer confirmed the dashboard brightness slider works in-headset: *"el slider de brillo me
 anduvo bien."* The earlier "broken" verdict (an objective screenshot A/B that showed a flat
 mean) used the **wrong instrument**: the desktop mirror shows the app's raw submitted

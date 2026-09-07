@@ -604,6 +604,27 @@ already runs. Full detail, the fix (`apt-get install --reinstall` on the actual 
 package, found with `dpkg -S`, not assumed from the package name), and the drift check now
 built into `pre-update-check.sh`: **`docs/73-nvidia-symlink-drift.md`**.
 
+## "The panel flickers at 90 Hz" — check the test pattern before the panel (RESOLVED twice)
+
+`hmd-vk` and `hmd-modeset` both alternate colour on every frame / page-flip by **design** —
+a sync/lock-on check that is a ~30 Hz and ~45 Hz strobe respectively at 90 fps. To a wearer
+that is indistinguishable from backlight flicker, and it is not the panel. This produced a
+false confirmation on **2026-08-06** (`docs/19`, commit `cc98bb0`) and, despite the fix from
+that day existing in the source the whole time, **again on 2026-09-06/07** (`docs/112`).
+
+Both tools now paint solid white under `HMD_VK_SOLID=1` / `HMD_MODESET_SOLID=1`, and every
+wrapper that asks a human to look (`verify-bpc.sh`, `hmd-test.sh`, `test-powermizer-90hz.sh`,
+`collect-nv.sh`) sets the flag automatically. **Before trusting any physical flicker verdict,
+confirm the run went through one of those wrappers, or pass the flag by hand.**
+
+Two related facts worth having in the same place:
+
+- **60 Hz flickers on this panel by design** — factory backlight behaviour at a non-native
+  frequency, identical on Windows. 90 Hz is clean on both. Not a bug, do not investigate it.
+- **A real content flicker** the same night was the **xrizer brightness gain above 1.0**
+  (`XR_KHR_composition_layer_color_scale_bias` -> temporal dithering). Never ship that gain
+  at anything but 1.0, and fix it in the user profile, not just the live file.
+
 ## Known broken hardware
 
 - 16GB RAM (upgrade to 32 planned); zram configured at 100% with zstd.

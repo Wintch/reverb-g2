@@ -3,7 +3,7 @@
 # for a genuinely GPU-bound counter-example to docs/48's "power capping is free" VR result.
 #
 #   ./q2rtx-power-sweep.sh                  default sweep: 100 150 175 200 W, 2 reps each
-#   ./q2rtx-power-sweep.sh -r 3 100 175 250  custom reps/levels
+#   ./q2rtx-power-sweep.sh -r 3 100 175 210  custom reps/levels
 #   ./q2rtx-power-sweep.sh -h                full usage
 #
 # WHY THIS EXISTS (docs/48, 2026-08-23/T246 follow-up): T209 measured VR frame pacing
@@ -57,8 +57,10 @@ Usage: $(basename "${BASH_SOURCE[0]}") [-r REPS] [levels...]
   -r REPS   repetitions per power level. Default: 2.
   -h        this help.
   levels    GPU power limits in watts to sweep. Default: 100 150 175 200
-            (card's floor/max here are 100W/250W -- nvidia-smi refuses anything
-            outside that range with a clear error, this script doesn't re-check it).
+            (card's floor/max here are 100W/210W since the 2026-09-03 GPU swap --
+            nvidia-smi refuses anything outside that range with a clear error, and this
+            script doesn't re-check it. Re-query it rather than trusting this comment:
+            nvidia-smi --query-gpu=power.max_limit --format=csv,noheader).
 
 Output: $VR/logs/q2rtx-power-sweep-<timestamp>.csv, columns:
         watts,rep,frames,seconds,fps

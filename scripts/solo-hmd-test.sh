@@ -7,6 +7,14 @@ export DISPLAY=:0
 LOOK_SECONDS="${1:-120}"
 STAMP=/home/iam/vr/solo-hmd-test.status
 
+# The HMD connector name is NOT stable -- it has gone DP-1 -> DP-3 -> DP-1 across GPU and
+# cable changes. Hardcoding it made every xrandr/kscreen-doctor call below silently no-op
+# (they do not error on an unknown output), so this script quietly did nothing to the very
+# display it exists to isolate. Resolve it live by EDID fingerprint instead.
+HMD_CONN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && ./hmd-connector.sh 2>/dev/null)"
+HMD_CONN="${HMD_CONN#card0-}"
+HMD_CONN="${HMD_CONN:-DP-1}"
+
 log() { echo "[$(date +%H:%M:%S)] $*" >> "$STAMP"; }
 
 restore_desktop() {
@@ -19,17 +27,17 @@ restore_desktop() {
 
     log "RESTORE: restoring the three monitors"
     xrandr --output HDMI-1 --mode 1920x1080 --rate 60 --pos 0x0 --rotate normal \
-           --output DP-3   --mode 1920x1080 --rate 60 --pos 1920x0 --rotate right --primary \
+           --output "$HMD_CONN"   --mode 1920x1080 --rate 60 --pos 1920x0 --rotate right --primary \
            --output HDMI-0 --mode 1920x1080 --rate 143.98 --pos 3000x0 --rotate normal 2>>"$STAMP"
     sleep 2
 
     # Cycle the portrait rotation: xrandr REPORTS "right" even though the panel shows
     # landscape after a direct-mode. In KDE the one that actually applies it is kscreen-doctor.
-    log "RESTORE: cycling DP-3 rotation"
-    xrandr --output DP-3 --rotate normal 2>>"$STAMP"; sleep 1
-    xrandr --output DP-3 --rotate right  2>>"$STAMP"; sleep 1
+    log "RESTORE: cycling $HMD_CONN rotation"
+    xrandr --output "$HMD_CONN" --rotate normal 2>>"$STAMP"; sleep 1
+    xrandr --output "$HMD_CONN" --rotate right  2>>"$STAMP"; sleep 1
     if command -v kscreen-doctor >/dev/null 2>&1; then
-        kscreen-doctor output.DP-3.rotation.right >>"$STAMP" 2>&1 || true
+        kscreen-doctor output.$HMD_CONN.rotation.right >>"$STAMP" 2>&1 || true
     fi
     log "RESTORE: done"
     xrandr --query 2>/dev/null | grep -E " connected" >> "$STAMP"
@@ -40,7 +48,7 @@ trap restore_desktop EXIT
 log "START - the headset remains the only display for ~${LOOK_SECONDS}s"
 
 # 1. Turn off the ENTIRE desktop: frees the last 60 Hz clock domain
-xrandr --output HDMI-0 --off --output HDMI-1 --off --output DP-3 --off 2>>"$STAMP"
+xrandr --output HDMI-0 --off --output HDMI-1 --off --output "$HMD_CONN" --off 2>>"$STAMP"
 sleep 2
 log "desktop off; active displays:"
 xrandr --query 2>/dev/null | grep -E " connected [0-9]" >> "$STAMP"

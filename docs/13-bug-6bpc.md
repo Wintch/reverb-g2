@@ -393,6 +393,13 @@ display** either in Windows' "Settings > Advanced display" or in the NVIDIA pane
 resolution" — both only list the desktop monitors. The avenue of reading DSC from there is
 closed due to lack of access to that screen, not because of a negative result from it.
 
+**Follow-up, 2026-09-07:** the one case this did not cover — a cold panel *bring-up* rather
+than a live transition — is now closed the same way, on the same physical unit. A USBPcap of
+Windows powering the panel on from fully disconnected (`flicker.pcapng`) shows nothing sent
+to the companion beyond the `0x50` version query, `{0x04,0x01}`/`{0x04,0x00}` and standard
+`SET_IDLE`. Between that and the transition case above, the HID/USB channel is closed for
+every phase of panel operation this project has been able to name. Detail: `docs/112` §5.
+
 ---
 
 ## Reproducibility note (important)
