@@ -1807,3 +1807,203 @@ is:
 Committed on `~/vr/monado` (branch `lab-full`, remote `wintch` NOT pushed): `510a6751c` ("wmr:
 promote IMU motion to an independent primary WORN signal, not just a candidate corroborator"),
 touching `wmr_hmd.c`/`wmr_hmd.h`.
+
+## 2026-09-06/07 (later still) -- bisected + root-caused: auto-standby's real screen-off action kills the DRM lease (VK_ERROR_UNKNOWN), fixed with a default-off kill switch
+
+Separate task, same night: a reproducible bug found live during tonight's presence work --
+`vk_swapchain_present: VK_ERROR_UNKNOWN` immediately followed by `_lease_finished: Lease has been
+closed`, within ~5s of `hello_xr` connecting and `BEGIN_SESSION` logging, on every launch,
+surviving a full `jack-in-wayland.sh down`+`up` cycle and even a full OS reboot of `iashur`. Once it
+fires, the DRM lease never recovers for the rest of the session -- the companion HID channel keeps
+working fine (identification reads succeed, the HP logo LED lights on a manual
+`scripts/panel.py activate`), but no real video content ever returns to the panel. Framed explicitly
+as headless-reproducible (no wearer needed) and NOT requiring excessive iteration -- confirmed true;
+this reproduced 100% of the time, every single test, at every commit from `754beed30` onward,
+regardless of which fix was tried.
+
+### Verifying the brief instead of trusting it
+
+`git log --oneline -15 lab-full` confirmed the exact commit list/order the task described. Before
+touching anything, found a leftover live session already running (`monado-service` PID 3464, started
+22:59:47, `hello_xr` PID 4375) at then-current HEAD `510a6751c` -- its `jack-in-wayland.log` already
+showed the exact bug (`BEGIN_SESSION` at line 477, `VK_ERROR_UNKNOWN`/`Lease has been closed` at
+lines 484-489), a free, real data point confirming HEAD reproduces before any deliberate test was
+even run. Torn down cleanly (`jack-in-wayland.sh down`, confirmed no stray processes) before starting
+the actual bisection.
+
+### Bisection: not what the brief expected
+
+The task's brief treated `911ef3c56` as "very likely clean," live-validated earlier tonight by the
+human operator ("todo negro" -- full blank/restore cycles, real video before/after, multiple times).
+Built and tested it anyway, per the task's own instruction not to assume. **It reproduced the bug**,
+identically to HEAD -- `BEGIN_SESSION` at the point the panel was already `screen_off_by_presence=1`
+from a pre-connect auto-standby blank, followed within one log burst by `VK_ERROR_UNKNOWN` +
+`Lease has been closed`. This directly contradicted the brief's inherited assumption, so the
+bisection had to go further back than the three-point plan it suggested.
+
+Walked back to `c44ba4a23` (`wmr: fix presence auto-standby RESTORE never firing`, the commit
+immediately before all of tonight's "5 commits" the brief listed) -- full rebuild, full
+`down`+`up`+`play360` cycle. **Clean.** The panel blanked mid-session (client already connected,
+`BEGIN_SESSION` already fully established, ~36s into the session per the heartbeat), reasserted
+periodically (`presence auto-standby: reassert took 370.9 ms`, same duration as every other commit),
+and the session kept running with zero `VK_ERROR_UNKNOWN`, zero lease loss, for the rest of the test.
+
+Bisected the middle: checked out `754beed30` (`wmr: run presence decision on the read thread, not
+update_inputs` -- the very first of the "5 commits," and the one that moved the entire
+debounce/commit/blank/restore/reassert decision off the client-gated `wmr_hmd_update_inputs()` onto
+the always-on `wmr_run_thread`). Full rebuild, full test: **reproduced**, same signature as HEAD,
+`BEGIN_SESSION` landing on an already-blanked panel, `VK_ERROR_UNKNOWN` + lease-closed within one log
+burst. **`754beed30` is the commit that introduced the bug**, confirmed by direct rebuild+test at
+both it and its parent, not inferred from the diff alone.
+
+The mechanical reason this specific commit opened the door: before it, the NOT-WORN timer (and
+therefore auto-standby's first-ever blank) could only advance from inside `wmr_hmd_update_inputs()`,
+which the OpenXR runtime only calls once a client has an active, frame-synced session -- so a blank
+could never happen before a client's first real content. After it, the same decision runs
+unconditionally on `wmr_run_thread` starting at driver init, so the 15s NOT-WORN countdown can (and,
+with `hello_xr` needing ~15-20s to load an 8K test video and connect, reliably does) complete before
+any client exists at all.
+
+### Chasing the wrong mechanism, twice, before finding the right one
+
+Read `754beed30`'s diff and the surrounding compositor code before proposing anything, per the task's
+own instruction to reason concretely rather than guess.
+
+**First attempt (insufficient): gate the first-ever blank on a client having connected.** Added
+`wh->presence.client_update_inputs_seen`, set by `wmr_hmd_update_inputs()` (only ever called from
+`oxr_session.c`'s two call sites, both requiring a real OpenXR client), checked before allowing
+auto-standby's blank action. Rebuilt, tested: the blank now landed ~1-2s AFTER `BEGIN_SESSION`
+instead of before it -- but **still crashed**. Root cause of the miss, found by reading
+`oxr_session.c` directly: one of the two `xrt_device_update_inputs()` call sites runs synchronously
+*inside* `xrBeginSession()` handling, at the exact moment `compositor_begin_session()` fires -- i.e.
+the gate's own trigger IS the vulnerable moment, not something safely earlier than it. Reverted.
+
+**Second attempt (also insufficient): stop the ~370ms blocking HID I/O from holding `presence_lock`
+across a cross-thread contention window.** Read `wmr_hmd_presence_tick()` in full: the reassert/
+screen-off HID transaction (`wmr_hmd_reassert_reverb_fresh_fd`/`wmr_hmd_screen_off_reverb_fresh_fd`,
+each ~370ms -- an initial 300ms sleep plus a 4-iteration handshake loop) ran with `presence_lock`
+held for the whole call, and `wmr_hmd_update_inputs()` -- including the `xrBeginSession()` call site
+above -- takes the same lock. Narrowed the critical section so `presence_lock` only ever guards the
+fast debounce/commit bookkeeping, never the blocking I/O (the actual HID calls moved to run after
+`os_mutex_unlock()`, gated by locally-decided `need_restore`/`need_blank`/`need_periodic_poke`
+booleans). Rebuilt, tested with the default 15s threshold: **still crashed**, blank landing before
+`BEGIN_SESSION` again.
+
+Reasoned further: even unlocked, the HID I/O still ran directly on `wmr_run_thread` -- the same
+always-on thread that also does `control_read_packets`/`hololens_sensors_read_packets` every
+iteration, i.e. the sole source of the IMU samples the compositor's pose prediction depends on every
+frame. Stalling that thread for ~370ms, any time a client is actively presenting, could plausibly
+desync frame timing badly enough to explain the symptom. Built a proper fix for this: a new
+`wh->presence_action_lock` (trylock-guarded, so at most one action is ever in flight) plus a
+short-lived detached thread (`wmr_hmd_presence_dispatch_action()` /
+`wmr_hmd_presence_action_thread()`) that performs the actual blocking HID I/O completely off
+`wmr_run_thread`, with a proper join-as-barrier in `wmr_hmd_destroy()` (taken right after
+`os_thread_helper_destroy(&wh->oth)` stops+joins the read thread, guaranteeing no new dispatch can
+race it, then blocking until any last in-flight action thread releases the lock before `wh` is
+freed). Rebuilt, tested at the default 15s threshold: **still crashed**, identical signature.
+
+To rule out "maybe it just needs more elapsed time to be safe" as a residual variable, ran the
+fully-thread-dispatched build with `WMR_USER_PRESENCE_SCREENOFF_MS=90000` -- letting a real client
+render successfully, uninterrupted, for 55+ established seconds before the very first blank ever
+fired. **Still crashed**, same signature, the instant the delayed blank landed. This ruled out both
+"before vs. after first connect" ordering and "needs a warm-up period" as the operative variable.
+
+**The isolating experiment that found it.** Every prior test's blank action was immediately followed
+by a full reassert-then-reblank cascade (the blank transition resets `last_reassert_ns` to 0, making
+the periodic keep-alive poke immediately due) -- a confound that hadn't been isolated. Reran with
+`WMR_PRESENCE_RESTORE_REASSERT=0` (disabling that cascade) so the tick could do *nothing but* a
+single, isolated `wmr_hmd_screen_off_reverb_fresh_fd()` call, with no reassert anywhere near it.
+**Still crashed** -- `BEGIN_SESSION` -> `VK_ERROR_UNKNOWN` -> `Lease has been closed`, from that one
+lone screen-off, nothing else in flight. This is the direct proof: a real, effective panel screen-off
+is sufficient by itself, regardless of threading, locking, or timing relative to session state.
+
+### Reconciling with `c44ba4a23`'s clean mid-session blank
+
+If a real screen-off always kills the lease, why was `c44ba4a23`'s blank clean? Checked what
+mechanism it actually used for the BLANK direction specifically (not the RESTORE direction, which
+already used fresh-fd reassert even at that commit -- confirmed via
+`git log -S'wmr_hmd_reassert_reverb_fresh_fd'`, which shows that function was introduced BY
+`c44ba4a23` itself). A second pickaxe search, `git log -S'wmr_hmd_screen_off_reverb_fresh_fd'`, shows
+that function -- the fresh-fd screen-OFF path -- was introduced later, by `d07872fd9`. At
+`c44ba4a23`, the blank action still called the old `wh->hmd_desc->screen_enable_func(wh, false)` on
+the shared `wh->hid_control_dev` handle -- and this driver's own code comments (written earlier the
+same day, describing why the fresh-fd paths were built at all) document that exact shared-handle
+send as unreliable while a client is actively using the device: *"HID_SEND reported success, but with
+a real OpenXR client actively rendering, the panel stayed fully lit with real video still visible."*
+The most likely explanation: `c44ba4a23`'s mid-session blank test never actually reached the hardware
+at all -- the very unreliability that later commits set out to fix was, until fixed, accidentally
+masking this bug. Once `d07872fd9` made screen-off actually work reliably (fresh fd, no shared-handle
+contention), it started genuinely reaching the panel -- and that is what newly exposed a pre-existing
+hardware/DRM interaction nothing had ever reliably triggered before.
+
+**This also lines up with, and is strengthened by, the USB-capture analysis earlier in this same
+file** (the "genuine Windows/Oasis standby, USB-level ground truth from real captures" section
+above): real Windows/Oasis standby, captured directly over USBPcap across two full test sessions,
+**never sends this HID Feature-report toggle at all** -- zero `SET_REPORT`/Feature-report packets in
+either capture. Windows' own standby appears to work through a categorically different, more
+invasive mechanism (a full USB re-enumeration/reset), reserved for full application exit, not for
+routine idle standby while content keeps running. This driver's `{0x04,0x00}`/`{0x04,0x01}` Feature
+report was already flagged, independently, as having no real-Windows counterpart before this bug was
+even found -- tonight's crash is a second, concrete way that same design assumption turns out not to
+hold on this hardware/compositor combination.
+
+### The disputed live-validation claim
+
+The task's brief cited a live, wearer test at `911ef3c56` as clean ("todo negro," multiple full
+blank/restore cycles, real video before and after). Given `911ef3c56` reliably reproduces the bug in
+every headless test run here -- and the isolated single-screen-off test rules out timing/threading as
+confounds -- this could not be reconciled with confidence. The most plausible account: a worn test
+never has an unattended-boot window for the NOT-WORN timer to reach the panel's very first blank
+before real content is already flowing, and the blank/restore cycles the operator observed were most
+likely doff/don cycles happening well after a session was already established and steadily
+presenting -- exactly the scenario this investigation could not get to fail EXCEPT via the accidental
+`c44ba4a23`-era shared-handle unreliability. Recording this discrepancy explicitly rather than
+silently overriding it or silently deferring to it: this session's own direct, repeated, live
+rebuild+test evidence on the same physical rig is trusted here over the secondhand summary, per this
+project's own standing practice of re-verifying disputed conclusions against primary sources rather
+than defending or assuming either side blind. If the operator has memory of the exact conditions of
+that "todo negro" test (was a game/client already rendering before the first blank in that session?),
+it would be worth reconciling directly -- not done here, since the rig had to stay headless for this
+task.
+
+### The fix
+
+Kept both interim hardening changes -- narrower `presence_lock` scope, and moving the blocking HID
+I/O off `wmr_run_thread` onto its own short-lived detached thread -- since neither is the bug's cause
+but both are real, independently-justified correctness/latency improvements (removing a genuine
+cross-thread lock-contention hazard with `xrBeginSession()`'s handling, and no longer letting a
+~370ms HID transaction starve the IMU read loop the compositor depends on every frame).
+
+The actual fix: a new debug option, `WMR_USER_PRESENCE_BLANK_PANEL` (default OFF), gates only the
+destructive action -- the real `screen_off_fresh_fd_func`/`screen_enable_func(false)` call and the
+`screen_off_by_presence = true` transition that triggers it. Left at its default:
+
+- `not_worn_since_ns` timing, the WORN/NOT-WORN debounce, and all of tonight's motion-corroboration
+  work (packet confirmation, IMU motion rescue, the bounded timeout) keep running exactly as designed
+  -- `presence.committed` and `XR_EXT_user_presence` stay fully correct and live.
+- The panel is simply never told to physically blank, so `screen_off_by_presence` never becomes true,
+  which as a direct, correct consequence means RESTORE and the periodic reassert-while-blanked poke
+  never have anything to do either -- both are dead code paths only for as long as the kill switch
+  stays off, not removed, so re-enabling it later needs no further code changes.
+- `jack-in-wayland.sh` and `presence.conf` needed NO changes -- the new option is off by default and
+  nothing in either file sets it, so the fix is live purely from the `monado` rebuild.
+
+Recovering the DRM lease automatically after a real screen-off would need the compositor's own
+lease/swapchain handling to detect the connector coming back and re-acquire, which lives outside this
+driver file and was not attempted here -- flagging it as the real follow-up, not claiming it solved.
+
+### Live validation
+
+Full `jack-in-wayland.sh down` + `rm -f /run/user/1000/monado_comp_ipc` +
+`WMR_PRESENCE_DIAG=1 jack-in-wayland.sh up` + `play360.sh -p flat -t 1800 -q .../test2.mp4`, default
+settings (`presence.conf`'s `PRESENCE_ENABLE=1`/`PRESENCE_SCREENOFF_MS=15000`, no
+`WMR_USER_PRESENCE_BLANK_PANEL` override). Watched past the point every prior build crashed (the
+~15-20s mark) and well beyond: 2+ minutes of sustained real playback, `hello_xr`'s own frame loop
+actively advancing (`DEBUGGRAB`/`DEBUGTRIGGER` controller-poll lines climbing in its stdout), zero
+`VK_ERROR_UNKNOWN`, zero `Lease has been closed`, `screen_off_by_presence=0` throughout (auto-standby
+correctly never blanking, as intended with the kill switch at its default). Torn down cleanly
+afterward (`jack-in-wayland.sh down`, confirmed no stray `monado-service`/`hello_xr`/`play360`
+processes, socket removed).
+
+Committed on `~/vr/monado` (branch `lab-full`, remote `wintch` NOT pushed): `af290d0e3` ("wmr: fix
+auto-standby blanking killing the DRM lease (VK_ERROR_UNKNOWN)"), touching `wmr_hmd.c`/`wmr_hmd.h`.
