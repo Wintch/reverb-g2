@@ -3,6 +3,14 @@
 Supersedes the conclusions of `docs/109`, `docs/110` and `docs/111`, which are corrected in
 place with pointers here.
 
+> **Correction 2026-09-08 — see `docs/115`.** The mechanism line below ("gets dithered
+> temporally") overstates what xrizer itself does: `current_brightness_gain()` only reads and
+> clamps the gain scalar and attaches it as a composition-layer color scale — there is no
+> dithering code in xrizer. The dithering happens downstream (most likely Monado's compositor
+> or NVIDIA's driver at scanout), not as a choice xrizer's code makes. The fix and the
+> conclusion (`gain == 1.0` is the only clean value) are unaffected — only the "xrizer dithers"
+> phrasing is retracted.
+
 ## Bottom line
 
 There was never a Linux-side panel bug. Two separate causes produced one symptom, and each
