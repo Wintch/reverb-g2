@@ -1153,3 +1153,223 @@ Committed on `~/vr/monado` (branch `lab-full`, remote `wintch` NOT pushed): `d07
 screen-off-fresh-fd work, found uncommitted and completed) and `41626b6e2` (this section's debounce
 fix). Committed on `~/Documents/reverb-g2` (branch `main`, NOT pushed): `scripts/presence-sound-alert.sh`
 (brightness dim/undim hooks + updated state-comment header) and this file.
+
+## 2026-09-06 (later still) -- live-caught follow-up: packet confirmation alone left a real don uncommitted for 13+s; fixed with IMU motion corroboration + a bounded timeout (code-analysis-only, not live-tested)
+
+Live wearer test of `41626b6e2` (the packet-confirmation fix from the section above) surfaced
+the opposite failure mode almost immediately: the user donned the headset for a real restore
+test, `PRESENCE-DIAG` showed `candidate` flip to `1` right away (a genuine proximity=1 packet),
+but `committed` stayed `0` for 13+ seconds and counting -- confirmed live via repeated
+`PRESENCE-DIAG heartbeat` lines showing `candidate=1 committed=0` unchanged, because the 2nd
+confirming packet `WMR_USER_PRESENCE_DON_CONFIRM_PACKETS=2` now requires never arrived in that
+window. The wearer was left donned with the panel still blanked and no visible restore, had to
+be un-blanked manually out-of-band (`scripts/panel.py activate`, bypassing the driver entirely)
+as a stopgap, and the session was torn down (`jack-in-wayland.sh down`) once this was confirmed
+-- specifically to stop leaving the wearer in an unpredictable state, not because anything was
+left running that needed attention. Per this follow-up task's own explicit instruction, this
+whole pass was **code-analysis-only from here**: no live hardware touch, no `monado-service`
+launch, no live test, no sudo -- everything below was designed and built against the log this
+live test had already produced, then rebuilt and reasoned about, not re-tested live.
+
+### Independently verifying the brief against the actual log, before designing anything
+
+Rather than take the task's framing on faith, re-derived the failure directly from
+`~/vr/jack-in-wayland.log` (the exact copy this live test produced) and from `git log`/`git show`
+on `~/vr/monado` `lab-full`. Two corrections to the framing worth recording:
+
+**The commit history has 3 commits from tonight, not 2 as loosely remembered going in**:
+`d07872fd9` (blank over a fresh fd), `41626b6e2` (the 2-packet confirmation debounce), and a
+third, `911ef3c56` ("re-blank the panel after every periodic reassert poke while auto-standby is
+active") -- the fix for the *other* live-caught bug tonight (the periodic 15s keep-alive poke
+structurally ending in a real screen-ON send, with nothing ever re-blanking afterward, so every
+poke permanently relit the real backlight). That one is separately live-validated ("todo negro"
+sustained across multiple keep-alive cycles) and untouched by this section -- it is not the same
+bug as the one fixed here, and nothing below revisits it.
+
+**The real log data is worse than "13+ seconds and counting" by itself suggests.** Grepped
+`control_ipd_value_decode` and `PRESENCE-DIAG heartbeat` across the full captured
+`jack-in-wayland.log` rather than trusting the live chat-timed figure alone:
+
+```
+717: PRESENCE-DIAG raw packet #2: proximity=0 ipd=765
+...(heartbeats climbing, raw_proximity=0, for the next ~74s of last_packet_age_ms)...
+783: PRESENCE-DIAG raw packet #3: proximity=1 ipd=763        <- candidate flips to WORN
+784: heartbeat: raw_packets=3 raw_proximity=1 candidate=1 committed=0 last_packet_age_ms=1237
+...
+816: heartbeat: raw_packets=3 raw_proximity=1 candidate=1 committed=0 last_packet_age_ms=43271
+                                                                       ^^^^^^^^^^^^^^^^^^^^^^^
+                                                       43+ real seconds, committed never flipped
+827: PRESENCE-DIAG raw packet #4: proximity=0 ipd=768        <- CONTRADICTS the candidate
+828: heartbeat: raw_packets=4 raw_proximity=0 candidate=0 committed=0 ...
+```
+
+So this was not "eventually confirmed, just slow": the candidate held for 43+ real seconds with
+zero corroboration, and the very next packet to arrive **contradicted** it (proximity flipped
+back to 0) rather than confirming it -- per the debounce's own flip logic, this resets the
+candidate to NOT WORN and the entire don is discarded, never committed WORN at all. The
+non-heartbeat lines in the same window show the real cause was not "the wearer took it off
+again" -- `Client 1 disconnected` appears between packet #3 and #4, i.e. the `jack-in-wayland.sh
+down` teardown (done specifically to end the stuck-donned state safely) is what produced
+packet #4's proximity=0, not a real doff during the test. **The genuine don in this test was
+never registered by the driver at all, for the entire time the user wore it.**
+
+Also confirmed directly from `git show 41626b6e2` (not assumed): the fix is exactly as described
+in the section above -- `candidate_confirm_count` requires `WMR_USER_PRESENCE_DON_CONFIRM_PACKETS`
+(default 2) independent packets to agree, tracked via `presence.last_update_ns` advancing (an
+"arrival time, not change time" signal `control_ipd_value_decode()` already sets on every decode
+regardless of value change). No surprises there; the fix does exactly what its own commit message
+says. The problem is purely that "independent packet" is an expensive, rare event on this
+hardware (2 s to 100+ s apart, per the SAME commit's own log-derived comment) -- a correct fix for
+a noise-rejection problem, with no latency bound at all for the case that actually matters live.
+
+### Design: IMU motion corroboration (fast, strong) + a bounded timeout (slow, weak, honest)
+
+Read `wmr_hmd_presence_tick()` in full before designing anything, plus its caller
+(`wmr_run_thread()`) and `hololens_sensors_decode_packet()` per this task's own hint, to find
+what motion data is already available without new plumbing. Found `wh->fusion.last_angular_velocity`
+(`wmr_hmd.h`'s `fusion` substruct, "the last angular velocity from the IMU, for prediction") --
+already a **calibrated** gyro sample (mix-matrix + bias-offset applied, rotated into the OXR
+frame), already updated on **every** IMU packet decode by both `hololens_handle_sensors_avg()` and
+`hololens_handle_sensors_all()`, both called from `hololens_sensors_read_packets()` --
+which `wmr_run_thread()`'s own loop calls **immediately before** `wmr_hmd_presence_tick()` on
+every single iteration. So by the time the tick function runs, this field already holds
+same-tick-fresh motion data, protected by the existing `wh->fusion.mutex` (already used elsewhere
+in this exact call chain) -- zero new plumbing needed, exactly what the task asked to check for
+before inventing any.
+
+This is the key structural advantage over the proximity channel: the IMU updates every tick
+(~250 Hz) regardless of whether a proximity packet has arrived, so "is something physically
+moving this thing right now" is a continuously-available signal, unlike "did the sparse
+companion channel happen to send a 2nd sample yet."
+
+**The fix, in `wmr_hmd.c`/`wmr_hmd.h` (`lab-full`, commit `a01003fb8`):**
+
+1. New `presence.candidate_motion_peak_rad_s` (float): the peak `|wh->fusion.last_angular_velocity|`
+   observed since the candidate last flipped. Reset on a flip to *that tick's own* reading (not
+   0 -- the flipping tick may already carry real motion), then extended by a running max every
+   tick thereafter while the candidate is WORN.
+2. `WMR_USER_PRESENCE_DON_MOTION_RAD_S` (default **0.10 rad/s**): if the peak crosses this, that
+   alone satisfies confirmation -- in addition to (not instead of) the existing packet-count path.
+   Either one is enough once `WMR_USER_PRESENCE_DON_MS` has also elapsed.
+3. `WMR_USER_PRESENCE_DON_CONFIRM_TIMEOUT_MS` (default **4000 ms**): a hard ceiling -- if the
+   candidate has held continuously this long with neither enough packets nor enough motion,
+   commit anyway on the wall-clock alone (the pre-`41626b6e2` behavior). This is the one hard
+   requirement the task set: a genuine don must never hang indefinitely.
+4. The `WMR_INFO` commit log now always prints the observed motion peak and which of the three
+   paths (`packets` / `motion` / `timeout`) actually triggered the commit, so the next live
+   session can read real numbers directly instead of re-deriving them from raw packet lines.
+
+**Where the 0.10 rad/s default comes from, and why it is not a blind guess.** Rather than invent
+a number with zero grounding, searched the codebase for any existing "is this device at rest"
+threshold already established elsewhere in Monado -- and found one: `m_imu_3dof.c`'s own
+`gyro_bias_auto()` already defines `STILL_GYRO_RAD_S = 0.10f` as the boundary between "at rest"
+(safe to auto-recalibrate gyro bias) and "moving," used generically across any Monado 3dof-fused
+device, not invented for this task. Better still, this exact threshold already has **real, live
+logged output from this exact physical unit**: `~/vr/jack-in-wayland.prev2.log` (an earlier
+session on this same rig) shows `gyro_bias_auto`'s own throttled diagnostic line firing
+repeatedly while the headset sat resting, e.g.:
+
+```
+gyro_bias_auto[0x55edd304ac98]: gyro=0.0139 rad/s (limit 0.10) accel=9.756 (want 9.81 +-0.5) -> STILL
+gyro_bias_auto[0x55edd304ac98]: gyro=0.0130 rad/s (limit 0.10) accel=9.760 (want 9.81 +-0.5) -> STILL
+```
+
+Real resting-state gyro magnitude on this unit sits at **0.011-0.016 rad/s**, comfortably (6-9x)
+below the 0.10 rad/s threshold -- so reusing that exact number leaves real margin above the
+measured noise floor rather than sitting right on top of it. **What this default has explicitly
+NOT been validated against, for lack of live access this pass: the actual peak magnitude a real
+donning gesture produces on this unit.** The reasoning that it should clear 0.10 rad/s easily
+(picking up and placing a headset on a head involves far more rotation than desk-resting
+micro-vibration) is sound but untested -- this is reasoning from the sensor's known behavior
+elsewhere in this same codebase, not a live measurement of a real don. The commit log's new
+`motion peak %.3f rad/s` field exists specifically so the very next live don/doff session settles
+this with real data instead of guessing blind twice.
+
+**Being honest about the timeout path's limitation, per this task's own explicit ask not to
+oversell it.** The 4000 ms ceiling is NOT a meaningful noise-rejection improvement by itself --
+this same log shows a stray packet's candidate can and does sit uncontradicted for well over 4
+seconds when packets are this sparse (the very don analyzed above held 43+ seconds before any
+2nd packet arrived at all), so a resting-desk noise blip that happens to survive quietly for 4
+seconds would still falsely commit via the timeout path, just delayed from the old 250ms to 4000
+ms rather than eliminated. The real noise-rejection value in this fix is the motion path: a
+genuinely resting, untouched headset should sit at ~0.01 rad/s indefinitely (per the real data
+above) and should never cross 0.10 rad/s on its own, so it should never need the timeout to
+rescue a false commit. The timeout exists purely to bound wearer-facing latency for a genuine
+don in the (expected to be rare, but not proven rare without a live test) case where the motion
+path also fails to trip -- not as a second independent defense against noise. Recorded plainly so
+a future session does not mistake "bounded" for "noise-proof."
+
+### DOFF direction: re-examined against tonight's data specifically, left untouched
+
+The prior fix (`41626b6e2`) left `WMR_USER_PRESENCE_DOFF_MS` as pure wall-clock, citing no live
+evidence of a matching noise-flip-to-0-while-worn failure mode. Re-checked this decision against
+tonight's own data rather than carrying it over unquestioned, per this task's explicit ask: the
+captured log from tonight's test **still** contains no genuine WORN stretch that also shows a
+spurious flip back to NOT WORN mid-session (the don analyzed above never even reached `committed`,
+so there was no worn session to spuriously interrupt). No new evidence changes the prior
+decision. Separately, applying either the packet-confirm or the new motion-confirm mechanism to
+the DOFF direction would actively cut against this driver's own hardware-protection goal (getting
+`SCREENOFF_MS`'s countdown started sooner on a real doff, to spare the one physical panel) by
+making a genuine doff wait on extra corroboration before the countdown could even begin. Left
+alone; revisit only if a live test produces a real spurious mid-worn doff.
+
+### Build
+
+Full rebuild (`cd ~/vr/monado/build && cmake --build .`, default target, confirmed via a
+follow-up no-op build showing `ninja: no work to do.`): clean except the same two pre-existing,
+unrelated warnings flagged in advance by this task (`control_read_packets` sign-compare,
+`PRESENCE_STALE_NS` integer-overflow) -- nothing new introduced.
+
+While in this code, also corrected a stale comment left over from `41626b6e2`: the
+`candidate_confirm_count` field comment in `wmr_hmd.h` still said "~750 Hz" for the read thread's
+rate, even though the `wmr_hmd.c` comment right next to the debug option itself had already been
+corrected to the real, log-measured ~250 Hz in that same commit. Fixed the header to match.
+
+### What is untested -- everything here, plainly
+
+Per this task's own hard constraint (no live hardware, no `monado-service`, no live test, no
+sudo), **nothing in this section has been run against real hardware**:
+
+- Whether 0.10 rad/s is actually crossed by a real donning gesture on this unit, and by how much
+  (expected to clear it easily, not measured).
+- Whether 0.10 rad/s is ever falsely crossed by something OTHER than a real don while the headset
+  sits resting -- e.g. desk vibration from a nearby door, someone bumping the table, HVAC/fan
+  vibration transmitted through the surface it rests on. The only real data available is the
+  `gyro_bias_auto` resting-log excerpt above, which shows calm, low readings, but that log was not
+  captured specifically to stress-test ambient vibration.
+- Whether 4000 ms actually feels acceptable to a wearer as a worst-case wait, or whether it should
+  be shorter (the task's own framing said "a few seconds," and 4000 ms is deliberately at the
+  upper end of that to leave the motion path more room to be the one that actually fires first --
+  but this trade was made without a live wearer's real reaction to fall back on).
+- Whether the three-way `packets` / `motion` / `timeout` split actually resolves tonight's exact
+  scenario correctly -- i.e. whether a real repeat of tonight's don would now show `via motion` in
+  the commit log within a fraction of a second, as designed, rather than falling through to
+  `timeout` at the 4-second mark or (worse) still not committing at all for some reason not caught
+  by this pass's code reading.
+- Whether the new `os_mutex_lock(&wh->fusion.mutex)` call added inside `wmr_hmd_presence_tick()`
+  (already holding `wh->presence_lock`) is free of any lock-ordering surprise under real
+  concurrent load -- reasoned through by inspection (no other code path locks `presence_lock`
+  while already holding `fusion.mutex`), not exercised under a live thread-sanitizer or stress
+  test.
+
+**Live-test checklist for the next session with physical access** (not run this round):
+
+1. `WMR_PRESENCE_DIAG=1 WMR_USER_PRESENCE=1 WMR_USER_PRESENCE_SCREENOFF_MS=<short>` (leave
+   `~/vr/presence.conf`'s real value alone), force a real blank, then a genuine, deliberate don --
+   watch the `User presence: WORN` commit log line specifically for its new `motion peak %.3f
+   rad/s, via %s` fields. `via motion` within roughly `DON_MS` (250 ms) of the don would confirm
+   the design works as intended; `via timeout` would mean the motion path did not trip and the
+   0.10 rad/s default needs lowering; `via packets` would mean the sparse channel got lucky.
+2. Repeat several times to get a real distribution of the motion peak value for a genuine don,
+   not just one sample -- use it to tune `WMR_USER_PRESENCE_DON_MOTION_RAD_S` for real if the
+   observed peaks run close to 0.10 rather than comfortably above it.
+3. Leave the headset resting untouched for several minutes with diagnostics on, watching for any
+   `via timeout` commit with a low motion peak -- that would be the residual, honestly-flagged
+   risk from the timeout path materializing, and would argue for raising 4000 ms or re-examining
+   the motion threshold.
+4. If a real spurious mid-worn doff is ever observed, revisit the "DOFF direction left untouched"
+   decision above with that evidence in hand.
+
+Committed on `~/vr/monado` (branch `lab-full`, remote `wintch` NOT pushed): `a01003fb8`
+("wmr: bound WORN-commit latency with IMU motion corroboration + timeout"), touching
+`wmr_hmd.c`/`wmr_hmd.h`.
