@@ -2007,3 +2007,37 @@ processes, socket removed).
 
 Committed on `~/vr/monado` (branch `lab-full`, remote `wintch` NOT pushed): `af290d0e3` ("wmr: fix
 auto-standby blanking killing the DRM lease (VK_ERROR_UNKNOWN)"), touching `wmr_hmd.c`/`wmr_hmd.h`.
+
+## 2026-09-07 -- CORRECTION to the section above: the reliability shift is thread placement, not fresh-fd
+
+The section above credited `d07872fd9` ("send auto-standby's screen-off over a fresh fd too") with
+making the blank action newly reliable, and treated that as why `754beed30` -- the confirmed
+bisection point -- started exposing this bug. Checked this claim directly (it hadn't been, when
+first written) with `git show 754beed30:src/xrt/drivers/wmr/wmr_hmd.c | grep
+screen_off_fresh_fd_func`: **at `754beed30` itself, the blank action still calls the OLD
+`wh->hmd_desc->screen_enable_func(wh, false)` on the shared handle** -- `d07872fd9`'s fresh-fd
+screen-off function does not exist yet at that commit. Since `754beed30` was independently confirmed
+(direct rebuild+test, not inferred) to reproduce the crash, the "fresh-fd made it reliable" story as
+stated cannot be the mechanism, because the crash already happens one commit before fresh-fd blank
+exists.
+
+The corrected, still evidence-consistent account: the reliability shift is `754beed30`'s move of the
+ENTIRE presence decision -- including the call to `screen_enable_func` for blank -- from whatever
+thread invokes the client-gated `wmr_hmd_update_inputs()` onto the always-on `wmr_run_thread`. The
+already-documented shared-handle unreliability (this driver's own comments: contention with
+concurrent HID activity silently swallowing the command) most plausibly depended on which thread was
+sending it and what else was contending for `wh->hid_lock` at that moment -- running from
+`wmr_run_thread`, likely already the primary/most frequent user of `wh->hid_control_dev` for other
+periodic HID traffic (`wmr_hmd_send_controller_keepalives`, `control_read_packets`), plausibly
+contends far less than a client-thread-driven call racing an active session's own concurrent HID use.
+This was not verified byte-for-byte (would need instrumenting `hid_lock` acquisition/wait times on
+both code paths, not done here), so stated as the best-supported account given the evidence in hand,
+not a fully proven mechanism -- consistent with this file's own practice of flagging where an
+explanation is inferred rather than directly measured.
+
+This does not change the bisection result (`754beed30` is still the confirmed introducing commit,
+directly rebuild-tested against its parent), the root cause (a real, effective screen-off during an
+active DRM lease kills it, confirmed in isolation regardless of which HID mechanism sends it), or the
+fix (the `WMR_USER_PRESENCE_BLANK_PANEL` kill switch gates the action itself, not any particular
+delivery mechanism) -- only the specific claim about *why* `d07872fd9` mattered, which it turns out
+it does not, for this bug.
