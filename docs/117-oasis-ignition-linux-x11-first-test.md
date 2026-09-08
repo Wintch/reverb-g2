@@ -105,17 +105,43 @@ Failed to start compositor: VRInitError_Compositor_CannotDRMLeaseDisplay
 ```
 
 The compositor correctly found the connector and selected the true 90Hz mode via X11 RandR —
-then failed to acquire NVIDIA's exclusive "direct mode" display lease, and crashed
-(`journalctl` shows NVIDIA driver backtraces in `libnvidia-glcore.so.595.71.05` at the same
-moment). This is why SteamVR's own Settings→Video panel never shows a 90Hz option — that UI
-queries the live compositor for available modes, and there is no live compositor to query once
-it's crashed. It's also why `xrandr` shows the panel's DisplayPort output as "disconnected"
-moments later: NVIDIA's direct-mode path only makes that output appear RandR-connected while
-something is actively probing it via the Vulkan direct-display extensions requested in the log
+then failed to acquire NVIDIA's exclusive "direct mode" display lease, and **segfaulted**.
+`journalctl` has the exact crash (kernel + systemd-coredump, `21:20:00`):
+
+```
+kernel: vrcompositor[110055]: segfault at 0 ip 000055b3544c0a86 sp 00007ffe9de04100 error 4
+  in vrcompositor[1e6a86,55b35440b000+31a000] likely on CPU 5 (core 5, socket 0)
+systemd-coredump: Process 110055 (vrcompositor) of user 1000 terminated abnormally with signal 11/SEGV
+#0-#3 in vrcompositor itself
+#4  libnvidia-glcore.so.595.71.05 + 0x9f58bc
+#5  libnvidia-glcore.so.595.71.05 + 0xe52a01 / 0xe3539d / 0xe4665e / 0xf5b619 (varies per capture)
+#6  libnvidia-glcore.so.595.71.05 + 0x9f5a74
+```
+
+`vrcompositor` calls into NVIDIA's own `libnvidia-glcore.so` (driver 595.71.05) to acquire the
+direct-mode surface and segfaults inside it — a real crash, not a clean error return. `vrserver`
+(PID 109507) then SIGABRTs 3 seconds later, consistent with its own "lost master process, quitting
+all immediately" logic once the compositor it depends on is gone. This is why SteamVR's own
+Settings→Video panel never shows a 90Hz option — that UI queries the live compositor for
+available modes, and there is no live compositor to query once it's crashed. It's also why
+`xrandr` shows the panel's DisplayPort output as "disconnected" moments later: NVIDIA's
+direct-mode path only makes that output appear RandR-connected while something is actively
+probing it via the Vulkan direct-display extensions requested in the log
 (`VK_EXT_acquire_xlib_display`, `VK_EXT_direct_mode_display`); once the compositor died, the
 transient state was torn down. No lab script, no presence/standby stack, and no real physical
 hotplug were involved — confirmed neither `panel.py` nor the presence/thermal tooling
 (Wayland/`jack-in-wayland.sh`-only) were running under this X11 session at all.
+
+**A second, unrelated crash in the same window, worth separating clearly:** 33 seconds later
+(`21:20:36`), a *different* `vrserver` process (SteamVR's own automatic restart, PID 112499)
+also segfaulted — this time inside **our own `driver_monado.so`** (`segfault at 10`, a
+near-null-pointer dereference), not Oasis. `activateMultipleDrivers: true` was still set, so
+Monado's driver was loading right alongside Oasis under this X11/Ignition test, and Monado's
+WMR driver is built and tested exclusively for this lab's own Wayland/DRM-lease launch path —
+it was never meant to run under X11 at all. **This is not an Ignition bug and not part of the
+report below** — it's a self-inflicted methodology gap: next time this test is repeated,
+disable `steamvr-monado` in Manage Add-ons alongside `vrto3d`, so only the driver actually being
+tested is active.
 
 ## Why this specific failure isn't surprising, and what to do about it
 
@@ -129,7 +155,8 @@ misconfigured something."
 
 Checked `BnuuySolutions/Ignition`'s GitHub issues for a known report or fix: **zero issues
 open or closed on the repo** — it is two days old as of this test, with no prior art to lean
-on either way.
+on either way. A ready-to-file bug report with the exact crash signature, environment, and
+repro steps above is prepared as `docs/119` — reviewed before submission, not auto-filed.
 
 **Not attempting `xorg.conf` surgery (excluding the HMD output from the normal X11 screen so
 NVIDIA's direct-mode path can claim it exclusively) tonight.** That's a real, non-trivial
