@@ -1,4 +1,4 @@
-# 117 — Oasis/Ignition on Linux: first live test, X11, real hardware detected, blocked at the NVIDIA direct-mode step (2026-09-07/08)
+# 117 — Oasis/Ignition on Linux: first live tests on X11 and Wayland, real hardware detected both times, two different blockers (2026-09-07/08)
 
 First hands-on test of Path A from `docs/108` (previously research-only: "we have not installed
 or run this"). Short version: it gets much further than expected — the real driver loads and
@@ -178,3 +178,86 @@ NVIDIA-specific "direct mode" leasing path, and that path is what's currently br
 independent of Wayland's leasing working fine for the same physical connector. Section 4's
 conclusion is unchanged and, if anything, reinforced: this lab's own Monado/Wayland pipeline
 remains the only one that actually renders real frames to this headset on this hardware today.
+
+## Same night, re-tested under Wayland: gets much further, hits a different wall
+
+Switched the session back to GNOME on Wayland (`loginctl show-session -p Type` confirmed
+`wayland`) for its own sake — not to run Ignition, whose developer explicitly doesn't recommend
+Wayland — but out of curiosity, since this rig's Mutter already does working DRM leasing for
+Monado (the exact thing X11's NVIDIA path failed at above). Worth trying once ourselves rather
+than only trusting the developer's general experience on other machines.
+
+**Direct mode and 90Hz actually worked.** `vrcompositor.txt` this time:
+
+```
+Direct mode: enabled
+Headset is using direct mode
+Updated HMD Prop_DisplayFrequency_Float to 90.000000
+```
+
+No crash at the display-acquisition step at all — a completely different (and much better)
+result than X11's immediate `libnvidia-glcore.so` segfault. GPU speed measurement, distortion
+mesh/warp mesh calculation, and render-target sizing all completed normally.
+
+**First failure found: camera/passthrough resource creation.**
+
+```
+vkGetPhysicalDeviceFormatProperties2 returned zero modifiers for DRM format 0x30313050
+Supports dmabuf formats + modifiers? - No!
+...
+Error connecting to camera block queue
+Tracked Camera: Failed to create static GPU resources.
+D3D11 Camera Initialization failure.
+Failed to init compositor distort mailbox (error:6)
+Failed to start compositor: VRInitError_Compositor_FailedToCreateMailbox
+```
+
+Disabling Room View/passthrough entirely (`"camera": {"enableCamera": false}` in
+`steamvr.vrsettings`) got past this — the compositor no longer tries to stand up the camera
+pipeline at all, and (after also clearing `driver_oasis`'s `blocked_by_safe_mode` flag the
+mailbox crash had set) the next launch reached SteamVR's **Room Setup wizard** — visibly further
+than any attempt that night, X11 included.
+
+**Second failure found, and still unresolved: a generic ~20-second connection watchdog.**
+Room Setup connects (`New Connect message from .../steamvr_room_setup ... VRApplication_Scene`),
+but `vrserver` itself aborts a few seconds later:
+
+```
+Failed Watchdog timeout in thread Connection after 20.130905 seconds. Aborting.
+```
+
+— note this names no specific driver (unlike the earlier `load_drivers in oasis` timeout from
+the Mono-install night), and leaves `vrcompositor`/`steamvr_room_setup` running orphaned without
+the `vrserver` hub they depend on, which is what Room Setup being visibly unable to find the
+headset ("no encontraba el casco") actually was: the UI was up, but the IPC hub underneath it
+had already died.
+
+Two hypotheses tested and ruled out:
+- **Not Monado resource contention.** The native `driver_monado.so` was still loaded alongside
+  Oasis this whole time (`activateMultipleDrivers: true`, never disabled), providing the G2's
+  *controllers* via its own constellation tracking while Oasis provided the HMD — a genuinely
+  interesting emergent hybrid (Oasis has no way to reach the G2's controllers at all without
+  Bluetooth; Monado's camera-based controller tracking doesn't need it). Disabled Monado
+  entirely (`"driver_monado": {"enable": false}`, confirmed via `Not loading driver monado
+  because it is disabled in settings`) and reran clean: **identical ~21.4 second timeout,
+  same symptom.** Not a two-driver conflict.
+- **Not a stale safe-mode block or leftover `forcedDriver`.** Both were re-checked and clear
+  going into the failing run.
+
+**What's still spinning throughout every one of these attempts, never fixed and likely
+related:** `oasis: Registering new controller: Built-in Bluetooth Left/Right` retries once a
+second, forever — there is no Bluetooth adapter on this machine at all (`bluetoothctl show`:
+"No default controller available"), so this can never succeed. Suspected, not proven, to be
+occupying whatever thread the "Connection" watchdog is timing out on — the ~20-21 second window
+observed is consistent across attempts, which fits a fixed timeout racing against a loop that
+will never yield, but nothing in the available (closed-source) logs confirms the two are the
+same thread. Not investigated further given no source access to confirm either way.
+
+**Bottom line for tonight:** Wayland is the more promising path of the two tested — it clears
+the exact hurdle X11 couldn't (direct mode + native 90Hz, on the strength of this rig's own
+already-working Mutter DRM leasing) and reaches SteamVR's own Room Setup UI, further than X11
+ever got. It then hits its own distinct, reproducible ~20s connection watchdog timeout,
+independent of Monado, that isn't understood yet. `docs/119` (the draft upstream report) has
+been updated to include both failure modes — the X11 crash and this Wayland timeout — since
+they may well be related (or may point Ignition's own maintainers at something neither of us
+can see from outside the driver).

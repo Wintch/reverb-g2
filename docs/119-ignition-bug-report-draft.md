@@ -1,4 +1,4 @@
-# 119 — Draft bug report for BnuuySolutions/Ignition: vrcompositor segfault in libnvidia-glcore during direct-mode acquisition (NVIDIA + HP Reverb G2)
+# 119 — Draft bug report for BnuuySolutions/Ignition: X11 direct-mode crash, and a different stall under Wayland (NVIDIA + HP Reverb G2)
 
 Prepared for filing at `github.com/BnuuySolutions/Ignition/issues` (repo had zero issues at
 time of writing — first report of this combination). Not filed automatically; review before
@@ -7,7 +7,7 @@ be able to follow it.
 
 ---
 
-**Title:** `vrcompositor` segfaults inside `libnvidia-glcore.so` acquiring direct-mode display (NVIDIA RTX 3060 Ti + HP Reverb G2, X11)
+**Title:** `vrcompositor` segfaults acquiring direct-mode display on X11; a different ~20s connection timeout under Wayland (NVIDIA RTX 3060 Ti + HP Reverb G2)
 
 **Environment**
 - GPU: NVIDIA GeForce RTX 3060 Ti, driver 595.71.05, VBIOS 94.04.46.80.80
@@ -73,6 +73,47 @@ lost-master-process shutdown logic once the compositor it depends on disappears.
 
 The panel does briefly show *something* during this — a flat, incorrect solid color, not
 rendered VR content — before the whole stack tears down.
+
+**A second failure mode found the same night, on Wayland (not requested/recommended, tried out of curiosity)**
+
+This rig's Mutter compositor already does working DRM leasing for our own native OpenVR
+driver, so we tried Wayland ourselves despite the docs saying not to. Result: direct mode and
+native 90Hz actually succeeded here — no crash at all at the step that fails on X11:
+
+```
+Direct mode: enabled
+Headset is using direct mode
+Updated HMD Prop_DisplayFrequency_Float to 90.000000
+```
+
+It failed one step later instead, trying to stand up the camera/passthrough pipeline:
+
+```
+vkGetPhysicalDeviceFormatProperties2 returned zero modifiers for DRM format 0x30313050
+Supports dmabuf formats + modifiers? - No!
+Error connecting to camera block queue
+Tracked Camera: Failed to create static GPU resources.
+D3D11 Camera Initialization failure.
+Failed to init compositor distort mailbox (error:6)
+Failed to start compositor: VRInitError_Compositor_FailedToCreateMailbox
+```
+
+Setting `"camera": {"enableCamera": false}` in `steamvr.vrsettings` (disabling Room
+View/passthrough) avoids that failure and gets one step further still, reaching SteamVR's own
+Room Setup wizard — but `vrserver` then aborts a few seconds later on a generic, unnamed
+timeout, every time, reproducibly:
+
+```
+Failed Watchdog timeout in thread Connection after ~20-21 seconds. Aborting.
+```
+
+Ruled out a conflict with our own native OpenVR driver running alongside Oasis (disabling it
+entirely made no difference — identical timeout). One thing running continuously through every
+attempt, on both X11 and Wayland, that we couldn't rule out as related: with no Bluetooth
+adapter present on this machine, `oasis: Registering new controller: Built-in Bluetooth
+Left/Right` retries once a second forever and can never succeed — the ~20s window is
+suspiciously consistent with a fixed watchdog racing a loop that never yields, though we have
+no way to confirm this from outside the driver.
 
 **Additional notes**
 
