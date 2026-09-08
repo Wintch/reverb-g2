@@ -1,5 +1,14 @@
 # 108 — Oasis/Ignition vs. the native Monado WMR driver: a strategy comparison
 
+> **First hands-on test 2026-09-07/08 — see `docs/117`.** Section 5's watch-item #2 ("is the
+> Wayland gap really about DRM leasing, given this rig already leases the same connector fine
+> under Wayland for Monado") is now answered: X11 doesn't skip that requirement either, it has
+> its own NVIDIA-specific "direct mode" leasing path, and that path crashes on this rig's exact
+> GPU+headset pairing (NVIDIA + Reverb G2) — a combination the developer never claimed to test
+> (only AMD+G2 and NVIDIA+Odyssey+ were). The driver itself loads and correctly identifies the
+> real hardware through the Wine/Proton bridge; only the final display-acquisition step fails.
+> Section 4's conclusion is unchanged, if anything reinforced.
+
 **Date:** 2026-09-07. **Status:** not a decision document — the user explicitly deferred this
 question on 2026-09-06 in favor of finishing the presence-detection debounce work, and asked for
 this comparison to be prepared in parallel so it's ready to revisit "in a few days." Nothing here
