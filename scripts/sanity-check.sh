@@ -10,8 +10,10 @@
 #   ./scripts/sanity-check.sh os         kernel/dkms/NVIDIA packaging/GLX only
 #   ./scripts/sanity-check.sh soft       Steam + OpenXR/OpenVR runtime routing only
 #   ./scripts/sanity-check.sh vr         headset/controllers/Monado/Basalt only (needs hardware)
+#   ./scripts/sanity-check.sh soft --fix-vrpath   also self-heal the T174 trap if it's tripped
 #
-# Doesn't start Monado, doesn't need root. Safe to run repeatedly and at any time.
+# Doesn't start Monado, doesn't need root (--fix-vrpath doesn't either, it only touches
+# ~/.config/openvr/openvrpaths.vrpath). Safe to run repeatedly and at any time.
 
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,6 +21,8 @@ VR="$(cd "$HERE/.." && pwd)"
 [ -d "$HOME/vr/monado" ] && VR="$HOME/vr"
 
 STAGE="${1:-all}"
+FIX_VRPATH=0
+[ "${2:-}" = "--fix-vrpath" ] && FIX_VRPATH=1
 FAIL=0
 
 stage_os() {
@@ -120,9 +124,14 @@ fi
 
 echo
 echo "=== OpenVR runtime routing (openvrpaths.vrpath) ==="
-# The T174 trap (CLAUDE.md): OpenVR takes the FIRST entry of "runtime". If SteamVR-native
-# ends up ahead of xrizer, every OpenVR title silently falls back to flat rendering with
-# audio still routed to the headset -- looks alive, isn't tracked.
+# The T174 trap (CLAUDE.md, docs/120): OpenVR takes the FIRST entry of "runtime". If
+# SteamVR-native ends up ahead of xrizer, every OpenVR title silently falls back to flat
+# rendering with audio still routed to the headset -- looks alive, isn't tracked. Confirmed
+# TWO independent triggers so far: T170's parked SteamVR-native experiment (2026-08-13) and
+# a plain Steam client update re-registering SteamVR (2026-09-11, docs/120) -- treat this as
+# a recurring class of bug, not a one-off, and check it FIRST on any "game runs, headset
+# shows nothing, Monado's own log shows 0 delivered frames" report, before Monado/USB/GPU
+# theories (see feedback memory localise-before-theorising).
 VRPATH="$HOME/.config/openvr/openvrpaths.vrpath"
 if [ -f "$VRPATH" ]; then
     FIRST_RUNTIME=$(jq -r '.runtime[0] // empty' "$VRPATH" 2>/dev/null)
@@ -131,9 +140,29 @@ if [ -f "$VRPATH" ]; then
         echo "  READY: xrizer is first -- OpenVR titles will render in the headset."
     else
         echo "  NOT READY: xrizer is NOT first (or missing). OpenVR titles will silently"
-        echo "  render flat/2D while audio still plays in the headset. Fix: edit $VRPATH"
-        echo "  so xrizer's path is runtime[0], or reinstall/re-register it ahead of SteamVR."
-        FAIL=1
+        echo "  render flat/2D while audio still plays in the headset."
+        if [ "$FIX_VRPATH" = 1 ]; then
+            BACKUP="$VRPATH.bak-$(date +%Y%m%d-%H%M%S)"
+            cp "$VRPATH" "$BACKUP"
+            if jq '.runtime |= ([.[] | select(test("xrizer";"i"))] + [.[] | select(test("xrizer";"i") | not)])' \
+                "$BACKUP" > "$VRPATH.tmp" && [ -s "$VRPATH.tmp" ]; then
+                mv "$VRPATH.tmp" "$VRPATH"
+                echo "  FIXED: reordered runtime[] so xrizer is first (backup: $BACKUP)."
+                echo "  new first entry: $(jq -r '.runtime[0]' "$VRPATH")"
+                echo "  Restart Steam (steam.sh -shutdown, wait, relaunch) for this to take effect --"
+                echo "  an already-running game process won't pick it up."
+            else
+                rm -f "$VRPATH.tmp"
+                echo "  FIX FAILED: jq reorder produced no/empty output, left $VRPATH untouched"
+                echo "  (backup still at $BACKUP). Fix by hand: edit $VRPATH so xrizer's path"
+                echo "  is runtime[0]."
+                FAIL=1
+            fi
+        else
+            echo "  Fix: edit $VRPATH so xrizer's path is runtime[0], or re-run this script as"
+            echo "  '$0 soft --fix-vrpath' to do it automatically."
+            FAIL=1
+        fi
     fi
 else
     echo "  NOT READY: $VRPATH does not exist -- no OpenVR runtime registered at all."

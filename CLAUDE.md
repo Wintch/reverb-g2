@@ -427,14 +427,25 @@ blocker.
   properly (second arg, default `3dof`) instead of hardcoding `WMR_SLAM=0
   WMR_CAMERAS=0` — it checks `~/vr/basalt/build/libbasalt.so` exists before promising
   6dof and sets `VIT_SYSTEM_LIBRARY_PATH` automatically.
-- **A game that launches with audio in the headset but a FLAT 2D image is almost certainly
-  `openvrpaths.vrpath`'s runtime ORDER, not the headset** (found 2026-08-13, T174).
-  OpenVR takes the **first** entry of `"runtime"` in `~/.config/openvr/openvrpaths.vrpath`.
-  T170's parked SteamVR-native experiment left `.../steamapps/common/SteamVR` ahead of
-  `~/vr/xrizer/target/release`, so every OpenVR title loaded SteamVR's `vrclient`, found no
-  session or lease, and silently fell back to flat rendering — `client_connected` stays at
-  0 in Monado's log while the game looks alive and even routes audio to the headset.
-  Check that file before debugging anything else; xrizer must be first (or alone).
+- **A game that launches (Steam shows "App Running") but shows nothing in the headset — flat
+  2D, or nothing at all, possibly with audio still in the headset, and Monado's own log stuck
+  at 0 "Delivered frame" lines / 0 sustained client connections — is almost certainly
+  `openvrpaths.vrpath`'s runtime ORDER, not the headset** (found 2026-08-13, T174; **recurred
+  2026-09-11, docs/120**). OpenVR takes the **first** entry of `"runtime"` in
+  `~/.config/openvr/openvrpaths.vrpath`. **Two confirmed independent triggers** — this is a
+  recurring class of bug, not a one-off: T170's parked SteamVR-native experiment (2026-08-13)
+  left `.../steamapps/common/SteamVR` ahead of `~/vr/xrizer/target/release`; a plain **Steam
+  client "update everything" pass** did the same thing again on 2026-09-11 (SteamVR's own
+  `appmanifest_250820.acf`/`vrclient.so` were rewritten at the exact trigger timestamp — any
+  Steam update touching the SteamVR app is a plausible trigger). Either way OpenVR loads
+  SteamVR's real `vrclient` instead of xrizer's shim, gets `VRInitError_Init_InterfaceNotFound`
+  (visible in the GAME'S OWN engine log, e.g. Unity's `output_log.txt` under
+  `<compatdata>/<appid>/pfx/.../AppData/LocalLow/<company>/<game>/` — check that log FIRST,
+  it names this instantly), and silently falls back to flat rendering.
+  **Check `scripts/sanity-check.sh soft` before debugging anything else** — it already has
+  this exact check (grep "OpenVR runtime routing") and, as of docs/120, a `--fix-vrpath` flag
+  that self-heals the file (reorders `runtime[]`, backs up the original). Restart Steam after
+  fixing — an already-running game process won't pick up the new order.
 - **Killing the Steam wrapper does NOT stop the game** (found 2026-08-21, T244 close).
   `kill $(pgrep -f "AppId=NNN")` or matching the title in a cmdline only takes down
   `reaper`/`steam-launch-wrapper`/`proton`; the Windows binary keeps running under
