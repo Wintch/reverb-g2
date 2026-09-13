@@ -258,7 +258,27 @@ TITLE_PROFILES = {
         # The remaining METERS of drift on fast yaw are NOT this layer's -- they are Basalt's
         # backend losing every landmark under yaw (p10 = 0 above 90 deg/s); see the G-J
         # backend variants in status-dashboard.py and docs/80's night section.
-        "SLAM_PRED_POSITION_HORIZON_MS": "50",
+        # 2026-09-13: 50 -> 60, from the FIRST offline sweep of this knob (docs/124's replay
+        # harness: 0/30/60/90 replayed over one recorded dataset, so all four arms saw
+        # byte-identical head motion -- something four worn arms can never give). Walk-forward
+        # prediction error p50 16.7 / 11.1 / 9.5 / 9.4 mm and p90 31.0 / 20.8 / 16.6 / 16.6 mm
+        # at 0/30/60/90. 60 takes essentially the whole win; 90 adds nothing measurable and
+        # degrades the fast-yaw tail (p90 64.1 -> 87.3 mm), which is what extrapolating further
+        # should do -- it bets harder on velocity holding, and in a fast turn it does not.
+        #
+        # Honest size of this change: 50 was ALREADY most of the way there (the sweep did not
+        # test 50; interpolating its own 30 and 60 puts it near 10 mm). This is a refinement of a
+        # worn-validated value, not the fix for the walking delay -- the title that would actually
+        # gain is Dali, which carries no prediction knobs at all and therefore runs this at the
+        # code default of 0 = OFF.
+        #
+        # Worn confirmation of 60 exists but on DALI with SLAM_PRED_NECK_ARM_MM=0, not here with
+        # this profile's own worn-confirmed arm of 100 (2026-08-29). Wearer on that run:
+        # "caminando se nota que se fue el delay grande que habia. Aun un poco al moverse muy
+        # rapido se siente que se va, pero bien." The two knobs are independent by construction
+        # -- the arm acts on rotation-induced displacement, the horizon on translation -- but that
+        # is an argument, not a measurement. Reversible: put it back to 50.
+        "SLAM_PRED_POSITION_HORIZON_MS": "60",
         "SLAM_PRED_POSITION_MAX_SPEED_CM_S": "150",  # explicit; also the code default
     },
     # ISS Tour VR: Aircar-class (does not render hands, docs/23) and the heaviest
