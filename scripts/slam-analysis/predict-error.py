@@ -252,9 +252,22 @@ def main():
         if not segs:
             print(f"\n  (no segments.csv under {seg_dir})")
         else:
-            # Offsets are relative to the dataset's first frame; the replay re-stamps timestamps to
-            # its own clock, so anchor them to the first pose this run produced.
+            # Offsets are relative to the dataset's FIRST FRAME, so the anchor has to be the first
+            # frame this run played -- timing.csv's first frames_original_timestamp, re-stamped to
+            # the replay clock. Anchoring on the first tracking pose instead shifts everything by
+            # however long Basalt took to produce one, which silently slid every segment window
+            # (yaw-fast read 1.3 mm, i.e. it had landed in a pause).
             t0 = t_ts[0]
+            tim = os.path.join(d, "timing.csv")
+            if os.path.exists(tim):
+                with open(tim) as fh:
+                    hdr = next(fh).lstrip("#").rstrip().split(",")
+                    col = hdr.index("frames_original_timestamp")
+                    for line in fh:
+                        f = line.rstrip().split(",")
+                        if len(f) == len(hdr):
+                            t0 = int(f[col])
+                            break
             rel_s = (p_ts - t0) / 1e9
             print("\n  BY ROUTINE SEGMENT (one axis at a time, as instructed)")
             print("    segment          n      err p50     err p90    horiz p50      up p50")

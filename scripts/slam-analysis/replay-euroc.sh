@@ -77,13 +77,18 @@ EOF
 DUR=$(python3 - "$DS" <<'PY'
 import sys
 ts = [int(l.split(",")[0]) for l in open(sys.argv[1] + "/mav0/cam0/data.csv") if not l.startswith("#")]
-print(int((ts[-1] - ts[0]) / 1e9) + 40)
+# +120 not +40: reading the dataset index and bringing Basalt up costs real time BEFORE playback
+# starts, and a margin that only covers the data length cuts the last segments off the end.
+print(int((ts[-1] - ts[0]) / 1e9) + 120)
 PY
 )
 
 echo "replaying $LABEL for up to ${DUR}s ($*)"
 cd ~/vr
-sleep 36000 | timeout "$DUR" env \
+# The stdin holder must outlive the run but NOT by much: the shell waits for the whole pipeline,
+# so a long sleep here blocks for its full length after `timeout` has already killed the run. A
+# `sleep 36000` cost an hour of a sweep sitting idle before anyone noticed (2026-09-13).
+sleep $((DUR + 30)) | timeout "$DUR" env \
 	VIT_SYSTEM_LIBRARY_PATH="$HOME/vr/basalt/build/libbasalt.so" \
 	EUROC_CAM_COUNT=2 EUROC_MAX_SPEED=0 EUROC_USE_SOURCE_TS=0 EUROC_PRINT_PROGRESS=0 \
 	SLAM_CONFIG="$TOML" SLAM_CONFIG_PIPELINE_ONLY=1 \
@@ -102,6 +107,34 @@ if [ "$rows" -lt 100 ]; then
 	grep -viE '^playback' "$OUT/run.log" | tail -15
 	exit 1
 fi
+
+# Row counts are NOT enough to tell a complete run from a truncated one. A single missing index
+# row in one camera desynchronises the rest of the dataset; the player logs ONE
+# "ERROR ... Unsynced frames" and stops pushing, but PREDICTION keeps extrapolating against the
+# last anchor forever, so prediction.csv grows to full size either way. On 2026-09-13 that turned
+# a 9-minute dataset into 3m55s of real tracking and the sweep read an impossible 1.3mm at fast
+# yaw, because the segments it thought it was cutting had never been tracked at all. Compare what
+# tracking actually covered against the dataset's own length. Repair with fix-dataset-sync.py.
+if grep -q "Unsynced frames" "$OUT/run.log" 2>/dev/null; then
+	echo "!! the player reported UNSYNCED FRAMES -- this dataset's cameras disagree on timestamps."
+	echo "   Repair it first:  fix-dataset-sync.py $DS"
+fi
+python3 - "$DS" "$OUT/out/tracking.csv" <<'PY' || exit 1
+import sys
+ds, trk = sys.argv[1], sys.argv[2]
+cam = [int(l.split(",")[0]) for l in open(ds + "/mav0/cam0/data.csv") if not l.startswith("#")]
+ts = [int(l.split(",")[0]) for l in open(trk) if l[:1].isdigit()]
+if len(ts) < 2:
+    print(f"!! tracking.csv has {len(ts)} rows -- the tracker never produced a trajectory")
+    sys.exit(1)
+want, got = (cam[-1] - cam[0]) / 1e9, (ts[-1] - ts[0]) / 1e9
+pct = 100 * got / want
+print(f"coverage: tracking spans {got:.1f}s of the dataset's {want:.1f}s ({pct:.1f}%), {len(ts)} rows")
+if pct < 95:
+    print(f"!! TRUNCATED -- {want - got:.1f}s of the recording was never tracked. Any per-segment")
+    print("   number past that point is meaningless. Check run.log for 'Unsynced frames'.")
+    sys.exit(1)
+PY
 
 echo
 python3 "$TOOL" "$OUT/out" --label="$LABEL" --segments="$DS"
