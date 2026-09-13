@@ -18,6 +18,19 @@
 > page also documents GNOME Wayland as unsupported for SteamVR DRM leasing, which reframes the
 > 2026-09-07/08 Wayland success as a lucky race outcome, not a working path.
 
+> **Compositor survey completed, same day — see `docs/122`.** Tested the two remaining
+> Valve-documented Wayland alternatives: KDE/KWin (already a known dead end since 2026-08-04,
+> unrelated to Oasis) and Sway/wlroots (newly tested, forced past its NVIDIA refusal with
+> `--unsupported-gpu`). Both announce the DRM-lease protocol but offer **zero connectors** —
+> identical symptom. GNOME/mutter is the only compositor on this rig that offers the lease at
+> all with NVIDIA. Checked externally before concluding anything: KWin's NVIDIA gap is a public,
+> still-open community bug (`NVIDIA/open-gpu-kernel-modules#251`, since 2022), and wlroots has a
+> long-documented non-support stance toward NVIDIA — neither failure is specific to this rig or
+> to Oasis. What genuinely is unresolved and Oasis-specific: Ignition's GitHub issues (2 total)
+> have zero prior reports either way on Wayland — this is unreported territory, not a confirmed
+> dead end. No further compositor-hopping lever remains; filing/tracking the upstream bug
+> (`docs/119`) is the only next step for this track.
+
 **Date:** 2026-09-07. **Status:** not a decision document — the user explicitly deferred this
 question on 2026-09-06 in favor of finishing the presence-detection debounce work, and asked for
 this comparison to be prepared in parallel so it's ready to revisit "in a few days." Nothing here
