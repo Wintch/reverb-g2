@@ -76,9 +76,21 @@ export VR_DEMO_COMMENT="Aperture Hand Lab -- docs/125 posture A/B + heading tele
 # Controllers that registered as <none> mean Monado never saw them -- it has no hot-add, so
 # plugging them in now would not help and the whole session would be zeros. Zeros from absent or
 # sleeping controllers are NOT a result; this project has thrown out windows for exactly that.
-if grep -q "controles: left: <none>" "$LOG" 2>/dev/null; then
-	echo "!! Monado registered NO left controller -- turn both on and re-run, there is no hot-add."
-	grep -m1 "controles:" "$LOG"
+# 2026-09-13: the first version of this guard grepped for a message format the launcher does
+# not print, so it sailed past a session with only ONE controller registered. Match the line the
+# launcher actually emits, and match the battery warning too -- LED brightness is a function of
+# charge state (docs/46 measured the cell sagging under sustained constellation load), so a
+# controller in the battery cliff zone makes every range and scale number unrepeatable.
+if grep -q "Controles NO registrados" "$LOG" 2>/dev/null; then
+	echo "!! Monado did not register every controller -- there is no hot-add, so this session"
+	echo "   would be all zeros for the missing hand. Fresh batteries, both on, then re-run."
+	grep -m1 "Controles NO registrados" "$LOG"
+	exit 1
+fi
+if grep -qiE "BATTERY LOW|cliff zone" "$LOG" 2>/dev/null; then
+	echo "!! A controller is in the battery cliff zone. LED brightness follows charge, so the"
+	echo "   range and scale numbers this session exists to collect would not be repeatable."
+	grep -m1 -iE "BATTERY LOW" "$LOG"
 	exit 1
 fi
 grep -m1 "controles:" "$LOG" || true
