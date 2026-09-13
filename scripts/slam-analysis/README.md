@@ -80,6 +80,25 @@ here was a headset lying on a desk, not the dataset. Check the log for
 `Selected wmr because it was certain it could create a head` before believing any replay result
 from the service path.
 
+### Run replays ONE AT A TIME
+
+A replay uses ~3 of 12 cores, so three or four fit and a 40-minute sweep looks like it should
+collapse to twelve. Don't. Pipeline latency **is** the prediction horizon, and the prediction
+horizon is the quantity under test — so anything that inflates latency changes the measurement.
+CPU contention does exactly that: the same Basalt frontend at the same 30/2 density measures
+**14.5 ms isolated and 24.1 ms** in [docs/113](../../docs/113-dali-redraw-is-pose-staleness.md),
+where a game ran alongside. Parallel runs would each measure a different machine, varying with how
+they happened to overlap.
+
+For the same reason the playback speed is fixed at 1x (`EUROC_MAX_SPEED=0`,
+`EUROC_USE_SOURCE_TS=0`). Those are load-bearing, not defaults to tidy up. The compute ceiling if
+you ever *did* drop the pacing — valid for tracking comparisons, never for prediction — is about
+2.3x real time, set by that 14.5 ms frontend.
+
+And when quoting results: a replay measures a *less loaded* machine than a real game session. It is
+sound for comparing configs against each other, which is the point, but its absolute numbers are
+not in-game truth.
+
 ## The one rule worth repeating
 
 **Drift and "redraw" are different failures and they can move in opposite directions.** Judge a
