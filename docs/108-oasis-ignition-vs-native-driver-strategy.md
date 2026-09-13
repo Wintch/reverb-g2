@@ -9,6 +9,15 @@
 > real hardware through the Wine/Proton bridge; only the final display-acquisition step fails.
 > Section 4's conclusion is unchanged, if anything reinforced.
 
+> **Retested 2026-09-13 — see `docs/121`.** Same driver build. X11 hits the identical wall
+> (no longer crashes, still blocked). Wayland this time fails earlier, at direct-mode
+> acquisition itself, despite independently confirming the DRM lease was genuinely available
+> (our own tooling and our own OpenXR runtime both leased the same connector cleanly in the
+> same session) — looks like a Wayland-roundtrip race in vrcompositor's own lease-query code,
+> the same class of bug already tracked upstream in Monado (issue #614). Valve's own support
+> page also documents GNOME Wayland as unsupported for SteamVR DRM leasing, which reframes the
+> 2026-09-07/08 Wayland success as a lucky race outcome, not a working path.
+
 **Date:** 2026-09-07. **Status:** not a decision document — the user explicitly deferred this
 question on 2026-09-06 in favor of finishing the presence-detection debounce work, and asked for
 this comparison to be prepared in parallel so it's ready to revisit "in a few days." Nothing here
