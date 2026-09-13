@@ -25,9 +25,17 @@ horizontal error during a yaw is "it carried me sideways", vertical error during
 construction (the neck-arm term is (R_pred - R_anchor) * arm -- zero at rest, growing with how
 far orientation advanced during the gap).
 
-Usage:  predict-error.py <session_dir> [--label NAME] [--json]
+Usage:  predict-error.py <session_dir> [--label=NAME] [--json] [--segments=<dataset_dir>]
         session_dir holds tracking.csv + prediction.csv (e.g. /mnt/vrtmp/slam-<ts>/)
+
+--segments points at a dataset recorded by record-euroc.sh, whose segments.csv marks where each
+single-axis block of the routine began and ended. Rate bins are an inference about what the head
+was doing; these marks are the record of what it was ASKED to do, one axis at a time, so a yaw
+number cannot be contaminated by a simultaneous pitch. Offsets are taken from the dataset's first
+frame, which makes them survive the replay re-stamping timestamps to its own clock -- but NOT
+EUROC_SKIP_FIRST, which would shift the origin.
 """
+import os
 import sys
 import json
 import numpy as np
@@ -114,6 +122,33 @@ def body_rates(ts, q):
 
 def pct(x, p):
     return float(np.percentile(x, p)) if len(x) else float("nan")
+
+
+def load_segments(dataset_dir):
+    """[(name, start_s, end_s)] as offsets from the dataset's first camera frame."""
+    seg_path = os.path.join(dataset_dir, "segments.csv")
+    cam_path = os.path.join(dataset_dir, "mav0", "cam0", "data.csv")
+    if not (os.path.exists(seg_path) and os.path.exists(cam_path)):
+        return []
+    with open(cam_path) as fh:
+        first = next(int(l.split(",")[0]) for l in fh if not l.startswith("#"))
+    marks, order = {}, []
+    for line in open(seg_path):
+        if line.startswith("#") or "," not in line:
+            continue
+        ts, ev = line.strip().split(",", 1)
+        if ":" not in ev:
+            continue
+        kind, name = ev.split(":", 1)
+        marks.setdefault(name, {})[kind] = int(ts)
+        if name not in order:
+            order.append(name)
+    out = []
+    for name in order:
+        m = marks[name]
+        if "start" in m and "end" in m:
+            out.append((name, (m["start"] - first) / 1e9, (m["end"] - first) / 1e9))
+    return out
 
 
 def main():
@@ -209,6 +244,31 @@ def main():
         lo = " -inf" if a < -1e8 else f"{a:5.0f}"
         hi = "  inf" if b > 1e8 else f"{b:5.0f}"
         print(f"    {lo}-{hi}  {m.sum():7d}   {pct(up[m],50)*1000:+8.1f}mm {pct(up[m],90)*1000:+9.1f}mm")
+
+    # --- per-segment, when the routine's own marks are available --------------------------------
+    seg_dir = next((f.split("=", 1)[1] for f in flags if f.startswith("--segments=")), None)
+    if seg_dir:
+        segs = load_segments(seg_dir)
+        if not segs:
+            print(f"\n  (no segments.csv under {seg_dir})")
+        else:
+            # Offsets are relative to the dataset's first frame; the replay re-stamps timestamps to
+            # its own clock, so anchor them to the first pose this run produced.
+            t0 = t_ts[0]
+            rel_s = (p_ts - t0) / 1e9
+            print("\n  BY ROUTINE SEGMENT (one axis at a time, as instructed)")
+            print("    segment          n      err p50     err p90    horiz p50      up p50")
+            out["segments"] = []
+            for name, a, b in segs:
+                m = (rel_s >= a) & (rel_s < b)
+                if m.sum() < 20:
+                    continue
+                row = {"name": name, "n": int(m.sum()),
+                       "err_p50_mm": pct(mag[m], 50) * 1000, "err_p90_mm": pct(mag[m], 90) * 1000,
+                       "horiz_p50_mm": pct(horiz[m], 50) * 1000, "up_p50_mm": pct(up[m], 50) * 1000}
+                out["segments"].append(row)
+                print(f"    {name:<12} {m.sum():7d}  {pct(mag[m],50)*1000:8.1f}mm {pct(mag[m],90)*1000:9.1f}mm "
+                      f"{pct(horiz[m],50)*1000:9.1f}mm {pct(up[m],50)*1000:+10.1f}mm")
 
     if "--json" in flags:
         print("\nJSON " + json.dumps(out))

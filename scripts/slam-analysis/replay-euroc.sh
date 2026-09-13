@@ -104,6 +104,6 @@ if [ "$rows" -lt 100 ]; then
 fi
 
 echo
-python3 "$TOOL" "$OUT/out" --label="$LABEL"
+python3 "$TOOL" "$OUT/out" --label="$LABEL" --segments="$DS"
 echo
 echo "csvs: $OUT/out"
