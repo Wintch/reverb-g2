@@ -45,6 +45,7 @@ Each answers exactly one question and is blind to the others — see
 | `recall-trend.py <timing.csv>` | does any frontend stage grow over the session |
 | `worn-window.py <csv> <mark_ns> [s]` | restrict the above to the worn segment only |
 | `pose-latency.py <timing.csv> <mark_ns> [s] [label]` | end-to-end pose latency |
+| `predict-error.py <session_dir>` | how far the PREDICTED pose lands from where the head really was, binned by yaw/pitch rate |
 
 Harnesses: `static-drift.sh` (hello_xr, no game), `static-recorded.sh` (demo-recorder path, the
 one that reliably writes CSVs), `don-ab.sh <arm>` (one arm of a worn A/B, emits a
@@ -55,6 +56,12 @@ one that reliably writes CSVs), `don-ab.sh <arm>` (one arm of a worn A/B, emits 
 **Drift and "redraw" are different failures and they can move in opposite directions.** Judge a
 redraw complaint with `pose-latency.py`, never with position ranges. Most of 2026-09-07 was spent
 measuring position to diagnose a latency complaint.
+
+And a third failure, separate from both: **prediction error** — the pose is fresh and the tracker
+is healthy, but the extrapolation to display time lands in the wrong place. That is what
+`predict-error.py` measures, and until 2026-09-13 nothing here could see it, so the artifacts the
+`SLAM_PRED_*` knobs introduce could only be judged by a wearer. Judge an "it carries me further
+than I turned" / "pitching drops me" complaint with `predict-error.py`, not with the other two.
 
 Normalise resets by movement, never by wall time: the guard fires on fast motion, so a livelier
 session earns more resets honestly. And check the distance *spread* before reading a time trend —
