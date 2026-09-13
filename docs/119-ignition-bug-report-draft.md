@@ -177,3 +177,34 @@ failures in this report may be more appropriately something to raise with Valve/
 with Ignition specifically — worth deciding before filing, and possibly worth trying a
 wlroots-based compositor before concluding this NVIDIA+G2 pairing can't work under Wayland at
 all.
+
+## Update, 2026-09-13 (same day, later): compositor survey completed — this is a `vrcompositor` bug, not a "no Wayland support here" gap
+
+Followed up on the open question above directly instead of leaving it undecided. Tested both
+of Valve's own documented alternatives:
+
+- **KDE Plasma (KWin, Wayland)**: `wp_drm_lease_device_v1` is announced, but **zero connectors**
+  are ever offered on it — this machine's KWin has this exact bug independent of Oasis (traced
+  to a local investigation from 2026-08-04, unrelated project). Also independently confirmed as
+  a known, public, still-open community issue: [`NVIDIA/open-gpu-kernel-modules#251`](https://github.com/NVIDIA/open-gpu-kernel-modules/issues/251)
+  (2022): *"Kwin added DRM leasing support, which works fine with AMD cards, but not Nvidia
+  ones."*
+- **Sway (wlroots, Wayland, forced past its NVIDIA refusal with `--unsupported-gpu`)**:
+  identical symptom — lease device announced, zero connectors offered.
+
+**GNOME/mutter remains the only compositor on this NVIDIA rig that offers the DRM lease
+connector at all.** Since that's true independent of Oasis (our own separate OpenXR runtime
+leases the same connector cleanly on mutter), the Wayland failure this report describes is
+**not** "this NVIDIA+compositor combination lacks DRM-lease support" — it's specifically
+`vrcompositor` failing to acquire a lease that is genuinely present and available. That points
+this squarely at Valve/SteamVR's own Wayland client code, not at a fundamental Ignition/Oasis
+limitation, and not at "try yet another compositor" (both alternatives Valve itself recommends
+are independently broken with NVIDIA, for reasons that have nothing to do with Oasis).
+
+**Recommendation for filing**: file the X11 segfault/block and this Wayland race as one report
+to `BnuuySolutions/Ignition` first (it's the direct point of contact and currently has zero
+open issues, so this would be genuinely new information for that project specifically) — but
+flag explicitly in the report that the Wayland half may need to be forwarded to Valve/SteamVR's
+own tracker if Ignition's maintainers conclude it's out of their hands (their driver loads
+correctly; the failure is entirely inside `vrcompositor`, code Ignition doesn't control).
+Full compositor-survey writeup and sources: reverb-g2 `docs/122`.
