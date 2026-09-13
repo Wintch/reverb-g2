@@ -778,3 +778,46 @@ very quantity being measured.
 Harnesses: `scripts/slam-analysis/record-euroc.sh` (capture a reference dataset, spoken routine)
 and `scripts/slam-analysis/replay-euroc.sh` (one config, headless, reports through
 `predict-error.py`). Build `ninja -C ~/vr/monado/build`. Commits `72da60566`, `0c31fedcc`.
+
+## 0107 — `WMR_CONTROLLER_HEADING_CSV`: per-solve heading and gyro-bias telemetry
+
+`docs/125` step 3. The controller 6DoF ghost is a **correspondence** error: choosing the right
+blob↔LED assignment needs a trusted heading, the only heading available is the controller's own
+3DoF fusion, and that heading's noise under worn motion (**10-30°**) is wider than the LED
+spacing it has to resolve (32 LEDs, **~11°**). Whether that noise is *fixable* depends on what
+it is made of, and nothing in the tree could tell the two cases apart.
+
+The decisive column is **`bias_age_ms`**. `m_imu_3dof`'s gyro-bias estimator fires only while the
+controller is **still**, by construction — its whole basis is that a stationary gyro reads its
+own bias — and gravity observes pitch and roll but never yaw. So under motion, yaw is a free
+integration against a bias last measured who knows when.
+
+- If `|yaw_err|` **grows with** `bias_age_ms`, the bias hypothesis holds and a better estimator
+  (or a slow observer driven by the solve-yaw residual) is a real fix.
+- If it **does not**, that whole branch is dead and the work belongs on temporal correspondence
+  instead — `docs/125` §8 fix 2.
+
+Either answer is worth having; today the question cannot even be asked.
+
+```bash
+WMR_CONSTELLATION_CONTROLLERS=1 WMR_CONTROLLER_HEADING_CSV=/mnt/vrtmp/heading ...
+# writes /mnt/vrtmp/heading-left.csv and -right.csv
+scripts/slam-analysis/heading-bias.py /mnt/vrtmp/heading-left.csv
+```
+
+Columns: `t_ns, yaw_err_deg, accepted, locked, bias_x, bias_y, bias_z, bias_age_ms, bias_fires,
+bias_estimates, gyro_len, step_deg`.
+
+Three details that are deliberate, not incidental:
+
+- **Distrusted samples are logged too** (`accepted=0`). Those are the ghosts, and their own
+  distribution against `bias_age_ms` is half the question — recording only the samples the
+  existing gate already liked would beg it.
+- **A never-estimated bias reports `bias_age_ms = -1`**, not a huge number. "Never" and "very
+  stale" are different states and must not average together.
+- **One file per hand**, because the two controllers are serviced on different threads and a
+  shared handle would need a lock this instrument has no reason to introduce. It also keeps the
+  per-hand asymmetry — which the record says is unexplained and *inverts between windows* —
+  visible instead of interleaved.
+
+Off unless the env var is set; otherwise it costs one null check per solve. Commit `3c6264ea9`.

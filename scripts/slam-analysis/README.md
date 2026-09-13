@@ -46,6 +46,7 @@ Each answers exactly one question and is blind to the others — see
 | `worn-window.py <csv> <mark_ns> [s]` | restrict the above to the worn segment only |
 | `pose-latency.py <timing.csv> <mark_ns> [s] [label]` | end-to-end pose latency |
 | `predict-error.py <session_dir>` | how far the PREDICTED pose lands from where the head really was, binned by yaw/pitch rate |
+| `heading-bias.py <csv>` | CONTROLLERS, not the head: is their heading error a stale gyro bias or noise? Reads lab patch 0107's WMR_CONTROLLER_HEADING_CSV. See docs/125 |
 
 Harnesses: `static-drift.sh` (hello_xr, no game), `static-recorded.sh` (demo-recorder path, the
 one that reliably writes CSVs), `don-ab.sh <arm>` (one arm of a worn A/B, emits a
