@@ -51,6 +51,35 @@ Harnesses: `static-drift.sh` (hello_xr, no game), `static-recorded.sh` (demo-rec
 one that reliably writes CSVs), `don-ab.sh <arm>` (one arm of a worn A/B, emits a
 `CLOCK_MONOTONIC` marker for `worn-window.py`).
 
+## Comparing configs without a wearer (2026-09-13)
+
+A worn A/B cannot hold the input constant: two donnings never repeat the same head motion, so the
+4-arm `SLAM_PRED_NECK_ARM_MM` sweep had to be binned by angular rate before its arms could even be
+put side by side. Record the motion **once** instead, then replay it through as many configs as
+you like:
+
+```
+record-euroc.sh [name]                       # ~3.5 min worn, spoken routine, writes a EuRoC dataset
+replay-euroc.sh <dataset> <label> [K=V ...]  # one config, headless, reports via predict-error.py
+```
+
+`record-euroc.sh` waits for `/tmp/record-euroc.go` before starting the routine, so the wearer is
+never rushed by a timer (the first take was lost to exactly that). Wear it for the recording if at
+all possible — the neck-arm model is about rotation around a real neck pivot, which hand-held
+motion does not reproduce.
+
+`replay-euroc.sh` needs no headset, wearer, compositor or OpenXR client: it drives
+`monado-cli slambatch`, which streams the dataset through the real tracker and the real prediction
+code. It depends on lab patches 0105/0106 and on `~/vr/logs/calib-g2-2cam.json`; the reasons for
+each are in `patches/monado/README.md` under 0105–0106, and they are not obvious — read that
+before changing anything in the harness.
+
+**The trap that makes a replay lie**: with a G2 plugged in, the prober picks the `wmr` builder and
+the service tracks the *real cameras* while looking completely healthy. The first replay reading
+here was a headset lying on a desk, not the dataset. Check the log for
+`Selected wmr because it was certain it could create a head` before believing any replay result
+from the service path.
+
 ## The one rule worth repeating
 
 **Drift and "redraw" are different failures and they can move in opposite directions.** Judge a

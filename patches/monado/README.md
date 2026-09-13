@@ -728,3 +728,53 @@ load → `stop all` → `down` cycles: **0 cores**; the counter did not fire in 
 is rare — 2 cores in ~8 game teardowns the same morning), so the guard is argued from the stacks,
 not yet observed catching a push. Build `ninja -C ~/vr/monado/build aux_tracking monado-service`.
 Commit `c84d91e84`. Upstreamable as-is.
+
+
+## 0105–0106 — offline config sweeps: replay a recorded dataset instead of a wearer (2026-09-13)
+
+Tuning the `SLAM_PRED_*` knobs used to cost one worn session **per value**, and every session had
+different head motion, so the arms were never a controlled A/B — the 4-arm `SLAM_PRED_NECK_ARM_MM`
+sweep that day had to bin results by angular rate just to be comparable. These two patches make
+`monado-cli slambatch` replay a recorded EuRoC dataset through the real tracker *and the real
+prediction code*, so any number of configs can be compared against byte-identical input with no
+headset, no wearer, no compositor and no OpenXR client.
+
+**0105 — `WMR_DISABLE`.** The prober takes the first builder that is *certain* it can create a
+head, and a connected G2 always makes the `wmr` builder certain, so the euroc device could never
+be reached without physically unplugging the headset. With `WMR_DISABLE=1` the builder reports an
+all-zero estimate without touching the device list and the prober moves on exactly as it would
+with nothing plugged in. Needed for the *service* path (`EUROC_PATH` + `EUROC_HMD`); the batch
+path below does not use the prober at all, but the knob is what proved where the data was really
+coming from — the first "replay works" reading was the real cameras on a desk, caught only by
+`Selected wmr because it was certain it could create a head` in the log.
+
+**0106 — `slambatch` for prediction work.** Two fixes in `euroc_run_dataset()`:
+- `SLAM_BATCH_POLL_HZ` (default 170). The loop polled the tracked pose at 5 Hz, purely to notice
+  tracking had stopped. Prediction only ever runs *inside* `get_tracked_pose`, so `prediction.csv`
+  came out ~34x sparser than a real session and could not characterise the predicted pose at all.
+  Polls at a display-like rate between the unchanged 0.2 s stop checks; `0` restores the old
+  behaviour.
+- `cam_count` off `playback`, not `dataset`. `EUROC_CAM_COUNT` narrows how many cameras the player
+  streams — a G2 dataset records all four while SLAM runs on two — and sizing the tracker off the
+  dataset makes it wait for cam2 forever (`Expected cam2 frame, received cam0`, first round).
+
+Both are upstreamable as-is; the `cam_count` one is a plain bug.
+
+**Two things that are NOT patches but are required, and cost real time to find:**
+- **`cam-calib` in the Basalt TOML.** Live, the WMR driver reads the headset's factory calibration
+  and hands it to `t_slam_create`. `p_factory_ensure_slam_frameserver` (and `slambatch`) build a
+  *default* tracker config with no calibration at all, so Basalt aborts with
+  `Missing IMU calibration`. `~/vr/logs/calib-g2-2cam.json` is the G2's own dump trimmed to the two
+  cameras SLAM uses — the full 4-camera file trips `calib_cam_count == cam_count`.
+- **stdin must stay open.** `slambatch` spawns a thread on `getchar()` so enter can quit it, so
+  `</dev/null` is an instant EOF and the run ends before it starts. The harness holds it open with
+  a long `sleep` on the write end. (Separately, the *service* path needs `XRT_NO_STDIN=1` for the
+  mirror-image reason: its IPC mainloop `epoll`s stdin, which `epoll_ctl` rejects for `/dev/null`.)
+
+Replay runs at 1x (`EUROC_MAX_SPEED=0`, `EUROC_USE_SOURCE_TS=0`) on purpose: the prediction horizon
+is the wall-clock gap between the anchor and "now", so accelerating the dataset would change the
+very quantity being measured.
+
+Harnesses: `scripts/slam-analysis/record-euroc.sh` (capture a reference dataset, spoken routine)
+and `scripts/slam-analysis/replay-euroc.sh` (one config, headless, reports through
+`predict-error.py`). Build `ninja -C ~/vr/monado/build`. Commits `72da60566`, `0c31fedcc`.
