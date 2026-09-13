@@ -1,9 +1,11 @@
 # 119 — Draft bug report for BnuuySolutions/Ignition: X11 direct-mode crash, and a different stall under Wayland (NVIDIA + HP Reverb G2)
 
-Prepared for filing at `github.com/BnuuySolutions/Ignition/issues` (repo had zero issues at
-time of writing — first report of this combination). Not filed automatically; review before
-submitting. Written to stand alone — a reader with no access to this repo's other docs should
-be able to follow it.
+**Filed 2026-09-13**: [`BnuuySolutions/Ignition#3`](https://github.com/BnuuySolutions/Ignition/issues/3)
+(first issue ever on that repo). A confirming data point was also added to
+[`NVIDIA/open-gpu-kernel-modules#251`](https://github.com/NVIDIA/open-gpu-kernel-modules/issues/251#issuecomment-5655983189),
+noting that Sway/wlroots exhibits the identical zero-connector symptom as KWin (that thread had
+only discussed KWin before). Kept below as the original prep doc, written to stand alone — a
+reader with no access to this repo's other docs should be able to follow it.
 
 ---
 
