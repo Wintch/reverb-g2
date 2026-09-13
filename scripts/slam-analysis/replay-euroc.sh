@@ -38,8 +38,24 @@ TOOL=~/Documents/reverb-g2/scripts/slam-analysis/predict-error.py
 CALIB=${SLAM_CAM_CALIB:-$HOME/vr/logs/calib-g2-2cam.json}
 
 [ -d "$DS/mav0" ] || { echo "!! $DS is not a euroc dataset"; exit 2; }
-[ -r "$CALIB" ] || { echo "!! no basalt calibration at $CALIB"; exit 2; }
 mkdir -p "$OUT"
+
+# Derive the 2-camera calibration from the G2's own 4-camera dump if it isn't there yet, rather
+# than making the harness depend on a file someone has to remember to create.
+if [ ! -r "$CALIB" ]; then
+	FULL=$HOME/vr/logs/calib-g2.json
+	[ -r "$FULL" ] || { echo "!! no basalt calibration at $CALIB and none to derive from at $FULL"; exit 2; }
+	python3 - "$FULL" "$CALIB" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+v = d["value0"]
+for k in ("T_imu_cam", "intrinsics", "resolution", "vignette"):
+    if isinstance(v.get(k), list):
+        v[k] = v[k][:2]
+json.dump(d, open(sys.argv[2], "w"), indent=2)
+PY
+	echo "derived $CALIB from $FULL (first 2 cameras)"
+fi
 
 TOML=$OUT/basalt-g2.toml
 cat > "$TOML" <<EOF
