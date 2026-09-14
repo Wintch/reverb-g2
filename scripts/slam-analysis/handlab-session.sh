@@ -42,12 +42,14 @@ SEG=$OUT/segments.csv
 mkdir -p "$OUT"
 rm -f "$GO"
 
-# Refuse to be the second copy. Belt and braces with the per-session go file above: a stale
-# instance also keeps speaking, holding the GUI env, and racing for the same log.
-others=$(pgrep -f "handlab-sessio[n]" | grep -v "^$$$" | wc -l)
-if [ "$others" -gt 1 ]; then
-	echo "!! another handlab-session.sh is already running (pids: $(pgrep -f 'handlab-sessio[n]' | tr '\n' ' '))"
-	echo "   Kill it BY PID first -- never pkill -f a pattern that also matches your own ssh command."
+# Refuse to be the second copy, with a lock rather than by counting processes. The first version
+# of this guard used pgrep and aborted a perfectly good session on 2026-09-13: pgrep -f matches
+# this script'"'"'s OWN pid plus the subshells setsid and bash fork off it, so "another instance" is
+# indistinguishable from "me" that way. flock has no such ambiguity.
+exec 9>/tmp/handlab-session.lock
+if ! flock -n 9; then
+	echo "!! another handlab-session.sh holds /tmp/handlab-session.lock -- kill it BY PID"
+	echo "   (never pkill -f a pattern that also matches your own ssh command line)"
 	exit 1
 fi
 
@@ -129,11 +131,14 @@ phase() { # phase <seconds> <name> <spoken>
 
 say "Empezamos. Cinco tramos, te voy diciendo."
 sleep 3
-phase 30 still-face   "Primero. Manos a la altura de la cara, delante tuyo, y quedate lo mas quieto que puedas."
-phase 30 near-face    "Ahora. Manos a la altura de la cara, cerca, movelas despacio."
-phase 30 far-reach    "Ahora. Estira los brazos todo lo que puedas, manos lejos. Movelas despacio."
-phase 30 low-waist    "Ahora. Manos a la altura de la cintura, abajo. Movelas despacio."
-phase 30 still-low    "Ahora. Manos abajo otra vez, pero quietas."
+# Four phases, not five, and 25s not 30. The wearer'"'"'s verdict on the first attempt was "son
+# muchas pruebas" -- a routine long enough to lose someone is a routine whose later segments are
+# not worth having. still-low was the cut: low-waist already answers the FOV-cone question and
+# still-face already gives the bias estimator its quiet stretch.
+phase 25 still-face   "Manos a la altura de la cara, delante tuyo. Quietas."
+phase 25 near-face    "Manos a la altura de la cara. Movelas despacio."
+phase 25 far-reach    "Estira los brazos. Manos bien lejos, despacio."
+phase 25 low-waist    "Manos a la altura de la cintura. Despacio."
 mark "start:free"
 say "Ultimo tramo. Jugá el demo normal, hacé lo que te pida. Avisame cuando termines."
 echo "free-play segment started; stop it with: vr-launcher.py stop all"
