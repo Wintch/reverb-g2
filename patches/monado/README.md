@@ -821,3 +821,46 @@ Three details that are deliberate, not incidental:
   visible instead of interleaved.
 
 Off unless the env var is set; otherwise it costs one null check per solve. Commit `3c6264ea9`.
+
+## 0108 — `WMR_CONTROLLER_LED_INTENSITY`, the LED pulse-train command ⚠ **KEEP THIS OFF**
+
+Sends the constellation LED pulse train (`CrystalKeySetLedPulseTrain`) Monado has never sent:
+report `0x03` + `hmd_cmd_base` → HMD reports `0x08`/`0x10`, at 15 Hz, `fill_led_pulse_train_packet()`
+ported from Jan Schmidt's `fill_timesync_packet()` (thaytan/monado
+`dev-constellation-controller-tracking`, same BSL-1.0). Packet format verified three ways that
+agree: thaytan's implementation, his 2019 OpenHMD constant, and a field-by-field decode of the real
+Windows USBPcap capture (`06 21 03 00 00 00 00 00 00 80 2c` → intensity 200, ts 0, U2 800, flags 1,
+ts_ctr 1). Commit `61f02ff36`.
+
+**Measured 2026-09-13 (docs/126): turning this on destroys constellation tracking.** One raw
+sample arrived in a four-minute session across three distances; the control arm produced 610 and
+634 in single 20 s windows at the same distances on the same battery charge. The rings *do* get
+visibly brighter to the eye, so the command works — it just leaves the LEDs useless to the tracker.
+
+Suspected mechanism: Windows recomputes the packet's 55-bit `TS` from the predicted next camera
+exposure, and this patch resends a constant `ts=0`, so the pulse train free-runs and is not
+guaranteed to be lit during the cameras' short exposure windows. A higher duty cycle reads as
+"brighter" to an eye and is worth nothing to a sensor that looks for a few hundred microseconds.
+
+**The default of 0 is load-bearing, not a formality.** Do not flip it. Making this useful means
+plumbing `wmr_camera.c`'s exposure timestamps into the packet, which is a far larger change than
+this patch; until then "no LED command" beats "an unsynchronised LED command". Note the verdict is
+*not* that LED intensity fails to help — that remains untested in either direction.
+
+Watch item: the intensity-200 run logged one `wmr_hmd_controller_create: Failed to create
+controller` the control run did not. It recovered, and one sample against one proves nothing, but
+tunnel traffic for controller 0 overlapping controller 1's creation handshake is a plausible
+mechanism.
+
+## 0109 — `WMR_CONSTELLATION_RAW_SAMPLES_LOG`, the pre-gate sample census
+
+One line per constellation sample at the very top of `constellation_sample_store`, before any gate
+or guard. Distinct from 0107's heading CSV, which sits *after* the gravity gate and so counts what
+survives; this counts what the cameras produced. Answers "did the optics see anything at all",
+which no existing counter could. Commit `81392f9fc`.
+
+The logged `dist=` is from the tracking **origin**, which equals hand-to-camera range only when
+`WMR_SLAM=0` and the headset is stationary. In any other configuration that reading is not a range.
+
+Off by default. First use produced docs/126's cliff table and, incidentally, closed the
+"absolute scale never validated" question — 0.490 m at a 0.50 m tape, 0.767 m at 0.75 m.

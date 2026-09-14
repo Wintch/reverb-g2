@@ -35,8 +35,8 @@ them has already cost a wrong call once.
 | # | Class | Magnitude | Status |
 |---|---|---|---|
 | A | Near-pure-yaw ghost | **10-20 cm horizontal**, both hands | Root cause understood, unfixed — §3 |
-| B | Visibility cliff | **zero samples past ~50-75 cm** | Measured once, unexplained, unfixed — §5 |
-| C | Absolute scale never validated | left read **0.556 m** for a tape-measured **0.75 m** | Open question, never investigated |
+| B | Visibility cliff | **~~zero samples past ~50-75 cm~~ → zero past ~77 cm; 75 cm is HEALTHY** | Remeasured 2026-09-13, see docs/126 — a wall, not a falloff |
+| C | ~~Absolute scale never validated~~ **CLOSED** | control arm reads **0.490 m** at a 0.50 m tape and **0.767 m** at 0.75 m | Scale is sound to ~2%, docs/126 §3 — retire this suspect |
 | D | High-frequency jitter | **~1 cm**, both hands | Different class (re-triangulation "breathe", T203's round map item 6), never worked |
 
 A wearer feels all four as "the hands are in the wrong place". B is the one most likely to
@@ -102,8 +102,17 @@ Measured once, headset aimed at two HID-verified-awake controllers:
 | distance | camera samples reaching the tracker |
 |---|---|
 | 50 cm | healthy — 118 poses / 20 s |
-| 75 cm | **zero** |
+| 75 cm | ~~**zero**~~ |
 | 100 cm | **zero** |
+
+> **CORRECTED 2026-09-13 (docs/126).** Remeasured with `WMR_CONSTELLATION_RAW_SAMPLES_LOG`,
+> counting samples *before* every gate rather than poses after them: **50 cm → 610 / 20 s,
+> 75 cm → 634 / 20 s, 100 cm → 0.** 75 cm is not merely non-zero, it is indistinguishable from
+> 50 cm. The wall sits between **77 cm and 1 m**, and it is a wall — 31.7/s to zero with no
+> degradation in between, which is the shape of an angular-resolution limit rather than a
+> photometric one. Whether the older table measured a different quantity (delivered poses, after
+> the gates) or a different geometry (worn, so a different camera cone) was not established;
+> either way the raw-sample numbers above are the ones to plan against.
 
 `WMR_CONTROLLER_CAM_GAIN=255` turns the 75 cm zero into **87 poses**, so the lever exists — but
 those poses read 0.556 m for a tape-measured 0.75 m, and the other hand 0.057 m, i.e. gain buys
