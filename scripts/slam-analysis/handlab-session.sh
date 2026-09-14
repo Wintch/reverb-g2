@@ -22,15 +22,34 @@
 # with no still stretches there is nothing to fit and nothing to re-estimate against.
 set -u
 
-APPID=868020
+# Default is Aperture Hand Lab, Valve'"'"'s own hand demo and the best stage for this. Overridable
+# because on 2026-09-13 it would not launch at all (Proton starts, exits instantly, nothing in any
+# log) and the posture A/B does not depend on which title is in front of the wearer -- it needs
+# hands visible and constellation running. Propagation VR (1363430) is the fallback with the
+# strongest record.
+APPID=${HANDLAB_APPID:-868020}
 TS=$(date +%Y%m%d-%H%M%S)
 OUT=/mnt/vrtmp/handlab-$TS
 LOG=~/vr/logs/handlab-$TS.log
-GO=/tmp/handlab.go
+# Per-session, NOT a fixed path. On 2026-09-13 a stale instance from an abandoned attempt was
+# still parked on a shared /tmp/handlab.go; touching it armed BOTH, and two espeak processes read
+# the same routine 150 ms apart. The wearer heard an echo, could not make out a single
+# instruction, and the whole donning was wasted. A fixed rendezvous path silently couples every
+# instance that has ever been started.
+GO=/tmp/handlab-$TS.go
 SEG=$OUT/segments.csv
 
 mkdir -p "$OUT"
 rm -f "$GO"
+
+# Refuse to be the second copy. Belt and braces with the per-session go file above: a stale
+# instance also keeps speaking, holding the GUI env, and racing for the same log.
+others=$(pgrep -f "handlab-sessio[n]" | grep -v "^$$$" | wc -l)
+if [ "$others" -gt 1 ]; then
+	echo "!! another handlab-session.sh is already running (pids: $(pgrep -f 'handlab-sessio[n]' | tr '\n' ' '))"
+	echo "   Kill it BY PID first -- never pkill -f a pattern that also matches your own ssh command."
+	exit 1
+fi
 
 DASH_PID=$(pgrep -f "status-dashboard.py" | head -1)
 [ -n "$DASH_PID" ] || { echo "dashboard not running, cannot borrow the GUI env"; exit 2; }
@@ -47,7 +66,7 @@ mark() { echo "$(mono_ns),$1" >> "$SEG"; }
 
 # A dark room is the documented root cause of every runaway this project chased for weeks
 # (see the Dali/Aircar drift work). Refuse to collect a session that will have to be thrown out.
-if [ -x ~/Documents/reverb-g2/scripts/light-preflight.sh ]; then
+if [ -x ~/Documents/reverb-g2/scripts/light-preflight.sh ] && [ "${HANDLAB_SKIP_LIGHT:-0}" != 1 ]; then
 	echo "== light preflight"
 	bash ~/Documents/reverb-g2/scripts/light-preflight.sh 2>&1 | tail -6
 fi
@@ -87,12 +106,13 @@ if grep -q "Controles NO registrados" "$LOG" 2>/dev/null; then
 	grep -m1 "Controles NO registrados" "$LOG"
 	exit 1
 fi
-if grep -qiE "BATTERY LOW|cliff zone" "$LOG" 2>/dev/null; then
-	echo "!! A controller is in the battery cliff zone. LED brightness follows charge, so the"
-	echo "   range and scale numbers this session exists to collect would not be repeatable."
-	grep -m1 -iE "BATTERY LOW" "$LOG"
-	exit 1
-fi
+# RECORD the battery state, do not gate on it. The percentage is Monado's linear raw/255 map,
+# and docs/46 measured this rig'"'"'s NiMH cells reading raw ~110-115 (43-45%) on their normal
+# plateau and ~79 (31%) under sustained LED load -- so a healthy, freshly-charged NiMH set reads
+# "LOW" on a scale shaped for alkalines. An abort here threw out a session on 2026-09-13 whose
+# controllers were both fine. What the measurement actually needs is not a minimum charge but a
+# KNOWN one, so later sessions can be compared like with like: write it next to the data.
+grep -iE "BATTERY|bateria" "$LOG" 2>/dev/null | sed '"'"'s/^[[:space:]]*/battery: /'"'"' | tee "$OUT/battery.txt"
 grep -m1 "controles:" "$LOG" || true
 
 say "Listo. Ponete el casco y avisame."
@@ -100,8 +120,11 @@ echo
 echo "waiting for the wearer: touch $GO when the headset is on and Hand Lab is responding"
 while [ ! -e "$GO" ]; do sleep 2; done
 
+# Speak FIRST, then mark. Marking before the instruction has even been read out dedicates the
+# first seconds of every segment to the previous posture, which is the one thing a segment label
+# must not do.
 phase() { # phase <seconds> <name> <spoken>
-	mark "start:$2"; say "$3"; sleep "$1"; mark "end:$2"; say "Pausa. Quedate quieto."; sleep 5
+	say "$3"; mark "start:$2"; sleep "$1"; mark "end:$2"; say "Pausa. Quedate quieto."; sleep 5
 }
 
 say "Empezamos. Cinco tramos, te voy diciendo."
