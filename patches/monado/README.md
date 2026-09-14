@@ -834,7 +834,8 @@ ts_ctr 1). Commit `61f02ff36`.
 
 **Measured 2026-09-13 (docs/126): turning this on destroys constellation tracking.** One raw
 sample arrived in a four-minute session across three distances; the control arm produced 610 and
-634 in single 20 s windows at the same distances on the same battery charge. The rings *do* get
+634 in single 20 s windows at the same distances on the same battery charge. It fails at **50 cm
+too**, where the control arm was healthy, so this is not a range effect. The rings *do* get
 visibly brighter to the eye, so the command works — it just leaves the LEDs useless to the tracker.
 
 Suspected mechanism: Windows recomputes the packet's 55-bit `TS` from the predicted next camera
@@ -872,5 +873,33 @@ which no existing counter could. Commit `81392f9fc`.
 The logged `dist=` is from the tracking **origin**, which equals hand-to-camera range only when
 `WMR_SLAM=0` and the headset is stationary. In any other configuration that reading is not a range.
 
-Off by default. First use produced docs/126's cliff table and, incidentally, closed the
-"absolute scale never validated" question — 0.490 m at a 0.50 m tape, 0.767 m at 0.75 m.
+Off by default. First use closed the long-standing "absolute scale never validated" question —
+0.490 m at a 0.50 m tape, 0.767 m at 0.75 m, two percent in opposite directions. It also produced
+docs/126's original cliff table, **which that document later retracted**: the same distance that
+gave 380 samples gave zero fifteen minutes later and zero again after a restart, so the effect is
+all-or-nothing in time, not a function of range.
+
+## 0111 — `WMR_CONSTELLATION_BLOB_TELEMETRY`, blobs at the sink
+
+Per-observation blob count, size and brightness, logged where observations ARRIVE at the tracker —
+deliberately **above** `constellation_tracker_camera_push_blobs`'s `num_blobs == 0` early return,
+because the case of interest is exactly the one that returns. The fields were already computed and
+carried through `t_blob` (`size.x`/`size.y` from the blob bounding box, `brightness` from the
+detector) and simply never recorded. Commit `22e081141`.
+
+**This is the patch that found the actual bug.** It separates two failures that look identical from
+outside — *no blobs at all* (a detection limit, where amplitude is the lever) from *blobs present,
+no pose* (correspondence, where amplitude buys nothing). Measured: detection is healthy in every
+window including every zero-sample one — 4-15 blobs/frame, p50 size **20-22 px**, brightness
+0.4-0.5 — and at 1 m the cameras see *more* and *brighter* blobs than at 75 cm while solving
+nothing. The tracker then says it outright: `blob ownership: device 0 holds 0 of 15 blobs this
+frame (BELOW the 4-blob floor tryDeviceBlobRecovery needs)`, with only one controller registered,
+so not T225's two-hand competition.
+
+It also killed a 20× estimation error: a 3 mm emitter predicts ~1 px at 1 m, and the fixed-focus
+fisheye cameras actually spread each LED over 20-22 px. **Never reason about blob size from emitter
+geometry on this hardware — measure it with this.**
+
+Off by default; the lines are `CT_INFO`, so `CONSTELLATION_TRACKER_LOG=info` is needed too. One
+line per observation rather than per blob: at 90 fps per-blob is a firehose, and it is the
+per-frame distribution the question needs.

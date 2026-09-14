@@ -36,7 +36,7 @@ them has already cost a wrong call once.
 |---|---|---|---|
 | A | Near-pure-yaw ghost | **10-20 cm horizontal**, both hands | Root cause understood, unfixed — §3 |
 | B | ~~Visibility cliff~~ **NOT A DISTANCE EFFECT** | same distance gave 380 samples, then 0, then 0 after a restart | docs/126 retraction — it is blob→device ownership, all-or-nothing, and detection is healthy throughout |
-| C | ~~Absolute scale never validated~~ **CLOSED** | control arm reads **0.490 m** at a 0.50 m tape and **0.767 m** at 0.75 m | Scale is sound to ~2%, docs/126 §3 — retire this suspect |
+| C | ~~Absolute scale never validated~~ **CLOSED** | control arm reads **0.490 m** at a 0.50 m tape and **0.767 m** at 0.75 m | Scale is sound to ~2%, docs/126 §5 — retire this suspect |
 | D | High-frequency jitter | **~1 cm**, both hands | Different class (re-triangulation "breathe", T203's round map item 6), never worked |
 
 A wearer feels all four as "the hands are in the wrong place". B is the one most likely to
@@ -58,7 +58,7 @@ That is a showcase-grade limit and is not what the same hardware does on Windows
 >
 > So class B collapses into the same area as class A: **correspondence**, not optics, not range,
 > not light. Anything in this document that treats "past ~70 cm the tracker receives no samples"
-> as a separate optical limit should be read with that in mind. See docs/126's retraction block.
+> as a separate optical limit should be read with that in mind. See docs/126 §1-2.
 
 ## 3. Class A, stated precisely: a circular dependency, broken by gyro drift
 
@@ -68,7 +68,7 @@ The chain, each link measured:
    produces a rotation of the solved pose about the vertical axis, which at ~0.45 m radius is a
    **10-20 cm purely horizontal displacement** — exactly the signature the wearer describes.
 
-   > **CORRECTED 2026-09-13 from the dumped factory geometry (patch 0110, docs/126 §4).** It is
+   > **CORRECTED 2026-09-13 from the dumped factory geometry (patch 0110, docs/126 §6).** It is
    > not a ring and they are not 11° apart. The 32 emitters sit on **two concentric shells on the
    > two faces of a shallow cone**: 18 facing outward at 51-59 mm radius, 14 facing inward at
    > 44-51 mm. Within a shell the angular gaps are **irregular** — outward 16.5°-25.9° (mean
@@ -93,7 +93,7 @@ The chain, each link measured:
 That circle is the root cause. Everything that has been tried so far attacks it from inside the
 circle, which is why none of it worked.
 
-> **The "near-symmetric ring" premise does not survive contact with the geometry (docs/126 §4).**
+> **The "near-symmetric ring" premise does not survive contact with the geometry (docs/126 §7).**
 > This document explains the yaw-flip ghost by the ring being near-symmetric under a half turn, so
 > that a wrong-yaw correspondence fits as well as the true one. Tested directly on the dumped
 > positions — rotate the pattern about its axis, measure how far each LED lands from the nearest
@@ -154,7 +154,8 @@ Measured once, headset aimed at two HID-verified-awake controllers:
 | 75 cm | ~~**zero**~~ |
 | 100 cm | **zero** |
 
-> **CORRECTED 2026-09-13 (docs/126).** Remeasured with `WMR_CONSTELLATION_RAW_SAMPLES_LOG`,
+> **CORRECTED 2026-09-13, then RETRACTED the same day — see docs/126 §2; the numbers below are
+> confounded and are kept only to show what was measured.** Remeasured with `WMR_CONSTELLATION_RAW_SAMPLES_LOG`,
 > counting samples *before* every gate rather than poses after them: **50 cm → 610 / 20 s,
 > 75 cm → 634 / 20 s, 100 cm → 0.** 75 cm is not merely non-zero, it is indistinguishable from
 > 50 cm. The wall sits between **77 cm and 1 m**, and it is a wall — 31.7/s to zero with no
