@@ -275,18 +275,43 @@ fi
 
 [ -x "$SERVICE" ] || fail "can't find monado-service at $SERVICE"
 
-# The headset's five devices (chap. 00). If the companion is missing, it's the USB port, not Monado.
-FOUND=$(lsusb | grep -cE "03f0:0580|045e:0659|04b4:650[46]|0bda:4c15")
-echo "Headset USB devices: $FOUND/5"
-if [ "$FOUND" -lt 5 ]; then
-    echo "  !! Devices missing. Check the USB port before continuing (chap. 00)." >&2
-    lsusb | grep -E "03f0:0580|045e:0659|04b4:650[46]|0bda:4c15" >&2
-fi
-
 # SIGKILL doesn't clean up the socket, and a stale socket makes startup fail.
 for p in $(pgrep -x monado-service); do kill -9 "$p" 2>/dev/null; done
 sleep 2
 rm -f "$SOCKET"
+
+# The headset's five devices (chap. 00). If the companion is missing, it's the USB port, not Monado.
+#
+# Wait for the bus to SETTLE rather than counting once, and do it AFTER the kill above.
+# Taking Monado down makes the headset drop and re-add its SuperSpeed link. Measured from
+# the kernel log 2026-09-13: 21:24:56 "usb 4-1: USB disconnect", then "HoloLens Sensors"
+# back at 21:25:00, four seconds later. jack-in relaunched at 21:24:57 -- inside that
+# window -- and opened a HID node that was about to disappear. monado-service started
+# cleanly and the display lit, then the sensor thread died with "10 consecutive read
+# errors, giving up". The wearer sees a perfectly good FROZEN image (the DP path is
+# independent of the sensor path), tracking.csv has 0 rows, and both controllers sit on
+# the (-0.2, 1.2, -0.5) placeholder. A single count would have passed that run: only the
+# SuperSpeed half re-enumerated, the USB2 half never left the bus.
+USB_RE="03f0:0580|045e:0659|04b4:650[46]|0bda:4c15"
+STABLE_NEEDED="${JACKIN_USB_STABLE_SECS:-3}"
+USB_WAIT="${JACKIN_USB_WAIT_SECS:-25}"
+STABLE=0
+for _s in $(seq 1 "$USB_WAIT"); do
+    if [ "$(lsusb | grep -cE "$USB_RE")" -ge 5 ]; then
+        STABLE=$((STABLE + 1))
+        [ "$STABLE" -ge "$STABLE_NEEDED" ] && break
+    else
+        [ "$STABLE" -gt 0 ] && echo "  .. the headset re-enumerated mid-check; settle timer restarted"
+        STABLE=0
+    fi
+    sleep 1
+done
+FOUND=$(lsusb | grep -cE "$USB_RE")
+echo "Headset USB devices: $FOUND/5 (present and stable for ${STABLE}s)"
+if [ "$FOUND" -lt 5 ]; then
+    echo "  !! Devices still missing after ${USB_WAIT}s. Check the USB port before continuing (chap. 00)." >&2
+    lsusb | grep -E "$USB_RE" >&2
+fi
 
 # Pre-flight the DP hotplug OURSELVES instead of letting Monado race it. Measured
 # 2026-08-07 (T050): time from panel.py activate to the DP connector actually flipping
@@ -509,6 +534,23 @@ else
     CONSTELLATION="${WMR_CONSTELLATION_CONTROLLERS:-$([ "$TRACKING" = ctrl ] && echo 1 || echo 0)}"
 fi
 TRACKING_ENV+=("WMR_CONSTELLATION_CONTROLLERS=$CONSTELLATION")
+
+# Constellation LED pulse-train intensity (1..399, Windows uses 200). 0 = send no LED command
+# at all, which is what this driver did for its whole history and is therefore the control arm
+# of the A/B -- keep it as the default until a measurement says otherwise.
+#
+# Background: Windows' CrystalKeySetLedPulseTrain commands LED brightness ~15x/s for the whole
+# tracking session; Monado never sent it. Measured effect (docs/re-windows/04, T230 photometry):
+# on Windows one ring photographs at ~2.45x the blob area of the other, on Linux both are
+# identical and dim. Suspected downstream effect: docs/125's visibility cliff (118 poses in 20s
+# at 50cm, zero at 75cm AND at 1m). ALWAYS pass it explicitly -- the service is launched through
+# `env` from a Python parent, so relying on inheritance here would be silent either way.
+LED_INTENSITY="${WMR_CONTROLLER_LED_INTENSITY:-0}"
+TRACKING_ENV+=("WMR_CONTROLLER_LED_INTENSITY=$LED_INTENSITY")
+if [ "$LED_INTENSITY" != 0 ]; then
+    TRACKING_ENV+=("WMR_CONTROLLER_LED_HZ=${WMR_CONTROLLER_LED_HZ:-15}")
+    echo "  Controller LED pulse train: intensity $LED_INTENSITY at ${WMR_CONTROLLER_LED_HZ:-15} Hz (0 disables)"
+fi
 
 # T223 worn-tracking stack (docs/58, docs/pruebas.jsonl T223) -- until this patch, the
 # configuration that actually gets both hands present at once existed only as env vars a

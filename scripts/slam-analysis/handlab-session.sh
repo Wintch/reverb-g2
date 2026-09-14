@@ -114,7 +114,7 @@ fi
 # "LOW" on a scale shaped for alkalines. An abort here threw out a session on 2026-09-13 whose
 # controllers were both fine. What the measurement actually needs is not a minimum charge but a
 # KNOWN one, so later sessions can be compared like with like: write it next to the data.
-grep -iE "BATTERY|bateria" "$LOG" 2>/dev/null | sed '"'"'s/^[[:space:]]*/battery: /'"'"' | tee "$OUT/battery.txt"
+grep -iE "BATTERY|bateria" "$LOG" 2>/dev/null | sed 's/^[[:space:]]*/battery: /' | tee "$OUT/battery.txt"
 grep -m1 "controles:" "$LOG" || true
 
 say "Listo. Ponete el casco y avisame."
