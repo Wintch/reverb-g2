@@ -51,6 +51,22 @@ The chain, each link measured:
 1. The LED ring has **32 LEDs, ~11° apart**. A 1-2 LED slip in the blob↔LED correspondence
    produces a rotation of the solved pose about the vertical axis, which at ~0.45 m radius is a
    **10-20 cm purely horizontal displacement** — exactly the signature the wearer describes.
+
+   > **CORRECTED 2026-09-13 from the dumped factory geometry (patch 0110, docs/126 §4).** It is
+   > not a ring and they are not 11° apart. The 32 emitters sit on **two concentric shells on the
+   > two faces of a shallow cone**: 18 facing outward at 51-59 mm radius, 14 facing inward at
+   > 44-51 mm. Within a shell the angular gaps are **irregular** — outward 16.5°-25.9° (mean
+   > 20.0°), inward 21.0°-30.4° (mean 25.7°). Nearest-neighbour distance in 3D is 12.4-20.4 mm,
+   > median 14.6 mm.
+   >
+   > The conclusion survives but the arithmetic inverts. At a real ~20° spacing, **one** slip —
+   > not one to two — displaces the hand by 2 × 0.45 × sin(10°) ≈ **16 cm**, landing squarely in
+   > the observed 10-20 cm. The reported symptom is a *single* correspondence slip, not a
+   > multi-LED one.
+   >
+   > It also weakens link 3 below. Against 20-26° of real spacing, the 10-30° heading noise is
+   > roughly **one** spacing, not "two to three". The circle is still a circle; its margin is less
+   > desperate than this section claims.
 2. Choosing the right correspondence needs a trusted heading. The only heading available is the
    controller's own IMU fusion.
 3. **That heading's noise under worn motion is 10-30°** — two to three LED spacings. The pool the
@@ -60,6 +76,23 @@ The chain, each link measured:
 
 That circle is the root cause. Everything that has been tried so far attacks it from inside the
 circle, which is why none of it worked.
+
+> **The "near-symmetric ring" premise does not survive contact with the geometry (docs/126 §4).**
+> This document explains the yaw-flip ghost by the ring being near-symmetric under a half turn, so
+> that a wrong-yaw correspondence fits as well as the true one. Tested directly on the dumped
+> positions — rotate the pattern about its axis, measure how far each LED lands from the nearest
+> original — **no rotation maps the pattern onto itself, and 180° is among the worst** (8.5 mm mean
+> displacement, against 7.1 mm at both 100° and 260°). The layout is deliberately irregular, which
+> is what a constellation designed for unique correspondence looks like.
+>
+> The margin is thin, though, and that is the actual finding: 8.5 mm is 58% of the median spacing,
+> which is a yaw-flip discriminant of only **4.6 px at 50 cm and 2.3 px at 1 m** — and the tracker
+> only ever sees the subset of emitters facing it, which is far more ambiguous than the whole.
+>
+> So the ghost is **not** forced by symmetry. It is a signal-to-noise problem in correspondence,
+> and that reframing changes the plan: better blob centroiding, more correspondences carried into
+> the fit, or rejecting solves resting on too few of them are all live. "The geometry is ambiguous
+> and we are stuck" was not.
 
 **Why the heading is noisy, from the code (`wmr_controller_base.c:1289`,
 `m_imu_3dof.c:gyro_bias_auto`):** the fusion is a 3DoF complementary filter. Gravity observes
