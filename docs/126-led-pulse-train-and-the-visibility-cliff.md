@@ -14,6 +14,60 @@ of `constellation_sample_store`, **before every gate and guard**. This is delibe
 quantity from `WMR_CONTROLLER_HEADING_CSV` (0107), which sits after the gravity gate and therefore
 counts what survives. This one counts what the cameras produced.
 
+> # ⚠ RETRACTION — read this before anything below
+>
+> **The cliff table in §1 does not measure distance, and §4's explanations of it are all void.**
+>
+> §1 was measured in increasing distance order — 50, 75, then 100 cm — with the zero at the end,
+> and no control window was run back at a short distance afterwards. A later session ran that
+> missing control (patch 0111, blob telemetry), and the result kills the reading:
+>
+> | window, all at gain 100, operator stationary | constellation samples |
+> |---|---|
+> | 75 cm | **380** |
+> | 100 cm | 0 |
+> | **75 cm again** | **0** |
+> | **75 cm, after a full Monado restart** | **0** |
+>
+> The same distance that produced 380 produced zero fifteen minutes later, twice, including once
+> from a cold start. **The failure varies with time, not with distance.** Everything §1 attributes
+> to range is therefore confounded, and the "wall between 77 cm and 1 m" is not established.
+>
+> **What the blob telemetry shows instead, and this part is solid:** detection is healthy in every
+> window, including every zero one. 4-15 blobs per frame, **p50 blob size ~20-22 px** (not the
+> sub-pixel emitters §4 hypothesised — that estimate was wrong by a factor of twenty, because the
+> fixed-focus fisheye cameras spread each LED over tens of pixels), brightness ~0.4-0.5, and the
+> same 25% zero-blob frame share at 75 cm and at 1 m. At 1 m the cameras saw **more** blobs, the
+> same size, **brighter** than at 75 cm — and solved nothing.
+>
+> **The failure is entirely in blob→device ownership.** The tracker's own telemetry says so:
+>
+> ```
+> blob ownership: device 0 holds 0 of 15 blobs this frame
+>                 (BELOW the 4-blob floor tryDeviceBlobRecovery needs)
+> ```
+>
+> Zero of fifteen, every sampled frame. And in this session **only one controller was registered**
+> — the left one's cells were flat — so this is not T225's two-hands-competing-for-a-shared-pool
+> mechanism. A single device, with up to 15 healthy blobs in front of it and nobody to compete
+> with, acquires none of them. Note also the deadlock in that message: recovery needs 4 owned
+> blobs, and a device at 0 can never reach 4.
+>
+> **What survives from below:** §2 (patch 0108 destroys tracking, keep it at 0), §2b (the command
+> is a per-controller servo we ran open-loop), §3 (absolute scale is sound — that was measured
+> against a tape within a single window and does not depend on the cliff reading), §4's *factory
+> LED geometry* (two concentric shells, 18 outward + 14 inward, dumped from the device) and §4's
+> *rotational asymmetry result* (no rotation self-maps, 180° is among the worst). Those are
+> measurements or device data. §4's three successive *explanations* of the wall — neighbour
+> merging, sub-pixel emitters, and the brightness reversal built on them — are all void, since
+> there is no established distance effect left for them to explain.
+>
+> **Method lesson, the third time tonight:** the controller's wrist orientation swings the sample
+> rate by ~10× (§5), which is far larger than any effect this protocol was trying to resolve, and
+> a hand-held protocol cannot hold it fixed. docs/59's string-and-knots fixture — designed in
+> August, never built — exists precisely to remove this. **Do not run another distance sweep by
+> hand.** Nothing distance-related here can be trusted until orientation is mechanically fixed.
+
 ## 1. The numbers
 
 | | 50 cm | 75 cm | 100 cm |

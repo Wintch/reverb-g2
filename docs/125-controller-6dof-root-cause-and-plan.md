@@ -35,7 +35,7 @@ them has already cost a wrong call once.
 | # | Class | Magnitude | Status |
 |---|---|---|---|
 | A | Near-pure-yaw ghost | **10-20 cm horizontal**, both hands | Root cause understood, unfixed — §3 |
-| B | Visibility cliff | **~~zero samples past ~50-75 cm~~ → zero past ~77 cm; 75 cm is HEALTHY** | Remeasured 2026-09-13, see docs/126 — a wall, not a falloff |
+| B | ~~Visibility cliff~~ **NOT A DISTANCE EFFECT** | same distance gave 380 samples, then 0, then 0 after a restart | docs/126 retraction — it is blob→device ownership, all-or-nothing, and detection is healthy throughout |
 | C | ~~Absolute scale never validated~~ **CLOSED** | control arm reads **0.490 m** at a 0.50 m tape and **0.767 m** at 0.75 m | Scale is sound to ~2%, docs/126 §3 — retire this suspect |
 | D | High-frequency jitter | **~1 cm**, both hands | Different class (re-triangulation "breathe", T203's round map item 6), never worked |
 
@@ -43,6 +43,22 @@ A wearer feels all four as "the hands are in the wrong place". B is the one most
 dominate the *felt* complaint: an arm's reach is ~70 cm, and past ~50-75 cm the tracker receives
 **no camera samples at all** — not bad solves, none — so the hand stops being measured and coasts.
 That is a showcase-grade limit and is not what the same hardware does on Windows.
+
+> **2026-09-13, class B is not what this document says it is.** The "visibility cliff" was
+> remeasured with pre-gate blob telemetry (patch 0111) and does not survive: the same distance
+> that yielded 380 constellation samples yielded **zero** fifteen minutes later, and zero again
+> after a full Monado restart, with the operator stationary. Blob *detection* is healthy in every
+> window including the zeros — 4-15 blobs per frame, ~20-22 px, brightness ~0.45, and at 1 m the
+> cameras saw *more* and *brighter* blobs than at 75 cm.
+>
+> The failure is that the device owns **zero of them**: `blob ownership: device 0 holds 0 of 15
+> blobs this frame (BELOW the 4-blob floor tryDeviceBlobRecovery needs)`. With only one controller
+> registered, so not T225's two-hand competition — and note the deadlock, since a device at 0 can
+> never climb to the 4 that recovery requires.
+>
+> So class B collapses into the same area as class A: **correspondence**, not optics, not range,
+> not light. Anything in this document that treats "past ~70 cm the tracker receives no samples"
+> as a separate optical limit should be read with that in mind. See docs/126's retraction block.
 
 ## 3. Class A, stated precisely: a circular dependency, broken by gyro drift
 

@@ -11,7 +11,7 @@
 #   - BLOB telemetry: were there blobs at all, and how big/bright were they
 #
 # A zero-sample window with blobs present is a CORRESPONDENCE failure; a zero-sample window with
-# no blobs is a DETECTION failure. Amplitude only helps the second. Nothing before this patch
+# no blobs is a DETECTION failure. Amplitude only helps the second. Nothing before patch 0111
 # could tell them apart.
 set -u
 LABEL="$1"
@@ -68,29 +68,32 @@ if [ "$NB" -gt 0 ]; then
     python3 - "$OUT/$LABEL.blobs.txt" <<'PY'
 import re, sys, statistics
 zero = 0
-counts, means, brights = [], [], []
+counts, means, mins, brights = [], [], [], []
 for line in open(sys.argv[1]):
-    if "n=0" in line:
-        zero += 1
-        counts.append(0)
+    # \bn= deliberately. A bare "n=0" substring test also matches inside "min=0", which misread
+    # every real line as an empty frame and produced a confidently wrong verdict once already.
+    mn = re.search(r"\bn=(\d+)", line)
+    if not mn:
         continue
-    m = re.search(r"n=(\d+) size_px min=([\d.]+) mean=([\d.]+) max=([\d.]+) bright min=([\d.]+) mean=([\d.]+)", line)
+    n = int(mn.group(1))
+    counts.append(n)
+    if n == 0:
+        zero += 1
+        continue
+    m = re.search(r"size_px min=([\d.]+) mean=([\d.]+) max=([\d.]+) bright min=([\d.]+) mean=([\d.]+)", line)
     if m:
-        counts.append(int(m.group(1)))
-        means.append(float(m.group(3)))
-        brights.append(float(m.group(6)))
+        mins.append(float(m.group(1)))
+        means.append(float(m.group(2)))
+        brights.append(float(m.group(5)))
 tot = len(counts)
 if tot:
-    print(f"  frames        {tot}, {zero} with ZERO blobs ({100*zero/tot:.0f}%)")
-if counts:
-    print(f"  blobs/frame   mean {statistics.mean(counts):.1f}  max {max(counts)}")
+    print(f"  frames        {tot}, {zero} with ZERO blobs ({100*zero/tot:.1f}%)")
+    print(f"  blobs/frame   mean {statistics.mean(counts):.2f}  max {max(counts)}")
 if means:
-    print(f"  blob size px  p50 {statistics.median(means):.2f}  min {min(means):.2f}  max {max(means):.2f}")
-if brights:
+    print(f"  blob size px  p50 {statistics.median(means):.2f}  min {min(mins):.2f}  max {max(means):.2f}")
     print(f"  brightness    p50 {statistics.median(brights):.3f}  min {min(brights):.3f}  max {max(brights):.3f}")
-if tot and not means:
-    print("  VERDICT: no blobs at all -> DETECTION limit (amplitude is the lever)")
-elif means and counts and statistics.mean(counts) > 0:
-    print("  (blobs present -- if samples are 0, this is a CORRESPONDENCE failure, not detection)")
+    print("  -> blobs ARE present. If samples are 0, this is CORRESPONDENCE, not detection.")
+elif tot:
+    print("  -> no blobs in any frame: DETECTION limit. Amplitude is the lever.")
 PY
 fi
