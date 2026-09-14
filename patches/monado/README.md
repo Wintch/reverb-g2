@@ -842,6 +842,16 @@ exposure, and this patch resends a constant `ts=0`, so the pulse train free-runs
 guaranteed to be lit during the cameras' short exposure windows. A higher duty cycle reads as
 "brighter" to an eye and is worth nothing to a sensor that looks for a few hundred microseconds.
 
+**0108 supplies an actuator and neither of its two controllers.** Windows drives this command with
+(a) the exposure timesync in `TS` and (b) a per-controller brightness **servo** whose feedback is
+measured blob photometry — `count` moves `−3` above 70, `+10` below 30 (thaytan `1d67d4d`). The
+operator's own cross-OS observation is the cleanest evidence of the second one: on Windows *one*
+ring ends up brighter than the other (T230 photographs the left at ~2.45× the right's blob area,
+and `0x08` commands 1.3-1.4× the on-time of `0x10`), because the two loops converge to different
+operating points. With 0108's fixed 200 both rings come out identical and bright, which is what an
+open-loop actuator does. So the older reading of that asymmetry as a hardware difference between
+controllers was backwards — it was the loop working.
+
 **The default of 0 is load-bearing, not a formality.** Do not flip it. Making this useful means
 plumbing `wmr_camera.c`'s exposure timestamps into the packet, which is a far larger change than
 this patch; until then "no LED command" beats "an unsynchronised LED command". Note the verdict is

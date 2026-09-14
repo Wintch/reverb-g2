@@ -54,6 +54,43 @@ exposure timesync is worse than sending nothing"**. The hypothesis that Windows'
 help tracking is untested either way — testing it requires plumbing `wmr_camera.c`'s exposure
 timestamps into the packet, which is a much larger change than 0108 was.
 
+## 2b. The operator's asymmetry observation names the missing half exactly
+
+Wearer, same session, comparing the two OSes directly:
+
+> *"la diferencia es que en Windows un solo joy queda más luminoso, el otro no. En Linux ambos
+> quedan más brillosos."*
+
+That is the whole diagnosis in one sentence, and it lines up with a measurement this repo already
+had but had not connected:
+
+- **T230 photometry**: on Windows the left ring photographs at ~2.45× the blob area and ~1.9× the
+  flux of the right; on Linux the two are identical and both dim.
+- **docs/re-windows/04 §3**, extracting all 10,503 pulse-train commands from the capture: report
+  `0x08` commands ~1.3-1.4× the on-time of `0x10` (mean 681,751 vs 496,987), and the difference is
+  driven by the `count` field, not the period.
+- **thaytan's branch**, since `1d67d4d` (Beyley Cardellio, 2025-05-17): a closed loop nudges the
+  intensity field from the tracker's own measured blob brightness — `−3` above 70, `+10` below 30
+  or under >20 m/s².
+
+So Windows is not *setting* a brightness. It is **servoing one, per controller, with measured blob
+brightness as the feedback signal**. The two rings differ because they converge to different
+operating points — different distance, angle, occlusion, LED efficiency, cell voltage. The
+asymmetry is the loop working, not a fault, and the older reading of it as "one controller is
+brighter than the other, so it's the hardware" was backwards.
+
+0108 sends a fixed 200 to both, open-loop. Both rings therefore come out identical and bright,
+which is exactly what the operator reports and exactly what an open-loop actuator does.
+
+This makes the gap sharper than §2 alone stated. The LED command has **two** halves this stack does
+not have: the exposure timesync (`TS`), and the brightness servo (`count`, driven by blob
+photometry). 0108 supplies the actuator and neither controller. That is why turning it on is worse
+than leaving it off — an actuator with no loop around it and no clock to align to is a fixed
+disturbance injected into a system that was previously just quiet.
+
+Both halves already exist in thaytan's branch and neither is upstream. That branch, not this patch,
+is the thing to port if this line is ever picked up again.
+
 ## 3. Absolute scale is fine — retire that suspect
 
 `docs/125` lists absolute scale as never validated, on the strength of one hand reading 0.556 m
@@ -76,25 +113,39 @@ More important than the location is the *shape*. 31.7/s → 0 with nothing in be
 brightness limit degrades: fewer blobs, noisier poses, scale starting to lie. None of that happened
 — the 75 cm window was as clean and as well-scaled as the 50 cm one, and then there was nothing.
 
-**Unverified hypothesis, stated so it can be killed:** this is an angular-resolution limit, not a
-photometric one. The tracking cameras are 640×480 with `fx ≈ 270.8` (from this rig's own logged
-calibration). The ring carries **32 LEDs**. If its diameter is ~10 cm, adjacent LEDs subtend:
+**This is an angular-resolution limit, not a photometric one.** The tracking cameras are 640×480
+with `fx = 270.8486` (this rig's own logged camera-0 intrinsic). The ring carries **32 LEDs** and
+its diameter is **11.9 cm**, measured physically by the operator 2026-09-13. 32 LEDs put neighbours
+11.25° apart, a centre-to-centre chord of **11.66 mm**:
 
-| distance | ring | adjacent-LED spacing |
-|---|---|---|
-| 50 cm | ~54 px | ~5.3 px |
-| 75 cm | ~36 px | ~3.5 px |
-| 100 cm | ~27 px | **~2.6 px** |
+| distance | ring | adjacent-LED spacing | measured |
+|---|---|---|---|
+| 50 cm | 64.5 px | **6.32 px** | 610 / 20 s |
+| 75 cm | 43.0 px | **4.21 px** | 634 / 20 s |
+| 100 cm | 32.2 px | **3.16 px** | **0** |
 
-Below ~3 px neighbouring LEDs stop resolving as separate blobs, correspondence has nothing to match,
-and the output goes to zero rather than getting worse — which is the observed shape. It also
-predicts that **more brightness makes it worse**, since blooming grows each blob and merges them
-sooner, and brightness indeed did not move the wall.
+The wall falls between **4.21 px and 3.16 px** of neighbour separation. Blobs are themselves
+2-4 px across, so at ~3 px two adjacent LEDs are one blob: correspondence has nothing left to
+match and the output goes to zero rather than degrading. That is the observed shape, and the
+threshold lands where the geometry says it should.
 
-**The 10 cm diameter is assumed, and that is the weak link in the whole argument.** The real
-geometry is already parsed into `wmr_controller_config.leds[]` (`wmr_config.c`'s
-`wmr_controller_led_config_parse`), so the check is cheap: log the extent of those positions at
-init and redo the arithmetic. Do that before this section is cited as established.
+Two independent oddities from the same session fall out of this without extra assumptions:
+
+- **Wrist orientation moved the sample rate ~10× (18/s → 175/s).** The table is the *face-on* case,
+  i.e. the best case. Seen off-axis the ring foreshortens and real spacing drops below these numbers
+  on the half turning away, so rotating the controller walks you across the wall.
+- **Brightness did not help and plausibly hurts.** Blooming widens every blob. If the failure is two
+  blobs touching at ~3 px, making them bigger merges them *sooner*. Consistent with §2's result.
+
+**What this means for the system, not just the measurement:** the useful constellation range ends
+around **80 cm**, and an arm's reach is ~70 cm. The controllers are therefore marginal at exactly
+the distance they are used at, by geometry rather than by tuning. No amount of exposure, gain or
+LED current moves a resolution limit — the levers that would are a longer focal length, fewer/more
+separated LEDs, or accepting the range and leaning on IMU fusion past it.
+
+Remaining check, now cheap and no longer load-bearing: confirm 11.9 cm against
+`wmr_controller_config.leds[]` (parsed by `wmr_config.c`'s `wmr_controller_led_config_parse`), which
+also gives the true 3D layout rather than assuming a planar ring.
 
 ## 5. Method notes, because two of tonight's readings were artifacts
 
