@@ -153,5 +153,33 @@ result comes back here and the next public message is written from it.
 2. User: paste the PR #1275 comment; buy the UB500; rotate the Matrix token.
 3. Dev, once the dongle exists: the system-Bluetooth `wmr_bt_controller.c` test promised on
    !2967, reported on that thread whatever the result.
-4. Comms: diff our Basalt `0014` against Faulto's `0014` (owed since 08-28).
+4. ~~Comms: diff our Basalt `0014` against Faulto's `0014` (owed since 08-28).~~ Done, §9.
 5. Nothing to post anywhere until one of the above produces a fact.
+
+## 9. Addendum (2026-09-18 ~01:15Z): the Basalt recall leak is upstream's, and upstream already has a stalled fix
+
+The diff owed since 08-28 turned out to be a three-way comparison. `mateosss/basalt` `main` still
+carries `// TODO: Patches are never getting deleted` (`frame_to_frame_optical_flow.h:590`), so the
+leak both forks bounded is upstream's; recall is off by default upstream and in our shipped
+`basalt-g2-config*.json`, which is why it never bit production here. Mateo's own fix, **!39 "Free
+feature patches used in recall"** (2023-11, last push 2024-03, `need_rebase`, debug `printf`s still
+in), routes `removed_lmids` from the backend to the frontend and stalled, per his 2023-12 note, on
+never being sure when a landmark is gone from both threads. Issue **#25** (2025-10, open) is an
+`out_of_range` in `recallPointsForCamera()` — plausibly the `patches.at()` both forks turn into
+`find()`.
+
+Faulto's series is our `0001–0012` imported unchanged (his README credits this repo) plus his own
+`0013` (recall-mode env var) and `0014`: a 16384-entry cap that, when hit, keeps the bundle ids and
+the last 4096 ids, erases the rest, and stops storing new patches while the cap is full. Ours
+(`0014`+`0016`+`0018`) is time-based, 90 frames of grace, amortised sweeps; it costs more memory
+(1.1–1.7 GB steady vs ~40 MB) and keeps recall working. An unmeasured inference, kept out of the
+public comment: at our ~1,950 detections per frame his 4096-id grace is about two frames, less than
+the bundle's lag, so his version is a sound OOM guard that probably recalls little.
+
+Posted with the user's approval as **note 3667707 on !39** (signed Nikolai): the two field
+measurements (18 GB in 3 min here, ~49 GiB per hour on Faulto's rig), our approach in one
+paragraph, and an offer to turn it into an MR with the env var made a config field. Next move is
+Mateo's; if he takes the offer, the MR needs the three patches squashed, the `reverb-g2` markers
+removed, their clang-format, and a rebase onto their `main`. The `patches/basalt/README.md` entry
+for `0014` now carries the upstream pointer.
+

@@ -83,6 +83,13 @@ a window with `--show-gui 0`. The production `libbasalt.so` in `build/` stays Pa
 
 ## 0014 — `prunePatches()`: bound the recall patch map (2026-08-27)
 
+> **Upstream status (2026-09-18):** the leak is upstream's (`main` still says "Patches are never
+> getting deleted"), and upstream's own fix, `mateosss/basalt` **!39** "Free feature patches used
+> in recall" (an exact removal signal from the backend), has sat un-rebased since 2024-03 on the
+> problem of knowing when a landmark is gone from *both* threads. Faulto's fork bounded the same
+> leak independently the same day (`patches/basalt-wmr/0014`: a 16384-entry cap, 4096-id grace).
+> Our 0014+0016+0018 offered on !39 as note 3667707, `docs/127` §9; waiting on Mateo.
+
 `optical_flow_recall_enable` (landmark recall — re-find a landmark that left the frame and
 came back, exactly the sweep-and-return case a fast yaw produces) had an unbounded memory
 leak: `addPointsForCamera()` saves a pyramid patch for **every** newly detected keypoint and
