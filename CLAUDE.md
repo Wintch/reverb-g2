@@ -503,7 +503,7 @@ docs/14-nvidia-report.md    >>> PUBLISHED REPORT <<< + the corrected body ready 
 docs/15-feedback-triage.md  external feedback on the report, item by item, with verdict
 docs/16-lab-vblank.md       vblank/pixel-clock factorial (conclusion superseded, see its banner)
 docs/17-publishing.md       preparing the repo for publication
-docs/18-monado-upstreaming.md  upstreaming the Monado WMR patches (4 MRs open)
+docs/18-monado-upstreaming.md  upstreaming the Monado WMR patches (5 MRs open; dated status log at the end)
 docs/19-nvidia-bug-5923212-followup.md  >>> THE RESOLUTION <<< how 90Hz actually got fixed
 docs/20-desktop-plasma-crash.md  the connected headset vs. the KDE desktop
 docs/21-project-retrospective.md  project retrospective

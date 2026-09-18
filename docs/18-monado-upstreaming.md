@@ -16,9 +16,14 @@ worktree):
 | `wmr-controller-input-fixes` | 4 | squeeze click, haptic name, timestamps, opt-in deadzone |
 | `wmr-camera-stream-toggle` | 1 | `WMR_CAMERAS=0` runs orientation-only, cameras never start |
 | `steamvr-drv-origin-rpath` | 1 | `$ORIGIN` runtime path on `driver_monado.so` |
+| `companion-hot-reconnect` (added 2026-09-07, stacked on `wmr-hid-resilience`) | 2 | back off the companion read on a sustained dropout; on Linux reopen the new hidraw node after a USB re-enumeration (lab patches 0049+0055 and 0090+0094, rebuilt as two clean commits) |
 
 The same ten commits, as a linear series, are `patches/monado/0001–0010` in this repo, which
 is what `bootstrap-lab.sh sources` applies (pinned base updated to `735e29e4e`).
+
+*State as of 2026-09-17: five MRs open (!2967, !2968, !2969, !2971, !3004), all rebased onto
+`main` `09741cbcb`, each branch ending in its `doc: Document !NNNN` changelog commit, all
+pipelines green. The dated record is the status log at the end of this file.*
 
 ## What the review changed (do not resubmit the old versions)
 
@@ -203,14 +208,25 @@ devices default to off or preserve upstream behaviour.
 | 2026-08-13 | Second reviewer `bl4ckb0ne` **requests changes** on !2968 (drop four comments redundant with the message) and !2971 (`LINUX` instead of `UNIX AND NOT APPLE`; squash the format follow-ups). Not noticed until 2026-08-28. |
 | 2026-08-27 | !2969: env-var answer posted (the existing vars only gate forwarding; `WMR_CAMERAS=0` is the only thing that skips `wmr_camera_start()`). !2967: five inline replies (no clean fw-retry recovery log yet; BT path architecturally untestable on a G2; **new finding**: re-enumeration invalidates the open hidraw fd, 0.92–4.63 drops/min measured, fix offered as a follow-up; will drop the cond/signal code if polling stands). Upstream **!2937** (EuRoC recorder + controller IMU unification) merged to `main` 21:16Z. |
 | 2026-08-28 | bl4ckb0ne's requests addressed: !2968 comments removed (`2643a7945`), !2971 `if(LINUX)` + squashed, force-pushed `2d61595a4`; replies 3635910 / 3635912. Later the same day: !2968 found `cannot_be_merged` (a content conflict in `wmr_controller_base.h` from !2937 — both sides add a declaration at the same spot), **rebased onto `365863615` with the fixup folded into its parents** — four commits `3e2238b12 ae8fa9a25 940312bba 80135e92d`, tree identical to a plain rebase, `drv_wmr` builds clean, clang-format clean — force-pushed, note 3636033. !2967 / !2969 / !2971 merge clean. See `docs/88` §3. |
+| 2026-08-30 | All four rebased onto `main` `5b133708c` (zero file overlap with the ~40 new commits) and force-pushed with an explicit lease: !2967 `9f9ff4d16`→`b40e637a1`, !2968 `80135e92d`→`b639354bb`, !2969 `66d66d9c0`→`eceadc08d`, !2971 `2d61595a4`→`490dafb19`. |
+| 2026-08-31 | !2967, thaytan's fw-retry recovery-log ask: **250 real cold starts** (both controllers powered on before each start, one of them at 36 % battery), **0 hits** of `Controller fw cmd failed` / `Discarding stale fw reply`. Also found: a mid-session HID link bounce does not re-run the controller config read, so the retry path only ever executes at device creation. Reported as a negative result with a fault-injection offer, note 3638948. |
+| 2026-09-07 | bl4ckb0ne's threads on !2968 / !2971 had been fixed in code since 08-28 but were still *unresolved*, so both MRs read as "changes requested, ignored"; verified against the live MR heads, resolved all five threads, one re-review note each (3650293 / 3650294). !2967: thaytan's *companion-tolerance* log ask answered from a capture already on disk (2026-08-18: companion dies at line 23860, ≥90 000 consecutive failed `os_hid_read` calls over 918 s while Basalt keeps consuming the IMU produced by the same thread), note 3650321; thread left unresolved on purpose, since it shows tolerance, not recovery — it is the dead-fd case thaytan predicted, so the reconnect was re-offered. **!3004 opened** the same afternoon: "Recover the companion device after a USB re-enumeration instead of polling a dead fd", branch `companion-hot-reconnect` `f9a49878b`, two commits stacked on !2967's head; lab patches 0049+0055 (back-off) and 0090+0094 (reopen) rebuilt as two clean commits with the lab instrumentation and test references stripped, DCO added, timestamps retyped `int64_t` to match `os_monotonic_get_ns()` (the lab version's `uint64_t` fields drew a `-Wsign-compare`). Created through the web form — Akismet blocks MR creation over the API. |
+| 2026-09-08 | Rylie Pavlik (`@rpavlik`) on !2967's `wmr_bt_controller.c` thread: the G2 controllers *can* be re-paired to system Bluetooth, so the direct-BT path is testable after all — our "architecturally untestable" claim only holds for the tunnelled transport. |
+| 2026-09-14 | All five rebased onto `main` `a6d31c6c1` (only `wmr_hmd.c` touched on both sides, in a different function — clean): !2967 `af7e775bb`, !3004 `ab81008b9`, !2968 `d4fcc3e24`, !2969 `ff0504955`, !2971 `5bbfab7c1`. No comment posted; a rebase needs none. |
+| 2026-09-17 | Rebased onto `main` `09741cbcb` and **runbook step 5 done**: one final `doc: Document !NNNN` commit per branch (upstream's own pattern) carrying the changelog fragment — `doc/changes/drivers/mr.{2967,2968,2969,3004}.md` with the `d/wmr:` prefix, `doc/changes/misc_fixes/mr.2971.md` with `build:` (a prefix `CHANGELOG.md` already uses for CMake-only fixes, next to `cmake:`; `t/steamvr_drv:` has no precedent there). Tips: !2967 `c0231b1f0`, !3004 `59078a32d`, !2968 `7e6dcd1ee`, !2969 `28b1281f9`, !2971 `721459454`. Pipelines 1748538 / 1748540 / 1748541 / 1748542 / 1748543 all green; !2971's `alpine` job needed one retry (`tests_worker` segfault, an upstream flake unrelated to an RPATH line). |
+| 2026-09-18 | Our reply to rpavlik's 09-08 comment (note 3667686, threaded, thread left unresolved): the adapter on hand was dead; promised to re-pair the controllers to the host, run the direct-BT path for real and report back either way. **That is an open public promise** — it needs a working USB Bluetooth dongle (TP-Link UB500 / UB500 Plus, RTL8761B, mainline `btusb`) and then a dev-session test of `wmr_bt_controller.c` with the controllers bonded to the host. |
 
-**Open**: thaytan's recovery-log ask on !2967 (the fw-retry path has no clean example yet);
-no reviewer activity since 2026-08-13 on any of the four; `doc/changes` fragments not yet
-added (runbook step 5); the `DEBUG_GET_ONCE_FLOAT_OPTION` placement between `#include`s in
-`wmr_controller_base.c` (pre-existing in the deadzone commit) may still be raised.
+**Open (2026-09-18)**: the promised system-Bluetooth test on !2967 (above); thaytan's fw-retry
+recovery-log ask on !2967 (250/0, fault injection offered 08-31, no reply); no reviewer activity
+on any of the five since rpavlik's 09-08 comment, and nobody has looked at !3004 yet; the
+`DEBUG_GET_ONCE_FLOAT_OPTION` placement between `#include`s in `wmr_controller_base.c`
+(pre-existing in the deadzone commit) may still be raised. Do not nudge.
 
-**Access, now that `gitlab.freedesktop.org/api/v4` GETs sit behind the Anubis challenge**: a
-feed token (`?feed_token=`) opens `.atom`, MR pages, `/-/merge_requests/<iid>/discussions.json`
-and `/-/merge_requests/<iid>/cached_widget.json` (`merge_status`); a personal access token
-still POSTs notes and pushes over HTTPS; `git ls-remote … refs/merge-requests/<iid>/head`
-needs nothing.
+**Access**: `gitlab.freedesktop.org/api/v4` GETs are intermittently behind the Anubis
+challenge (blocked 08-28, open again from 08-30 through 09-17). When blocked, a feed token
+(`?feed_token=`) opens `.atom`, MR pages, `/-/merge_requests/<iid>/discussions.json` and
+`/-/merge_requests/<iid>/cached_widget.json` (`merge_status`). A personal access token POSTs
+notes, resolves threads (`PUT …/discussions/<id>?resolved=true`), retries jobs and pushes
+over HTTPS regardless (SSH to the host does not work from here); `git ls-remote …
+refs/merge-requests/<iid>/head` needs nothing. Issues can be created over the API; MRs
+cannot (Akismet) — use the web form.
