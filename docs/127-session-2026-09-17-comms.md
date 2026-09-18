@@ -183,3 +183,66 @@ Mateo's; if he takes the offer, the MR needs the three patches squashed, the `re
 removed, their clang-format, and a rebase onto their `main`. The `patches/basalt/README.md` entry
 for `0014` now carries the upstream pointer.
 
+## 10. Addendum (2026-09-18, 01:30–03:40Z): the upstream queue, two new MR branches, tested on the desk headset
+
+The user left the headset and controllers on, which turned "prepare MR #6" into "prepare and test it".
+
+### 10.1 Triage of the lab entries marked upstreamable (five verifiers, all against `main` `09741cbcb`)
+
+| lab patch | verdict | why |
+|---|---|---|
+| 0096 (`cam->running = true`) | **already upstream** | Christoph Haag, `8ed03a5cf`, 2026-09-07, !3005 |
+| 0095 (join the USB thread in `stop()`) | **superseded, rewritten** | the thread is started in `open()` and joined in `free()`; a join in `stop()` breaks `stop()`→`start()`. Upstream's own `c236c11fd` (Mateo, !2937: callback returns early when `!running`) shrinks the window but leaves two holes: the callback already past the check, and its unconditional resubmit at `out:` after a cancel that found nothing |
+| 0106 `cam_count` | **MR-ready, done** | present in `euroc_runner.c:95` and its twin `p_tracking.c:268`, both from `c39dc977c` (the commit that added `EUROC_CAM_COUNT`). The `SLAM_BATCH_POLL_HZ` half is a behaviour change and stays out |
+| 0026 (`pushPose` gating) | still present, **needs care** | `3c001896d` "Always trust RANSAC" (Beyley, 08-27) made `tryDeviceBlobRecovery` bypass `POSE_MATCH_GOOD` on purpose; a bare re-check at the push site would silently undo that. Three callers now, not two |
+| 0104 (`t_slam` push-after-stop guard) | valid, complementary | node order is LIFO so the tracker is broken apart before the camera on every driver; needs a headless repro via the EuRoC player and the lab-only `correction.mutex` reference stripped |
+| 0044 (filter before predict) | **issue first** | the filters are opt-in and GUI-only upstream; half the patch's rationale (the divergence guard) is lab-only code |
+
+### 10.2 Branch `wmr-camera-stop-drain` (fork tip `30da35bbf`, two commits)
+
+`wmr_camera_stop()` now counts the submitted image transfers under a dedicated `os_mutex`, cancels
+them, and waits (bounded, 500 × 1 ms, then a warning, as `uvc_fs_stream_stop()` does) until each
+has had its final completion; `img_xfer_cb()` decides between resubmit and retire under the same
+lock, so a stop landing mid-frame retires instead of resubmitting onto a camera told to stop. The
+USB thread is untouched. Second commit removes the vestigial trailing `os_thread_helper_wait_locked()`
+in the USB thread (upstream's own `@todo`): a lost-wakeup hang of `wmr_camera_free()`'s join.
+Three reviewers found no correctness hole in the final shape; they caught an init `||`
+short-circuit, the unbounded wait, and over-long commit messages, all fixed before the push.
+
+**Test, on iashur, no compositor**: `scripts/wmr-camera-teardown-cycles.sh` runs one
+`monado-cli probe` process per cycle with `WMR_SLAM=1` (creates the HMD, streams the cameras
+through Basalt, destroys everything). 40 cycles on unpatched `main`, 40 on an interim variant
+(condition variable instead of the bounded poll), 40 on the final: **0 SIGSEGV, 0 hangs**, camera
+started and stopped in every log, no "still in flight" warning. The baseline was also clean: the
+window is narrow and the lab's 20+ cores came from game teardowns, so the MR argues from the code
+and reports the counter honestly. Logs: `iashur:~/vr/camstop-test/{baseline,patched,final}/`.
+
+### 10.3 Branch `euroc-playback-cam-count` (fork tip `96ff5d895`, one commit, two lines)
+
+Reproduced headless with the 08-27 yaw recording:
+`EUROC_CAM_COUNT=2 EUROC_MAX_SPEED=1 VIT_SYSTEM_LIBRARY_PATH=~/vr/basalt/build/libbasalt.so
+monado-cli slambatch ~/vr/logs/euroc/euroc-yaw_20260827170436 g2.toml out` where `g2.toml` carries
+`cam-calib="~/vr/logs/calib-g2-2cam.json"` (slambatch's default config has no calibration; the
+G2's own dump trimmed to two cameras is what `replay-euroc.sh` builds). Before: `Basalt with
+cam_count=4`, then Basalt's `calib_cam_count == cam_count` assert and a hang until `timeout`.
+After: `cam_count=2`, the whole dataset plays, 2842 rows in `tracking.csv`, exit 0 in 43 s.
+
+### 10.4 State at the end of the session, and how to resume
+
+- Both branches are on `Wintch/monado`; **the MRs are not created** (Akismet: web form only). Titles
+  and descriptions: `docs/upstream/mr-texts-2026-09-18.md`; the patches themselves:
+  `docs/upstream/wmr-camera-stop-drain-000{1,2}-*.patch`, `docs/upstream/euroc-playback-cam-count-0001-*.patch`.
+- Once the MR numbers exist: add one `doc: Document !NNNN` commit per branch
+  (`doc/changes/drivers/mr.NNNN.md`, `d/wmr:` for the first, `d/euroc:` for the second), push,
+  add the rows to `docs/18`, check the pipelines.
+- The branches also exist as local branches of `~/Documents/linux_vr_base/monado` on the everyday
+  box (`git worktree prune` there if the scratch worktrees are gone). On iashur:
+  `~/vr/monado-camstop` (worktree of `~/vr/monado`, branch `wmr-camera-stop-drain` + the euroc
+  commit on top, 501 MB build) and `~/vr/camstop-test/` (harness copy, logs, patches). Delete the
+  build once the MRs are green; `~/vr/monado` itself was not touched.
+- Next in the queue: 0026 as an MR that respects `kAlwaysTrustRansac` (gate only the pushes whose
+  score was actually re-evaluated, or gate on the refined score only when refinement ran), 0104
+  with a EuRoC-based reproduction, 0044 as an issue with the +42.5 ms measurement.
+- Related, same night: `mateosss/basalt` !39 got our comment (§9); Faulto's issue and hare_ware's
+  issue unchanged.
+

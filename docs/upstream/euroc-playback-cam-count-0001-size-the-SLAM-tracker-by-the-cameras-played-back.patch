@@ -1,0 +1,53 @@
+From 96ff5d895a67bf2ac1e8ae4e7e79bf8489b7690f Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Thu, 17 Sep 2026 23:41:23 -0300
+Subject: [PATCH] d/euroc, st/prober: Size the SLAM tracker by the cameras
+ actually played back
+
+EUROC_CAM_COUNT lets the player stream fewer cameras than the dataset holds,
+but the SLAM tracker created around it was still sized from
+dataset.cam_count. The tracker only flushes poses and submits a frame set once
+the frame for its last camera arrives, and that camera is never pushed, so a
+four-camera recording played with EUROC_CAM_COUNT=2 gets nowhere: with Basalt
+as the VIT system the first round aborts on its own frame-order check,
+"Expected cam2 frame, received cam0". Use playback.cam_count, which
+euroc_player_fill_default_config_for() already resolves to the dataset count
+when the variable is unset, so the default behaviour does not change.
+
+Both call sites came from c39dc977c, the commit that introduced the variable.
+
+Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
+---
+ src/xrt/drivers/euroc/euroc_runner.c       | 2 +-
+ src/xrt/state_trackers/prober/p_tracking.c | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/xrt/drivers/euroc/euroc_runner.c b/src/xrt/drivers/euroc/euroc_runner.c
+index 558216ff3..15b587472 100644
+--- a/src/xrt/drivers/euroc/euroc_runner.c
++++ b/src/xrt/drivers/euroc/euroc_runner.c
+@@ -92,7 +92,7 @@ euroc_run_dataset(const char *euroc_path,
+ {
+ 	struct euroc_player_config *ep_config = make_euroc_player_config(euroc_path);
+ 	struct t_slam_tracker_config *st_config = make_slam_tracker_config(slam_config, output_path);
+-	st_config->cam_count = ep_config->dataset.cam_count;
++	st_config->cam_count = ep_config->playback.cam_count;
+ 
+ 	// Frame context that will manage SLAM tracker and euroc player lifetimes
+ 	struct xrt_frame_context xfctx = {0};
+diff --git a/src/xrt/state_trackers/prober/p_tracking.c b/src/xrt/state_trackers/prober/p_tracking.c
+index d3d052920..d169b9afc 100644
+--- a/src/xrt/state_trackers/prober/p_tracking.c
++++ b/src/xrt/state_trackers/prober/p_tracking.c
+@@ -265,7 +265,7 @@ p_factory_ensure_slam_frameserver(struct p_factory *fact)
+ #ifdef XRT_FEATURE_SLAM
+ 		struct t_slam_tracker_config st_config;
+ 		t_slam_fill_default_config(&st_config);
+-		st_config.cam_count = ep_config.dataset.cam_count;
++		st_config.cam_count = ep_config.playback.cam_count;
+ 
+ 		int ret = t_slam_create(&fact->xfctx, &st_config, &fact->xts, &sinks);
+ 		if (ret != 0) {
+-- 
+2.47.3
+

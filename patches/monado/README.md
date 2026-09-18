@@ -548,6 +548,8 @@ one session, zero SLAM holes, wearer no longer relocated. docs/06.
 
 ## 0095 — join the camera USB thread in `wmr_camera_stop()` (2026-08-21, T244 close)
 
+> **Upstream status (2026-09-18):** superseded, do not send as is — the USB thread is started in `wmr_camera_open()` and joined in `wmr_camera_free()`, so a join inside `stop()` breaks `stop()`→`start()`. The upstream-shaped fix (count the transfers, wait for their final completion in `stop()`, decide resubmit-vs-retire under the same lock) is branch `wmr-camera-stop-drain` on the fork, `docs/upstream/wmr-camera-stop-drain-000*.patch`, `docs/127` §10. Upstream's own partial fix is `c236c11fd` (!2937).
+
 `wmr_camera_stop()` cancelled the transfers and deactivated the stream but never joined
 `cam->usb_thread`, so `wmr_cam_usb_thread` could still be inside `img_xfer_cb() → pop_pose()`
 while `wmr_hmd_destroy()` tore the tracker down on another thread — the teardown SIGSEGV on 20+
@@ -557,6 +559,8 @@ pattern from `constellation_tracker_node_break_apart`. Vulnerable code is byte-i
 upstream: upstreamable.
 
 ## 0096 — `wmr_camera_start()` never set `cam->running` (2026-08-22)
+
+> **Upstream status (2026-09-18):** already upstream — Christoph Haag, `8ed03a5cf` "d/wmr: Actually set cam->running = true", 2026-09-07, !3005. Drop from the series at the next rebase.
 
 Which made 0095 dead code: `wmr_camera_stop()`'s `if (!cam->running) return;` guard skipped the
 join (and the cancel loop) on every teardown. Sets `running = true` once all transfers are
@@ -709,6 +713,8 @@ any N.) `filter_pose`'s filters are NOT the alternative:
 
 ## 0104 — `t_slam`: no pushes into a stopped tracker (the teardown SIGSEGV in `pop_pose`) (2026-08-29)
 
+> **Upstream status (2026-09-18):** still absent on `main` and still valid (LIFO node order breaks the tracker apart before the camera on every driver). Before an MR: strip the `correction.mutex` lock-order comment (lab patch 0102, not upstream), and reproduce headless through the EuRoC player, which registers its SLAM node the same way. `docs/127` §10.
+
 Every `monado-service` core on this rig had the same stack: `basalt::Tracker::pop_pose` ←
 `flush_poses` ← `receive_frame` ← `t_slam_receive_cam3` ← `wmr_cam_usb_thread`, main thread inside
 `wmr_source_stream_stop` (docs/06 "segfaults in Basalt's pop_pose()", 2026-08-21; two more on
@@ -731,6 +737,8 @@ Commit `c84d91e84`. Upstreamable as-is.
 
 
 ## 0105–0106 — offline config sweeps: replay a recorded dataset instead of a wearer (2026-09-13)
+
+> **Upstream status (2026-09-18):** the `cam_count` half is branch `euroc-playback-cam-count` on the fork (also fixes the twin line in `p_tracking.c:268`, same origin `c39dc977c`), reproduced and fixed headless — `docs/upstream/euroc-playback-cam-count-0001-*.patch`, `docs/127` §10. `SLAM_BATCH_POLL_HZ` stays lab-only for now (behaviour change, would need its own MR with a 0 default). 0105 (`WMR_DISABLE`) not triaged.
 
 Tuning the `SLAM_PRED_*` knobs used to cost one worn session **per value**, and every session had
 different head motion, so the arms were never a controlled A/B — the 4-arm `SLAM_PRED_NECK_ARM_MM`
