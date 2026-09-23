@@ -1,0 +1,12 @@
+{
+  "name": "VR Mixtape 01",
+  "gap_seconds": 6,
+  "entries": [
+    {"type": "video", "name": "Steve Miller Band - Abracadabra", "path": "/mnt/videos/stereo3d-pack/out/abracadabra_sbs.mp4", "seconds": 230},
+    {"type": "video", "name": "Terminator - Police Station", "path": "/mnt/videos/stereo3d-pack/out/dav2_demo/terminator_police_station_sbs.mp4", "seconds": 300},
+    {"type": "video", "name": "Tron: Legacy", "path": "/mnt/videos/stereo3d-pack/out/dav2_demo/tron_legacy_sbs2048.mp4", "seconds": 180},
+    {"type": "video", "name": "Eve of Destruction", "path": "/mnt/videos/stereo3d-pack/out/dav2_demo/eve_of_destruction_sbs.mp4", "seconds": 200},
+    {"type": "video", "name": "Blade Runner - Skyline", "path": "/mnt/videos/stereo3d-pack/out/dav2_demo/blade_runner_skyline_vr180_4k.mp4", "seconds": 230},
+    {"type": "video", "name": "Blade Runner - Visuals", "path": "/mnt/videos/stereo3d-pack/out/dav2_demo/blade_runner_visuals_vr180_4k.mp4", "seconds": 170}
+  ]
+}
