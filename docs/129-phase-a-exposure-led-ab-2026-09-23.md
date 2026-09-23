@@ -65,6 +65,56 @@ iashur:~/vr/logs/phaseA-A3-400-1-led0-20260923.log
 iashur:~/vr/logs/phaseA-A4-400-1-led200-20260923.log
 ```
 
+## Follow-up (same day, autonomous check): the blob-ownership frame trace, half done
+
+Picked up the "next concrete step" `docs/126` named — trace a high-blob-count failing frame
+through the tracker code — using A1's log above, which has far richer detail (`WMR_LOG` landed
+as `debug`, not the `info` this session intended, because `jack-in-wayland.sh dev` hard-sets it;
+harmless here, since `debug` is a superset that also gave per-frame `markMatchingBlobs`/`pushPose`
+lines).
+
+**Found the exact mechanism of A1's one successful contested recovery** (`docs/129`'s table,
+above): at the frame `device 0 RECOVERED via all-blobs search after 19 consecutive deep-search
+failures`, the very next lines show `markMatchingBlobs` assigning 8 of device 0's 32 LEDs against
+the 21 blobs visible that frame, then `pushPose`: `RANSAC-PnP refinement for device 0 from 21
+blobs had 8 LEDs with 8 inliers` — a clean, unanimous inlier set, not a marginal recovery.
+
+**Read `t_constellation_tracker.cpp` to place device 1's failures precisely, and found the
+frame count only tells half the story:**
+
+- `tryDeviceBlobRecovery` (the fast path, and the one that logs `RANSAC-PnP recovered pose was
+  good enough` / `... failed`) requires **≥4 blobs already marked for that device** before it
+  ever runs (`needed_blobs = 4` at `t_constellation_tracker.cpp:519`, and the function's own
+  comment: "the path that wins most frames"). In this log, **every single occurrence of that log
+  line is for device 0** — 1095+243+210+49+48+46+37+… — device 1 has **zero**. This is not a new
+  finding; it is exactly the pre-condition docs/125/126 already named, showing up in an actual
+  session for the first time with a fresh log.
+- The contested-blob escalation (`CS_FLAG_MATCH_ALL_BLOBS`, the 2026-09-14 fix) lives in
+  `processSampleSlow`, and **does not go through `tryDeviceBlobRecovery` at all** — it calls
+  `correspondence_search_find_one_pose()` directly (`t_constellation_tracker.cpp:1084`). Its
+  failure is logged with `CT_TRACE`, not `CT_INFO`: `"Camera %p slow processing for device %d
+  failed to find a pose"` (line ~1114).
+- **`CT_TRACE` is gated by `CONSTELLATION_TRACKER_LOG`, a separate env var from `WMR_LOG`**
+  (already flagged once before, in `project_g2_controller_6dof`'s 2026-08-11 notes, and
+  apparently not carried into this session's launch). Today's runs never set it, so **the one
+  log line that would explain WHY device 1's escalated search still fails — an empty candidate
+  set, a candidate that failed RANSAC-PnP outright, or one that passed PnP but got rejected by
+  `deviceGravityRejected` right after (the same gravity re-check the successful path also
+  applies) — was never emitted.** `trySeededRecovery` (the other rescue path, seed-pose
+  override) is in the same boat: 83/83 of its `CT_INFO` lines are device 0, and its own failure
+  detail is presumably behind the same gate.
+
+**Net result: the trace narrows the open question from "why does the ownership fix not fully
+work" to a precise, answerable one** — does device 1's contested/seeded search (a) never find
+*any* geometrically consistent candidate at all, or (b) find one that then fails RANSAC-PnP, or
+(c) find one that passes PnP but gets gravity-rejected as a wrong-lobe ghost (the mechanism
+`docs/125` already showed dominates the *fast* path)? **Cannot be answered from any log captured
+so far, including today's** — it needs a re-run with `CONSTELLATION_TRACKER_LOG=trace` (in
+addition to `WMR_LOG=info`, both exported explicitly since `dev` mode hard-sets `WMR_LOG=debug`
+regardless) alongside the same desk setup, headset and both controllers on. That is now the
+literal next step, not "trace a frame by hand" in the abstract — the specific missing
+instrumentation is identified.
+
 ## Also confirmed, not new but worth another tally mark
 
 `jack-in-wayland.sh down` needed the 10s-grace SIGKILL escalation in **5 of 5** teardowns this
@@ -77,5 +127,7 @@ across the two sessions). Worth investigating directly rather than continuing to
   use before getting to it.
 - The 30 s deliberate-fast-motion half of Phase A's own protocol.
 - Battery-level and precise light readings per run.
-- The blob-ownership frame trace using A1's log, above.
+- The blob-ownership frame trace using A1's log — **half done, see the follow-up section above**:
+  the code path is now precisely mapped, but the actual answer needs a re-run with
+  `CONSTELLATION_TRACKER_LOG=trace` that hasn't happened yet.
 - Posting anything to the public issue.
