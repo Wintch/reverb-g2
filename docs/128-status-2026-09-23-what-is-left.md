@@ -5,6 +5,13 @@ controller 6DoF, headset 6DoF, latency, and title compatibility. This doc consol
 current state of each from existing records, states the one concrete next action per front, and
 is meant to be re-read (not re-derived) at the start of the next session on any of them.
 
+> **2026-09-24 update, read first: `docs/133`.** Three things changed since this doc was written:
+> Monado !2940 (the constellation-tracker rewrite §2 depends on) merged upstream — re-verify
+> against post-merge `main` before resuming §2's next step; !3020/!3021 (§1) still have zero
+> reviewer activity, nothing new to do there; and Faulto independently fixed the `minBpc` gap
+> flagged as open when the NVIDIA 615 port was done (unrelated to any of these five fronts, but
+> worth folding into PR #1275 next time that's picked up).
+
 ## 1. Upstream Monado branches
 
 Seven MRs open against `monado/monado`, all from `Wintch/monado`:
