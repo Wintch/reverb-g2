@@ -65,7 +65,61 @@ seconds were fine, now they follow me with head movement".
    companion error appeared in both hare_ware runs and not in the control. Unexplained, keep
    an eye on it; not enough evidence to report as the branch's bug.
 
-## Next
+## Run 3 (debug) — both failures localised
+
+Same binary, `WMR_LOG=debug`, `CONSTELLATION_TRACKER_LOG=debug`,
+`CONSTELLATION_TRACKER_DATA_RECORDER_OUTPUT` on. Wearer: "image, no head 6dof, no controllers" —
+run 1 reproduced.
+
+### Head death = the G2 USB2 storm + upstream's read thread exiting (not hare_ware's bug)
+
+gdb: the `WMR: USB-HMD` thread no longer exists. Service log:
+
+```
+ERROR [control_read_packets] Error reading from companion (HMD control) device. Call to os_hid_read returned -1
+DEBUG [wmr_run_thread] Exiting reading thread.
+```
+
+Kernel: the whole USB2 branch (`usb 3-1`: hub `04b4:6506`, audio, companion `03f0:0580`)
+disconnected and re-enumerated at 00:44:11 (companion `hidraw5` → `hidraw6`). The same event hit
+00:22:34 (run 1 start — the "no head tracking" run) and 00:36:32 (end of run 2, after the wearer's
+report). Upstream `wmr_run_thread` exits on a companion read error, taking the HMD IMU and the
+tunnelled controllers with it. This is the storm of docs/60 and exactly what our **!3004
+(companion hot-reconnect)** fixes; the control run simply did not hit a re-enumeration.
+
+### Controller timesync sends a negative device time — hare_ware's bug, root-caused
+
+Every one of the ~2670 timesync packets sent to the controllers in run 3 carried a negative
+`slam_time_us` (logged as `uint64`, e.g. `time 18446744045771499111`): from −27938.05 s to
+−27886.12 s, advancing in real time. Device clock was ~1658 s, host monotonic ~29596 s:
+1658 − 29596 = −27938. The exposure timestamp is double-converted:
+
+- `wmr_camera.c` (`img_xfer_cb`) publishes `T_TIMING_EVENT_TYPE_CAMERA_EXPOSURE_START` with
+  `timestamp_ns = frame_start_ts`, read from the camera frame header — the driver's own comment
+  says it is "from same clock as video_timestamps on the IMU feed", i.e. **HMD device clock**.
+- `wmr_controller_base_timing_event_sink_push` treats it as host time
+  (`next_slam_mono_ns = camera_exposure.timestamp_ns + 2 * interval`) and converts it again with
+  `wmr_controller_base_host_ts_to_device` → a time ~host-uptime in the past.
+
+With the LED sync scheduled against a nonsensical time the controller LEDs cannot line up with
+the camera exposures, which fits the tracker matching almost nothing (1923 slow-thread drops in
+~45 s, no `Found pose`) and losing the lock within seconds in run 2. Candidate fix: feed the
+device-clock exposure time straight into the timesync (it is already the HMD's SLAM clock the
+controllers expect), or convert device→host before publishing the timing event — not both.
+
+Run 2's "frozen but still TRACKED" pose (stale `relation_history` sample, no IMU fallback) is a
+separate issue and still stands. Tracker recording kept for offline replay:
+`~/vr/datasets/constellation/ct-rec-20261002.bin` (1.7 MB); debug log
+`~/vr/logs/jack-in-hw-wmrnct-run3-debug-20261002.log.gz`.
+
+### Next, updated
+
+1. Local experiment: patch the double conversion in `~/vr/monado-hw` and cherry-pick !3004's
+   companion hot-reconnect so a USB2 storm can't kill the run; one wear test.
+2. Report to hare_ware: the timesync double conversion (with the numbers above), the stale
+   TRACKED pose, and the Ceres link failure. Not posted — needs the user's go.
+
+## Next (written before run 3)
 
 - Report (a), (b) and the Ceres link failure to hare_ware as a short factual test report, with
   the pose-log excerpt. Not posted yet — needs the user's go.
