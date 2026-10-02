@@ -128,3 +128,27 @@ separate issue and still stands. Tracker recording kept for offline replay:
   drift compared on the control build.
 - Logs archived on iashur in `~/vr/logs/*-20261002.*` (service logs for both hare_ware runs
   and the control, the three hello_xr pose logs, the gdb thread dump of run 2).
+
+## Run 4 — clock-domain fix + !2967/!3004, self-verified without a wearer
+
+Branch `hw-timesync-fix` (local monado clone; also applied in `~/vr/monado-hw` on iashur):
+`9e1773326` + one fix commit + our !2967/!3004 series (8 commits, cherry-picked clean). The fix
+(`patches/hare-ware-test/0001-*.patch`, 3 files, ~27 lines): `wmr_camera` adds `wmr_source`'s
+IMU-derived `hw2mono` offset to `frame_start_ts` before publishing the exposure timing event, and
+publishes nothing until the offset is known. Built clean on iashur.
+
+Launched with debug logging, controllers lying on the desk in camera view, no client, no wearer:
+
+- Timesync packets now carry sane controller-clock times (`time 36785640`..`37178193` us,
+  advancing), instead of −27938 s.
+- Tracker: **1779 `Found pose`** (fast path + RANSAC recovery succeeding) in the first ~45 s,
+  versus **0** in run 3 with the same binary minus the fix. No companion read error, read thread alive.
+- **Open:** in the following 20 s the tracker logged zero new poses AND zero dropped samples,
+  i.e. it stopped receiving work, not failing to match. Last poses were static (controllers at
+  rest). Not yet explained: candidates are controller idle/sleep with no client, camera stream
+  stalling, or the controller exposure frames stopping. The session was cut short (iashur went
+  offline at ~01:00 while this was being checked), so no wear test of the fix yet.
+
+Next: relaunch the `hw-timesync-fix` build, check whether controller packets / camera frames keep
+flowing after ~45 s (count `timesync counter` and enable `CONSTELLATION_TRACKER_LOG=trace` briefly
+for `Received blob observation`), then one wear test.
