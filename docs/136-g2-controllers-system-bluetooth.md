@@ -78,6 +78,41 @@ Joys on the host adapter, Steam title via xrizer, wearer in the headset.
   game with the controllers worked. The weak/parked left controller is the known constellation issue
   (docs/125-126), not a Bluetooth effect.
 
+## LED brightness over system BT (2026-10-03, patch 0112)
+
+**The command never reached host-BT controllers.** `wmr_hmd.c` ticks the LED pulse train (and the
+keepalive) only for controllers in its own tunnelled table, so `WMR_CONTROLLER_LED_INTENSITY` was a silent
+no-op for everything created through `wmr_bt_controller.c`. Patch 0112 ticks it from the BT read loop
+(default behaviour unchanged: it does nothing unless the env option is set), adds
+`WMR_CONTROLLER_LED_INTENSITY_LEFT/_RIGHT`, and logs one INFO line per controller on the first command
+(`first LED pulse-train command sent (intensity N, 15 Hz): ok`).
+
+**Validated by eye over BT** (`scripts/bt-controllers/bt-led.py`, phone camera shows the IR LEDs): report id 3,
+12 bytes, byte-identical to the Windows capture decode (`03 cc 21 03 00 00 00 00 00 00 80 2c` for intensity 200);
+brightness scales monotonically with the value (20 / 100 / 200 / 399). There is no "off" command: the controller
+keeps the last brightness it received until it sleeps or is power-cycled (intensity 1 dims it).
+
+**Per-hand mapping from the Windows capture** (docs/re-windows/04): report 0x08 (= 3 + base 0x05, left) is driven
+~1.3-1.4x longer than 0x10 (right), roughly 225 vs 165 in the 1..399 scale; the ratio varies 0.5-3.2x over time,
+so it looks adaptive rather than fixed.
+
+**Static protocol** (`ab-static.sh`: headset fixed on a desk, both joys held still, rings toward the cameras, lit
+room; per distance 12 s to place + 25 s measured; joys confirmed awake by a hidraw rate of ~200 Hz in every window):
+
+| Arm (left / right) | 50 cm (L, R tracked of 25) | 75 cm | 100 cm |
+|---|---|---|---|
+| A: 0 / 0 (no command, historical) | 25, 25 | 0, 0 | 0, 0 |
+| B: 200 / 200 | 25, 3 | 0, 0 | 0, 0 |
+| C: 225 / 165 | 0, 11 | 0, 0 | 0, 0 |
+
+- The **visibility cliff of docs/125 reproduces on system BT**: perfect at 50 cm, zero from 75 cm, joys awake throughout.
+- **LED brightness does not move the cliff**, and at 50 cm more light did not help (only arm A is perfect for both hands).
+- Which hand locks in B and C swaps, which looks like the blob-ownership lottery of docs/126 (the first device to win a
+  solve keeps the shared blob pool), not a brightness effect. "Tracked yes/no over 25 s" therefore cannot answer the
+  brightness question; the next instrument would be blob count and size per distance
+  (`WMR_CONSTELLATION_BLOB_TELEMETRY`, patch 0111). Not run.
+- Earlier worn A/B (0 vs 200, light vs dark, held in the hands) was dominated by how the joys were held and showed no clear effect.
+
 ## Launcher guard
 
 `scripts/jack-in-wayland.sh` (commit de41ead): when ≥1 "Motion controller" is bonded to the host

@@ -911,3 +911,9 @@ geometry on this hardware — measure it with this.**
 Off by default; the lines are `CT_INFO`, so `CONSTELLATION_TRACKER_LOG=info` is needed too. One
 line per observation rather than per blob: at 90 fps per-blob is a firehose, and it is the
 per-frame distribution the question needs.
+
+## 0112 — drive the LED pulse train for BT controllers, per-hand intensity, first-send log (2026-10-03)
+
+| patch | what |
+|---|---|
+| 0112 | `wmr_hmd.c` only ticks the LED pulse train for tunnelled controllers, so `WMR_CONTROLLER_LED_INTENSITY` was a silent no-op for controllers on the host Bluetooth adapter (`wmr_bt_controller.c`). Tick it from the BT read loop (does nothing unless the env option is set). Adds `WMR_CONTROLLER_LED_INTENSITY_LEFT/_RIGHT` (0 = unset; Windows drives left ~1.3-1.4x right, ~225 vs ~165) and one INFO line per controller on the first command. Validated: the command goes out over BT and brightness scales (phone camera); it did **not** move the 75 cm visibility cliff (docs/136). Launcher passes the per-hand vars through. |

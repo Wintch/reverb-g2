@@ -597,6 +597,11 @@ TRACKING_ENV+=("WMR_CONSTELLATION_CONTROLLERS=$CONSTELLATION")
 # `env` from a Python parent, so relying on inheritance here would be silent either way.
 LED_INTENSITY="${WMR_CONTROLLER_LED_INTENSITY:-0}"
 TRACKING_ENV+=("WMR_CONTROLLER_LED_INTENSITY=$LED_INTENSITY")
+
+# Per-hand LED intensity overrides (patch 0112): pass them through explicitly when set.
+for _v in WMR_CONTROLLER_LED_INTENSITY_LEFT WMR_CONTROLLER_LED_INTENSITY_RIGHT; do
+    if [ -n "${!_v:-}" ]; then TRACKING_ENV+=("$_v=${!_v}"); echo "  $_v=${!_v}"; fi
+done
 if [ "$LED_INTENSITY" != 0 ]; then
     TRACKING_ENV+=("WMR_CONTROLLER_LED_HZ=${WMR_CONTROLLER_LED_HZ:-15}")
     echo "  Controller LED pulse train: intensity $LED_INTENSITY at ${WMR_CONTROLLER_LED_HZ:-15} Hz (0 disables)"
