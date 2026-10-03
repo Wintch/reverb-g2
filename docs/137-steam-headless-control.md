@@ -31,9 +31,9 @@ return; re-run the command after a SteamVR update.
 
 ### 1c. Popups that are NOT cured by PATH  [from docs, not re-tested today]
 - Safe-mode: a driver that crashes vrserver is silently disabled on later launches until toggled in
-  Manage Add-ons in the SteamVR GUI (docs/117, docs/121 section 1a). Only the GUI toggle clears it.
-  [inferred] editing the `driver_<name>.enable` key in `steamvr.vrsettings` with Steam closed is the
-  untested no-GUI route.
+  Manage Add-ons in the SteamVR GUI (docs/117, docs/121 section 1a). Update 2026-10-03 night: the headless route
+  worked once for `driver_oasis`: with Steam fully closed, set `blocked_by_safe_mode` to `false` in
+  `steamvr.vrsettings` (the flag SteamVR wrote after an abrupt session end), then launch; Oasis loaded (docs/138).
 - Mono installer prompt inside Oasis's Wine prefix blew the 20 s `load_drivers` watchdog (docs/121).
   Pre-seed the prefix once, interactively, before any headless run.
 

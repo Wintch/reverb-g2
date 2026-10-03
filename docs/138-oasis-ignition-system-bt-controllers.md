@@ -4,6 +4,14 @@ Follow-up to docs/117, docs/121 and docs/136. docs/117 ended with "the G2's buil
 infinite once-per-second retry loop … no Bluetooth adapter on this machine", so every Oasis session was headset-only.
 This session the controllers were bonded to a TP-Link UB500 Plus on the host (docs/136) and Oasis was launched again.
 
+
+> **Status at the end of 2026-10-03: it works end to end.** SteamVR + Oasis/Ignition on KDE Plasma **X11**, the HP Reverb G2 and
+> both controllers on a host Bluetooth adapter (TP-Link UB500 Plus), no Monado involved. Wearer verdict after playing Propagation
+> VR: *"everything works perfectly: rumble, mapping, everything"*. Open: no sound in the headset, frame rate felt below 90 at
+> maximum quality settings (not measured), menu/Windows buttons not mapped as expected on their own. This is the path to use
+> to play SteamVR games today; what the project built itself (Monado, docs/136) stays valuable as the Linux-native route.
+> Start/stop with `scripts/jack-in-oasis-x11.sh up|down|status`; the traps and fixes are below.
+
 ## Result
 
 - Oasis (Ignition, preview branch, Steam build 25276174, depot 3824492) registers **both** controllers through the host
@@ -97,15 +105,62 @@ What it took (`scripts/jack-in-oasis-x11.sh up|down|status`, identical copy in `
 `~/vr/oasis-x11-backup/<stamp>`, reloads the KScreen module, and leaves DP-0 off the desktop on purpose
 (`RESTORE_DESKTOP_OUTPUT=1` re-enables it). If the panel ever sticks on a desktop: `xrandr --output DP-0 --off`.
 
+## Addendum 2026-10-03 (night): game test, buttons, controls, safe mode
+
+**Propagation VR (Steam 1363430) through SteamVR/Oasis:** launched from Steam with its existing launch options (their
+`XR_RUNTIME_JSON` for Monado is ignored by an OpenVR title, nothing had to be changed; SteamVR is first in `openvrpaths.vrpath`
+for the run). Wearer: everything worked, **including rumble and the mapping**; at maximum quality it did not feel like 90 fps
+(not measured, "the least of it"); **no sound in the headset** (not investigated; Monado's launcher has an `hmd-audio.sh`
+for this on the other stack). Propagation loads its own `oculus_touch.json` bindings for the `hpmotioncontroller` profile.
+
+**Controller reconnect:** Oasis resumes a controller that powered off or whose link dropped. Log, 19:52:55: a burst of
+`oasis: Fatal error: HRESULT failure [80070005/80070006] Origin: Failed to get HID report`, then at 19:53:05
+`Registering new controller` for the left address and normal operation. This is better than Monado, which does not
+recover a dropped controller (docs/136). A sleeping controller at launch makes Oasis loop on
+`Cannot register controller with error: 0x800705b4` (ERROR_TIMEOUT) until it is touched; once awake it registers
+(`finished adding tracked device`). The launcher's own "OK" verdict needs the controllers awake within ~120 s, otherwise it
+reports `TIMEOUT` although SteamVR is healthy (it was in the 20:08 and 20:11 runs); touching the joys is enough, no shaking.
+
+**Buttons.** Raw check over the BT hidraw, one control at a time with the right controller and the left one
+(`scripts/bt-controllers/bt-menu-probe2.py`, `bt-left-probe.py`): the right controller sends menu (byte1 bit 0x04) and Windows
+(0x02); the left sends menu, Windows, X and the trigger. Left Y, left stick click and left grip were not seen but the wearer
+pressed X twice instead of Y and did not press the others, so they are **unconfirmed, not broken**. Whatever went wrong with the
+menu/Windows buttons in SteamVR therefore happens after the controller, in Oasis/SteamVR:
+- Oasis' `mixedreality_hpcontroller_profile.json` exposes trigger, grip, joystick (+click), emulated trackpad, A/B/X/Y,
+  `application_menu`, pose and haptic; there is **no `/input/system`** in it.
+- The profile/legacy bindings SteamVR loads for the HP controller come from the original Microsoft driver folder
+  (`.../MixedRealityVRDriver/resources/input/`), which is still in `external_drivers`.
+- `application_menu` is the application's menu button (it does nothing in SteamVR Home without an app that uses it); the system
+  button (dashboard) is separate.
+- **Oasis setting `driver_oasis.use_windows_key`** (`steamvr.vrsettings`; 0 none, 1 controllers only, 2 keyboard only,
+  **3 both, the default**): with 3 the Windows button is also sent as the PC keyboard Windows key. Set to **1** for the
+  runs from 20:05 on. Also `turn_off_controllers_on_exit` is **true**: Oasis powers the controllers off when SteamVR exits, which
+  is the "they turn off" seen at the end of a session. Holding the Windows button for about a second powers a controller off in
+  hardware; that is not the driver.
+- The effect of `use_windows_key = 1` on what the Windows/menu buttons do inside SteamVR was not isolated before the game test.
+
+**SteamVR safe mode, headless fix confirmed once:** after the abrupt end of a session SteamVR wrote
+`driver_oasis.blocked_by_safe_mode: true` and the next launch logged `Not loading driver oasis because it was blocked by a
+previous safe mode event`, with no HMD and `vrserver` exiting on its own. With Steam fully closed, setting that key to `false`
+in `steamvr.vrsettings` (and `jack-in-oasis-x11.sh down` first, because `down` restores the saved copy) made Oasis load again on
+the next `up`. No GUI needed; one observation, docs/121 §1a saw edits not stick in another situation.
+
+**KDE vs GNOME on X11:** all of today's successful runs were KDE Plasma X11. A switch to GNOME-on-Xorg was attempted at the end
+(the mouse did not work in that session) and abandoned; it was not needed.
+
 ## Open
 
-- **Menu button:** the wearer could not bring up the menu. A raw probe over the BT hidraw while SteamVR ran was inconclusive
-  (the left controller had no hidraw node while Oasis owned the link; the right one reported byte1=0x00 throughout, and it is
-  not known whether the buttons were pressed). Whether the Windows/menu buttons reach SteamVR, and how Oasis' bindings
-  map them (system button vs app menu), is untested.
-- A game through SteamVR/OpenVR with these controllers (the Steam launch options of the library titles force Monado's
-  `XR_RUNTIME_JSON`; that has to be removed for a SteamVR run).
-- The display lease on Wayland, and GNOME-on-Xorg instead of KDE X11, were not needed in the end.
-- A persistent no-sudo fix for "the desktop grabs the headset": `xrandr --output DP-0 --set non-desktop 1` (property reports
-  `supported: 0, 1`) is untested; the guard works without it.
+- **No sound in the headset** under Oasis.
+- **Frame rate** at maximum quality (felt below 90 fps in Propagation): not measured; the compositor stats of the room-setup
+  client (`543945 dropped`) are also unexplained.
+- **Menu / Windows buttons** inside SteamVR: controller side verified, SteamVR side not; test with `use_windows_key = 1`
+  in SteamVR Home (short tap) once the next session starts.
+- Left **Y, stick click and grip** raw confirmation.
+- **Haptics:** rumble works under Oasis. Capturing the report Oasis writes to the controller (btmon, needs sudo and a real
+  terminal) would give the real waveform indices and resolve docs/136's open questions (index 3 = continuous buzz, 0 and 4 stall
+  the stream).
+- A persistent no-sudo fix for "the desktop grabs the headset": `xrandr --output DP-0 --set non-desktop 1` is untested; the
+  guard works without it.
+- The `setcap CAP_SYS_NICE=eip` on `vrcompositor-launcher` was run by the user; it must be redone after a SteamVR update.
 - A hybrid (Oasis controllers + Monado display) stays the fallback; not needed so far.
+- Verdict logic of `jack-in-oasis-x11.sh`: wait for the controllers (prompt to touch them) before the 120 s watch starts.
