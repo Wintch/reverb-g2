@@ -358,6 +358,10 @@ do_up() {
 		log "panel guard running (pid $GUARD_PID)"
 	fi
 	local t0; t0=$(date +%s)
+	# Only judge the compositor by lines written AFTER this launch: the SteamVR logs are appended
+	# across runs, so an older run's CannotDRMLeaseDisplay used to make a good launch "fail".
+	local comp_base=0
+	[ -f "$VRLOGS/vrcompositor.txt" ] && comp_base=$(wc -l < "$VRLOGS/vrcompositor.txt")
 	log "launching SteamVR: steam steam://run/250820"
 	setsid nohup steam steam://run/250820 >> "$VR_DIR/oasis-x11-steam.log" 2>&1 < /dev/null & disown
 
@@ -371,12 +375,18 @@ do_up() {
 		ctl_n=$(grep -c "Driver 'oasis' finished adding tracked device" "$VRLOGS/vrserver.txt")
 		comp_err=0; compfresh=0
 		[ -f "$VRLOGS/vrcompositor.txt" ] && [ "$(stat -c %Y "$VRLOGS/vrcompositor.txt")" -ge "$t0" ] && compfresh=1
-		[ "$compfresh" = 1 ] && comp_err=$(grep -c 'CannotDRMLeaseDisplay\|Failed to acquire xlib display' "$VRLOGS/vrcompositor.txt")
-		if [ "${comp_err:-0}" -gt 0 ]; then res=COMPOSITOR_FAILED; break; fi
-		if [ "${hmd_ok:-0}" -ge 1 ] && [ "${ctl_n:-0}" -ge 3 ] && [ "$compfresh" = 1 ] && grep -q 'Headset is using direct mode\|Direct mode: enabled' "$VRLOGS/vrcompositor.txt" 2>/dev/null; then res=OK; break; fi
+		local comp_new=""
+		[ "$compfresh" = 1 ] && comp_new=$(tail -n +$((comp_base + 1)) "$VRLOGS/vrcompositor.txt" 2>/dev/null)
+		comp_err=$(printf '%s\n' "$comp_new" | grep -c 'CannotDRMLeaseDisplay\|Failed to acquire xlib display')
+		# Success = the compositor acquired the panel and finished starting, whatever failed before
+		# (it restarts itself: a first failed start followed by a good one is normal here).
+		if [ "${hmd_ok:-0}" -ge 1 ] && [ "${ctl_n:-0}" -ge 3 ] && printf '%s\n' "$comp_new" | grep -q 'Acquired xlib display' && printf '%s\n' "$comp_new" | grep -q 'Startup Complete'; then res=OK; break; fi
 		[ $((i % 15)) = 0 ] && log "  t+${i}s: active-hmd=$hmd_ok tracked-devices=$ctl_n compositor-errors=${comp_err:-0}"
 	done
 	[ -n "$GUARD_PID" ] && kill "$GUARD_PID" 2>/dev/null
+	if [ "$res" = PENDING ]; then
+		if [ "${comp_err:-0}" -gt 0 ]; then res=COMPOSITOR_FAILED; else res=TIMEOUT; fi
+	fi
 	log "--- result: $res (t+${i}s) ---"
 	{
 		echo "vrserver.txt markers:"; grep -E "Active HMD set|finished adding tracked device|Cannot register controller|Unable to load driver|safe mode" "$VRLOGS/vrserver.txt" | tail -12
