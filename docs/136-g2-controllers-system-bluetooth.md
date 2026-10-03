@@ -67,6 +67,17 @@ Same symptom family as bluez/bluez#689 (WMR controllers dropping after pairing, 
   1 vs 2 character, and the tunnel path (report id gets the controller's `hmd_cmd_base` added).
 - Left trigger `isActive=0` in the hello_xr player is not BT-specific (same in the 2026-09-06 tunnel-era log).
 
+## Game test: Propagation VR (2026-10-03)
+
+Joys on the host adapter, Steam title via xrizer, wearer in the headset.
+- `6dof` + `WMR_CONSTELLATION_CONTROLLERS=1`: controllers **0 / 67** tracked samples (anchored at a point,
+  orientation from the IMU only), `monado-service` ~700 % CPU, 5 980 late frames, Basalt dropped 3 000
+  camera frames, >10 700 trusted-yaw rejections. Head 6dof felt good. Same CPU-starvation family as docs/23.
+- `ctrl`: ~330 % CPU; left 5 / 146 (3 %), right 39 / 146 (27 %) tracked samples. Hand rotations good;
+  hands often sit near the headset (parked/placeholder); drew the weapon, aimed and fired; exiting the
+  game with the controllers worked. The weak/parked left controller is the known constellation issue
+  (docs/125-126), not a Bluetooth effect.
+
 ## Launcher guard
 
 `scripts/jack-in-wayland.sh` (commit de41ead): when ≥1 "Motion controller" is bonded to the host
