@@ -237,3 +237,9 @@ notes, resolves threads (`PUT …/discussions/<id>?resolved=true`), retries jobs
 over HTTPS regardless (SSH to the host does not work from here); `git ls-remote …
 refs/merge-requests/<iid>/head` needs nothing. Issues can be created over the API; MRs
 cannot (Akismet) — use the web form.
+
+**2026-10-03 — rpavlik's BT re-pair test answered (note 3693637).** G2 controllers re-paired to a
+TP-Link UB500 Plus on the host; `wmr_bt_controller.c` works on real hardware (both controllers created,
+3dof + `ctrl` mode, 200 Hz IMU while in use). Reply threaded under the original promise (note
+3667686, discussion `0e01f17a…`), signed Nikolai. Write-up: docs/136. No code changes in the MRs; no
+reviewer activity on any MR since 09-08.
