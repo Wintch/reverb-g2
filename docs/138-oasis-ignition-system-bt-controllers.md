@@ -61,3 +61,40 @@ or Wine process left, no Monado running, no fail marker.
 
 The display lease (compositor) under Oasis; a Monado-for-display + Oasis-for-controllers hybrid (docs/117 saw a form of it
 with the controllers missing); what `Cannot locate root anchor` means for controller tracking.
+
+## Addendum 2026-10-03 (evening): `scripts/jack-in-oasis-x11.sh`, one measured X11 attempt
+
+Launcher: `scripts/jack-in-oasis-x11.sh up|down|status` (identical copy in `~/vr/`). It finds the X session env from the live
+shell processes (the box was a **KDE Plasma X11** login on `:0`, `XAUTHORITY=/tmp/xauth_*`, not GNOME; `gui_env.py` is
+Wayland-only and returned a stale Wayland session), finds the G2 output from the EDID (vendor `HPN`; RandR `non-desktop` reads
+**0** on this rig, so that property cannot be the selector), waits for the host-BT controllers, backs up and edits
+`openvrpaths.vrpath` (SteamVR runtime first) and `steamvr.vrsettings` (`driver_monado.enable=false`), frees the panel
+(`kscreen-doctor output.DP-0.disable`, KScreen kded module parked, 8 s wait), starts Steam with `/usr/sbin` in PATH, runs
+`steam://run/250820`, watches the logs once and samples `vrcmd --pollposes`. One attempt per `up`; `down` restores both files.
+
+Result of the single attempt (19:31-19:34): Oasis loaded and set the active HMD (`Active HMD set to oasis.8CC044Z2CM`), the
+compositor found the output over RandR (`Found candidate direct display as RandR output 0x1d5`, `Selected mode 1`) and then
+`Failed to acquire xlib display` -> `VRInitError_Compositor_CannotDRMLeaseDisplay`, 0.3 s later. Same wall as docs/121 s4.
+New evidence: Xorgs log shows DP-0 being **re-enabled by the desktop at 19:32:24**, about 3 s before the compositor probed it,
+
+## Addendum 2026-10-03 (evening): `scripts/jack-in-oasis-x11.sh`, one measured X11 attempt
+
+Launcher: `scripts/jack-in-oasis-x11.sh up|down|status` (identical copy in `~/vr/`). It finds the X session env from the live
+shell processes (the box was a **KDE Plasma X11** login on `:0`, `XAUTHORITY=/tmp/xauth_*`, not GNOME; `gui_env.py` is
+Wayland-only and returned a stale Wayland session), finds the G2 output from the EDID (vendor `HPN`; RandR `non-desktop` reads
+**0** on this rig, so that property cannot be the selector), waits for the host-BT controllers, backs up and edits
+`openvrpaths.vrpath` (SteamVR runtime first) and `steamvr.vrsettings` (`driver_monado.enable=false`), frees the panel
+(`kscreen-doctor output.DP-0.disable`, KScreen kded module parked, 8 s wait), starts Steam with `/usr/sbin` in PATH, runs
+`steam://run/250820`, watches the logs once and samples `vrcmd --pollposes`. One attempt per `up`; `down` restores both files.
+
+Result of the single attempt (19:31-19:34): Oasis loaded and set the active HMD (`Active HMD set to oasis.8CC044Z2CM`), the
+compositor found the output over RandR (`Found candidate direct display as RandR output 0x1d5`, `Selected mode 1`) and then
+`Failed to acquire xlib display` -> `VRInitError_Compositor_CannotDRMLeaseDisplay`, 0.3 s later. Same wall as docs/121 s4.
+New evidence: the Xorg log shows DP-0 being **re-enabled by the desktop at 19:32:24**, about 3 s before the compositor probed
+it, i.e. right after Oasis woke the panel (an asleep G2 is `disconnected` in RandR; waking it makes the output reappear and the
+desktop grabs it again), even with KScreen's kded module unloaded (so it is kwin_x11 and/or the NVIDIA auto-modeset on
+hotplug, not KScreen). The panel guard (re-run `xrandr --output DP-0 --off` every 0.3 s while SteamVR starts) was added after
+the fact and is **untested**; so is `xrandr --output DP-0 --set non-desktop 1` (the property reports `supported: 0, 1`), the
+only user-level persistent-fix candidate (it would have to run at session start, e.g. `~/.config/plasma-workspace/env/`).
+Persistent alternatives need root (`xorg.conf` options for the NVIDIA X driver). `down` left Steam/SteamVR/Wine stopped, both
+files restored, the panel asleep (`DP-0 disconnected`), desktop on HDMI-0 only.
