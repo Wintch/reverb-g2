@@ -243,6 +243,56 @@ if [ "$TRACKING" = "6dof" ] && [ ! -e "$BASALT_LIB" ]; then
     fail "6dof requested but $BASALT_LIB doesn't exist -- build it first (docs/01, 'Basalt's own deps')."
 fi
 
+# --- System-Bluetooth controller preflight (2026-10-03) ------------------------------------
+# G2 controllers bonded to the HOST adapter (not the headset) reach Monado as BlueZ hidraw
+# nodes (bus 0005, 045E:066A), and wmr_prober only sees them while they are awake and
+# connected. If a bonded controller is asleep when the service starts, creating it fails and
+# that failure is fatal for the whole wmr builder: Monado silently falls back to the
+# Simulated HMD, the Simulated check below burns all retries, and the FAIL_MARKER then blocks
+# the next launch (measured 2026-10-03, docs/18 / MR !2967 note 3693637). So wait here, out
+# loud, for the controllers instead.
+#   * Only active when at least one "Motion controller" is bonded to the host adapter, so the
+#     headset-tunnel setup is untouched (nothing bonded -> silent skip).
+#   * A controller that is not awake is not a hardware fault, so this never writes the
+#     FAIL_MARKER (that exists to stop relaunch loops against a sick headset).
+#   * VR_BT_CTRL_CHECK=0 skips it; VR_BT_CTRL_WAIT=<s> sets the wait (default 30).
+bt_ctrl_nodes() {
+    local h n=0
+    for h in /sys/class/hidraw/hidraw*; do
+        grep -q 'HID_ID=0005:0000045E:0000066A' "$h/device/uevent" 2>/dev/null && n=$((n + 1))
+    done
+    echo "$n"
+}
+if [ "${VR_BT_CTRL_CHECK:-auto}" != 0 ] && command -v bluetoothctl >/dev/null 2>&1; then
+    BT_BONDED=$(timeout 5 bluetoothctl devices Paired 2>/dev/null | grep -c 'Motion controller')
+    if [ "${BT_BONDED:-0}" -gt 0 ]; then
+        BT_WAIT="${VR_BT_CTRL_WAIT:-30}"
+        echo "System-BT controller check: $BT_BONDED bonded to the host adapter, waiting up to ${BT_WAIT}s for them to be awake..."
+        BT_STABLE=0; BT_SPOKE=0; BT_N=0
+        for _i in $(seq 1 $((BT_WAIT * 2))); do
+            BT_N=$(bt_ctrl_nodes)
+            if [ "$BT_N" -ge "$BT_BONDED" ]; then BT_STABLE=$((BT_STABLE + 1)); else BT_STABLE=0; fi
+            [ "$BT_STABLE" -ge 6 ] && break
+            if [ "$BT_SPOKE" = 0 ] && [ "$_i" -ge 6 ] && command -v espeak-ng >/dev/null 2>&1; then
+                BT_SPOKE=1
+                XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}" \
+                    espeak-ng -v es "Agita los joys para despertarlos" >/dev/null 2>&1 &
+            fi
+            sleep 0.5
+        done
+        if [ "$BT_STABLE" -ge 6 ]; then
+            echo "  $BT_N controller(s) awake and connected."
+        elif [ "$BT_N" -gt 0 ]; then
+            echo "  WARNING: only $BT_N of $BT_BONDED bonded controller(s) awake -- launching with those." >&2
+        else
+            echo "!! No bonded controller is awake after ${BT_WAIT}s. Launching now would make Monado" >&2
+            echo "!! fall back to the Simulated HMD. Shake them (LEDs steady), then retry, or skip with" >&2
+            echo "!! VR_BT_CTRL_CHECK=0. (Not recorded as a failure: nothing was launched.)" >&2
+            exit 2
+        fi
+    fi
+fi
+
 if [ "${XDG_SESSION_TYPE:-}" != "wayland" ] && [ -S "/run/user/1000/wayland-0" ]; then
     # A detached setsid/nohup/SSH shell has XDG_SESSION_TYPE=tty even when a real GNOME
     # Wayland session is up and running (the socket check above proves it) -- recover its
