@@ -148,6 +148,18 @@ the next `up`. No GUI needed; one observation, docs/121 §1a saw edits not stick
 **KDE vs GNOME on X11:** all of today's successful runs were KDE Plasma X11. A switch to GNOME-on-Xorg was attempted at the end
 (the mouse did not work in that session) and abandoned; it was not needed.
 
+## Game round under SteamVR/Oasis (2026-10-03, running log; newest last)
+
+Tracking helper: `scripts/bt-controllers/game-round.py` (per-run summary from the SteamVR logs: apps that connected to `vrserver`,
+the compositor's cumulative stats per client = presents / dropped / reprojected and fps target, Steam app run windows, crash dumps in
+`/tmp/dumps`). A SteamVR session can be restarted by Steam when a game takes it down, so check `vrserver` uptime.
+
+| Title (AppID) | Result | Notes |
+|---|---|---|
+| Propagation VR (1363430) | **works** | rumble, mapping, tracking; felt < 90 fps at maximum quality (unmeasured) |
+| DOOM VFR (650000) | **fails at start** | two launches (20:30:46-20:30:57, 20:32:24-20:32:40); never connected to `vrserver` (no `SetApplicationPid`); a Proton `wine64-preloader` process crashed (`/tmp/dumps/crash_20261003203238_5.dmp`); no Proton log exists, set `PROTON_LOG=1` in its launch options to see why |
+| Half-Life: Alyx (546560) | in progress | only a shader-cache update logged so far |
+
 ## Open
 
 - **No sound in the headset** under Oasis.
