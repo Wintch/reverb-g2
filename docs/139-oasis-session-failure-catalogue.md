@@ -162,3 +162,7 @@ Already in `up` before: PATH with `/usr/sbin` (getcap), Oasis `driver_oasis.so` 
 | 4738456 (earlier) | `vr_pids` renamed-comm fix, superseded by 347cec7 |
 
 `~/vr/jack-in-oasis-x11.sh`, `~/vr/jack-in-wayland.sh` and `~/vr/jack-in-wayland-tracing.sh` are byte-identical to the tracked copies (replaced by rename so a running instance was not disturbed).
+
+## Addendum 2026-10-03 22:53: stale-HID is not always fatal
+
+After the hub bounce at 22:48:15 `status` / `watchdog` reported the HMD driver as broken (stale HID, 64k errors) while the user kept playing The Lab for about five more minutes with normal tracking and 90 fps (compositor stats: 36509 presents, 1.8 % dropped, 0 reprojected). Earlier bounces (21:50, 22:14, 22:27) did leave the HMD unusable (a game said "waiting for VR device"). So the HID-error signature alone is NOT proof of a dead HMD: it only says the driver's HID handle is stale. Before `watchdog --auto` restarts a session, require a second signal (the compositor stopped presenting, or tracked-devices dropped, or the user reports it). Until the detector is refined, treat its recommendation as advice and do not auto-restart.
