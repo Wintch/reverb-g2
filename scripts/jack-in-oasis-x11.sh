@@ -174,12 +174,13 @@ controller_preflight() {   # returns 0 ok, 2 none awake (nothing touched yet)
 
 # ---- process helpers -------------------------------------------------------------------
 # Never pkill -f: match on the exact command name (comm) or on a wine process whose command
-# line references the Oasis driver, by PID.
+# line references the Oasis driver, by PID. vrserver renames its own comm to "<pid>: vrstart"
+# while waiting for vrmonitor, so a comm match alone missed it (2026-10-03): also match the SteamVR binary path.
 VR_COMMS='vrmonitor|vrserver|vrcompositor|vrcompositor-la|vrdashboard|vrwebhelper|vrstartup|vrcmd|ignition|oasis'
 vr_pids() {
 	ps -u "$(id -u)" -o pid=,comm=,args= | awk -v re="^($VR_COMMS)" -v oas="$OASIS_DIR" '
 		{ pid=$1; comm=$2; if (comm ~ re) { print pid; next }
-		  if (index($0, "Oasis Driver") || index($0, "ignition")) { if (comm !~ /^(awk|ps|bash|grep|sshd)/) print pid } }'
+		  if (index($0, "Oasis Driver") || index($0, "ignition") || index($0, "SteamVR/bin/linux64/")) { if (comm !~ /^(awk|ps|bash|grep|sshd)/) print pid } }'
 }
 wine_pids() {
 	ps -u "$(id -u)" -o pid=,comm= | awk '$2 ~ /^(wineserver|wine64-preloader|wine-preloader|services\.exe|winedevice\.exe|explorer\.exe|plugplay\.exe|svchost\.exe|rpcss\.exe)$/ { print $1 }'
