@@ -917,3 +917,9 @@ per-frame distribution the question needs.
 | patch | what |
 |---|---|
 | 0112 | `wmr_hmd.c` only ticks the LED pulse train for tunnelled controllers, so `WMR_CONTROLLER_LED_INTENSITY` was a silent no-op for controllers on the host Bluetooth adapter (`wmr_bt_controller.c`). Tick it from the BT read loop (does nothing unless the env option is set). Adds `WMR_CONTROLLER_LED_INTENSITY_LEFT/_RIGHT` (0 = unset; Windows drives left ~1.3-1.4x right, ~225 vs ~165) and one INFO line per controller on the first command. Validated: the command goes out over BT and brightness scales (phone camera); it did **not** move the 75 cm visibility cliff (docs/136). Launcher passes the per-hand vars through. |
+
+## 0113 — contested-blob escalation (2026-09-14, committed 2026-10-04)
+
+| patch | what |
+|---|---|
+| 0113 | `t_constellation_tracker.cpp` only (+45). A device below `tryDeviceBlobRecovery`'s 4-blob floor can never win a first accepted solve while another device owns the shared blob pool, because the correspondence search excludes blobs claimed by another device. After 10 consecutive failed deep searches (deep pass only, fewer than 4 blobs for that device) it sets `CS_FLAG_MATCH_ALL_BLOBS` so that device can see every blob. Read-only on assignments (only an accepted, validated `pushPose` writes them); logs "contested-blob recovery" at INFO when it starts and when it recovers. **Experimental and partial, lab-full only, not for upstream:** live results 0/15 recoveries (docs/125, 126), then 1/9 (docs/129). The root cause of the missing controller poses turned out to be the timesync double conversion (docs/135), so the value of this one is unproven. It had been running uncommitted in every lab build since 2026-09-14 and was committed on 2026-10-04 so the builds are reproducible from git. Base: `432806028` on `lab-full`, commit `ff6db76f6`. |

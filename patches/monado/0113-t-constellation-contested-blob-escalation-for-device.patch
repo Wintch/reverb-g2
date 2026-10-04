@@ -1,0 +1,91 @@
+From ff6db76f6da197dcf4316a456e9c7cd177a6336a Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Sun, 4 Oct 2026 01:07:47 -0300
+Subject: [PATCH] t/constellation: contested-blob escalation for devices stuck
+ below the 4-blob floor
+
+A device below tryDeviceBlobRecovery's 4-blob floor can never win a first accepted
+solve while another device owns the shared blob pool, because the correspondence
+search filters out blobs already claimed by another device. After 10 consecutive
+failed deep searches (deep pass only, num_blobs_for_device < 4) set
+CS_FLAG_MATCH_ALL_BLOBS so that device can see every blob. The search only reads
+the candidate list; assignments are still written solely by an accepted, validated
+pushPose, so a failed contested attempt changes nothing. Logs at INFO when it
+starts and when it recovers.
+
+EXPERIMENTAL and PARTIAL: lab-full only, not for upstream. Live results 2026-09-14
+to 09-23: 0/15 recoveries, then 1/9 (docs/125, 126, 129). The root cause of the
+missing controller poses was later found elsewhere (timesync double conversion,
+docs/135).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ .../constellation/t_constellation_tracker.cpp | 45 +++++++++++++++++++
+ 1 file changed, 45 insertions(+)
+
+diff --git a/src/xrt/tracking/constellation/t_constellation_tracker.cpp b/src/xrt/tracking/constellation/t_constellation_tracker.cpp
+index 9a7cd4e12..f0a65ef2a 100644
+--- a/src/xrt/tracking/constellation/t_constellation_tracker.cpp
++++ b/src/xrt/tracking/constellation/t_constellation_tracker.cpp
+@@ -1040,6 +1040,45 @@ Camera::processSampleSlow(CameraSample &sample)
+ 			const pose_metrics_trusted_orientation *trusted_orientation_ptr =
+ 			    trusted_orientation.has_value() ? &trusted_orientation.value() : nullptr;
+ 
++			// Contested-blob escalation (reverb-g2, 2026-09-14): breaks the blob-ownership
++			// deadlock traced this session -- a device stuck below tryDeviceBlobRecovery's
++			// 4-blob floor can never win a FIRST accepted solve through the ordinary paths
++			// (they all require blobs already matched to it, or a prior pose that itself
++			// requires a prior solve), because correspondence_search's own candidate filter
++			// (see its "Filter the list of blobs" comment) excludes any blob already claimed
++			// by another device. Two devices then compete for one shared blob pool with no
++			// tie-breaker: whichever wins the very first frame keeps every advantage after
++			// that (its own trusted-orientation lock, its own last-known pose), and the loser
++			// can never contest a blob back. CS_FLAG_MATCH_ALL_BLOBS (defined since this
++			// tracker's earliest version, never previously set by any caller) is the existing,
++			// already-hardened escape hatch: it lets this device's search see every blob,
++			// including ones currently marked for another device. Deliberately restricted to
++			// deep search (i == 1, already the expensive/rate-limited pass) and to a device
++			// that is BOTH below the floor (num_blobs_for_device < 4 -- above it, the ordinary
++			// paths already have a fair shot, and this is a "ghost/geometry" problem, not a
++			// starvation one) AND has failed deep search repeatedly (consecutive_failures past
++			// the backoff ceiling, i.e. genuinely stuck for several seconds, not just mid a
++			// normal fast reacquisition) -- so the common case (a device tracking fine, or
++			// briefly reacquiring) never contests another device's blobs. Safe even if wrong:
++			// a losing contested search here only reads correspondence_search's candidate
++			// list, it writes nothing (markMatchingBlobs, the only place matched_device_id is
++			// ever assigned, runs solely from pushPose on a fully gravity/trusted-orientation/
++			// reprojection-validated accepted solve) -- so a contested attempt that doesn't
++			// find a strong match leaves every existing assignment, on every device, untouched.
++			bool contested_attempt = false;
++			if (i == 1 && backoff.consecutive_failures >= 10 &&
++			    num_blobs_for_device(sample, device->id) < 4) {
++				search_flags = (correspondence_search_flags)(search_flags | CS_FLAG_MATCH_ALL_BLOBS);
++				contested_attempt = true;
++				if (backoff.consecutive_failures == 10) {
++					CT_INFO(tracker,
++					        "contested-blob recovery: device %d stuck below the 4-blob floor for "
++					        "%d consecutive deep-search failures -- searching ALL blobs, including "
++					        "ones currently owned by another device",
++					        device->id, backoff.consecutive_failures);
++				}
++			}
++
+ 			pose_metrics score;
+ 			bool found_pose = correspondence_search_find_one_pose( //
+ 			    data.cs,                                           //
+@@ -1063,6 +1102,12 @@ Camera::processSampleSlow(CameraSample &sample)
+ 				}
+ 			}
+ 			if (found_pose) {
++				if (contested_attempt) {
++					CT_INFO(tracker,
++					        "contested-blob recovery: device %d RECOVERED via all-blobs search "
++					        "after %d consecutive deep-search failures",
++					        device->id, backoff.consecutive_failures);
++				}
+ 				this->pushPose(sample,               //
+ 				               *device_state,        //
+ 				               device,               //
+-- 
+2.47.3
+
