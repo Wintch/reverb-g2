@@ -1,5 +1,7 @@
 # 108 — Oasis/Ignition vs. the native Monado WMR driver: a strategy comparison
 
+> **Updated 2026-10-04 — see `docs/140`.** Oasis now runs end to end on KDE X11 with host-Bluetooth controllers (docs/138); docs/140 lists the games tested on both stacks and compares the two approaches with that hands-on data. The text below is the 2026-09-07 pre-test comparison.
+
 > **First hands-on test 2026-09-07/08 — see `docs/117`.** Section 5's watch-item #2 ("is the
 > Wayland gap really about DRM leasing, given this rig already leases the same connector fine
 > under Wayland for Monado") is now answered: X11 doesn't skip that requirement either, it has
