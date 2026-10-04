@@ -150,6 +150,24 @@ if [ "$ACTION" = down ]; then
     exit 0
 fi
 
+# --- OpenXR runtime json preflight (2026-10-03, docs/139 F6) --------------------------------
+# jack-in-oasis-x11.sh temporarily points ~/vr/monado/build/openxr_monado-dev.json at SteamVR (about
+# 49 Steam titles use that file as XR_RUNTIME_JSON, and under SteamVR they must reach SteamVR, not
+# Monado) and its 'down' restores the Monado original. If a session ended without 'down', the file
+# is still the SteamVR pointer and a Monado launch would silently hand those games to SteamVR.
+xr_json_check() {
+    local j="${MONADO_RUNTIME_JSON:-$HOME/vr/monado/build/openxr_monado-dev.json}"
+    [ -f "$j" ] || return 0
+    if grep -q 'VALVE_runtime_is_steamvr\|vrclient\.so' "$j"; then
+        echo "!! WARNING: $j still points at SteamVR (left behind by jack-in-oasis-x11.sh). Steam titles launched with" >&2
+        echo "!!          XR_RUNTIME_JSON=<that file> will NOT reach Monado. Restore the original:" >&2
+        echo "!!            cp -p $HOME/vr/oasis-x11-backup/openxr_monado-dev.json.monado-original $j   (or: jack-in-oasis-x11.sh down)" >&2
+    elif ! grep -q 'libopenxr_monado' "$j"; then
+        echo "!! WARNING: $j does not name libopenxr_monado.so; it is not the Monado runtime file" >&2
+    fi
+}
+xr_json_check
+
 # T060: Basalt (~/vr/basalt/build/libbasalt.so) was never actually built here for a long
 # time despite docs referencing SLAM measurements -- cmake --preset library was silently
 # failing on undocumented deps and leaving a configured-but-not-built tree. Check for the
