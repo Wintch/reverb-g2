@@ -320,7 +320,7 @@ GROUPS = {
     "vrserver": (["vrserver.previous.txt", "vrserver.txt"], {
         "hmd_ok": ("Active HMD set to oasis",), "ctl_n": ("finished adding tracked device",),
         "hid": ("Failed to get HID report",), "anchor": ("Cannot locate root anchor",),
-        "bind_err": ("Unable to bind server socket",), "safe": ("blocked by a previous safe mode",),
+        "bind_err": ("Unable to bind server socket",), "safe": ("Not loading driver oasis because it was blocked by a previous safe mode",),
         "reg_to": ("Cannot register controller",)}),
     "vrstartup": (["vrstartup.txt"], {
         "hmd_nf": ("Hmd Not Found",), "bind_err": ("Unable to bind server socket",)}),
