@@ -158,7 +158,7 @@ the compositor's cumulative stats per client = presents / dropped / reprojected 
 |---|---|---|
 | Propagation VR (1363430) | **works** | rumble, mapping, tracking; felt < 90 fps at maximum quality (unmeasured) |
 | DOOM VFR (650000) | **fails at start** | two launches (20:30:46-20:30:57, 20:32:24-20:32:40); never connected to `vrserver` (no `SetApplicationPid`); a Proton `wine64-preloader` process crashed (`/tmp/dumps/crash_20261003203238_5.dmp`); no Proton log exists, set `PROTON_LOG=1` in its launch options to see why |
-| Half-Life: Alyx (546560) | in progress | only a shader-cache update logged so far |
+| Half-Life: Alyx (546560) | **works on the 2nd launch** | first shader compile saturated the CPU for a long time. Run 1 (20:52:46-20:54:54, pid 535051): 10429 presents, 368 dropped (3.5 %), 0 reprojected; user: ran badly. Run 2 (20:56:04-~21:00:49, pid 536553): 24273 presents, 605 dropped (2.5 %), 0 reprojected; user: perfect. Open: waist/body sits inside the floor (same chaperone floor calibration as SteamVR, not Alyx-specific); headset sound mostly OK but briefly flips to the speakers for a few seconds and back (headset audio = Realtek USB Audio 0bda:4c15 sink; cause not yet found, no default-sink change logged by vrserver); at 21:02:17 `driver_oasis` logged a burst of `Failed to get HID report` (HmdDriver.cpp:44, HRESULT 80070005) after Alyx had exited |
 
 ## Open
 
