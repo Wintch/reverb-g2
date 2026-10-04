@@ -171,6 +171,7 @@ About 70 disconnects of the headset hub (`usb 3-1`, with audio `3-1.2` and HID `
 
 ## Open
 
+- **Failure catalogue of this night** (hub drop storms, stale HID after a bounce, stale vrserver, verdict bugs, NTFS prefixes, stale launch options, DOOM VFR hypotheses): docs/139.
 - **No sound in the headset** under Oasis.
 - **Frame rate** at maximum quality (felt below 90 fps in Propagation): not measured; the compositor stats of the room-setup
   client (`543945 dropped`) are also unexplained.
