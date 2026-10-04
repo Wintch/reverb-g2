@@ -636,6 +636,13 @@ do_up() {
 	pfout=$(do_preflight); pfrc=$?
 	log "preflight:"; printf '%s\n' "$pfout" | tee -a "$LOG"
 	[ "$pfrc" -gt 0 ] && die "preflight found $pfrc blocking problem(s) (see above); nothing was changed" 4
+	# Proton prefixes must not live on the NTFS libraries (docs/139 F5): move any that appeared and pre-create
+	# ext4-backed ones for installed apps that have none yet, so a game's first launch works. OASIS_PREFIX_AUTOFIX=0 disables.
+	if [ "${OASIS_PREFIX_AUTOFIX:-1}" = 1 ] && [ -x "$(dirname "$0")/steam-prefix-guard.sh" ]; then
+		log "prefix guard: relocating/pre-seeding Proton prefixes off the NTFS libraries"
+		"$(dirname "$0")/steam-prefix-guard.sh" fix --apply 2>&1 | sed 's/^/  /' | tee -a "$LOG"
+		"$(dirname "$0")/steam-prefix-guard.sh" preseed --apply 2>&1 | sed 's/^/  /' | tee -a "$LOG"
+	fi
 
 	[ -z "$HMD_OUTPUT" ] && HMD_OUTPUT=$(find_hmd_output)
 	if [ -n "$HMD_OUTPUT" ]; then

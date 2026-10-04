@@ -4,6 +4,10 @@
 #   steam-prefix-guard.sh check            read-only; exit 0 = clean, 1 = problems found
 #   steam-prefix-guard.sh fix [--apply]    move offending prefixes to ext4 and symlink them back;
 #                                          DRY RUN unless --apply is given
+#   steam-prefix-guard.sh preseed [--apply]  for every INSTALLED app on an NTFS library that has no
+#                                          compatdata entry yet, create an empty ext4 directory under
+#                                          the store and symlink it in, so its FIRST launch already works
+#                                          (a first launch on NTFS creates the prefix and dies with Errno 22)
 #
 # Why (docs/70, docs/139 F5): a library on NTFS (fuseblk/ntfs3, here /mnt/videos and /mnt/win5)
 # cannot hold the relative symlinks Proton creates inside a prefix; a NEW prefix there dies in about
@@ -119,8 +123,30 @@ do_fix() {
 	echo "fix: moved=$moved skipped/refused=$skipped$([ "$apply" = 0 ] && echo ' (dry run)')"
 }
 
+do_preseed() {
+	local apply=0 lib f id n=0
+	[ "${1:-}" = "--apply" ] && apply=1
+	[ "$apply" = 1 ] || echo "DRY RUN (nothing will be changed; pass --apply to do it)"
+	while IFS= read -r lib; do
+		[ -d "$lib/steamapps" ] || continue
+		is_ntfs_fs "$lib/steamapps" || continue
+		mkdir -p "$lib/steamapps/compatdata" 2>/dev/null
+		for f in "$lib"/steamapps/appmanifest_*.acf; do
+			[ -f "$f" ] || continue
+			id=${f##*appmanifest_}; id=${id%.acf}
+			case "$id" in ''|*[!0-9]*) continue ;; esac
+			if [ -e "$lib/steamapps/compatdata/$id" ] || [ -L "$lib/steamapps/compatdata/$id" ]; then continue; fi
+			if [ "$apply" = 0 ]; then echo "WOULD    preseed appid $id in $lib"; n=$((n + 1)); continue; fi
+			mkdir -p -- "$PREFIX_STORE/$id" && ln -s "$PREFIX_STORE/$id" "$lib/steamapps/compatdata/$id" \
+				&& { echo "PRESEED  appid $id -> $PREFIX_STORE/$id"; n=$((n + 1)); } || echo "FAILED   preseed appid $id"
+		done
+	done < <(libraries)
+	echo "preseed: $n app(s)$([ "$apply" = 0 ] && echo ' (dry run)')"
+}
+
 case "${1:-}" in
 	check) do_check ;;
 	fix) shift; do_fix "$@" ;;
-	*) echo "usage: $(basename "$0") check | fix [--apply]" >&2; exit 2 ;;
+	preseed) shift; do_preseed "$@" ;;
+	*) echo "usage: $(basename "$0") check | fix [--apply] | preseed [--apply]" >&2; exit 2 ;;
 esac
