@@ -1,0 +1,109 @@
+From 438f135c120f357336cd46484997d8a6def6bba8 Mon Sep 17 00:00:00 2001
+From: Wintch <nikolai.viktorovich@gmail.com>
+Date: Fri, 2 Oct 2026 03:48:39 -0300
+Subject: [PATCH] d/wmr: Publish camera exposure timing events in monotonic
+ time
+
+The camera frame header carries exposure timestamps in the HMD hardware
+clock, but the controller timesync treats timing events as host time and
+converts them to the controller clock with host_ts_to_device(), so every
+timesync packet carried a device time roughly one host uptime in the past.
+Add wmr_source's IMU-derived hw2mono offset before publishing, and hold
+events back until the offset is known.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/xrt/drivers/wmr/wmr_camera.c | 13 +++++++++++--
+ src/xrt/drivers/wmr/wmr_camera.h | 14 ++++++++++++++
+ src/xrt/drivers/wmr/wmr_source.c |  3 +++
+ 3 files changed, 28 insertions(+), 2 deletions(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_camera.c b/src/xrt/drivers/wmr/wmr_camera.c
+index 2b9fcea00..53b17224e 100644
+--- a/src/xrt/drivers/wmr/wmr_camera.c
++++ b/src/xrt/drivers/wmr/wmr_camera.c
+@@ -134,6 +134,7 @@ struct wmr_camera
+ 	struct xrt_frame_sink *cam_sinks[XRT_TRACKING_MAX_CAMS]; //!< Downstream sinks to push tracking frames to
+ 	struct t_timing_event_sink *timing_event_sink;
+ 	struct t_timing_event_source *timing_event_source;
++	const time_duration_ns *hw2mono; //!< HMD hardware-to-monotonic clock offset, owned by wmr_source
+ 
+ 	enum u_logging_level log_level;
+ };
+@@ -442,11 +443,13 @@ img_xfer_cb(struct libusb_transfer *xfer)
+ 		xrt_frame_reference(&frames[i], NULL);
+ 	}
+ 
+-	if (cam->timing_event_sink) {
++	// frame_start_ts is in the HMD hardware clock; consumers want monotonic time.
++	time_duration_ns hw2mono = cam->hw2mono != NULL ? *cam->hw2mono : 0;
++	if (cam->timing_event_sink && hw2mono != 0) {
+ 		struct t_timing_event event = {
+ 		    .type = T_TIMING_EVENT_TYPE_CAMERA_EXPOSURE_START,
+ 		    .camera_exposure_start = {.sequence_id = cam->frame_sequence,
+-		                              .timestamp_ns = frame_start_ts,
++		                              .timestamp_ns = (int64_t)frame_start_ts + hw2mono,
+ 		                              .frame_period_ns = delta,
+ 		                              .exposure_time_ns = DEFAULT_CTRL_EXPOSURE * U_TIME_1US_IN_NS},
+ 		};
+@@ -806,4 +809,10 @@ struct t_timing_event_source *
+ wmr_camera_get_timing_event_source(struct wmr_camera *cam)
+ {
+ 	return cam->timing_event_source;
++}
++
++void
++wmr_camera_set_hw2mono_offset_source(struct wmr_camera *cam, const time_duration_ns *hw2mono)
++{
++	cam->hw2mono = hw2mono;
+ }
+\ No newline at end of file
+diff --git a/src/xrt/drivers/wmr/wmr_camera.h b/src/xrt/drivers/wmr/wmr_camera.h
+index 8f1b39930..121dc142e 100644
+--- a/src/xrt/drivers/wmr/wmr_camera.h
++++ b/src/xrt/drivers/wmr/wmr_camera.h
+@@ -11,6 +11,7 @@
+ 
+ #include "util/u_debug.h"
+ #include "util/u_logging.h"
++#include "util/u_time.h"
+ #include "xrt/xrt_config_have.h"
+ #include "xrt/xrt_frame.h"
+ #include "xrt/xrt_prober.h"
+@@ -69,6 +70,19 @@ wmr_camera_set_exposure_gain(struct wmr_camera *cam, uint8_t camera_id, uint16_t
+ struct t_timing_event_source *
+ wmr_camera_get_timing_event_source(struct wmr_camera *cam);
+ 
++/*!
++ * Sets where the camera reads the HMD hardware-to-monotonic clock offset from.
++ *
++ * The camera frame header carries exposure timestamps in the HMD's hardware clock, but timing
++ * event consumers expect host monotonic time. The offset is estimated from the IMU stream by the
++ * owner of @p hw2mono; until it is non-zero no timing events are published.
++ *
++ * @param cam The wmr_camera.
++ * @param hw2mono Pointer to the offset to add to hardware timestamps, owned by the caller.
++ */
++void
++wmr_camera_set_hw2mono_offset_source(struct wmr_camera *cam, const time_duration_ns *hw2mono);
++
+ #else
+ 
+ /* Stubs to disable camera functions without libusb */
+diff --git a/src/xrt/drivers/wmr/wmr_source.c b/src/xrt/drivers/wmr/wmr_source.c
+index 0fdc56e6b..0d35ac142 100644
+--- a/src/xrt/drivers/wmr/wmr_source.c
++++ b/src/xrt/drivers/wmr/wmr_source.c
+@@ -357,6 +357,9 @@ wmr_source_create(struct xrt_frame_context *xfctx,
+ 	};
+ 
+ 	ws->camera = wmr_camera_open(&options, xfctx);
++	if (ws->camera != NULL) {
++		wmr_camera_set_hw2mono_offset_source(ws->camera, &ws->hw2mono);
++	}
+ 	ws->config = cfg;
+ 	ws->euroc_recorder = euroc_recorder_create(xfctx, NULL, cfg.sinks_count, XRT_TRACKING_MAX_IMUS, false);
+ 	*out_timing_event_source = wmr_camera_get_timing_event_source(ws->camera);
+-- 
+2.47.3
+
