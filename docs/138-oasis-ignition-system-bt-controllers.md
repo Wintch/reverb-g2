@@ -173,6 +173,19 @@ Batman (502820), Superhot VR (617830) and The Lab (450390) all died within about
 
 About 70 disconnects of the headset hub (`usb 3-1`, with audio `3-1.2` and HID `3-1.3`) between 19:30 and 22:14, in bursts (about 40 in 14 min while Batman was being played, 21:27-21:41). The kernel logs a clean disconnect with no `-71` and no over-current: the headset itself drops off and re-enumerates. Consequences seen: PipeWire removes/recreates the headset sink (speaker flips), and `driver_oasis` often keeps a stale HID handle afterwards (`Failed to get HID report` thousands of times, `Cannot locate root anchor`), so the next game reports "waiting for VR device" (Superhot VR, 22:14:25). This matches the known visor-end marginal-contact fault (docs/22, "hub resets under load"; one prior observation was 66 reconnects/hour). Rules from that doc apply: do not cycle SteamVR repeatedly (each activation is another chance to loosen the contact); PC-end USB-C unplug/replug is the best-evidenced first lever, then a visor-end reseat. A restart of the SteamVR session (`down` + `up`) is the software recovery after a drop. Script fix made along the way: `jack-in-oasis-x11.sh down` now also stops a `vrserver` whose comm was renamed to `<pid>: vrstart` (it survived `down` and blocked the next `vrserver` with `errno=98` on the SteamVR sockets).
 
+## Reported upstream (2026-10-04)
+
+Posted by the user from drafts written in this session (no GitHub token or `gh` exists on either machine, so nothing can be posted from the tooling):
+
+| where | what | link |
+|---|---|---|
+| BnuuySolutions/Ignition issue 3 (our own issue, open) | Oasis works end to end on KDE Plasma X11 with host-Bluetooth controllers; the panel-guard recipe; two Oasis-side observations (stale HID handle after a headset hub bounce, outdated shipped binding for I Expect You To Die) | https://github.com/BnuuySolutions/Ignition/issues/3#issuecomment-5977096991 |
+| bluez/bluez issue 689 (closed) | pairing recipe for G2 controllers on a host adapter with BlueZ 5.82 (Windows-order L2CAP, `pairable on`, `trust`) | https://github.com/bluez/bluez/issues/689#issuecomment-5977100843 |
+
+Caveat to correct: the Ignition comment says renaming the action set "fixes it"; that is **not yet verified in play** (the user was asked to edit it to "should fix it"). Deliberately not posted: a Monado MR for the LED fix (patch 0112; wait for a reply to the earlier note on MR 2967 first), replies to LVRA members on Matrix (the one G2-on-NVIDIA thread of 10-03 was left alone until the right person is confirmed), NVIDIA/open-gpu-kernel-modules#251 (our result is X11, that thread is about the KWin Wayland lease gap), Faulto/hare_ware (issue 1 on that repo stays un-nudged). Idea from the same Matrix thread, untested: `enableSafeMode: false` in the `steamvr` block of `steamvr.vrsettings` to stop SteamVR blocking drivers after a crash (would have saved several restart cycles on 10-03).
+
+Secrets exposed in the chat this night and still to close: the GitLab API token (revoke in Preferences, Access Tokens) and a Matrix access token (end the session in Element, Settings, Sessions; it normally dies within a day).
+
 ## Open
 
 - **Games tested under both stacks and the Oasis-vs-Monado comparison:** docs/140.
