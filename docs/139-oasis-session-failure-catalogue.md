@@ -150,6 +150,13 @@ Already in `up` before: PATH with `/usr/sbin` (getcap), Oasis `driver_oasis.so` 
 
 17 G2 controller HID attach events from the kernel log tonight; 3 within +-10 s of a hub bounce (about 3.4 expected by chance from the bounce coverage), so **no correlation** (likely), as expected for controllers on the host adapter. The rough start ("started badly, settled after seconds") matches the documented `0x800705b4` ERROR_TIMEOUT retries for a controller that was asleep when Oasis tried to register it (docs/138); touching the joys is the fix. BlueZ logged only older refused/timeout lines (14:25-15:25, before the session).
 
+## F10 — shipped Oasis binding does not match the game (I Expect You To Die)
+
+- **Symptom:** the game runs in VR, tracking fine, but ignores every button; the user cannot get past the first screen. Log of the game (`AppData/LocalLow/<studio>/<game>/Player.log` in its prefix) shows `Successfully loaded action manifest into SteamVR` and no errors.
+- **Root cause (proven by reading both files):** Oasis ships a binding per game, `resources/input/steam.app.<id>_hpmotioncontroller.json`, listed in the `default_bindings` of `mixedreality_hpcontroller_profile.json` (controller type `hpmotioncontroller`, fallback `oculus_touch`). For app 587430 it targets `/actions/ieytd_default`; the game's `actions.json` now declares `/actions/ieytd1_default` (all 26 actions exist there under the new set). SteamVR cannot apply a binding whose action set does not exist, so no input is mapped.
+- **Fix:** `scripts/oasis-binding-fix.py scan|fix [--apply]` compares every installed game's `actions.json` with the shipped binding, repairs a pure action-set rename and backs up the original in `~/vr/oasis-bindings-fixed/original/`. It refuses anything it cannot prove (partial overlap, several sets) and reports it. Checked tonight: 8 shipped bindings for installed games, only 587430 was broken (Alyx matches; OpenVR-legacy titles have no `actions.json` and are skipped). Steam updates of the Oasis driver overwrite the files: re-run after an update.
+- **Evidence level:** mismatch proven; that it is the cause of the dead controls is likely, **not yet confirmed in play** (a hub storm broke the session right after the relaunch).
+
 ## Commits (local, `~/Documents/reverb-g2`, not pushed)
 
 | commit | what |
@@ -160,9 +167,19 @@ Already in `up` before: PATH with `/usr/sbin` (getcap), Oasis `driver_oasis.so` 
 | 347cec7 | `jack-in-oasis-x11.sh`: preflight, watchdog, verdicts, sockets, json swap, guard |
 | 4bbac2a | `jack-in-wayland.sh`, `jack-in-wayland-tracing.sh`: warn on a SteamVR-pointing runtime json |
 | 4738456 (earlier) | `vr_pids` renamed-comm fix, superseded by 347cec7 |
+| 630e52e, 1dc13ec | `up` reported SAFE_MODE after 22 s because an unrelated driver (`prism`) was blocked; now only a block of driver `oasis` counts (and the exec bit lost by that edit was restored) |
+| 530fca9 | `steam-prefix-guard.sh preseed`; `up` now runs `fix --apply` + `preseed --apply` (OASIS_PREFIX_AUTOFIX=0 disables). 32 installed apps pre-seeded, I Expect You To Die was the proof that first launches on NTFS die |
+| 428ca4a | `scripts/oasis-binding-fix.py` (F10) |
 
 `~/vr/jack-in-oasis-x11.sh`, `~/vr/jack-in-wayland.sh` and `~/vr/jack-in-wayland-tracing.sh` are byte-identical to the tracked copies (replaced by rename so a running instance was not disturbed).
 
 ## Addendum 2026-10-03 22:53: stale-HID is not always fatal
 
 After the hub bounce at 22:48:15 `status` / `watchdog` reported the HMD driver as broken (stale HID, 64k errors) while the user kept playing The Lab for about five more minutes with normal tracking and 90 fps (compositor stats: 36509 presents, 1.8 % dropped, 0 reprojected). Earlier bounces (21:50, 22:14, 22:27) did leave the HMD unusable (a game said "waiting for VR device"). So the HID-error signature alone is NOT proof of a dead HMD: it only says the driver's HID handle is stale. Before `watchdog --auto` restarts a session, require a second signal (the compositor stopped presenting, or tracked-devices dropped, or the user reports it). Until the detector is refined, treat its recommendation as advice and do not auto-restart.
+
+## Addendum 2026-10-03 23:15: late-night log
+
+- Hub bounces kept coming: besides the 71 counted by the timeline through 22:27 there were bounces at 22:27, 22:39, 22:43, 22:48 and seven between 22:58 and 23:02 (about one per minute), so the storm was getting denser, not rarer. The 22:17:05 PC-end unplug was done by hand and is excluded.
+- Sessions that came up fine and stayed fine: 22:23 (Superhot VR, The Lab); sessions broken by a bounce within minutes: 22:14, 22:27, 22:43, 23:02. Restarting does fix a broken session, but each cycle counts against the contact (docs/22 stop rule), so the recommendation stands: visor-end reseat before more cycles.
+- Mistakes of the night worth not repeating: (1) `steam-prefix-guard.sh fix --apply` without naming an appid also relocated `compatdata/3824490` (the Oasis folder, empty; harmless, the session kept running) because the guard only detects games started through `reaper`, not the Ignition server; (2) my first launch-options parse read only one block and said Superhot had no launch options while it carried the Monado ones; the audit script parses the VDF properly; (3) a launch-time `pgrep -f "AppId=..."` matches the shell running it, so a game looked alive when it was not.
+- A permission classifier blocked downloading a game from an external link and then reading the downloaded file, even after the user agreed in chat; the user has to download it themselves or add a permission rule.
