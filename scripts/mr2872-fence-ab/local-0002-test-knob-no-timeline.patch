@@ -1,0 +1,35 @@
+From 94764a8f5da4dac8e9a4994cf8e7877b68f6b7c8 Mon Sep 17 00:00:00 2001
+From: Wintch <nikolai.viktorovich@gmail.com>
+Date: Sun, 4 Oct 2026 00:27:38 -0300
+Subject: [PATCH 2/2] TEST ONLY: XRT_TEST_NO_TIMELINE knob (1=fence path, 2=old
+ temporary-fence path)
+
+---
+ src/xrt/compositor/client/comp_vk_client.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/src/xrt/compositor/client/comp_vk_client.c b/src/xrt/compositor/client/comp_vk_client.c
+index 926b47cb3..5b16952e1 100644
+--- a/src/xrt/compositor/client/comp_vk_client.c
++++ b/src/xrt/compositor/client/comp_vk_client.c
+@@ -1026,14 +1026,15 @@ client_vk_compositor_create(struct xrt_compositor_native *xcn,
+ 	VK_NAME_COMMAND_POOL(&c->vk, c->pool.pool, "client_vk_compositor command pool");
+ 
+ #ifdef VK_KHR_timeline_semaphore
+-	if (vk_can_import_and_export_timeline_semaphore(&c->vk)) {
++	const char *test_nt = getenv("XRT_TEST_NO_TIMELINE"); // LOCAL TEST KNOB, not for upstream
++	if (test_nt == NULL && vk_can_import_and_export_timeline_semaphore(&c->vk)) {
+ 		xret = setup_semaphore(c);
+ 		if (xret != XRT_SUCCESS) {
+ 			goto err_pool;
+ 		}
+ 	} else
+ #endif
+-	{
++	if (test_nt == NULL || test_nt[0] != '2') {
+ 		xret = setup_fences(c);
+ 		if (xret != XRT_SUCCESS) {
+ 			goto err_pool;
+-- 
+2.47.3
+

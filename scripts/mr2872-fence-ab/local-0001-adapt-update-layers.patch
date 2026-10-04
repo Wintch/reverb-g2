@@ -1,0 +1,30 @@
+From 12cd01576ebfec928c37056a12baaa990d3f75c5 Mon Sep 17 00:00:00 2001
+From: Wintch <nikolai.viktorovich@gmail.com>
+Date: Sun, 4 Oct 2026 00:08:06 -0300
+Subject: [PATCH 1/2] splitme(lab): adapt layer_sync_with_fence to lab-full
+ _update_layers signature
+
+---
+ src/xrt/ipc/server/ipc_server_handler.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/src/xrt/ipc/server/ipc_server_handler.c b/src/xrt/ipc/server/ipc_server_handler.c
+index 3be839e95..2854afb03 100644
+--- a/src/xrt/ipc/server/ipc_server_handler.c
++++ b/src/xrt/ipc/server/ipc_server_handler.c
+@@ -1426,7 +1426,11 @@ ipc_handle_compositor_layer_sync_with_fence(volatile struct ipc_client_state *ic
+ 
+ 	xrt_comp_layer_begin(ics->xc, &copy.data);
+ 
+-	_update_layers(ics, ics->xc, &copy);
++	xrt_result_t xret = _update_layers(ics, &copy);
++	if (xret != XRT_SUCCESS) {
++		xrt_compositor_fence_reference(&xcf, NULL);
++		IPC_CHK_AND_RET(ics->server, xret, "_update_layers");
++	}
+ 
+ 	xrt_comp_layer_commit_with_fence(ics->xc, xcf);
+ 
+-- 
+2.47.3
+
