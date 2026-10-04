@@ -10,8 +10,9 @@ Flags:
   MONADO-IPC        PRESSURE_VESSEL_FILESYSTEMS_RW=/run/user/*/monado_comp_ipc (only useful with Monado)
   PROTON_LOG        debug logging left on (large logs, slower start)
 
-Usage: steam-launch-options-audit.py [--all] [--strict] [--vdf PATH]
-  --all     also list titles that are not installed in any library
+Usage: steam-launch-options-audit.py [--installed] [--strict] [--vdf PATH]
+  --installed  only list titles installed in a library (default: ALL titles with LaunchOptions,
+               installed or not; uninstalled ones are marked "(not installed)")
   --strict  exit 1 when any flag is raised (default exit 0)
 Exit 2 when the file cannot be read.
 """
@@ -108,7 +109,8 @@ def flags_for(opts):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--all", action="store_true")
+    ap.add_argument("--installed", action="store_true")
+    ap.add_argument("--all", action="store_true", help=argparse.SUPPRESS)  # old spelling, now the default
     ap.add_argument("--strict", action="store_true")
     ap.add_argument("--vdf", default=None)
     a = ap.parse_args()
@@ -132,19 +134,19 @@ def main():
             continue
         opts = d.get("LaunchOptions", "")
         is_inst = appid in inst
-        if not opts or (not is_inst and not a.all):
+        if not opts or (not is_inst and a.installed):
             continue
         fl = flags_for(opts)
-        nflag += bool(fl) and is_inst
+        nflag += bool(fl)
         rows.append((int(appid) if appid.isdigit() else 0, appid, inst.get(appid, ("(not installed)", ""))[0], opts, fl))
     rows.sort()
     print("localconfig: %s (read-only)" % path)
     print("titles with LaunchOptions: %d (%s), installed titles seen in libraries: %d" % (
-        len(rows), "installed + uninstalled" if a.all else "installed only", len(inst)))
+        len(rows), "installed only" if a.installed else "installed + not installed", len(inst)))
     for _, appid, name, opts, fl in rows:
         print("%-9s %-38s %s" % (appid, name[:38], ("[" + ",".join(fl) + "]") if fl else "[ok]"))
         print("          %s" % opts)
-    print("flagged installed titles: %d" % nflag)
+    print("flagged titles: %d (%d of them installed)" % (nflag, sum(1 for r in rows if r[4] and r[1] in inst)))
     if nflag:
         print("hint: under SteamVR/Oasis the Monado variables are dead weight for OpenVR titles and wrong for OpenXR "
               "titles; edit in the Steam UI (or with Steam fully shut down), never while Steam is running. "

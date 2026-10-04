@@ -31,6 +31,7 @@ import sys
 HOME = os.path.expanduser("~")
 LOGS = os.path.join(HOME, ".steam/debian-installation/logs")
 OASIS_LOG = os.path.join(HOME, "vr/oasis-x11.log")
+COVER = {"vrcompositor": []}
 APP_NAMES = {
     "250820": "SteamVR", "1363430": "Propagation VR", "650000": "DOOM VFR",
     "502820": "Batman Arkham VR", "546560": "Half-Life Alyx", "617830": "Superhot VR",
@@ -114,11 +115,22 @@ def steamvr_events(ev):
             elif "VR_Init error, exiting" in line:
                 ev.append((parse_steamvr_ts(line), "VR-INITERR", line.split("exiting:")[1].strip()[:80]))
     for name in ("vrcompositor.previous.txt", "vrcompositor.txt"):
+        stamps = []
         for line in read_lines(os.path.join(LOGS, name)):
+            try:
+                stamps.append(parse_steamvr_ts(line))
+            except ValueError:
+                pass
+            m = re.search(r"External connection from (\S+?)(?: |$)(\S*)", line)
+            if m and "[Info]" in line:
+                ev.append((parse_steamvr_ts(line), "VR-CONNECT", "client %s %s connected to vrcompositor" % (
+                    os.path.basename(m.group(1)), m.group(2))))
             if "Startup Complete" in line:
                 ev.append((parse_steamvr_ts(line), "VR-COMP-OK", "compositor Startup Complete"))
             elif "CannotDRMLeaseDisplay" in line or "Failed to acquire xlib display" in line:
                 ev.append((parse_steamvr_ts(line), "VR-COMP-FAIL", line.split("]")[-1].strip()[:80]))
+        if stamps:
+            COVER["vrcompositor"].append((min(stamps), max(stamps)))
 
 
 def oasis_log_events(ev):
@@ -190,7 +202,7 @@ def main():
         drops.append((t, cls))
 
     others = [e for e in ev if e[1] in ("APP-START", "APP-EXIT", "VR-LAUNCH", "VR-INITERR", "VR-COMP-OK",
-                                         "VR-COMP-FAIL", "TOOL-UP", "TOOL-DOWN", "XID")]
+                                         "VR-COMP-FAIL", "TOOL-UP", "TOOL-DOWN", "XID", "VR-CONNECT")]
     o_times = [e[0] for e in others]
 
     def near(t):
@@ -266,6 +278,52 @@ def main():
         kinds = collections.Counter(e[1] for _, n in hit for e in n)
         print("   which events: " + ", ".join("%s=%d" % kv for kv in kinds.most_common()))
         print("   (association is not causation: see docs/139 for how this was read)")
+
+    def assoc_test(label, kinds, regions, win):
+        """Do bounces sit within +-win s of events of these kinds more often than chance? Exact binomial
+        tail with p = share of the region time that lies within +-win s of some event. Bounces cluster
+        in bursts, so a second figure uses one bounce per burst (the first)."""
+        import math
+        ts_ = sorted(e[0] for e in ev if e[1] in kinds)
+        if regions is None:
+            regions = [(bounces[0], bounces[-1])]
+        w_ = dt.timedelta(seconds=win)
+        tot = sum((hi - lo).total_seconds() for lo, hi in regions) or 1
+        cov = 0.0
+        for lo, hi in regions:
+            cur = None
+            for t in ts_:
+                l2, h2 = max(t - w_, lo), min(t + w_, hi)
+                if h2 <= l2:
+                    continue
+                if cur is None or l2 > cur:
+                    cov += (h2 - l2).total_seconds(); cur = h2
+                elif h2 > cur:
+                    cov += (h2 - cur).total_seconds(); cur = h2
+        p = min(1.0, cov / tot)
+        def run(bs):
+            bs = [b for b in bs if any(lo <= b <= hi for lo, hi in regions)]
+            k = sum(1 for b in bs if any(abs((b - t).total_seconds()) <= win for t in ts_))
+            n = len(bs)
+            tail = sum(math.comb(n, j) * p ** j * (1 - p) ** (n - j) for j in range(k, n + 1)) if n else 1.0
+            return k, n, tail
+        k, n, tail = run(bounces)
+        first_of_burst = [b for i, b in enumerate(bounces) if i == 0 or (b - bounces[i - 1]).total_seconds() > 120]
+        k2, n2, tail2 = run(first_of_burst)
+        print("  %-34s +-%2ds: %2d of %2d bounces near an event (chance level %4.1f%%, P(>=k | chance)=%.3f); "
+              "burst-starts only: %d of %d (P=%.3f); events in region: %d" % (
+                  label, win, k, n, 100 * p, tail, k2, n2, tail2,
+                  sum(1 for t in ts_ if any(lo <= t <= hi for lo, hi in regions))))
+
+    if bounces and not a.no_events or bounces:
+        print("association tests (bounce vs event; a small P means 'not chance'):")
+        for win in (10, 20):
+            assoc_test("Steam app start/exit", ("APP-START", "APP-EXIT"), None, win)
+        for win in (10, 20):
+            if COVER["vrcompositor"]:
+                assoc_test("vrcompositor client connects", ("VR-CONNECT",), COVER["vrcompositor"], win)
+        print("  (vrcompositor regions = the time spans the retained compositor logs cover: %s)" % ", ".join(
+            "%s-%s" % (lo.strftime("%H:%M:%S"), hi.strftime("%H:%M:%S")) for lo, hi in COVER["vrcompositor"]))
     ctl = [e for e in ev if e[1] == "CTRL" and (not since or e[0] >= since) and (not until or e[0] <= until)]
     if ctl and bounces:
         cn = sum(1 for e in ctl if any(abs((e[0] - b).total_seconds()) <= a.window for b in bounces))
