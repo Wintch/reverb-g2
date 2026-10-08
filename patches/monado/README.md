@@ -1,5 +1,7 @@
 # Monado patches
 
+> **2026-10-08 — pin stays on `735e29e4e`.** Upstream `main` (`ec188bb13`) removed the `WMR_LEFT/RIGHT_DISPLAY_VIEW_Y_OFFSET` options (`019d9d458`), which 0072 and 0075 carry as context, and the lab branches conflict with it in `d/wmr` and the constellation code (details in docs/18, row 2026-10-08). Do not bump the pin without a full rebase of `lab-full-dev`.
+
 Twenty-three patches on top of Monado `main` @ `735e29e4e` (the SHA `bootstrap-lab.sh sources`
 pins) — **but two of them (0016, 0017) do not apply; read the box further down before
 trusting this series.** The first ten are the linear form of four independent MR branches prepared for
