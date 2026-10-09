@@ -15,7 +15,7 @@ the NVIDIA forum, LVRA Matrix. Nothing was posted anywhere. Times are UTC. Compa
 | hare_ware/monado | `wmr-new-constellation-tracking` got two commits 10-06 (`apply timing_fudge_ns more correctly`, `d/wmr: expose LED ramp pattern to debug gui`); his issue #1 still unanswered | none |
 | Basalt !39 | unchanged since our 09-21 answer to Mateo | none |
 | NVIDIA PR #1275 / forum 337744 | unchanged (open, 1 comment, 09-17; 18 posts, last 08-28) | none |
-| Faulto fork | not checked: `Faulto/reverb-g2` returns 404 on the GitHub API (owner or repo name differs) | find the right name next sweep |
+| Faulto fork | `Faulto/reverb-g2-linux` (the first try, `Faulto/reverb-g2`, was the wrong name and returned 404): last push 09-23 10:38Z, the three commits already known (`b229b59a` NVIDIA 615 support, `a75f1131`, `08cad7dc`); 0 issues, 0 stars. Our issue #1 (`Wintch/reverb-g2`) is open, last comment ours (08-27) | none |
 | LVRA Matrix `#general-linux-vr-adventures` | 2414 messages 10-04 → 10-08, keyword-filtered: nothing about us, hare_ware or constellation. A G2+NVIDIA user is adding an "NVIDIA users" section to a wiki MR on his fork (10-05); others call Monado's experimental controller tracking "ROUGH" | none; whether his section repeats the false "60 Hz-only on Nvidia" claim was not checked |
 
 ## 2. Conflict survey against the new `main`
