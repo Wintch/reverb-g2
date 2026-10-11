@@ -255,3 +255,10 @@ exact commits: G2 with host-BT controllers fails 3/3 on main and comes up with b
 fix; no-controller control identical on both; HDK path checked with an emulated device (dummy_hcd
 gadget). Opened through the web form as !3036 (cc @bl4ckb0ne @wallbraker), changelog fragment `b4fae42d5`
 (`doc: Document !3036`). Write-up: docs/145.
+
+**2026-10-11 — !2967 firmware reads soaked on hardware, two local follow-ups.** The chunk-loop
+stale-reply recovery Jan asked about runs on real host-BT controllers (39 discards, every block
+completed). Two gaps found: the block header request aborted on a stale reply (2 builder losses in
+25 runs; fixed locally by `4e3e6b419`, 25/25), and the zero/quiesce init commands had no retry (one
+soak failure plus docs/143 R5; `b184f1ed2`). A 40+40 soak and a power-cycle soak ran clean on both
+arms (no timeouts at all), so `b184f1ed2` has no A/B yet. Not pushed to !2967. Write-up: docs/146.
