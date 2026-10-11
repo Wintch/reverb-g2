@@ -142,7 +142,7 @@ Launched with debug logging, controllers lying on the desk in camera view, no cl
 - Timesync packets now carry sane controller-clock times (`time 36785640`..`37178193` us,
   advancing), instead of −27938 s.
 - Tracker: **1779 `Found pose`** (fast path + RANSAC recovery succeeding) in the first ~45 s,
-  versus **0** in run 3 with the same binary minus the fix. No companion read error, read thread alive.
+  versus **0** in run 3 with the same binary minus the fix — **corrected 2026-10-10: not a clean A/B**, see below. No companion read error, read thread alive.
 - **Open:** in the following 20 s the tracker logged zero new poses AND zero dropped samples,
   i.e. it stopped receiving work, not failing to match. Last poses were static (controllers at
   rest). Not yet explained: candidates are controller idle/sleep with no client, camera stream
@@ -152,3 +152,35 @@ Launched with debug logging, controllers lying on the desk in camera view, no cl
 Next: relaunch the `hw-timesync-fix` build, check whether controller packets / camera frames keep
 flowing after ~45 s (count `timesync counter` and enable `CONSTELLATION_TRACKER_LOG=trace` briefly
 for `Received blob observation`), then one wear test.
+
+## Re-diff against hare_ware `10a23daab` (2026-10-10, no hardware)
+
+hare_ware force-pushed again on 10-06: `10a23daab` = the same 45 commits rebased onto main
+`045931d12` (`git range-diff`: all `=`) plus `89451995e` (LED ramp pattern in the debug GUI) and
+`10a23daab` ("apply timing_fudge_ns more correctly").
+
+- **The double conversion is unchanged.** `wmr_camera.c:449` still publishes `frame_start_ts`
+  (HMD device clock, frame footer) as the exposure timing event; `wmr_controller_base.c:814-818`
+  still treats it as host time and runs `host_ts_to_device` on it. The new fudge comes from the
+  LED-sync refinement, whose search is bounded by `latency_cap_ns` (now 22 ms, comment still says
+  11) — about 1.3e6 times smaller than the −27938 s error. Our fix cherry-picks cleanly.
+- **10a23daab drops a constant ~10.5 ms offset** that 9e1773326 sent (`timesync_time_offset =
+  period_id`, period_id ≈ 21 × 0.5 ms). Run 4 had it; on the new tip the closed-loop search must
+  find the phase instead, so Run 4's result may not carry over.
+- **Second clock-domain slip (his own `HACK ... SUPER wrong`):** `wmr_controller_base.c:1013`
+  passes the controller-clock `sample_time_ns` to `t_led_sync_mark_latest_sample_applied`, which
+  `t_led_sync_refinement.c:457` compares against `os_monotonic_get_ns()` — the 7-frame settle gate
+  never waits.
+- **Host-Bluetooth controllers get no constellation tracking on his branch:**
+  `wmr_bt_controller.c` passes `NULL` for the tracker and `target_builder_wmr.c` has
+  `// TODO: Add the controllers to the constellation tracker`. Ours have been on the UB500 Plus
+  since 10-03 (docs/136), so testing his branch needs them re-paired to the headset.
+- **Correction to Run 4 above:** Run 4 versus Run 3 is not a clean A/B. Run 4's binary also carried
+  our 8 !2967/!3004 commits, and Run 3 was worn while Run 4 was on the desk with no wearer.
+- Stale TRACKED pose and the Ceres link failure: both still present at `10a23daab`
+  (`wmr_controller_base.c:950,1087,890-891`; `src/xrt/drivers/CMakeLists.txt:554,587`).
+
+Branches (local monado clone; also in iashur `~/vr/monado-hw`, built 10-10 18:29, not run):
+`hw-timesync-fix-v2` = `10a23daab` + fix (`783cf6ae5`) + !2967/!3004 (cherry-picked with `-x`).
+A clean desk A/B (`hw-ab-nofix` = same minus the fix) is prepared; it needs the controllers on the
+headset radio. Report draft: `notify-drafts/03-hare-ware-timesync-report.md` (outside the repo), not posted.
