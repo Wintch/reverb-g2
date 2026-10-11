@@ -254,7 +254,8 @@ reviewer activity on any MR since 09-08.
 exact commits: G2 with host-BT controllers fails 3/3 on main and comes up with both controllers on the
 fix; no-controller control identical on both; HDK path checked with an emulated device (dummy_hcd
 gadget). Opened through the web form as !3036 (cc @bl4ckb0ne @wallbraker), changelog fragment `b4fae42d5`
-(`doc: Document !3036`). Write-up: docs/145.
+(`doc: Document !3036`). Write-up: docs/145. **Merged the same day** (18:20 UTC): wallbraker approved ("Oh thanks!") and handed it to
+marge-bot, which rebased it as `bccd57f1` + `0d7970c9`.
 
 **2026-10-11 — !2967 firmware reads soaked on hardware, two local follow-ups.** The chunk-loop
 stale-reply recovery Jan asked about runs on real host-BT controllers (39 discards, every block
