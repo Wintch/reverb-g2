@@ -1318,3 +1318,52 @@ targeted check later: does `02 07` also fire when an already-paired controller r
 the six `02 07`. Nothing precedes the PAIR on any report id, any device. The Linux-side pairing
 attempt's framing (`16 05 0x`) stands as the complete host contribution visible on USB; what
 remains unexplained about our negative (T235/T236) is not a missing preamble.
+
+## 2026-10-10 research — pairing to the headset radio from Linux: three untried leads (docs/144 §6)
+
+Desk research only; no PAIR was sent. Status of the claim "nobody has paired from Linux": still
+**unproven publicly** — no success report was found anywhere — but it is no longer "nobody has
+tools for it".
+
+1. **Oasis 1.0.4 (2026-10-09) ships a Linux pairing launch option.** Steam app 3824490, public
+   build 25833996, launch config `pair_bluetooth.sh`, "to pair motion controllers on Samsung
+   Odyssey+, HP Reverb and HP Reverb G2"; the Oasis wiki (`Home.md`) says it works like the
+   controller part of the Windows unlock; the release notes thank Toemmsen for "solving Bluetooth
+   receiver issues". Toemmsen's own patch (`Toemmsen96/oasis-bt-patch` `344225d`, a one-string
+   `Kernel32.dll` → `kernelbase.dll` Detours fix under Wine) is about controllers that are already
+   paired, not about the PAIR command. Script not read yet; iashur had build 25276174.
+2. **thaytan's wmr-utilities** (`gitlab.freedesktop.org/thaytan/wmr-utilities`, one commit
+   `e9dc15a0`, 2024-05-18, BSL-1.0, `hp-reverb-g2-pairing.c`): opens 045e:0659 (after checking
+   03f0:0580 or the Odyssey+ companion is present), sends `16 05 <0|1>` as a 64-byte Feature report
+   **once**, then polls `16 09 <n>` and reads the reply flag (0 complete, 1 pending, 3 in progress,
+   2 failed, 4/5 paired, 6 unpaired), then `16 08`/`16 04` for MAC/VID/PID/online. Same wire bytes
+   as T240 — the differences are the access path (default hidapi-**libusb**: detaches usbhid and
+   claims the interface; we always used hidraw with usbhid bound) and reading the 0x16 replies.
+   Caveat: a flag-0 reply prints "completed" with no message and send errors are not checked, so
+   only the final MAC/VID line proves success. Built on iashur (`~/vr/wmr-utilities/build-libusb`,
+   `build-hidraw`), not run. The LVRA wiki links it since 10-10 with no test claim.
+3. **The 0x03 firmware log answers what 0x05 silence could not.** Re-reading `pairing3.pcapng`
+   (`/mnt/nvme/debug_vr/`): PAIR at frame 53970 t=188.3308; report **0x03** 1.0 ms later:
+   `Received pair request MC: 0`, `MC:0, New pairingStatus: 1`; then 0x05 `COMMAND_SET_VISIBILITY`,
+   `COMMAND_SET_PAIRING_MODE`, `Set the pairing allowed to 1`, `COMMAND_INQUIRY`, `inquiry started`
+   (+2.9..+8.7 ms), 0x03 `CmdStatus Success` (188.3414), 0x05 `Found by address: Motion Controller -
+   Left` (189.5137). None of our Linux attempts decoded 0x03 or the 0x16 replies, so "the MCU never
+   dispatches the command" and "it dispatches and declines" are still indistinguishable.
+   Corrections from the same re-read: the T240 `02 08` writes are the **config-block reader**
+   (`wmr_hmd.c`), not a pairing poll; Windows sent `16 09` 47 s *before* PAIR and 19 s after, never
+   right after it; the 0x03 packet holds 8 fixed 63-byte records after one `Dlo+` magic, so
+   `fwlog.py` only ever decoded the first record of each packet.
+
+**New tool: `scripts/controller-pair-v2.py`.** Reader thread started before any send, decoding
+0x03 (all 8 records), 0x05, 0x16 (flag table above), 0x17; JSONL + console log. Modes:
+`--listen`, `--status L|R` (`16 08` + `16 04`), `--single-pair L|R` (exactly one `16 05`, gated by
+`--i-understand-this-erases-the-current-bond`; `16 06`/`16 07` are refused at the send layer),
+`--windows-preamble` (replays the capture's host setup: config reads, `02 07` IMU on, `16 09`, the
+~6.4 s gap, then a wait before PAIR), `--dry-run`, `--selftest PCAP` (17/17 against
+`pairing3.pcapng`). Not yet run against the headset. The `16 08` reply layout is taken from
+wmr-utilities' struct and is unverified.
+
+**Plan, cheapest first** (one controller in discovery, Monado stopped, the controller leaves its
+UB500 bond if it pairs — docs/136 has the way back): (a) `--single-pair` and watch 0x03;
+(b) wmr-utilities `--pair 0 -v` with both backends; (c) `--windows-preamble`; (d) Oasis 1.0.4
+`pair_bluetooth.sh`, read first.

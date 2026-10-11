@@ -167,9 +167,9 @@ hare_ware force-pushed again on 10-06: `10a23daab` = the same 45 commits rebased
 - **10a23daab drops a constant ~10.5 ms offset** that 9e1773326 sent (`timesync_time_offset =
   period_id`, period_id ≈ 21 × 0.5 ms). Run 4 had it; on the new tip the closed-loop search must
   find the phase instead, so Run 4's result may not carry over.
-- **Second clock-domain slip (his own `HACK ... SUPER wrong`):** `wmr_controller_base.c:1013`
+- **Second clock-domain slip (his own `HACK ... SUPER wrong`):** `wmr_controller_base.c:1014-1015`
   passes the controller-clock `sample_time_ns` to `t_led_sync_mark_latest_sample_applied`, which
-  `t_led_sync_refinement.c:457` compares against `os_monotonic_get_ns()` — the 7-frame settle gate
+  `t_led_sync_refinement.c:454-457` compares against `os_monotonic_get_ns()` — the 7-frame settle gate
   never waits.
 - ~~Host-Bluetooth controllers get no constellation tracking on his branch~~ — **retracted the
   same day**: the `// TODO: Add the controllers to the constellation tracker` comments in

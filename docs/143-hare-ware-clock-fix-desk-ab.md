@@ -41,8 +41,8 @@ string (`p_prober.c:1438` at `13b5c134b`), i.e. > 0 on success. Every host-paire
 therefore fails, and because a BT creation failure is fatal to the builder, the headset goes with
 it. The same file already checks the same call correctly at line 64 (`if (result <= 0)`).
 Fix: `if (ret <= 0)`. Applied locally, the BT controllers were created and the legs ran. Present
-on upstream `main` since !2985; our lab is pinned at `735e29e4e` (before it), so lab-full is not
-affected. Not reported upstream yet.
+on upstream `main` since !2985; our lab pin is `735e29e4e` and `lab-full` sits on upstream `a6d31c6c1`
+(2026-09-11), both before it, so lab-full is not affected. Not reported upstream yet.
 
 ## Results
 
@@ -50,9 +50,9 @@ affected. Not reported upstream yet.
 |---|---|---|---|---|---|
 | R1b | nofix | 2555/2596, 2617/2658 **negative**; device clock runs at **−27.9x** wall | 1389, one controller | +28.5 s | USB2 storm at +40 s, companion reconnected (!3004) |
 | R2 | fix | **0 negative**, advances at **1.0007x / 1.0003x** wall | 992 (991 + 1) | +56.3 s | LED sync MAINTAIN, then resync after ~525 frames unseen, repeatedly |
-| R3 | fix | 0 negative, 1.0008x | **0** | — | LED sync never leaves FIND_INITIAL_OFFSET; no blob ever matched |
-| R4 | nofix | 2677/2739 negative, −27.8x | **0** | — | same as R3 |
-| R5 ×3 | fix | — | — | — | after a controller power-cycle: left controller `fw read timed out` (281-345 ms) at BT controller creation, builder fails, 3/3 attempts, also with the controllers held and buttons pressed |
+| R3 | fix | 0 negative, 1.0008x / 1.0004x | **0** | — | LED sync never leaves FIND_INITIAL_OFFSET; no blob ever matched |
+| R4 | nofix | 2677/2739 negative, −27.8x / −28.0x | **0** | — | same as R3 |
+| R5 ×3 | fix | — | — | — | after a controller power-cycle: left controller `fw read timed out` (250-345 ms) at BT controller creation, builder fails, 3/3 attempts, also with the controllers held and buttons pressed |
 
 The nudge at 60 s never brought poses back in any leg (the user did move the controllers; LEDs on).
 
@@ -70,7 +70,7 @@ The nudge at 60 s never brought poses back in any leg (the user did move the con
    controller's firmware command times out and the builder aborts. Not investigated further.
 4. **Shutdown crash in hare_ware's code**, 3 of 4 completed legs, both arms: SIGSEGV after SIGTERM.
    gdb on the core: the BT controller read thread is in `wmr_controller_base_handle_imu_sample` →
-   `xrt_sink_push_imu(wcb->tracking.constellation_imu_sink)` (`wmr_controller_base.c:1113`) while
+   `xrt_sink_push_imu(wcb->tracking.constellation_imu_sink)` (`wmr_controller_base.c:1113` in the `hw-ab-nofix` / `hw-timesync-fix-v2` builds; line 1054 at bare `10a23daab`) while
    the main thread is in `os_thread_helper_destroy` — the constellation tracker's IMU sink is gone
    before the controller thread stops (use-after-free in teardown order). Probably BT-specific in
    practice (tunnelled controllers stop with the HMD thread).

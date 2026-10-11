@@ -74,7 +74,10 @@
 > values past `0x17` are inert (identical `CONTROLLER_STATUS` replies), i.e. unvalidated RE
 > guesses. The unpair was the PHYSICAL button (Linux read it live), not a host command. Nobody has
 > ever paired a WMR controller from Linux; the scoped next step is **USBPcap of Oasis pairing on
-> Windows** to get the real framing. Recovery: one Oasis pass re-pairs (the right controller is
+> Windows** to get the real framing. **Update 2026-10-10 (docs/03 addendum, docs/144 §6)**: still unproven
+> publicly, but three untried leads now exist — Oasis 1.0.4's Linux `pair_bluetooth.sh`, thaytan's
+> wmr-utilities (hidapi-libusb path), and the 0x03 firmware log we never read during a PAIR
+> (`scripts/controller-pair-v2.py` decodes it). Recovery: one Oasis pass re-pairs (the right controller is
 > currently unpaired). Pairing is literal Bluetooth bonding (2402-2480 MHz to the HEADSET radio,
 > mutable, per-hand-slot, calibration travels with the controller) — which makes controllers
 > **migratable between G2 units**, key for the recycling mission.
