@@ -65,10 +65,12 @@ The only warning in B/C/D is Vulkan's `Duplicate extension VK_KHR_get_surface_ca
   kernel truncates comm to 15 chars (`monado-service-`), and every `pgrep -x` / `/proc/*/comm`
   check missed them. Four orphans (3 from leg A, 1 from B, the latter holding the DRM lease) were
   killed by PID. Fix: variants live in `~/vr/monado-prober-bin/{main,fix}/monado-service`.
-- **Upstream `main` does not exit after a failed system init.** In leg A each failed
-  `monado-service` (`ipc_server_main_common ... XRT_ERROR_DEVICE_CREATION_FAILED`) stayed alive
-  for minutes until killed (the launcher's SIGKILL in the second run). Not investigated; separate
-  from this fix.
+- **Upstream `main` stays alive after a failed system init: by design, not a bug.** In leg A each
+  failed `monado-service` (`ipc_server_main_common ... XRT_ERROR_DEVICE_CREATION_FAILED`) kept
+  running until killed. `ipc_server_main_common()` only logs the early-init failure and enters the
+  main loop anyway ("If not available now, will try again per client request"), added by
+  `803e8168e` (!2612, 2025-02, already in the lab pin `735e29e4e`). The launcher copes by retrying
+  and killing the service. Nothing to report.
 
 ## Not covered
 
