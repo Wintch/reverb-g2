@@ -247,3 +247,11 @@ TP-Link UB500 Plus on the host; `wmr_bt_controller.c` works on real hardware (bo
 3dof + `ctrl` mode, 200 Hz IMU while in use). Reply threaded under the original promise (note
 3667686, discussion `0e01f17a…`), signed Nikolai. Write-up: docs/136. No code changes in the MRs; no
 reviewer activity on any MR since 09-08.
+
+**2026-10-11 — prober string-descriptor fix tested and opened as !3036.** Branch
+`prober-string-descriptor-length` (`6eedc6cf8`, on upstream `main` `13b5c134b`) fixes `b0b1d8b1b`
+(!2985), which rejects every successful `xrt_prober_get_string_descriptor()` lookup. Tested on the
+exact commits: G2 with host-BT controllers fails 3/3 on main and comes up with both controllers on the
+fix; no-controller control identical on both; HDK path checked with an emulated device (dummy_hcd
+gadget). Opened through the web form as !3036 (cc @bl4ckb0ne @wallbraker), changelog fragment `b4fae42d5`
+(`doc: Document !3036`). Write-up: docs/145.
