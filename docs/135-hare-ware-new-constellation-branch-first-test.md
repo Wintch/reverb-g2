@@ -171,10 +171,13 @@ hare_ware force-pushed again on 10-06: `10a23daab` = the same 45 commits rebased
   passes the controller-clock `sample_time_ns` to `t_led_sync_mark_latest_sample_applied`, which
   `t_led_sync_refinement.c:457` compares against `os_monotonic_get_ns()` — the 7-frame settle gate
   never waits.
-- **Host-Bluetooth controllers get no constellation tracking on his branch:**
-  `wmr_bt_controller.c` passes `NULL` for the tracker and `target_builder_wmr.c` has
-  `// TODO: Add the controllers to the constellation tracker`. Ours have been on the UB500 Plus
-  since 10-03 (docs/136), so testing his branch needs them re-paired to the headset.
+- ~~Host-Bluetooth controllers get no constellation tracking on his branch~~ — **retracted the
+  same day**: the `// TODO: Add the controllers to the constellation tracker` comments in
+  `target_builder_wmr.c` are stale; right after them the builder calls
+  `wmr_constellation_attach_controller_to_hmd()` for `left`/`right` whatever their transport
+  (`target_builder_wmr.c:273-280`, `wmr_constellation_tracking.c:285-294`: timing sink + tracker).
+  So our UB500-paired controllers should be tracked too; a re-pair to the headset is not required
+  for the A/B (untested over BT on his branch).
 - **Correction to Run 4 above:** Run 4 versus Run 3 is not a clean A/B. Run 4's binary also carried
   our 8 !2967/!3004 commits, and Run 3 was worn while Run 4 was on the desk with no wearer.
 - Stale TRACKED pose and the Ceres link failure: both still present at `10a23daab`
@@ -182,5 +185,4 @@ hare_ware force-pushed again on 10-06: `10a23daab` = the same 45 commits rebased
 
 Branches (local monado clone; also in iashur `~/vr/monado-hw`, built 10-10 18:29, not run):
 `hw-timesync-fix-v2` = `10a23daab` + fix (`783cf6ae5`) + !2967/!3004 (cherry-picked with `-x`).
-A clean desk A/B (`hw-ab-nofix` = same minus the fix) is prepared; it needs the controllers on the
-headset radio. Report draft: `notify-drafts/03-hare-ware-timesync-report.md` (outside the repo), not posted.
+A clean desk A/B (`hw-ab-nofix` = same minus the fix) is prepared. Report draft: `notify-drafts/03-hare-ware-timesync-report.md` (outside the repo), not posted.
