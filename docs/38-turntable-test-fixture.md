@@ -26,7 +26,7 @@ instrument, not just a way to confirm a fix:
    blob detection under real motion instead of a static controller.
 5. **Judder / camera-in-display stimulus** (Vector A). Constant rotation is a clean,
    repeatable motion for the through-the-lens judder measurement
-   (`reverb-g2-linux/scripts/analyze-panel-judder.py`).
+   (`scripts/analyze-panel-judder.py`).
 6. **Cross-machine reproducibility.** Same fixture + same ω → comparable results on dev
    vs the everyday system. Since it is the same physical rig (only the SSD is swapped),
    a result that reproduces under the identical turntable motion on both is strong.

@@ -133,7 +133,7 @@ grep -oE '^vit_loop pop_ms=[0-9.eE+-]+ imu_ms=[0-9.eE+-]+$' log | sed -E 's/.*im
   *through the lens* with a high-frame-rate camera while the scene rotates, then counting how
   many camera frames each displayed frame persists for (irregular persistence = judder).
 - **Usage:** high-fps capture through the lens → `ffmpeg` frame extraction → the OpenCV script
-  (`reverb-g2-linux/scripts/analyze-panel-judder.py`) for the per-frame luminance/diff series.
+  (`scripts/analyze-panel-judder.py`) for the per-frame luminance/diff series.
 - **Gotcha (critical):** **do not film at an exact multiple of the refresh rate** (e.g. 90 Hz)
   — the aliasing hides the very drops you are trying to see. The script warns when the camera
   fps is a multiple of 90.
