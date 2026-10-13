@@ -221,3 +221,60 @@ the folder's `README.md` explains how.
    revoke path, a flip-permission flag only an explicit revoke clears), then the xrizer input and
    frame-timing items.
 8. Mechanical sweeps: English-only strings, hard-coded paths, one env-knob helper per codebase.
+
+## 10. Fix status (updated 2026-10-12, same night)
+
+"Verified" below means what was actually checked on the everyday box. **Nothing in C, C++ or
+Rust has been run on the rig yet.** Rebuild on the lab box and check there before relying on it.
+
+| # | Item | Commit | Verified |
+|---|---|---|---|
+| §4 #4, #5 | `vr-cockpit.py` reads `<none>` as unregistered and parses 0073's tagged battery line; `constellation-gate-validate.py` accepts 0080's gravity-gate tag | 3ec9e6b | synthetic logs |
+| §4 #6 | `jack-in.sh` passes `--pos XxY` | 3ec9e6b | `bash -n`; xrandr syntax |
+| §4 #7 | `collect-nv.sh`: comment moved out of the continuation; no other instance in the repo | 3ec9e6b | `bash -n`, repo scan |
+| §4 #8 | `apply-bpc-patch.sh` retired (stub that exits 1); `bootstrap-lab.sh patch-nv` builds before it installs over the old module | 3ec9e6b, 38e9bf7 | `bash -n` |
+| §4 #9 | `ab-analyze.py`: builder token without the colon; read-thread exit at shutdown is not a death | 3ec9e6b | synthetic clean and dead logs |
+| §5.1 | `verify-bpc.sh` exit status (0 only for 8 bpc and a live hmd-vk), `speak.sh` silence switch, `hw-monitor.sh`, `led_hunt.sh`, `triage-sweep.sh`, `record-euroc.sh` prompt, `testlog.py` ids (T246/T247 renumbered) | 3ec9e6b | jq and grep cases, testlog list |
+| §9.1 | `fs-backup.sh` fails loudly and also archives `/var/lib/dkms/nvidia*`; the playbook restores with `tar -C /mnt/lab` and runs depmod/initramfs (linuxlab-kit) | linuxlab-kit df0c9cb | `bash -n` |
+| §4 #2 | Monado 0095/0096 replaced by the camera drain pair, adapted to the pin | a866812 | applies; `-fsyntax-only`; 0097-0113 apply as before |
+| §4 #3 | Monado 0114: fusion clock restarted after an idle run | a866812 | `-fsyntax-only` |
+| M14-1 | Monado 0115: neck-arm sign (docs/80's ruling-out corrected) | a866812 | ratio -1 to +1 on random rotations through the correction code |
+| §9.3 | Monado 0116: 0087's stale-presence notice (int overflow) | a866812 | gcc `-Woverflow` gone |
+| §5.4 | `bootstrap-lab.sh sources` applies `patches/<series>/applies-on-base.txt` (new `check-series-apply.sh`), can be re-run, applies Basalt, adds xrizer; deps/nvidia statuses checked | 38e9bf7 | apply lists generated and replayed on fresh clones |
+| §5.1 | `teardown-stress.sh` fails on a SIGKILL escalation, a missing client or a core | 38e9bf7 | `bash -n` |
+| §4 #10 | hello_xr series re-exported in English: all 25 apply; 0023 recenter sign, 0024 seek while paused and frame-accurate, 0025 audio clock hand-back | ced9684 | applies on the pin; `ninja hello_xr` builds |
+| §5.2 | Traps and ownership: `light-preflight.sh`, `gpu-pacing-baseline.sh`, `bench-launcher.py`, `playlist-runner.py`, `usb-companion-reset.sh`, `usb-bus-reset.sh`, `capture-hid.sh`, `power-on.py` self-repair, bootstrap WirePlumber step | 741568c | `bash -n`, process-group kill test |
+| §5.6 | `controller-pair-btlog.py` no longer pairs on import | e2c92b8 | syntax |
+| §9.7 | NVIDIA 0002: lease hook puts the master and takes locks in the revoke path's order | 4690a0c | `make modules` on 595.71.05, kernel 6.12 |
+| §9.7 | xrizer 0014-0017: 0013 had broken upstream's `load_actions_race` test (fixed); repeated manifest no longer restarts the session; timing ring; refresh-rate fallback; hold-time parsing | 505c075 | `cargo test --lib`: 88 passed |
+
+Still open:
+
+- **Owner decisions (§6), all seven.** The sudoers allowlist waits on the root check output. A
+  read-only script was handed over on 2026-10-12; the lab box was unreachable over SSH then.
+- **Nothing has been run on the rig.** Owed: a camera-on teardown loop with
+  `teardown-stress.sh`, the neck-arm wearer A/B (the Aircar 100 mm and Cyberpilot 150 mm
+  values were tuned with the inverted sign), a recenter, seek and frame step in the player, a
+  two-file playlist with audio, a DRM lease on the rebuilt NVIDIA module, and one game through
+  the patched xrizer.
+- **The same fixes on the tree the rig runs.** Monado 0114-0116 and the camera drain are also on
+  the local `monado` branch `lab-full-review-fixes-20261012`, based on the 2026-09-14
+  `lab/lab-full` snapshot. It is not pushed: that branch carries about 115 lab commits that were
+  never published. The fork's `lab-full` (22e081141) is older than that snapshot.
+- **Not fixed:** `solve_yaw_locked` has no release path (review §3.7). NVIDIA 0002's
+  `lesseeFlipPermissive` stays set after a lessee exits without REVOKE_LEASE. NVIDIA 0003 is
+  still keyed on the wrong manufacturer id (owner decision). The `constellation sample #` regex
+  in `constellation-gate-validate.py` matches no exported log line. The Monado series is still
+  two lineages, and 36 of its patches do not apply on the pin. The session-anchor/stale-pose
+  pair (M14-2, M08-2) needs a re-measurement before any change.
+- **Sweeps (§9.8):** the English-only pass covers printed output and comments of the operator
+  scripts. It deliberately leaves the spoken TTS prompts in Spanish (the user's choice),
+  data tokens other programs parse (`ROJO/AMARILLO/VERDE`, `TE NECESITO/HAY QUE COMPRAR/LISTO`,
+  `voz-*` cue ids), `docs/pruebas.jsonl`'s name and keys, quoted wearer feedback in docs, and
+  the dashboard and launcher strings that go through `vr_i18n.py`. `power-on.py` and
+  `windows-kit/power-on.ps1` also stay Spanish: on 2026-08-13 the owner decided their
+  boot-console text moves to English through the `vr_i18n.py` preset in one dedicated pass, not
+  piecemeal. Done in this sweep: `play360.sh`, `usb-bus-reset.sh`, `play-with-legend.sh`, the
+  boot selector and launcher console, the two installers, `fix-vr-launcher-console.sh`,
+  `pose-lag.py`, `reseat_audio.py`, `network-link-check.py` and `.gitignore`. Hard-coded paths
+  and a shared env-knob helper are not done.

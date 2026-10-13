@@ -1,14 +1,18 @@
 # Next step
 
-> ## 2026-10-12 — full code review done, nothing fixed yet: read `docs/147` before trusting a tool
+> ## 2026-10-12 — full code review done and fixes landed: what is still unverified (`docs/147` §10)
 >
 > 525 agents read every script, every patch series and the Monado fork branch (2191 entries,
-> ~1450 distinct, 0 critical, 10 distinct headline defects). Before relying on these, know that
-> they currently lie or break: `vr-cockpit.py` says GO with an unregistered controller and never
-> reads the battery; `collect-nv.sh` captures nothing; `ab-analyze.py` voids every hare_ware leg;
-> `apply-bpc-patch.sh` can leave the box with no nvidia module; Monado 0095 hangs every camera
-> teardown until SIGKILL; 0097's neck-arm sign is inverted in the shipped profiles. Fix plan and
-> owner decisions: `docs/147` §6 and §9.
+> ~1450 distinct, 0 critical, 10 distinct headline defects). The same night the fixes for most of
+> them were committed (docs/147 §10 lists each one): the instruments that failed green
+> (`vr-cockpit.py`, `collect-nv.sh`, `ab-analyze.py`, `verify-bpc.sh`, ...), the camera-teardown
+> hang (Monado 0095/0096 replaced by the drain pair), the neck-arm sign (0115), the idle fusion
+> clock (0114), `bootstrap-lab.sh`, the hello_xr series (all 25 apply now), xrizer (0014-0017,
+> one fixes a test 0013 broke) and NVIDIA 0002's lease hook. **None of the C/C++/Rust changes
+> has run on the rig yet.** Before trusting them, rebuild and run a camera-on teardown
+> (`teardown-stress.sh` now fails on a SIGKILL escalation). The launcher's neck-arm values (Aircar
+> 100 mm, Cyberpilot 150 mm) were tuned with the inverted sign, so re-run that wearer A/B. Owner
+> decisions still open: `docs/147` §6.
 
 > ## START HERE (2026-09-07 ~04:00 -03 — the panel flicker is CLOSED; `docs/112` is the
 > one to read, and `docs/109`/`110`/`111` are superseded by it)
