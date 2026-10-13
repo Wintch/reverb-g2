@@ -7,6 +7,10 @@ cluster, plus a 193/321 mm mixed cluster). Born 2026-08-13 (T181), reads monado
 0047's INFO telemetry. Blind to: hand attribution is adjacent-line pairing; only
 every 15th solve is logged; a pure-yaw ghost shows a CLEAN gravity mismatch here —
 the scatter/steps columns are what expose it.
+
+Needs a Monado built from lab-full: the sample lines come from lab commit e58036e6f, and the
+pinned base plus patches/monado has no controller constellation path, so a bootstrap build
+logs none of these lines and this prints 0 samples.
 """
 import re, math, sys
 

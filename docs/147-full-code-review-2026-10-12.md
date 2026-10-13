@@ -263,10 +263,14 @@ Still open:
   never published. The fork's `lab-full` (22e081141) is older than that snapshot.
 - **Not fixed:** `solve_yaw_locked` has no release path (review §3.7). NVIDIA 0002's
   `lesseeFlipPermissive` stays set after a lessee exits without REVOKE_LEASE. NVIDIA 0003 is
-  still keyed on the wrong manufacturer id (owner decision). The `constellation sample #` regex
-  in `constellation-gate-validate.py` matches no exported log line. The Monado series is still
+  still keyed on the wrong manufacturer id (owner decision). The Monado series is still
   two lineages, and 36 of its patches do not apply on the pin. The session-anchor/stale-pose
   pair (M14-2, M08-2) needs a re-measurement before any change.
+- **Retracted:** the review said the `constellation sample #` regex in
+  `constellation-gate-validate.py` matches no log line. It matches the line lab commit
+  e58036e6f emits, which is on `lab-full` (local and the fork). The line is missing only from
+  the exported series, because the pinned base plus the applying patches has no controller
+  constellation path at all. The validator's docstring now says it needs a `lab-full` build.
 - **Sweeps (§9.8):** the English-only pass covers printed output and comments of the operator
   scripts. It deliberately leaves the spoken TTS prompts in Spanish (the user's choice),
   data tokens other programs parse (`ROJO/AMARILLO/VERDE`, `TE NECESITO/HAY QUE COMPRAR/LISTO`,
