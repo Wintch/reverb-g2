@@ -1,9 +1,11 @@
 # Context for the 90Hz lab agent
 
 > ## UPDATE 2026-10-12 — a full code review found tools that fail green: read `docs/147` first.
-> Most fixes landed the same night (docs/147 §10). The script fixes are tested offline; the
-> Monado, hello_xr, xrizer and NVIDIA changes are built but **not yet run on the rig**, so
-> rebuild and check before relying on them. Re-run the neck-arm wearer A/B (patch 0115 flipped
+> Most fixes landed the same night (docs/147 §10). The script fixes are tested offline. On
+> 2026-10-13 the Monado, hello_xr, xrizer and NVIDIA changes were built on the rig on
+> `review-fixes-20261013` branches. The new Monado is live and passed a camera-on teardown loop.
+> The player, a game through xrizer and the NVIDIA lease (which needs a root install) are still
+> untested. Re-run the neck-arm wearer A/B (patch 0115 flipped
 > its sign).
 
 > ## UPDATE 2026-08-23 ~00:30 — the plan of record is `docs/67-pending-plan-2026-08-22.md`

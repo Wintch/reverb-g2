@@ -222,10 +222,11 @@ the folder's `README.md` explains how.
    frame-timing items.
 8. Mechanical sweeps: English-only strings, hard-coded paths, one env-knob helper per codebase.
 
-## 10. Fix status (updated 2026-10-12, same night)
+## 10. Fix status (updated 2026-10-13)
 
-"Verified" below means what was actually checked on the everyday box. **Nothing in C, C++ or
-Rust has been run on the rig yet.** Rebuild on the lab box and check there before relying on it.
+"Verified" below means what was actually checked on the everyday box, except where a row says
+"rig". On 2026-10-13 the Monado, player, xrizer and NVIDIA changes were built on the lab box
+(details after the table); only the Monado camera teardown has run on hardware so far.
 
 | # | Item | Commit | Verified |
 |---|---|---|---|
@@ -248,19 +249,42 @@ Rust has been run on the rig yet.** Rebuild on the lab box and check there befor
 | §9.7 | NVIDIA 0002: lease hook puts the master and takes locks in the revoke path's order | 4690a0c | `make modules` on 595.71.05, kernel 6.12 |
 | §9.7 | xrizer 0014-0017: 0013 had broken upstream's `load_actions_race` test (fixed); repeated manifest no longer restarts the session; timing ring; refresh-rate fallback; hold-time parsing | 505c075 | `cargo test --lib`: 88 passed |
 
+**On the rig, 2026-10-13.** The lab box's checkouts were behind: `reverb-g2` by 12 commits
+(fast-forwarded, clean tree) and 18 of the `~/vr` script copies (each one an older repo version
+or, for `parse-metrics.py`, a superseded draft; backed up to `~/vr/backups/deploy-20261013/`,
+then refreshed; `deploy-check.py` clean). Each fix went onto a new branch, so the old state is one
+checkout away:
+
+- **Monado:** branch `review-fixes-20261013` on the rig's `lab-full` (ff6db76f6, 2026-10-04,
+  newer than the 09-14 snapshot the local branch used). The 6 commits applied cleanly, it builds,
+  and this is now the binary in `~/vr/monado/build`; the previous one is in
+  `~/vr/backups/monado-lab-full-ff6db76f6-20261013/`. `teardown-stress.sh 8 20` in 6dof, headset
+  on the desk, controllers off (UB500 powered down for the run, `VR_BT_CTRL_CHECK=0`): **8/8
+  cycles pass**. Each used the real `wmr` builder with 5/5 USB devices, logged exactly one camera
+  start and one stop, and went down in about 4 s. There were no SIGKILL escalations, no cores, no
+  `ERROR` lines and no failed resubmits. The 4 client cycles had a live `hello_xr`.
+- **Player:** branch `review-fixes-20261013` on `lab` (fdc6c80). 0023-0025 apply and
+  `hello_xr` builds; the old binary is in `~/vr/backups/hello_xr-lab-fdc6c80-20261013/`.
+- **xrizer:** worktree `~/vr/xrizer-review` (branch `review-fixes-20261013`), kept apart from
+  `~/vr/xrizer`, whose `compositor.rs` holds an uncommitted `wait_image` fix (DRAP work).
+  0014-0017 apply, `cargo test --lib` passes 88, and the release builds. The vrpath still points
+  at `~/vr/xrizer`.
+- **NVIDIA:** the DKMS source is pristine and its installed 0002 is the 2026-08-04 version. The
+  new series applies to a copy, and `make modules` builds against the rig's 6.12.111 kernel.
+  Installing it needs root: `~/vr/backups/nv-0002-20261013/install-0002.sh` takes an fs-backup,
+  replaces 0002, rebuilds, installs and refreshes the initramfs, and then the box needs a reboot.
+
 Still open:
 
 - **Owner decisions (§6), all seven.** The sudoers allowlist waits on the root check output. A
   read-only script was handed over on 2026-10-12; the lab box was unreachable over SSH then.
-- **Nothing has been run on the rig.** Owed: a camera-on teardown loop with
-  `teardown-stress.sh`, the neck-arm wearer A/B (the Aircar 100 mm and Cyberpilot 150 mm
+- **Still owed on the rig:** the neck-arm wearer A/B (the Aircar 100 mm and Cyberpilot 150 mm
   values were tuned with the inverted sign), a recenter, seek and frame step in the player, a
   two-file playlist with audio, a DRM lease on the rebuilt NVIDIA module, and one game through
   the patched xrizer.
-- **The same fixes on the tree the rig runs.** Monado 0114-0116 and the camera drain are also on
-  the local `monado` branch `lab-full-review-fixes-20261012`, based on the 2026-09-14
-  `lab/lab-full` snapshot. It is not pushed: that branch carries about 115 lab commits that were
-  never published. The fork's `lab-full` (22e081141) is older than that snapshot.
+- **Publishing the Monado branch.** The same fixes are on the rig (above) and on the everyday
+  box's local branch `lab-full-review-fixes-20261012`. Neither is pushed: `lab-full` carries lab
+  commits that were never published. The fork's `lab-full` (22e081141) is older than both.
 - **Not fixed:** `solve_yaw_locked` has no release path (review §3.7). NVIDIA 0002's
   `lesseeFlipPermissive` stays set after a lessee exits without REVOKE_LEASE. NVIDIA 0003 is
   still keyed on the wrong manufacturer id (owner decision). The Monado series is still

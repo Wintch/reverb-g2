@@ -8,9 +8,10 @@
 > (`vr-cockpit.py`, `collect-nv.sh`, `ab-analyze.py`, `verify-bpc.sh`, ...), the camera-teardown
 > hang (Monado 0095/0096 replaced by the drain pair), the neck-arm sign (0115), the idle fusion
 > clock (0114), `bootstrap-lab.sh`, the hello_xr series (all 25 apply now), xrizer (0014-0017,
-> one fixes a test 0013 broke) and NVIDIA 0002's lease hook. **None of the C/C++/Rust changes
-> has run on the rig yet.** Before trusting them, rebuild and run a camera-on teardown
-> (`teardown-stress.sh` now fails on a SIGKILL escalation). The launcher's neck-arm values (Aircar
+> one fixes a test 0013 broke) and NVIDIA 0002's lease hook. **2026-10-13 on the rig:** all of
+> them are built on review branches. The new Monado is live in `~/vr/monado/build` and passed a
+> camera-on teardown loop (8/8). The NVIDIA 0002 install waits on root
+> (`~/vr/backups/nv-0002-20261013/install-0002.sh`). The launcher's neck-arm values (Aircar
 > 100 mm, Cyberpilot 150 mm) were tuned with the inverted sign, so re-run that wearer A/B. Owner
 > decisions still open: `docs/147` §6.
 
