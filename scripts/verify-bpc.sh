@@ -26,7 +26,7 @@ elif grep -q "0004-nvkms-do-not-clamp-to-6bpc" /usr/src/nvidia-*/dkms.conf 2>/de
     echo "  YES, via PATCH[] in dkms.conf (the source tree is kept clean on purpose -"
     echo "  DKMS applies it to a copy at build time, see docs/13-bug-6bpc.md)"
 else
-    echo "  !! NO -- the patch is not present through any path. Run apply-bpc-patch.sh or"
+    echo "  !! NO -- the patch is not present through any path. Run"
     echo "  bootstrap-lab.sh patch-nv first."
     exit 1
 fi

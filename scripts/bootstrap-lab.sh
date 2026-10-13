@@ -5,7 +5,7 @@
 #   ./bootstrap-lab.sh deps       apt packages only
 #   ./bootstrap-lab.sh nvidia     the 595 driver only (asks for a reboot at the end)
 #   ./bootstrap-lab.sh sources    clone and patch the upstream repos only
-#   ./bootstrap-lab.sh build      compile monado/basalt/hello_xr only
+#   ./bootstrap-lab.sh build      compile monado/basalt/hello_xr/xrizer only
 #   ./bootstrap-lab.sh patch-nv   apply the Project-VR patches to NVIDIA's DKMS tree
 #
 # The real order is: deps -> nvidia -> REBOOT -> sources -> build -> patch-nv -> REBOOT.
@@ -91,7 +91,7 @@ STEP="${1:-all}"
 # --- Step: dependencies --------------------------------------------------------------------
 do_deps() {
 	echo "### Base packages"
-	$SUDO apt update
+	$SUDO apt update || return 1
 	$SUDO apt install -y \
 		build-essential dkms linux-headers-amd64 git curl ca-certificates \
 		cmake ninja-build meson pkg-config glslang-tools \
@@ -103,7 +103,11 @@ do_deps() {
 		libavcodec-dev libavformat-dev libavutil-dev libswscale-dev ffmpeg \
 		libopencv-dev libboost-all-dev libtbb-dev libfmt-dev \
 		libsdl2-dev python3-pil \
-		x11-xserver-utils pciutils usbutils time
+		libbz2-dev liblz4-dev libssl-dev libepoxy-dev libyaml-cpp-dev libsqlite3-dev \
+		libclang-dev glslc \
+		x11-xserver-utils pciutils usbutils time || return 1
+	# libbz2 ... libsqlite3-dev: Basalt's build (docs/01). libclang-dev, glslc: xrizer's
+	# build (docs/06, T063). Rust itself comes from rustup, not apt: see do_build.
 	# libsdl2-dev: Monado's debug GUI / compositor mirror (XRT_FEATURE_DEBUG_GUI, see
 	# do_build below) silently needs SDL2, not GLFW as its symbol names might suggest -
 	# cmake just leaves the feature off with no error if it's missing. Cost a rebuild cycle
@@ -119,9 +123,12 @@ do_deps() {
 
 	echo "### udev rules for the headset"
 	$SUDO cp "$REPO_DIR/scripts/70-wmr-reverb.rules" "$REPO_DIR/scripts/71-usb-no-autosuspend.rules" \
-		"$REPO_DIR/scripts/72-reverb-audio-no-input-watch.rules" /etc/udev/rules.d/
+		"$REPO_DIR/scripts/72-reverb-audio-no-input-watch.rules" /etc/udev/rules.d/ || return 1
 	$SUDO udevadm control --reload-rules
-	$SUDO usermod -aG plugdev,adm,systemd-journal "$TARGET_USER"
+	# Rule 71 matches ACTION=="add": without a trigger, devices already plugged in keep
+	# their old permissions and autosuspend until the next replug or reboot.
+	$SUDO udevadm trigger --subsystem-match=usb --subsystem-match=hidraw --action=add
+	$SUDO usermod -aG plugdev,adm,systemd-journal "$TARGET_USER" || return 1
 	echo "    (the group change for $TARGET_USER needs a log out and back in)"
 
 	echo "### WirePlumber rule: silence the headset audio reconnect popup"
@@ -146,12 +153,16 @@ do_deps() {
 do_nvidia() {
 	echo "### NVIDIA driver $NVIDIA_VER (NVIDIA's own debian13 repo)"
 	echo "    Do NOT use Debian's nvidia-driver: the stacks are mutually exclusive."
-	curl -fsSL -o /tmp/cuda-keyring.deb \
-		https://developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64/cuda-keyring_1.1-1_all.deb
-	$SUDO dpkg -i /tmp/cuda-keyring.deb
-	$SUDO apt update
-	$SUDO apt install -y "nvidia-driver-pinning-$NVIDIA_VER"
-	$SUDO apt install -y nvidia-open
+	local tmp
+	tmp="$(mktemp -d)" || return 1
+	curl -fsSL -o "$tmp/cuda-keyring.deb" \
+		https://developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64/cuda-keyring_1.1-1_all.deb \
+		|| { echo "keyring download failed" >&2; rm -rf "$tmp"; return 1; }
+	$SUDO dpkg -i "$tmp/cuda-keyring.deb" || { rm -rf "$tmp"; return 1; }
+	rm -rf "$tmp"
+	$SUDO apt update || return 1
+	$SUDO apt install -y "nvidia-driver-pinning-$NVIDIA_VER" || return 1
+	$SUDO apt install -y nvidia-open || return 1
 	echo
 	echo ">>> REBOOT NOW, then: $0 sources"
 }
@@ -163,11 +174,46 @@ do_nvidia() {
 clone_at() {   # url dir sha
 	local url="$1" dir="$2" sha="$3"
 	if [ -d "$dir/.git" ]; then
-		echo "    $dir already exists, leaving it alone"
+		echo "    $dir already exists, leaving the clone alone"
 		return 0
 	fi
-	git clone "$url" "$dir"
-	git -C "$dir" checkout -B lab "$sha"
+	git clone "$url" "$dir" || return 1
+	git -C "$dir" checkout -B lab "$sha" || return 1
+}
+
+# apply_series <dir> <series>: apply patches/<series>/applies-on-base.txt in order, each
+# with `git am` and then `git am -3`, the way scripts/check-series-apply.sh generated the
+# list. `# SKIP` lines are patches that do not apply on the pinned base and are left out.
+# Safe to re-run: a tree already tagged bootstrap-<series> is left alone, and a stale
+# `git am` left by an earlier failed run is aborted first.
+apply_series() {
+	local dir="$1" series="$2"
+	local list="$REPO_DIR/patches/$series/applies-on-base.txt" line n=0 skipped
+	[ -f "$list" ] || { echo "    missing $list (scripts/check-series-apply.sh --write)" >&2; return 1; }
+	if git -C "$dir" rev-parse -q --verify "refs/tags/bootstrap-$series" >/dev/null; then
+		echo "    $dir already carries the $series patches (tag bootstrap-$series), skipping"
+		return 0
+	fi
+	[ -d "$dir/.git/rebase-apply" ] && git -C "$dir" am --abort
+	while IFS= read -r line; do
+		case "$line" in '#'*|'') continue ;; esac
+		if ! git -C "$dir" am -q "$REPO_DIR/patches/$series/$line" >/dev/null 2>&1; then
+			git -C "$dir" am --abort 2>/dev/null
+			git -C "$dir" am -q -3 "$REPO_DIR/patches/$series/$line" || {
+				git -C "$dir" am --abort 2>/dev/null
+				echo "    $line is listed as applying but did not: regenerate $list" >&2
+				return 1
+			}
+		fi
+		n=$((n + 1))
+	done < "$list"
+	skipped=$(grep -c '^# SKIP ' "$list")
+	git -C "$dir" tag "bootstrap-$series"
+	echo "    applied $n $series patches"
+	if [ "$skipped" -gt 0 ]; then
+		echo "    !! $skipped $series patches do NOT apply on this base and were left out (# SKIP in"
+		echo "       $list). This tree is not the one the lab rig runs; see docs/147 §5.4."
+	fi
 }
 
 do_sources() {
@@ -176,26 +222,24 @@ do_sources() {
 
 	echo "### Monado"
 	clone_at https://gitlab.freedesktop.org/monado/monado.git monado \
-		735e29e4e7552b254528dbb20e0e96ec8f32368c
-	git -C monado am "$REPO_DIR/patches/monado/"*.patch || {
-		echo "    The Monado patches did not apply cleanly. 'git -C monado am --abort' and look." >&2
-		return 1
-	}
-	echo "    NOTE: the Project-VR 90 Hz patch (nominal_frame_interval 1e9/90) is still missing."
-	echo "          Without it the nominal interval stays at 60 Hz. See docs/04-lab-90hz.md step 5."
+		735e29e4e7552b254528dbb20e0e96ec8f32368c || return 1
+	apply_series monado monado || return 1
 
-	echo "### Basalt (SLAM, no patches of ours)"
+	echo "### Basalt (SLAM)"
 	clone_at https://gitlab.freedesktop.org/mateosss/basalt.git basalt \
-		df6e970c8da7636eb401a09e3317fbeaaf829b9a
-	git -C basalt submodule update --init --recursive
+		df6e970c8da7636eb401a09e3317fbeaaf829b9a || return 1
+	git -C basalt submodule update --init --recursive || return 1
+	apply_series basalt basalt || return 1
 
 	echo "### OpenXR-SDK-Source (the 360/VR180 player)"
 	clone_at https://github.com/KhronosGroup/OpenXR-SDK-Source.git OpenXR-SDK-Source \
-		c610211f38f4e1e4ac811ced6135e144eedc7cf2
-	git -C OpenXR-SDK-Source am "$REPO_DIR/patches/hello_xr-player/"*.patch || {
-		echo "    The player patches did not apply cleanly." >&2
-		return 1
-	}
+		c610211f38f4e1e4ac811ced6135e144eedc7cf2 || return 1
+	apply_series OpenXR-SDK-Source hello_xr-player || return 1
+
+	echo "### xrizer (OpenVR on OpenXR, for SteamVR titles)"
+	clone_at https://github.com/Supreeeme/xrizer.git xrizer \
+		6c3e45f4c18b014a7aba87282ee0677306315052 || return 1
+	apply_series xrizer xrizer || return 1
 }
 
 # --- Step: build ---------------------------------------------------------------------------
@@ -229,6 +273,19 @@ do_build() {
 		-DBUILD_TESTS=ON -DBUILD_API_LAYERS=OFF -DBUILD_CONFORMANCE_TESTS=OFF || return 1
 	step "ninja hello_xr" ninja -C OpenXR-SDK-Source/build hello_xr || return 1
 
+	echo "### xrizer"
+	# shellcheck disable=SC1091
+	[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+	command -v cargo >/dev/null || {
+		echo "FAILED: no cargo. Install Rust with rustup (https://rustup.rs), then re-run '$0 build'." >&2
+		return 1
+	}
+	# xbuild (xrizer's own alias) lays out the runtime directory; extra arguments go to cargo.
+	# static-openxr: nothing on this system registers libopenxr_loader.so with ldconfig, so
+	# the dynamic loader lookup fails (docs/06, T063).
+	(cd xrizer && step "cargo xbuild xrizer" cargo xbuild --release --features static-openxr) || return 1
+	echo "    point openvrpaths.vrpath's runtime at $BASE/xrizer/target/release (scripts/sanity-check.sh checks it)"
+
 	echo "### Launcher scripts"
 	cp "$REPO_DIR/scripts/jack-in.sh" "$REPO_DIR/scripts/play360.sh" "$REPO_DIR/scripts/get360.sh" "$BASE/"
 	chmod +x "$BASE"/*.sh
@@ -244,8 +301,8 @@ do_patch_nv() {
 	[ -d "$SRC" ] || { echo "$SRC does not exist. Did you install the driver? ($0 nvidia)" >&2; exit 1; }
 
 	echo "### Project-VR patches on NVIDIA's DKMS tree"
-	$SUDO mkdir -p "$SRC/patches"
-	$SUDO cp "$REPO_DIR/patches/nvidia/"000*.patch "$SRC/patches/"
+	$SUDO mkdir -p "$SRC/patches" || exit 1
+	$SUDO cp "$REPO_DIR/patches/nvidia/"000*.patch "$SRC/patches/" || exit 1
 
 	echo "### Dry run before touching anything"
 	local fail=0

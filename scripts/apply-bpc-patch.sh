@@ -1,95 +1,19 @@
 #!/bin/bash
-# Applies patch 0004 (do not clamp to 6 bpc when the EDID does not declare depth) to the
-# NVIDIA driver's DKMS tree, and rebuilds the module.
+# apply-bpc-patch.sh - RETIRED 2026-10-12 (code review, docs/147 §4 #8).
 #
-#   sudo ./scripts/apply-bpc-patch.sh
-#   sudo ./scripts/apply-bpc-patch.sh --revert     (removes the patch and rebuilds)
+# It edited patch 0004 straight into NVIDIA's DKMS source tree and rebuilt the module.
+# `bootstrap-lab.sh patch-nv` already lists 0004 in dkms.conf's PATCH[] together with
+# 0001-0003, so on a box set up that way the direct edit applied 0004 twice and broke the
+# DKMS build. One path is enough:
 #
-# WHY: the G2's EDID leaves the color depth undeclared (byte 0x14 = 0x80).
-# nvt_edid.c parses it as bpc = 0, and nvDpyGetOutputColorFormatInfo() does `bpc < 8` ->
-# clamps the display to 6 bpc. Measured: the link runs at 18 bpp and the headset itself
-# reports 6. Windows uses 8 and runs fine at 90 Hz. Full detail in the patch header and
-# in chapter 13.
+#   ./scripts/bootstrap-lab.sh patch-nv     apply 0001-0004 through PATCH[] and rebuild
 #
-# After running this you MUST REBOOT (or at least restart the graphical session) for the
-# new module to be loaded.
+# To undo 0004 only: delete its PATCH[] line from /usr/src/nvidia-<ver>/dkms.conf, then
+# `dkms build nvidia/<ver> --force && dkms install nvidia/<ver> --force` and reboot.
+# The last working version of this script is in git history (`git log -- scripts/apply-bpc-patch.sh`).
+#
+# The file stays (and exits non-zero) because the lab sudoers allowlist and older notes
+# name this path; remove it from linuxlab-kit/sudoers/reverb-g2-agent.sudoers.
 
-set -eu
-
-[ "$(id -u)" -eq 0 ] || { echo "needs root: sudo $0" >&2; exit 1; }
-
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PATCH_NAME="0004-nvkms-do-not-clamp-to-6bpc-when-EDID-leaves-color-de.patch"
-PATCH_SRC="$REPO/patches/nvidia/$PATCH_NAME"
-[ -f "$PATCH_SRC" ] || { echo "can't find $PATCH_SRC" >&2; exit 1; }
-
-DKMS_DIR=$(ls -d /usr/src/nvidia-* 2>/dev/null | head -1)
-[ -n "$DKMS_DIR" ] || { echo "can't find the nvidia DKMS tree in /usr/src" >&2; exit 1; }
-VER=$(basename "$DKMS_DIR" | sed 's/^nvidia-//')
-echo "DKMS tree: $DKMS_DIR   (version $VER)"
-
-TARGET="$DKMS_DIR/src/nvidia-modeset/src/nvkms-dpy.c"
-[ -f "$TARGET" ] || { echo "can't find nvkms-dpy.c in the tree" >&2; exit 1; }
-
-if [ "${1:-}" = "--revert" ]; then
-    echo "reverting..."
-    python3 - "$TARGET" <<'PY'
-import re, sys
-p = sys.argv[1]
-s = open(p).read()
-s = s.replace(
-"""                } else if (pDpyEvo->parsedEdid.info.input.u.digital.bpc != 0 &&
-                           pDpyEvo->parsedEdid.info.input.u.digital.bpc < 8) {""",
-"""                } else if (pDpyEvo->parsedEdid.info.input.u.digital.bpc < 8) {""")
-open(p, "w").write(s)
-print("  source restored")
-PY
-    sed -i "/$PATCH_NAME/d" "$DKMS_DIR/dkms.conf" 2>/dev/null || true
-else
-    # The tree is edited directly (not via dkms.conf's PATCH[]) because the other three
-    # patches are already applied there and a new PATCH[] would apply against the clean tree.
-    if grep -q "$PATCH_NAME" "$DKMS_DIR/dkms.conf" 2>/dev/null; then
-        # bootstrap-lab.sh patch-nv lists 0004 in PATCH[]: DKMS applies it to a copy at
-        # build time. Editing the tree as well would make that PATCH[] fail to apply.
-        echo "  dkms.conf already applies the patch through PATCH[], nothing to do"
-        exit 0
-    elif grep -q "digital.bpc != 0" "$TARGET"; then
-        echo "  the patch is ALREADY applied, doing nothing"
-    else
-        python3 - "$TARGET" <<'PY'
-import sys
-p = sys.argv[1]
-s = open(p).read()
-old = "                } else if (pDpyEvo->parsedEdid.info.input.u.digital.bpc < 8) {"
-new = ("                } else if (pDpyEvo->parsedEdid.info.input.u.digital.bpc != 0 &&\n"
-       "                           pDpyEvo->parsedEdid.info.input.u.digital.bpc < 8) {")
-if old not in s:
-    sys.exit("  !! could not find the line to patch -- did the tree change?")
-if s.count(old) != 1:
-    sys.exit(f"  !! the line appears {s.count(old)} times, expected 1")
-open(p, "w").write(s.replace(old, new))
-print("  patch applied to nvkms-dpy.c")
-PY
-    fi
-fi
-
-echo
-echo "=== line verification ==="
-grep -n -A1 "digital.bpc != 0\|digital.bpc < 8" "$TARGET" | head -6
-
-echo
-echo "=== rebuilding the module (takes a few minutes) ==="
-# Build first and install over the old module: a failed build then leaves the working
-# module in place, instead of the box with no nvidia module at all after `dkms remove`.
-KVER="$(uname -r)"
-dkms build "nvidia/$VER" -k "$KVER" --force
-dkms install "nvidia/$VER" -k "$KVER" --force
-
-echo
-echo "DONE. YOU MUST REBOOT to load the new module."
-echo "After the reboot, verify with:"
-echo "  cat /proc/driver/nvidia/version"
-echo "  and run the 90Hz test: ./scripts/hmd-test.sh 1"
-echo
-echo "What to look for: byte 18 of DEVICE_STATUS should go from 06 to 08."
-echo "  ./scripts/panel-status.py 40   (in parallel with hmd-vk)"
+echo "apply-bpc-patch.sh is retired: use ./scripts/bootstrap-lab.sh patch-nv (see the header of $0)." >&2
+exit 1

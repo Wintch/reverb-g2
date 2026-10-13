@@ -2,8 +2,11 @@
 # teardown-stress.sh -- bring the compositor up and down N times, headset on the desk, and count
 # monado-service cores. Exercises the SLAM-tracker teardown race (patch 0104: pop_pose SIGSEGV
 # when the camera USB thread pushes into a stopped tracker). Half the cycles run a light client
-# (play360.sh -t) so the pose-query path is exercised too. Detached: run with setsid nohup, poll
-# the .done marker. Never run while someone wears the headset.
+# (play360.sh showing a generated still for the up time) so the pose-query path is exercised
+# too. A cycle FAILS when monado-service needed SIGKILL to go down (a teardown hang, e.g. the
+# old 0095 join), when the client never started, or when a core was dumped; the .done marker
+# says ok only if no cycle failed. Detached: run with setsid nohup, poll the .done marker.
+# Never run while someone wears the headset.
 #
 #   scripts/teardown-stress.sh [cycles=8] [up_seconds=20]      (needs gui_env.py next to it)
 set -u
@@ -30,6 +33,12 @@ while IFS='=' read -r k v; do [ -n "$k" ] && export "$k=$v"; done <<< "$ENVLINES
 STAMP="$(date +%Y%m%d-%H%M%S)"; LOG="$OUT/stress-$STAMP.log"; DONE="$OUT/stress-$STAMP.done"
 exec > "$LOG" 2>&1
 START_TS="$(date '+%Y-%m-%d %H:%M:%S')"
+FAILS=0
+# The client needs a real file: `play360.sh -t` alone never started a player (review S11-1).
+STILL="$OUT/stress-still.png"
+if [ ! -s "$STILL" ] && command -v ffmpeg >/dev/null; then
+    ffmpeg -loglevel error -f lavfi -i color=c=gray:s=2048x1024 -frames:v 1 "$STILL"
+fi
 echo "$START_TS teardown stress: $N cycles, $UP_S s up, binary $(stat -c %y "$VR/monado/build/src/xrt/targets/service/monado-service" | cut -d. -f1)"
 for i in $(seq 1 "$N"); do
     if pgrep -x monado-service >/dev/null; then echo "cycle $i: monado already up -- forcing down"; "$VR/jack-in-wayland.sh" down >/dev/null 2>&1; sleep 3; fi
@@ -44,18 +53,37 @@ for i in $(seq 1 "$N"); do
     fi
     echo "$(date +%T) cycle $i: up ok (monado $(pgrep -x monado-service | head -1), $(grep -o "Headset USB devices: [0-9]/[0-9]" "$OUT/stress-$STAMP-cycle$i-up.out" | head -1))"
     CLIENT=""
-    if [ $((i % 2)) -eq 0 ] && [ -x "$VR/play360.sh" ]; then
-        "$VR/play360.sh" -t > /dev/null 2>&1 &
+    if [ $((i % 2)) -eq 0 ] && [ -x "$VR/play360.sh" ] && [ -s "$STILL" ]; then
+        # Own session, so the whole group (wrapper, timeout, hello_xr) can be stopped at once.
+        setsid "$VR/play360.sh" -q -s -t "$UP_S" "$STILL" > "$OUT/stress-$STAMP-cycle$i-client.out" 2>&1 &
         CLIENT=$!
-        echo "$(date +%T) cycle $i: client play360 -t pid $CLIENT"
+        sleep 8
+        if pgrep -x hello_xr >/dev/null; then
+            echo "$(date +%T) cycle $i: client up (play360 pid $CLIENT, hello_xr $(pgrep -x hello_xr | head -1))"
+        else
+            echo "$(date +%T) cycle $i: FAIL client never started, see $OUT/stress-$STAMP-cycle$i-client.out"
+            FAILS=$((FAILS + 1))
+        fi
+    elif [ $((i % 2)) -eq 0 ]; then
+        echo "$(date +%T) cycle $i: FAIL no client (play360.sh or the still image missing)"
+        FAILS=$((FAILS + 1))
     fi
     sleep "$UP_S"
-    if [ -n "$CLIENT" ]; then kill "$CLIENT" 2>/dev/null; sleep 2; fi
+    if [ -n "$CLIENT" ]; then kill -TERM -- "-$CLIENT" 2>/dev/null; sleep 2; fi
     echo "$(date +%T) cycle $i: down"
     "$VR/jack-in-wayland.sh" down > "$OUT/stress-$STAMP-cycle$i-down.out" 2>&1
+    if grep -q "escalating to SIGKILL" "$OUT/stress-$STAMP-cycle$i-down.out"; then
+        echo "$(date +%T) cycle $i: FAIL teardown hung, 'down' escalated to SIGKILL"
+        FAILS=$((FAILS + 1))
+    fi
     sleep 3
-    for p in $(pgrep -x monado-service); do kill "$p"; done; sleep 2
-    for p in $(pgrep -x monado-service); do kill -9 "$p"; done
+    LEFT=$(pgrep -x monado-service)
+    if [ -n "$LEFT" ]; then
+        echo "$(date +%T) cycle $i: FAIL monado-service still up after 'down' ($LEFT)"
+        FAILS=$((FAILS + 1))
+        for p in $LEFT; do kill "$p"; done; sleep 2
+        for p in $(pgrep -x monado-service); do kill -9 "$p"; done
+    fi
     rm -f /run/user/1000/monado_comp_ipc
     D=$(grep -c "0104:" "$VR/jack-in-wayland.log" 2>/dev/null); D=${D:-0}
     W=$(grep -o "0104: [0-9]* sample" "$VR/jack-in-wayland.log" 2>/dev/null | head -1)
@@ -64,7 +92,9 @@ for i in $(seq 1 "$N"); do
     sleep 5
 done
 echo "=== cores since start:"
-coredumpctl list --since "$START_TS" --no-pager 2>/dev/null | grep -c monado-service | sed 's/^/monado-service cores: /'
+CORES=$(coredumpctl list --since "$START_TS" --no-pager 2>/dev/null | grep -c monado-service)
+echo "monado-service cores: ${CORES:-0}"
 coredumpctl list --since "$START_TS" --no-pager 2>/dev/null | tail -5
-echo "$(date +%T) done"
-echo ok > "$DONE"
+FAILS=$((FAILS + ${CORES:-0}))
+echo "$(date +%T) done: $FAILS failure(s) in $N cycles"
+if [ "$FAILS" -eq 0 ]; then echo ok > "$DONE"; else echo "FAIL $FAILS" > "$DONE"; exit 1; fi
