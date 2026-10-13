@@ -271,8 +271,11 @@ checkout away:
   at `~/vr/xrizer`.
 - **NVIDIA:** the DKMS source is pristine and its installed 0002 is the 2026-08-04 version. The
   new series applies to a copy, and `make modules` builds against the rig's 6.12.111 kernel.
-  Installing it needs root: `~/vr/backups/nv-0002-20261013/install-0002.sh` takes an fs-backup,
-  replaces 0002, rebuilds, installs and refreshes the initramfs, and then the box needs a reboot.
+  The owner ran `~/vr/backups/nv-0002-20261013/install-0002.sh` as root (fs-backup
+  `20261013-135400` first) and rebooted. The loaded module was built 2026-10-13 13:54.
+  `teardown-stress.sh 6 20` on it: **6/6 pass**. Every cycle leased the HMD and found
+  `4320x2160@90.00`, with no errors and no kernel messages from nvidia/drm during the run. That
+  covers the lease at the API level only: nobody has looked at the panel on this module yet.
 
 Still open:
 
@@ -280,8 +283,8 @@ Still open:
   read-only script was handed over on 2026-10-12; the lab box was unreachable over SSH then.
 - **Still owed on the rig:** the neck-arm wearer A/B (the Aircar 100 mm and Cyberpilot 150 mm
   values were tuned with the inverted sign), a recenter, seek and frame step in the player, a
-  two-file playlist with audio, a DRM lease on the rebuilt NVIDIA module, and one game through
-  the patched xrizer.
+  two-file playlist with audio, a look at the panel on the rebuilt NVIDIA module, and one game
+  through the patched xrizer.
 - **Publishing the Monado branch.** The same fixes are on the rig (above) and on the everyday
   box's local branch `lab-full-review-fixes-20261012`. Neither is pushed: `lab-full` carries lab
   commits that were never published. The fork's `lab-full` (22e081141) is older than both.
