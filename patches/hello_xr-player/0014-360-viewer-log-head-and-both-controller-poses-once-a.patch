@@ -1,4 +1,4 @@
-From f2a8e581fd730de026176987d68c5298f7f0dbd4 Mon Sep 17 00:00:00 2001
+From f9d265bf10a90452f1b920c61d70dac0bac15bdf Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Tue, 11 Aug 2026 04:11:52 -0300
 Subject: [PATCH] 360 viewer: log head and both controller poses once a second
@@ -115,3 +115,6 @@ index 2980a86..6448d34 100644
      int64_t m_colorSwapchainFormat{-1};
      int64_t m_depthSwapchainFormat{-1};
  
+-- 
+2.47.3
+

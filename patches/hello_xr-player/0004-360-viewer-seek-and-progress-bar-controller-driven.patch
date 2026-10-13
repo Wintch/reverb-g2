@@ -1,4 +1,4 @@
-From f3d38b4dd3507aa45359f228b7dcc1b5108adcce Mon Sep 17 00:00:00 2001
+From e3b617de63b0d05b814670b1c7bc68a1e5f114cd Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Thu, 6 Aug 2026 13:39:39 -0300
 Subject: [PATCH] 360 viewer: seek and progress bar, controller-driven
@@ -149,7 +149,7 @@ index 554a166..1886fa0 100644
  
          // There were no subaction paths specified for the quit action, because we don't care which hand did it.
 diff --git a/src/tests/hello_xr/playercontrol.cpp b/src/tests/hello_xr/playercontrol.cpp
-index 5de17e1..74f1ae6 100644
+index 4df887e..dcf4f78 100644
 --- a/src/tests/hello_xr/playercontrol.cpp
 +++ b/src/tests/hello_xr/playercontrol.cpp
 @@ -3,6 +3,7 @@
@@ -251,7 +251,7 @@ index 5de17e1..74f1ae6 100644
  }
  
  const char* HelpLine() {
--    return "  Teclas: [espacio] pausa   [ ] velocidad   1 normal   n siguiente   q salir";
+-    return "  Keys: [space] pause   [ ] speed   1 normal   n next   q quit";
 +    return "  Keys: [space] pause   [ ] speed   1 normal   h/l -10s/+10s   n next   q quit";
  }
  

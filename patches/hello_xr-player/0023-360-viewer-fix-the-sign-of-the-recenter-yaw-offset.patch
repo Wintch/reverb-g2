@@ -1,0 +1,42 @@
+From b51566a64e1e47231868c8afe74fe23784440af5 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Mon, 12 Oct 2026 22:38:06 -0300
+Subject: [PATCH] 360 viewer: fix the sign of the recenter yaw offset
+
+The recenter captures the forward azimuth psi = atan2(x, -z) and then
+rotates the view pose by -psi about +Y. XrQuaternionf_Multiply(&r, &a, &b)
+in xr_linear.h computes b * a, so the offset is applied in world space,
+where a +Y rotation by theta changes that azimuth by -theta: -psi took the
+captured direction to 2 * psi instead of 0. Replaying the code's own
+quaternion formulas: head yaw 30, 90, -60 and 150 deg ended at -60, -180,
+120 and 60 deg after a recenter, with or without pitch; with +psi all end
+at 0. Grip, Enter and the gamepad's Start all go through this path.
+
+Found by the 2026-10-12 code review (reverb-g2 docs/147, H03-2). Not yet
+tried on the headset.
+
+Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
+---
+ src/tests/hello_xr/graphicsplugin_vulkan.cpp | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/src/tests/hello_xr/graphicsplugin_vulkan.cpp b/src/tests/hello_xr/graphicsplugin_vulkan.cpp
+index 94dda60..fe92a3f 100644
+--- a/src/tests/hello_xr/graphicsplugin_vulkan.cpp
++++ b/src/tests/hello_xr/graphicsplugin_vulkan.cpp
+@@ -1893,7 +1893,11 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
+         if (recenterYaw != 0.0) {
+             XrVector3f yAxis{0.0f, 1.0f, 0.0f};
+             XrQuaternionf yawOffset;
+-            XrQuaternionf_CreateFromAxisAngle(&yawOffset, &yAxis, (float)-recenterYaw);
++            // +recenterYaw: XrQuaternionf_Multiply(&r, &a, &b) computes b * a, so the offset is
++            // applied in world space, and a +Y rotation by theta moves the azimuth
++            // atan2(x, -z) by -theta. Rotating by +psi takes the captured azimuth psi to 0;
++            // the former -psi took it to 2 * psi (a 30 deg head yaw ended at -60 deg).
++            XrQuaternionf_CreateFromAxisAngle(&yawOffset, &yAxis, (float)recenterYaw);
+             XrQuaternionf adjusted;
+             XrQuaternionf_Multiply(&adjusted, &pose.orientation, &yawOffset);
+             pose.orientation = adjusted;
+-- 
+2.47.3
+

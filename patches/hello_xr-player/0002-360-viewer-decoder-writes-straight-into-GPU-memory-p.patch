@@ -1,7 +1,7 @@
-From cf4cd294b9b5b30c1cf85afa8db6b1dd3c83cdfb Mon Sep 17 00:00:00 2001
+From 93f12f5eecc3511d064902ce38d4a5dac4db3720 Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Tue, 4 Aug 2026 15:33:53 -0300
-Subject: [PATCH 2/3] 360 viewer: decoder writes straight into GPU memory, plus
+Subject: [PATCH] 360 viewer: decoder writes straight into GPU memory, plus
  VR180/flat/stereo support
 
 Upload path
@@ -330,7 +330,7 @@ index 9b60472..224b158 100644
      // NV12 plane textures the decoder output is uploaded into each frame.
 diff --git a/src/tests/hello_xr/projection360.cpp b/src/tests/hello_xr/projection360.cpp
 new file mode 100644
-index 0000000..d74a89f
+index 0000000..b744c6c
 --- /dev/null
 +++ b/src/tests/hello_xr/projection360.cpp
 @@ -0,0 +1,290 @@

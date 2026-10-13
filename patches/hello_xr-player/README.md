@@ -4,8 +4,27 @@
 test client, extended into a real 360/VR180 player and, more recently, a live display-
 diagnostics and controller-visualization tool. Base: **OpenXR SDK 1.1.62**
 (`c610211f38f4e1e4ac811ced6135e144eedc7cf2`, the SHA `bootstrap-lab.sh sources` pins).
-Apply with `git am` — but read the numbering-collision box below first; applying this
-directory's `*.patch` glob in plain lexical order is not the right build order.
+Apply with `git am`, in lexical order.
+
+> **Re-exported 2026-10-12 (code review, docs/147 §4 #10): all 25 patches now `git am` cleanly
+> on the pinned base, in order** (`applies-on-base.txt`, by `scripts/check-series-apply.sh`).
+> Before, only 9 of 22 applied. 0001-0005 had been exported with English help text, and 0006
+> onward with Spanish, so four pre-images (`HelpLine()` in 0004, 0005 and 0006, and 0011's
+> next-track log line) no longer matched the patch before them. The series was replayed with
+> those four pre-images restored, and one fixed English map was applied to every commit's
+> tree before re-exporting. The two restore steps came out empty after the translation,
+> which shows the map reproduces 0004/0005's English exactly. The final tree differs
+> from the lab's Spanish one only in those strings and one quoted comment, and it builds
+> (`ninja hello_xr`, FFmpeg and Pulse enabled, 2026-10-12). Spanish user quotes in commit
+> messages are kept, with an English translation next to them. The two boxes below describe
+> the state before this; the blob gap they mention did not stop the series from applying.
+>
+> 0023-0025 are fixes from the same review, built but **not yet tried on the headset**:
+> 0023 fixes the recenter sign (it doubled the head yaw instead of cancelling it), 0024 makes
+> seeks and frame steps work while paused, land on the requested frame instead of the GOP
+> keyframe, and report the position in file time, and 0025 hands the clock back to the wall
+> clock when the audio ends (a non-looping file with audio froze at the end, and a playlist
+> never advanced).
 
 ## This directory holds TWO separate patch tracks that share numbers 0004-0006
 

@@ -1,8 +1,7 @@
-From 3205919adbc35ebc6aacfd758c384820ee30f107 Mon Sep 17 00:00:00 2001
+From a690145a2f68aa8929646f0d0c7ef1f7cb6c971b Mon Sep 17 00:00:00 2001
 From: iam <iam@iashur.internal>
 Date: Sun, 9 Aug 2026 02:49:03 -0300
-Subject: [PATCH 2/2] 360 viewer: next track on the controller (Touch Y, left
- hand)
+Subject: [PATCH] 360 viewer: next track on the controller (Touch Y, left hand)
 
 Directory playlists could only advance to the next file via the keyboard
 ('n') - useless with the headset on, and the user asked directly: "como
@@ -18,8 +17,8 @@ paths share one implementation instead of drifting.
 Verified: action registers against real hardware ("NextTrack action is
 bound to 'Left Oculus Touch Controller Y'"), and CONFIRMED live with the
 headset on playing a real 3-file directory playlist - pressed Y, log shows
-"player: siguiente" immediately followed by the next file's projection
-line, user confirmed watching it: "si, cambio bien".
+"player: next" immediately followed by the next file's projection
+line, user confirmed watching it: "si, cambio bien" ("yes, it switched fine").
 ---
  src/tests/hello_xr/openxr_program.cpp | 29 ++++++++++++++++++++++++++-
  src/tests/hello_xr/playercontrol.cpp  |  9 +++++++--
@@ -109,7 +108,7 @@ index cd054e3..bf12ebc 100644
  
      void RenderFrame() override {
 diff --git a/src/tests/hello_xr/playercontrol.cpp b/src/tests/hello_xr/playercontrol.cpp
-index be1066b..f5f67d6 100644
+index 7662632..1b28ddb 100644
 --- a/src/tests/hello_xr/playercontrol.cpp
 +++ b/src/tests/hello_xr/playercontrol.cpp
 @@ -109,6 +109,12 @@ void NormalSpeed() {
@@ -119,7 +118,7 @@ index be1066b..f5f67d6 100644
 +void RequestNextTrack() {
 +    g_nextTrack = true;
 +    TouchInteraction();
-+    Log::Write(Log::Level::Info, "player: siguiente");
++    Log::Write(Log::Level::Info, "player: next");
 +}
 +
  int TakeSeekRequest() { return g_seekJumpSeconds.exchange(0); }
@@ -130,7 +129,7 @@ index be1066b..f5f67d6 100644
          case 'n':
          case 'N':
 -            g_nextTrack = true;
--            Log::Write(Log::Level::Info, "player: siguiente");
+-            Log::Write(Log::Level::Info, "player: next");
 +            RequestNextTrack();
              return true;
          case 'q':

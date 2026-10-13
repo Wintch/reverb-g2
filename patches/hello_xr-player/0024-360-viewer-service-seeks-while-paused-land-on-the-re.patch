@@ -1,0 +1,157 @@
+From 9a831c58d4f774cb2b64639101ac1679626f1a77 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Mon, 12 Oct 2026 22:38:56 -0300
+Subject: [PATCH] 360 viewer: service seeks while paused, land on the requested
+ frame
+
+Three defects in the seek path (0004, 0006):
+
+- A seek or frame step issued while paused did nothing until playback
+  resumed: with the clock stopped no buffer frees, so the decoder sat in
+  TakeFreeSlot(), whose wait only woke on a free slot, and Seek() never
+  notified. 0006's frame step pauses first, so it was blocked by
+  construction. Seek() now notifies, and a pending seek wakes the wait;
+  the frame in hand is dropped and DecodeLoop services the seek.
+- The seek landed on the keyframe at or before the target
+  (AVSEEK_FLAG_BACKWARD) and played from there, so a one-frame step on
+  inter-coded content jumped back to the GOP start. Frames before the
+  target are now decoded and dropped.
+- PlaybackPosition() returned the loop-accumulated clock: from the second
+  pass of a looping file the progress bar sat at 100% and a seek clamped to
+  the end of the file. Each queued frame now carries its loop offset, and
+  the position is file time. Presses that arrive before the previous seek
+  is serviced add up instead of overwriting each other.
+
+Found by the 2026-10-12 code review (reverb-g2 docs/147, H03-3, H03-4,
+H03-5, H03-14). Not yet tried on the headset; decode-and-drop costs up to
+one GOP of decode per seek.
+
+Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
+---
+ src/tests/hello_xr/video360.cpp | 42 +++++++++++++++++++++++++++++----
+ 1 file changed, 37 insertions(+), 5 deletions(-)
+
+diff --git a/src/tests/hello_xr/video360.cpp b/src/tests/hello_xr/video360.cpp
+index d9234ed..3d76688 100644
+--- a/src/tests/hello_xr/video360.cpp
++++ b/src/tests/hello_xr/video360.cpp
+@@ -130,6 +130,7 @@ struct Video360::Impl {
+     struct QueuedFrame {
+         int slot{-1};
+         double pts{0.0};  // seconds since playback start, already loop-adjusted
++        double loopOffset{0.0};  // the part of pts that is earlier loops, see PlaybackPosition()
+     };
+ 
+     AVFormatContext* fmt{nullptr};
+@@ -146,6 +147,10 @@ struct Video360::Impl {
+     // mutex, same as the other cross-thread state below.
+     bool seekPending{false};
+     int64_t seekTargetPts{0};  // stream timeBase units
++    // Decoder thread only: after a seek, frames before this file time (seconds) are decoded
++    // and dropped, so the seek lands on the requested frame and not on the keyframe before
++    // it. -1 when no seek is being completed.
++    double discardBeforePts{-1.0};
+     std::string codecName{"unknown"};
+     PanoLayout layout;  // whatever the container declared; Unknown fields mean "it did not say"
+ 
+@@ -163,6 +168,7 @@ struct Video360::Impl {
+     std::deque<QueuedFrame> queue;
+     std::deque<int> freeSlots;
+     int currentSlot{-1};  // held by the renderer, off-limits to the decoder
++    double currentLoopOffset{0.0};  // loopOffset of the frame in currentSlot; guarded by mutex
+     std::atomic<bool> quit{false};
+     bool opened{false};
+     bool started{false};
+@@ -398,8 +404,11 @@ struct Video360::Impl {
+     int TakeFreeSlot() {
+         std::unique_lock<std::mutex> lock(mutex);
+         if (freeSlots.empty()) statStalls++;
+-        spaceAvailable.wait(lock, [this] { return quit || !freeSlots.empty(); });
+-        if (quit) return -1;
++        // A pending seek also wakes it: while paused no buffer ever frees, and without this
++        // a seek or frame step waited for playback to resume. -1 then makes DrainDecoder drop
++        // the frame in hand, and DecodeLoop services the seek.
++        spaceAvailable.wait(lock, [this] { return quit || seekPending || !freeSlots.empty(); });
++        if (quit || freeSlots.empty()) return -1;
+         const int slot = freeSlots.front();
+         freeSlots.pop_front();
+         return slot;
+@@ -447,6 +456,7 @@ struct Video360::Impl {
+                     const int64_t targetPts = seekTargetPts;
+                     seekPending = false;
+                     lock.unlock();
++                    discardBeforePts = targetPts * timeBase;
+ 
+                     avcodec_flush_buffers(dec);
+                     if (av_seek_frame(fmt, streamIndex, targetPts, AVSEEK_FLAG_BACKWARD) < 0) {
+@@ -587,6 +597,17 @@ struct Video360::Impl {
+             double pts = (ts == AV_NOPTS_VALUE) ? lastPts + frameDuration : ts * timeBase;
+             lastPts = pts;
+ 
++            // Completing a seek: AVSEEK_FLAG_BACKWARD landed on the keyframe at or before the
++            // target, so decode forward and drop frames until the target. Half a frame of
++            // slack absorbs pts rounding.
++            if (discardBeforePts >= 0.0) {
++                if (pts + 0.5 * frameDuration < discardBeforePts) {
++                    av_frame_unref(frame);
++                    continue;
++                }
++                discardBeforePts = -1.0;
++            }
++
+             const int slot = TakeFreeSlot();
+             if (slot < 0) {
+                 av_frame_unref(frame);
+@@ -630,7 +651,7 @@ struct Video360::Impl {
+ 
+             {
+                 std::lock_guard<std::mutex> lock(mutex);
+-                queue.push_back(QueuedFrame{slot, pts + loopOffset});
++                queue.push_back(QueuedFrame{slot, pts + loopOffset, loopOffset});
+                 finalPts = pts + loopOffset;
+             }
+ 
+@@ -1037,20 +1058,30 @@ size_t Video360::YBytes() const { return m_impl->YBytes(); }
+ size_t Video360::UVBytes() const { return m_impl->UVBytes(); }
+ double Video360::FrameRate() const { return m_impl->frameDuration > 0.0 ? 1.0 / m_impl->frameDuration : 0.0; }
+ double Video360::Duration() const { return m_impl->durationSeconds; }
++// Position within the current file. playbackTime keeps growing across loops (each pass adds
++// the file's length through loopOffset), so it is taken back to file time with the loop
++// offset of the frame on screen; otherwise the progress bar sat at 100% from the second pass
++// on, and a seek from there clamped to the end of the file.
+ double Video360::PlaybackPosition() const {
+     Impl& impl = *m_impl;
+     std::lock_guard<std::mutex> lock(impl.mutex);
+-    return impl.playbackTime;
++    const double pos = impl.playbackTime - impl.currentLoopOffset;
++    return pos > 0.0 ? pos : 0.0;
+ }
+ void Video360::Seek(double deltaSeconds) {
+     Impl& impl = *m_impl;
+     if (!impl.started || impl.decodeDone) return;
+     std::lock_guard<std::mutex> lock(impl.mutex);
+-    double target = impl.playbackTime + deltaSeconds;
++    // Presses that arrive before the decoder has serviced the previous seek add up, instead
++    // of each one recomputing from the same frozen position and overwriting the last.
++    const double from = impl.seekPending ? impl.seekTargetPts * impl.timeBase
++                                         : impl.playbackTime - impl.currentLoopOffset;
++    double target = from + deltaSeconds;
+     if (target < 0.0) target = 0.0;
+     if (impl.durationSeconds > 0.0 && target > impl.durationSeconds) target = impl.durationSeconds;
+     impl.seekTargetPts = (int64_t)(target / impl.timeBase);
+     impl.seekPending = true;
++    impl.spaceAvailable.notify_all();  // the decoder may be parked waiting for a free buffer
+ }
+ std::string Video360::CodecName() const { return m_impl->codecName; }
+ PanoLayout Video360::DetectedLayout() const { return m_impl->layout; }
+@@ -1098,6 +1129,7 @@ int Video360::AcquireCurrentSlot() {
+     while (!impl.queue.empty() && impl.queue.front().pts <= elapsed) {
+         if (impl.currentSlot >= 0) impl.freeSlots.push_back(impl.currentSlot);
+         impl.currentSlot = impl.queue.front().slot;
++        impl.currentLoopOffset = impl.queue.front().loopOffset;
+         impl.queue.pop_front();
+         advanced = true;
+     }
+-- 
+2.47.3
+

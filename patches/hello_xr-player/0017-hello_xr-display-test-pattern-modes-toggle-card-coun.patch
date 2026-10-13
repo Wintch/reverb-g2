@@ -1,4 +1,4 @@
-From d388b9264779fe35f39a2d1937ec10916f3d1e0c Mon Sep 17 00:00:00 2001
+From 02af6e94bced95facd06e615ae3ed78e096ae6c9 Mon Sep 17 00:00:00 2001
 From: iam <iam@iashur.internal>
 Date: Mon, 17 Aug 2026 17:57:21 -0300
 Subject: [PATCH] hello_xr: display test-pattern modes (toggle/card/counter)
@@ -221,7 +221,7 @@ index 2d1a6f1..6fcbb9a 100644
      VkDeviceMemory m_photoImageMemory{VK_NULL_HANDLE};
      VkImageView m_photoImageView{VK_NULL_HANDLE};
 diff --git a/src/tests/hello_xr/vulkan_shaders/frag.glsl b/src/tests/hello_xr/vulkan_shaders/frag.glsl
-index fbfe760..8e52138 100644
+index 967e444..39b4f4f 100644
 --- a/src/tests/hello_xr/vulkan_shaders/frag.glsl
 +++ b/src/tests/hello_xr/vulkan_shaders/frag.glsl
 @@ -19,7 +19,10 @@ layout (std140, push_constant) uniform buf

@@ -1,4 +1,4 @@
-From 7bdb7a768f23da619e9671e8f6547f3e68bd441d Mon Sep 17 00:00:00 2001
+From 44add730deb76e8926d9183a48048aaca5d09a7c Mon Sep 17 00:00:00 2001
 From: iam <iam@iashur.internal>
 Date: Fri, 7 Aug 2026 02:26:24 -0300
 Subject: [PATCH] 360 viewer: frame-by-frame step (arrow keys, < > fallback)
@@ -98,7 +98,7 @@ index 3749811..d02c04c 100644
                  if (PlayerControl::QuitRequested()) quitKeyPressed = true;
                  if (c == EOF) break;
 diff --git a/src/tests/hello_xr/playercontrol.cpp b/src/tests/hello_xr/playercontrol.cpp
-index 5009c7d..10f9595 100644
+index 95b226e..359f8f8 100644
 --- a/src/tests/hello_xr/playercontrol.cpp
 +++ b/src/tests/hello_xr/playercontrol.cpp
 @@ -25,6 +25,7 @@ std::atomic<bool> g_paused{false};
@@ -142,11 +142,11 @@ index 5009c7d..10f9595 100644
  }
  
  const char* HelpLine() {
--    return "  Teclas: [espacio] pausa   [ ] velocidad   1 normal   h/l -10s/+10s   enter recentra   "
-+    return "  Teclas: [espacio] pausa   [ ] velocidad   1 normal   h/l -10s/+10s   "
-+           "<-/-> (o < >) frame a frame   enter recentra   "
-            "n siguiente   q salir "
-            "(mando WMR: trigger pausa, stick seek, grip recentra, mantener Menu ~1.5s sale)";
+-    return "  Keys: [space] pause   [ ] speed   1 normal   h/l -10s/+10s   enter recenter   "
++    return "  Keys: [space] pause   [ ] speed   1 normal   h/l -10s/+10s   "
++           "<-/-> (or < >) frame step   enter recenter   "
+            "n next   q quit "
+            "(WMR controller: trigger pause, stick seek, grip recenter, hold Menu ~1.5s to quit)";
  }
 diff --git a/src/tests/hello_xr/playercontrol.h b/src/tests/hello_xr/playercontrol.h
 index 16e0427..139b569 100644

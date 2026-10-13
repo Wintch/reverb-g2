@@ -1,4 +1,4 @@
-From b1e97f6b21a9cc21949a0c825dd7863a50c619e4 Mon Sep 17 00:00:00 2001
+From 180013030de32104efa4051216515cbd676605aa Mon Sep 17 00:00:00 2001
 From: iam <iam@iashur.internal>
 Date: Mon, 17 Aug 2026 18:25:24 -0300
 Subject: [PATCH] hello_xr: solid color caps on the positive tip of each gizmo
@@ -35,7 +35,7 @@ index dc3040e..dbf0862 100644
  };
  
 diff --git a/src/tests/hello_xr/openxr_program.cpp b/src/tests/hello_xr/openxr_program.cpp
-index 583d2ef..3595758 100644
+index 8b14995..920c3ed 100644
 --- a/src/tests/hello_xr/openxr_program.cpp
 +++ b/src/tests/hello_xr/openxr_program.cpp
 @@ -761,17 +761,48 @@ struct OpenXrProgram : IOpenXrProgram {

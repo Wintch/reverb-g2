@@ -1,4 +1,4 @@
-From 1ea7f129171d4e7c46845816503a869aa2b61d1a Mon Sep 17 00:00:00 2001
+From cef9ed80182bd8e6a8f77f6e3b8208cc2c63f1ab Mon Sep 17 00:00:00 2001
 From: iam <iam@iashur.internal>
 Date: Wed, 26 Aug 2026 06:39:04 -0300
 Subject: [PATCH] 360 viewer: stereo audio playback via PipeWire's pa_simple,

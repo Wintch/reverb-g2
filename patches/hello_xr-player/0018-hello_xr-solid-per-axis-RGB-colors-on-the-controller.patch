@@ -1,4 +1,4 @@
-From 3cc2ff7af4bf30be587965753c9cfca96bb50c3d Mon Sep 17 00:00:00 2001
+From 87d8f6b23a34c608993373a2cf77b34f1ed41ed3 Mon Sep 17 00:00:00 2001
 From: iam <iam@iashur.internal>
 Date: Mon, 17 Aug 2026 18:04:51 -0300
 Subject: [PATCH] hello_xr: solid per-axis RGB colors on the controller pose
@@ -66,7 +66,7 @@ index 6fcbb9a..94dda60 100644
              }
          }
 diff --git a/src/tests/hello_xr/openxr_program.cpp b/src/tests/hello_xr/openxr_program.cpp
-index ba6b781..583d2ef 100644
+index 85accae..8b14995 100644
 --- a/src/tests/hello_xr/openxr_program.cpp
 +++ b/src/tests/hello_xr/openxr_program.cpp
 @@ -748,10 +748,19 @@ struct OpenXrProgram : IOpenXrProgram {

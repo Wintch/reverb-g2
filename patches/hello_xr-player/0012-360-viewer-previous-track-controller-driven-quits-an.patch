@@ -1,4 +1,4 @@
-From 84bf12a3d2f832ddae91e59e1e6f2548905d5ed6 Mon Sep 17 00:00:00 2001
+From 0fdce6eff65268b94dbae7183c3c69489fc97714 Mon Sep 17 00:00:00 2001
 From: iam <iam@iashur.internal>
 Date: Sun, 9 Aug 2026 04:26:29 -0300
 Subject: [PATCH] 360 viewer: previous track, controller-driven quits, and two
@@ -20,7 +20,7 @@ T105.
 
 - Background default flipped to black: HELLO_XR_THEME's default was
   "daylight" (medium grey), which for VR180 content paints the entire rear
-  hemisphere grey - user wanted black ("hagamos negro todo por ahora").
+  hemisphere grey - user wanted black ("hagamos negro todo por ahora", i.e. "let's make it all black for now").
   HELLO_XR_THEME=daylight opts back in. Confirmed live.
 
 - Zoom/brightness no longer flash the progress bar: SetZoom()/
@@ -374,7 +374,7 @@ index bf12ebc..2980a86 100644
  
      void RenderFrame() override {
 diff --git a/src/tests/hello_xr/playercontrol.cpp b/src/tests/hello_xr/playercontrol.cpp
-index f5f67d6..800aab4 100644
+index 1b28ddb..7fd0431 100644
 --- a/src/tests/hello_xr/playercontrol.cpp
 +++ b/src/tests/hello_xr/playercontrol.cpp
 @@ -23,6 +23,7 @@ constexpr int kNormalRateIndex = 3;
@@ -438,7 +438,7 @@ index f5f67d6..800aab4 100644
      g_nextTrack = true;
      TouchInteraction();
 +    MaybeQuitOnAnyKey();
-     Log::Write(Log::Level::Info, "player: siguiente");
+     Log::Write(Log::Level::Info, "player: next");
  }
  
 +bool TakePreviousTrackRequest() { return g_prevTrack.exchange(false); }
@@ -447,7 +447,7 @@ index f5f67d6..800aab4 100644
 +    g_prevTrack = true;
 +    TouchInteraction();
 +    MaybeQuitOnAnyKey();
-+    Log::Write(Log::Level::Info, "player: anterior");
++    Log::Write(Log::Level::Info, "player: previous");
 +}
 +
  int TakeSeekRequest() { return g_seekJumpSeconds.exchange(0); }
@@ -489,7 +489,7 @@ index f5f67d6..800aab4 100644
 +    // No TouchInteraction() - see the same note in SetZoom() above. MaybeQuitOnAnyKey()
 +    // still applies.
 +    MaybeQuitOnAnyKey();
-     Log::Write(Log::Level::Info, Fmt("player: brillo %.2fx", b));
+     Log::Write(Log::Level::Info, Fmt("player: brightness %.2fx", b));
  }
  }  // namespace
 @@ -191,6 +224,8 @@ double SecondsSinceLastInteraction() {
@@ -521,15 +521,15 @@ index f5f67d6..800aab4 100644
          case 'Q':
          case 27:   // ESC
 @@ -323,9 +363,10 @@ const char* HelpLine() {
-     return "  Teclas: [espacio] pausa   [ ] velocidad   1 normal   h/l -10s/+10s   "
-            "<-/-> (o < >) frame a frame   arriba/abajo (o ^ v) zoom   0 zoom normal   "
-            "b/d brillo   9 brillo normal   "
--           "enter recentra   n siguiente   q salir "
-+           "enter recentra   n siguiente   p anterior   q salir "
-            "(mando WMR: trigger pausa, stick X seek, stick Y zoom, grip recentra, "
--           "A/B (der.) brillo, mantener Menu ~1.5s sale)";
-+           "A/B (der.) brillo, Y (izq.) siguiente, X (izq.) anterior, "
-+           "mantener Menu ~1.5s sale)";
+     return "  Keys: [space] pause   [ ] speed   1 normal   h/l -10s/+10s   "
+            "<-/-> (or < >) frame step   up/down (or ^ v) zoom   0 normal zoom   "
+            "b/d brightness   9 normal brightness   "
+-           "enter recenter   n next   q quit "
++           "enter recenter   n next   p previous   q quit "
+            "(WMR controller: trigger pause, stick X seek, stick Y zoom, grip recenter, "
+-           "A/B (right) brightness, hold Menu ~1.5s to quit)";
++           "A/B (right) brightness, Y (left) next, X (left) previous, "
++           "hold Menu ~1.5s to quit)";
  }
  
  }  // namespace PlayerControl

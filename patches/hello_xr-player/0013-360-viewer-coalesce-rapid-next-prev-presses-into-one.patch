@@ -1,4 +1,4 @@
-From e8c25516d4357f720056690ded688cf614f2f47a Mon Sep 17 00:00:00 2001
+From 38a986a18f5d18f9778bc904f603a64197128a03 Mon Sep 17 00:00:00 2001
 From: iam <iam@iashur.internal>
 Date: Sun, 9 Aug 2026 05:47:38 -0300
 Subject: [PATCH] 360 viewer: coalesce rapid next/prev presses into one
@@ -110,7 +110,7 @@ index bc645de..036f8f2 100644
              if (m_videoMode) UpdateVideoTexture();
          }
 diff --git a/src/tests/hello_xr/playercontrol.cpp b/src/tests/hello_xr/playercontrol.cpp
-index 800aab4..c789fe5 100644
+index 7fd0431..9b8cb9f 100644
 --- a/src/tests/hello_xr/playercontrol.cpp
 +++ b/src/tests/hello_xr/playercontrol.cpp
 @@ -22,8 +22,13 @@ constexpr int kNormalRateIndex = 3;
@@ -141,7 +141,7 @@ index 800aab4..c789fe5 100644
 +    g_nextTrack += 1;
      TouchInteraction();
      MaybeQuitOnAnyKey();
-     Log::Write(Log::Level::Info, "player: siguiente");
+     Log::Write(Log::Level::Info, "player: next");
  }
  
 -bool TakePreviousTrackRequest() { return g_prevTrack.exchange(false); }
@@ -152,7 +152,7 @@ index 800aab4..c789fe5 100644
 +    g_prevTrack += 1;
      TouchInteraction();
      MaybeQuitOnAnyKey();
-     Log::Write(Log::Level::Info, "player: anterior");
+     Log::Write(Log::Level::Info, "player: previous");
 diff --git a/src/tests/hello_xr/playercontrol.h b/src/tests/hello_xr/playercontrol.h
 index 2814143..0a79ad9 100644
 --- a/src/tests/hello_xr/playercontrol.h

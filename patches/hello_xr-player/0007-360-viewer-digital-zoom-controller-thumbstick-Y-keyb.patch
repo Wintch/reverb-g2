@@ -1,4 +1,4 @@
-From 49a5c1af23f431aba75ed01d2be6570d2e961d98 Mon Sep 17 00:00:00 2001
+From de58426e46667973b8d2a6814b4c6ed787f097c8 Mon Sep 17 00:00:00 2001
 From: iam <iam@iashur.internal>
 Date: Sat, 8 Aug 2026 22:36:45 -0300
 Subject: [PATCH] 360 viewer: digital zoom (controller thumbstick Y, keyboard
@@ -227,7 +227,7 @@ index 74fe419..e9b80f1 100644
              // fire once past 0.7, must fall back under 0.3 before it can fire again.
              static std::array<bool, Side::COUNT> pauseLatched{{false, false}};
 diff --git a/src/tests/hello_xr/playercontrol.cpp b/src/tests/hello_xr/playercontrol.cpp
-index 10f9595..81da0d6 100644
+index 359f8f8..b8abb0b 100644
 --- a/src/tests/hello_xr/playercontrol.cpp
 +++ b/src/tests/hello_xr/playercontrol.cpp
 @@ -32,6 +32,15 @@ std::atomic<bool> g_recenterRequested{false};
@@ -297,14 +297,14 @@ index 10f9595..81da0d6 100644
 @@ -231,9 +274,10 @@ void EndRawInput() {
  
  const char* HelpLine() {
-     return "  Teclas: [espacio] pausa   [ ] velocidad   1 normal   h/l -10s/+10s   "
--           "<-/-> (o < >) frame a frame   enter recentra   "
--           "n siguiente   q salir "
--           "(mando WMR: trigger pausa, stick seek, grip recentra, mantener Menu ~1.5s sale)";
-+           "<-/-> (o < >) frame a frame   arriba/abajo (o ^ v) zoom   0 zoom normal   "
-+           "enter recentra   n siguiente   q salir "
-+           "(mando WMR: trigger pausa, stick X seek, stick Y zoom, grip recentra, "
-+           "mantener Menu ~1.5s sale)";
+     return "  Keys: [space] pause   [ ] speed   1 normal   h/l -10s/+10s   "
+-           "<-/-> (or < >) frame step   enter recenter   "
+-           "n next   q quit "
+-           "(WMR controller: trigger pause, stick seek, grip recenter, hold Menu ~1.5s to quit)";
++           "<-/-> (or < >) frame step   up/down (or ^ v) zoom   0 normal zoom   "
++           "enter recenter   n next   q quit "
++           "(WMR controller: trigger pause, stick X seek, stick Y zoom, grip recenter, "
++           "hold Menu ~1.5s to quit)";
  }
  
  }  // namespace PlayerControl

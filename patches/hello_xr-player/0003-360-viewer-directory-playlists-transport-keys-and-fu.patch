@@ -1,7 +1,7 @@
-From d6ee9ecb6f58adb0b7587ce79eb82c63caea2699 Mon Sep 17 00:00:00 2001
+From 36bd85ba82d7b319308e9920b31e48db5b6a7e44 Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Tue, 4 Aug 2026 16:00:20 -0300
-Subject: [PATCH 3/3] 360 viewer: directory playlists, transport keys, and
+Subject: [PATCH] 360 viewer: directory playlists, transport keys, and
  full-rate 8K60
 
 Playlist
@@ -402,7 +402,7 @@ index 40d513a..3749811 100644
  
 diff --git a/src/tests/hello_xr/playercontrol.cpp b/src/tests/hello_xr/playercontrol.cpp
 new file mode 100644
-index 0000000..5de17e1
+index 0000000..4df887e
 --- /dev/null
 +++ b/src/tests/hello_xr/playercontrol.cpp
 @@ -0,0 +1,139 @@

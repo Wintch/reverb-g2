@@ -1,4 +1,4 @@
-From 872b56664dad3da5af2369ea9527293123c38907 Mon Sep 17 00:00:00 2001
+From 2c592ad168dc2ee6dc2dbc029ccb62b1d455bf31 Mon Sep 17 00:00:00 2001
 From: iam <iam@iashur.internal>
 Date: Wed, 2 Sep 2026 18:53:58 -0300
 Subject: [PATCH] 360 viewer: Xbox 360 gamepad fallback for
@@ -104,7 +104,7 @@ index a703640..da6dd02 100644
      graphicsplugin_factory.cpp
 diff --git a/src/tests/hello_xr/gamepadinput.cpp b/src/tests/hello_xr/gamepadinput.cpp
 new file mode 100644
-index 0000000..d460536
+index 0000000..155e40d
 --- /dev/null
 +++ b/src/tests/hello_xr/gamepadinput.cpp
 @@ -0,0 +1,219 @@
@@ -228,7 +228,7 @@ index 0000000..d460536
 +void PollLoop() {
 +    Log::Write(Log::Level::Info,
 +               "gamepad: watching for an Xbox 360 pad (045e:028e) - optional; A pause/resume, "
-+               "Start recentra, RB/LB next/prev track, hold Guide ~1.5s to quit. Useful when a "
++               "Start recenter, RB/LB next/prev track, hold Guide ~1.5s to quit. Useful when a "
 +               "VR controller isn't paired/available.");
 +    int fd = -1;
 +    std::optional<std::chrono::steady_clock::time_point> guideHoldStart;
@@ -399,17 +399,17 @@ index 31cfba9..04636f4 100644
          do {
              // Create platform-specific implementation.
 diff --git a/src/tests/hello_xr/playercontrol.cpp b/src/tests/hello_xr/playercontrol.cpp
-index 237ed88..6345d55 100644
+index 6ff2695..a9ebc3b 100644
 --- a/src/tests/hello_xr/playercontrol.cpp
 +++ b/src/tests/hello_xr/playercontrol.cpp
 @@ -373,7 +373,9 @@ const char* HelpLine() {
-            "enter recentra   n siguiente   p anterior   q salir "
-            "(mando WMR: trigger pausa, stick X seek, stick Y zoom, grip recentra, "
-            "A/B (der.) brillo, Y (izq.) siguiente, X (izq.) anterior, "
--           "mantener Menu ~1.5s sale)";
-+           "mantener Menu ~1.5s sale) "
-+           "(mando Xbox, opcional: A pausa, Start recentra, RB siguiente, LB anterior, "
-+           "mantener Guide ~1.5s sale)";
+            "enter recenter   n next   p previous   q quit "
+            "(WMR controller: trigger pause, stick X seek, stick Y zoom, grip recenter, "
+            "A/B (right) brightness, Y (left) next, X (left) previous, "
+-           "hold Menu ~1.5s to quit)";
++           "hold Menu ~1.5s to quit) "
++           "(Xbox controller, optional: A pause, Start recenter, RB next, LB previous, "
++           "hold Guide ~1.5s to quit)";
  }
  
  }  // namespace PlayerControl

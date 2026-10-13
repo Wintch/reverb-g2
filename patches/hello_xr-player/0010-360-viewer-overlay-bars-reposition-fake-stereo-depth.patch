@@ -1,21 +1,21 @@
-From 62590db5a0794b247d0793f6c6301c591a5acdba Mon Sep 17 00:00:00 2001
+From 3bae88cce26850c108793890499a27e9127a62a7 Mon Sep 17 00:00:00 2001
 From: iam <iam@iashur.internal>
 Date: Sun, 9 Aug 2026 02:48:52 -0300
-Subject: [PATCH 1/2] 360 viewer: overlay bars - reposition, fake stereo depth,
+Subject: [PATCH] 360 viewer: overlay bars - reposition, fake stereo depth,
  thinner+red
 
 Same-session iterative fix, three rounds of live headset feedback:
 
 1. Position (found 2026-08-09): the progress bar and quit-hold bar sat at
    t in [0.94,0.98] / [0.02,0.06] - 2-4% from the absolute edge of the
-   render target. User: "aparece muy abajo, no lo llego a ver". A first
+   render target. User: "aparece muy abajo, no lo llego a ver" ("it shows up too low, I can't see it"). A first
    move to [0.80,0.88] still wasn't enough ("se ve mejor, pero aun muy
    abajo") - moved much further inboard to [0.58,0.62] (progress) /
    [0.30,0.40] (quit), explicitly trading subtlety for guaranteed
    visibility. Also inset horizontally (was full s in [0,1], "se me va
    para los costados") to s in [0.20,0.80], centered.
 
-2. Depth (user: "hace que este a la distancia del video"): both bars were
+2. Depth (user: "hace que este a la distancia del video", i.e. "make it sit at the distance of the video"): both bars were
    drawn identically for both eyes (zero disparity), so they read as glued
    flat to the lens/at infinity against real stereo 3D content that has
    its own depth baked into the footage via camera parallax. Faked a
@@ -26,14 +26,14 @@ Same-session iterative fix, three rounds of live headset feedback:
    (which only ever needed values 0-2 for PROJ_*) instead of growing the
    push-constant struct past its current 128 bytes.
 
-3. Style (user: "el indicador de la posicion mas fino y rojo"): progress
+3. Style (user: "el indicador de la posicion mas fino y rojo", i.e. "the position marker thinner and red"): progress
    bar thickness reduced further as part of the position fix above, fill
    color changed from white/gray to red (0.95,0.15,0.12 filled /
    0.30,0.08,0.07 unfilled) to read as a clear position marker.
 
 Verified live with the headset on across all three rounds, on VR180 4K
 content (blade_runner_visuals_vr180_4k.mp4, blade_runner_skyline_vr180_4k.mp4).
-Final user verdict: "se ve bien, funciona" - described it as reading like a
+Final user verdict: "se ve bien, funciona" ("looks good, it works") - described it as reading like a
 thin red position marker over a lighter total-duration track, exactly the
 intended design.
 ---
@@ -56,7 +56,7 @@ index 1bba34f..89d2120 100644
          // alpha *255. Only shown for a few seconds after the last transport-control touch, so
          // it doesn't sit on screen the whole time someone is just watching.
 diff --git a/src/tests/hello_xr/vulkan_shaders/frag.glsl b/src/tests/hello_xr/vulkan_shaders/frag.glsl
-index 756437b..fbfe760 100644
+index 756437b..967e444 100644
 --- a/src/tests/hello_xr/vulkan_shaders/frag.glsl
 +++ b/src/tests/hello_xr/vulkan_shaders/frag.glsl
 @@ -38,6 +38,11 @@ void main()
@@ -109,8 +109,8 @@ index 756437b..fbfe760 100644
 +
 +    // Found same session: drawn identically for both eyes (zero disparity), the bars read as
 +    // glued flat to the lens/at infinity, floating oddly against real stereo 3D content that
-+    // has its own depth from disparity baked into the footage - user: "hace que este a la
-+    // distancia del video". Fake a comfortable fixed HUD depth (kHudMeters) instead of true
++    // has its own depth from disparity baked into the footage - user, translated: "make it sit at the
++    // distance of the video". Fake a comfortable fixed HUD depth (kHudMeters) instead of true
 +    // per-pixel depth (which isn't knowable - it's baked into whatever the footage shows):
 +    // shift each eye's copy of the bar by the small angle a real object at that depth would
 +    // subtend given a nominal IPD, same small-angle approximation (tan(x) ~= x) used

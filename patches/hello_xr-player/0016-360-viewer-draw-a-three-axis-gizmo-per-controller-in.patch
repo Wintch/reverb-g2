@@ -1,4 +1,4 @@
-From 91a5e3c087a80f48b3dac6058a1ead6883ad39cb Mon Sep 17 00:00:00 2001
+From 0ee99e939c134a81e4b17a05cbfa759686338abd Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Tue, 11 Aug 2026 05:08:08 -0300
 Subject: [PATCH] 360 viewer: draw a three-axis gizmo per controller instead of
@@ -83,3 +83,6 @@ index c3b73d7..85accae 100644
                  }
              } else {
                  // Tracking loss is expected when the hand is not active so only log a message
+-- 
+2.47.3
+
