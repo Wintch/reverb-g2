@@ -407,6 +407,13 @@ hacia el lado opuesto. Miro arriba y baja la cámara un poco suavemente, luego s
 Lo mismo yaw y pitch, roll bien. No es entrecortado, es un poco de delay + un movimiento que ni
 está ahí."* Smooth, not jerky; yaw+pitch, roll clean; opposite-direction displacement that settles.
 
+> **Correction 2026-10-12 (code review, docs/147, M14-1): this hypothesis was right, and the
+> ruling-out below is wrong.** The correction negates the orientation's y and z, which is a
+> conjugation, so it changes the body frame too, not only the summed position. The OpenXR arm
+> must be `(0, -0.6, 0.8)` in Basalt's raw frame. With the old vector the compensation came out
+> exactly negated (ratio -1.000 on random rotation pairs). Fixed in patch 0115. The 0/100/150/200
+> wearer A/B below was run with the inverted sign.
+
 **Hypothesis 1, investigated and RULED OUT: a coordinate-frame bug in 0097's neck-arm vector.**
 The arm `{0, 0.6, -0.8}` (authored in OpenXR convention) is rotated by Basalt-native-frame
 quaternions, and the Basalt→WMR axis correction (`wmr_hmd_correct_pose_from_basalt`, a +90°

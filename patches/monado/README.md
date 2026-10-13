@@ -548,29 +548,40 @@ the shared run loop. Default off (`WMR_COMPANION_RECONNECT_RESYNC=1` re-enables)
 warns on any step >50 ms, which is the instrument that named it. With 0093: 66 natural drops in
 one session, zero SLAM holes, wearer no longer relocated. docs/06.
 
-## 0095 — join the camera USB thread in `wmr_camera_stop()` (2026-08-21, T244 close)
+## 0095 — `wmr_camera_stop()` waits for the in-flight transfers (replaced 2026-10-12)
 
-> **Upstream status (2026-09-18):** superseded, do not send as is — the USB thread is started in `wmr_camera_open()` and joined in `wmr_camera_free()`, so a join inside `stop()` breaks `stop()`→`start()`. The upstream-shaped fix (count the transfers, wait for their final completion in `stop()`, decide resubmit-vs-retire under the same lock) is branch `wmr-camera-stop-drain` on the fork, `docs/upstream/wmr-camera-stop-drain-000*.patch`, `docs/127` §10. Upstream's own partial fix is `c236c11fd` (!2937).
+> **Replaced 2026-10-12** (full code review, docs/147 headline #2). The former 0095 joined
+> `cam->usb_thread` inside `wmr_camera_stop()`. The thread then parked in an unsignalled
+> `os_thread_helper_wait_locked()`, so every teardown after a camera session hung in
+> `pthread_join` until the launcher's SIGKILL at 10 s (T245, docs/06, docs/129). The former 0096
+> (`cam->running = true` after the submit loop) is what made that join reachable. Both are gone.
+> The new 0095 and 0096 are the fork's `wmr-camera-stop-drain` branch (`docs/upstream/
+> wmr-camera-stop-drain-000*.patch`, docs/127 §10), adapted to this base.
 
-`wmr_camera_stop()` cancelled the transfers and deactivated the stream but never joined
-`cam->usb_thread`, so `wmr_cam_usb_thread` could still be inside `img_xfer_cb() → pop_pose()`
-while `wmr_hmd_destroy()` tore the tracker down on another thread — the teardown SIGSEGV on 20+
-cores (`thread apply all bt`, NEXT-STEP's correction #1). Adds
-`os_thread_helper_stop_and_wait(&cam->usb_thread)` right after the cancel loop, the precedented
-pattern from `constellation_tracker_node_break_apart`. Vulnerable code is byte-identical to
-upstream: upstreamable.
+`wmr_camera_stop()` cancelled the transfers and returned while the USB thread could still be inside
+`img_xfer_cb()` pushing a frame into a tracker that `wmr_hmd_destroy()` was tearing down, which is
+the teardown SIGSEGV. Now the transfers are counted, and `stop()` waits until each one has had its
+final completion. The callback decides between resubmitting and retiring a transfer under the same
+lock that guards `running`. The USB thread is still started in `wmr_camera_open()` and joined in
+`wmr_camera_free()`, so `stop()` followed by `start()` keeps working. The pinned base lacks
+two upstream commits the fork branch builds on, so this patch also carries them: the early return
+in `img_xfer_cb()` once the camera is stopped (`c236c11fd`, !2937), and setting `cam->running` in
+`wmr_camera_start()` (`8ed03a5cf`, !3005), here under the new lock and before the transfers are
+submitted. At the next rebase onto a main that has both, use the fork branch as is.
 
-## 0096 — `wmr_camera_start()` never set `cam->running` (2026-08-22)
+Status: applies on the 0001-0094 tree and compiles with `-Wall` on it (2026-10-12), and 0097-0113
+apply exactly as before. **Not run on hardware yet:** the repeated start/stop stress and a
+camera-on teardown without the SIGKILL escalation are still owed. The second race noted under the
+old 0096 (a SIGSEGV directly in `receive_frame`, `t_tracker_slam.cpp:2080`, with the main thread
+in `libnvidia-eglcore`) is a separate EGL/Vulkan teardown ordering problem, still open (docs/06,
+docs/67).
 
-> **Upstream status (2026-09-18):** already upstream — Christoph Haag, `8ed03a5cf` "d/wmr: Actually set cam->running = true", 2026-09-07, !3005. Drop from the series at the next rebase.
+## 0096 — drop the extra wait at the end of the camera USB thread (2026-10-12)
 
-Which made 0095 dead code: `wmr_camera_stop()`'s `if (!cam->running) return;` guard skipped the
-join (and the cancel loop) on every teardown. Sets `running = true` once all transfers are
-submitted. **Not closed**: the same night a SIGSEGV with a DIFFERENT shape (directly in
-`receive_frame`, `t_tracker_slam.cpp:2080`, with the main thread stuck in
-`libnvidia-eglcore`/`ioctl`) showed a second race between the EGL/Vulkan teardown and the camera
-thread that this join does not cover — race #2 in docs/06 / the 2026-08-22 plan (docs/67). Treat
-"teardown crash fixed" as unverified until the EGL-side ordering is instrumented.
+The `os_thread_helper_wait_locked()` at the end of `wmr_cam_usb_thread` (with a `@todo` asking
+what it waits for) waited on a condition nobody signals after the loop exits. It is the trailing
+wait that turned the old 0095's join into a hang, and it leaves the same lost-wakeup window in
+`wmr_camera_free()`. Removed. Same as the fork's `30da35bbf`.
 
 ## 0097 — SLAM_PRED_FREEZE_POSITION + SLAM_PRED_NECK_ARM_MM (seated 6dof head)
 
@@ -925,3 +936,17 @@ per-frame distribution the question needs.
 | patch | what |
 |---|---|
 | 0113 | `t_constellation_tracker.cpp` only (+45). A device below `tryDeviceBlobRecovery`'s 4-blob floor can never win a first accepted solve while another device owns the shared blob pool, because the correspondence search excludes blobs claimed by another device. After 10 consecutive failed deep searches (deep pass only, fewer than 4 blobs for that device) it sets `CS_FLAG_MATCH_ALL_BLOBS` so that device can see every blob. Read-only on assignments (only an accepted, validated `pushPose` writes them); logs "contested-blob recovery" at INFO when it starts and when it recovers. **Experimental and partial, lab-full only, not for upstream:** live results 0/15 recoveries (docs/125, 126), then 1/9 (docs/129). The root cause of the missing controller poses turned out to be the timesync double conversion (docs/135), so the value of this one is unproven. It had been running uncommitted in every lab build since 2026-09-14 and was committed on 2026-10-04 so the builds are reproducible from git. Base: `432806028` on `lab-full`, commit `ff6db76f6`. |
+
+## 0114-0116 — fixes from the 2026-10-12 code review (docs/147)
+
+Written on the 0001-0113 tree and exported from it. The same changes are also on the local
+`monado` branch `lab-full-review-fixes-20261012`, ported onto `lab/lab-full` (the 2026-09-14
+snapshot). On that branch they come with the camera drain that replaces the lab's 0095 join, and
+it is not pushed. Each one compiles (`-fsyntax-only`) on both trees. **None has run on hardware
+yet.**
+
+| patch | what |
+|---|---|
+| 0114 | Restarts the controller fusion clock on the first live IMU sample after an idle run (0035's zeroed packets). Before, `m_imu_3dof` kept the last pre-idle timestamp, so the wake-up sample integrated the whole idle gap as one step: tens of degrees of heading error in a replay. The orientation and gyro bias are kept. The separate `solve_yaw_locked` release path (review section 3.7) is still open. |
+| 0115 | Fixes the sign of `SLAM_PRED_NECK_ARM_MM` (0097). The arm is rotated by Basalt's raw quaternions, and `wmr_hmd_correct_pose_from_basalt()` negates the orientation's y and z, a conjugation that changes the body frame too. The OpenXR arm `(0, 0.6, -0.8)` is `(0, -0.6, 0.8)` in that frame. The old vector gave exactly the negated compensation: a delivered/desired ratio of -1.000 on random rotation pairs replayed through the correction code, +1.000 after. This supersedes docs/80's "Hypothesis 1, ruled out". **The launcher's Aircar (100 mm) and Cyberpilot (150 mm) values were tuned with the sign inverted. Re-run the wearer A/B before trusting them.** |
+| 0116 | Fixes 0087's stale-presence notice, which never fired. `30 * U_TIME_1S_IN_NS` overflowed `int` (gcc: `results in '-64771072'`), so the threshold was about 1.8e19 ns. With the overflow fixed the notice would fire on any calm headset, because the proximity message is change-driven, so the text now says silence alone is normal. The throttle also resets when updates resume (M12-1, M12-2). |

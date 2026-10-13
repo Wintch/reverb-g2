@@ -192,6 +192,7 @@ TITLE_PROFILES = {
         # 100 rather than 0 because 0 showed near-field cockpit jitter ("un poco de jittering al
         # mirar la cabina de cerca"). Reversible: 0 felt the same, 150/200 worse. The wearer
         # confirmed 100 on 2026-08-29 15:35 ("deja el brazo de cuello en 100").
+        # Tuned before patch 0115 fixed this knob's sign (2026-10-12): re-run the A/B.
         "SLAM_PRED_NECK_ARM_MM": "100",
         # 2026-08-27 (evening): 50 -> 25. Variant F (A + spread 25) worn: "bastante solido",
         # smoother settle, latency still low -- the wearer's own ask (E's smoothness without
@@ -377,6 +378,7 @@ TITLE_PROFILES = {
         "WMR_CONSTELLATION_CONTROLLERS": "1",  # explicit: the game needs 6dof hands
         "SLAM_PREDICTION_TYPE": "2",
         "SLAM_PRED_FREEZE_POSITION": "1",
+        # Tuned before patch 0115 fixed this knob's sign (2026-10-12): re-run the A/B.
         "SLAM_PRED_NECK_ARM_MM": "150",
         "SLAM_CORRECTION_SPREAD_MS": "50",
         # 2026-08-27: same 0099 first wearer test as the Aircar profile above -- see its
