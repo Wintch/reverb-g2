@@ -275,16 +275,26 @@ checkout away:
   `20261013-135400` first) and rebooted. The loaded module was built 2026-10-13 13:54.
   `teardown-stress.sh 6 20` on it: **6/6 pass**. Every cycle leased the HMD and found
   `4320x2160@90.00`, with no errors and no kernel messages from nvidia/drm during the run. That
-  covers the lease at the API level only: nobody has looked at the panel on this module yet.
+  covers the lease at the API level only. The panel was then seen worn (below): 90 Hz, fine.
+- **Worn check, 2026-10-13 15:10** (3dof, new Monado + NVIDIA module + player). The player ran
+  on two generated 360 clips with the frame number and time burned in. A had a 15 s tone on a
+  40 s video; B had a tone over its whole length. Keys came from a FIFO through a pty, with spoken
+  prompts in the headset (`~/vr/review-session/`). The wearer: *"bien, 90hz, video andando bien.
+  recentrado bien"*. The player log agrees. The seek and the three frame steps were taken while
+  paused, with frames decoded while paused. The video kept 30 fps after the tone ended. The
+  playlist moved to B on its own at the end of A. The wearer did not report the frame numbers, so
+  frame-step accuracy rests on the log, not the eye. The prompt timing was off: A ended during
+  step 5, so the "next" key wrapped back to A.
 
 Still open:
 
 - **Owner decisions (§6), all seven.** The sudoers allowlist waits on the root check output. A
   read-only script was handed over on 2026-10-12; the lab box was unreachable over SSH then.
 - **Still owed on the rig:** the neck-arm wearer A/B (the Aircar 100 mm and Cyberpilot 150 mm
-  values were tuned with the inverted sign), a recenter, seek and frame step in the player, a
-  two-file playlist with audio, a look at the panel on the rebuilt NVIDIA module, and one game
-  through the patched xrizer.
+  values were tuned with the inverted sign) and one game through the patched xrizer. Both were
+  planned on Aircar on 2026-10-13. They stopped at Steam's "kick the other session" prompt,
+  because the shared account was in use elsewhere, and nobody was kicked. The vrpath is back on
+  `~/vr/xrizer`, and `~/vr/review-session/vrpath.sh review|restore` switches it.
 - **Publishing the Monado branch.** The same fixes are on the rig (above) and on the everyday
   box's local branch `lab-full-review-fixes-20261012`. Neither is pushed: `lab-full` carries lab
   commits that were never published. The fork's `lab-full` (22e081141) is older than both.
