@@ -39,16 +39,16 @@ G='\033[1;92m'   # bright green -- the "matrix" accent, cosmetic only
 R='\033[0m'
 
 echo -e "${G}=================================================="
-echo -e "  HP Reverb G2 -- selector de arranque"
+echo -e "  HP Reverb G2 -- boot selector"
 echo -e "==================================================${R}"
-echo -e "  ${G}[a] Auto${R}    -- diagnostico ahora mismo, en consola, sin escritorio"
-echo -e "  ${G}[m] Manual${R}  -- arranque normal (login grafico), como siempre"
+echo -e "  ${G}[a] Auto${R}    -- diagnostic right now, on the console, no desktop"
+echo -e "  ${G}[m] Manual${R}  -- normal boot (graphical login), as usual"
 echo
-echo "  Sin elegir nada en ${TIMEOUT}s -> Auto (default)."
+echo "  No choice within ${TIMEOUT}s -> Auto (default)."
 echo
 
 CHOICE=""
-read -r -t "$TIMEOUT" -n 1 -p "Elegí [a/m]: " CHOICE || true
+read -r -t "$TIMEOUT" -n 1 -p "Choose [a/m]: " CHOICE || true
 echo
 
 # SDDM autologin, conditional on the choice -- found live 2026-08-09/10: the
@@ -100,7 +100,7 @@ SDDM_AUTOLOGIN_CONF=/etc/sddm.conf.d/98-vr-autologin.conf
 case "$CHOICE" in
     m|M)
         rm -f "$SDDM_AUTOLOGIN_CONF"
-        echo "=== MANUAL -- arranque grafico normal ==="
+        echo "=== MANUAL -- normal graphical boot ==="
         ;;
     *)
         # Hardcoded "iam", not `logname` -- nobody's logged in yet at this
@@ -108,7 +108,7 @@ case "$CHOICE" in
         # nothing real to report. Matches vr-launcher-console.sh's own
         # VR_USER="iam" convention.
         printf '[Autologin]\nUser=iam\nSession=gnome-wayland.desktop\n' > "$SDDM_AUTOLOGIN_CONF"
-        echo -e "${G}=== AUTO (default, o timeout) -- corriendo power-on.py --pre-login ===${R}"
+        echo -e "${G}=== AUTO (default, or timeout) -- running power-on.py --pre-login ===${R}"
         # No 'exec' here on purpose: power-on.py already hands off to
         # graphical.target on both its success AND failure paths, but this
         # wrapper is the actual safety net if the script crashes before
@@ -156,7 +156,8 @@ case "$CHOICE" in
         # the live stuck session from this same boot: `timeout --foreground` keeps
         # power-on.py in the terminal's foreground group and the read just works.
         # This was very likely also the real cause behind T172's "ya no pude
-        # apretar enter para volver a reintentar" -- the WAIT_HUMAN_S rearm logic
+        # apretar enter para volver a reintentar" (Spanish: "I could no longer
+        # press enter to retry") -- the WAIT_HUMAN_S rearm logic
         # added there never actually got to run, because the very first Enter
         # already froze the process before reaching it.
         if command -v script >/dev/null 2>&1; then
@@ -169,10 +170,10 @@ case "$CHOICE" in
         fi
         echo
         if [ "$rc" -eq 124 ]; then
-            echo "diagnostico se colgo (timeout de 1200s, rc=124) -- forzado a login grafico."
+            echo "diagnostic hung (1200s timeout, rc=124) -- forcing graphical login."
             echo "log: $BOOT_LOG"
         else
-            echo "diagnostico termino (rc=$rc). Subiendo a login grafico en 3s..."
+            echo "diagnostic finished (rc=$rc). Switching to graphical login in 3s..."
         fi
         sleep 3
         ;;

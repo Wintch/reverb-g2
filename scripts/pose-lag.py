@@ -119,24 +119,24 @@ def compare(name, a_path, b_path):
     ta, ca = load(a_path)
     tb, cb = load(b_path)
     if len(ta) < 10 or len(tb) < 10:
-        print(f"  {name}: sin datos suficientes")
+        print(f"  {name}: not enough data")
         return
     ch, var = pick_channel(ca)
     t0, t1 = max(ta[0], tb[0]), min(ta[-1], tb[-1])
     if t1 - t0 < 5:
-        print(f"  {name}: menos de 5 s en comun, no alcanza")
+        print(f"  {name}: less than 5 s in common, not enough")
         return
     ra = resample(ta, ca[ch], t0, t1, GRID_HZ)
     rb = resample(tb, cb[ch], t0, t1, GRID_HZ)
     m = sum(ra) / len(ra)
     sig = sum((x - m) ** 2 for x in ra) / len(ra)
     if sig < 1e-8:
-        print(f"  {name}: el casco no se movió lo suficiente (varianza {sig:.2e}) -- "
-              f"sin movimiento la medición no significa nada")
+        print(f"  {name}: the headset did not move enough (variance {sig:.2e}) -- "
+              f"without motion the measurement means nothing")
         return
     lag, sse = best_shift(ra, rb, GRID_HZ)
     frac = (sse / sig) if sig else float("nan")
-    print(f"  {name}: {lag:+.1f} ms   (canal q[{ch}], residuo {frac*100:.2f}% de la señal, "
+    print(f"  {name}: {lag:+.1f} ms   (channel q[{ch}], residual {frac*100:.2f}% of signal, "
           f"{t1-t0:.0f} s)")
 
 
@@ -146,15 +146,15 @@ def main():
     else:
         dirs = sorted(Path.home().glob("vr/logs/slam-*"), key=lambda p: p.stat().st_mtime)
         if not dirs:
-            print("No hay directorios de sesión en ~/vr/logs/")
+            print("No session directories in ~/vr/logs/")
             return 1
         d = dirs[-1]
-    print(f"Sesión: {d}")
-    print("Positivo = la segunda etapa ATRASA respecto de la primera.\n")
+    print(f"Session: {d}")
+    print("Positive = the second stage LAGS the first.\n")
     compare("tracking -> filtering ", d / "tracking.csv", d / "filtering.csv")
     compare("filtering -> prediction", d / "filtering.csv", d / "prediction.csv")
     compare("tracking -> prediction ", d / "tracking.csv", d / "prediction.csv")
-    print("\nA 200 grados/s de giro de cabeza, 10 ms de atraso = 2 grados de separación.")
+    print("\nAt a head turn of 200 deg/s, 10 ms of lag = 2 degrees of separation.")
     return 0
 
 

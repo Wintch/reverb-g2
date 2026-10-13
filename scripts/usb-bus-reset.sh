@@ -26,13 +26,13 @@ BUS="${2:-usb3}"
 DEV_RE="03f0:0580|045e:0659|04b4:650[46]|0bda:4c15"
 
 if [ "$(id -u)" -ne 0 ]; then
-    echo "Necesita root (unbind/bind en /sys/bus/usb/drivers/usb/). Corré con sudo." >&2
+    echo "Needs root (unbind/bind under /sys/bus/usb/drivers/usb/). Run with sudo." >&2
     exit 1
 fi
 
 DRIVER_PATH="/sys/bus/usb/drivers/usb"
 if [ ! -e "/sys/bus/usb/devices/$BUS" ]; then
-    echo "!! $BUS no existe en /sys/bus/usb/devices/ -- nada que resetear." >&2
+    echo "!! $BUS does not exist in /sys/bus/usb/devices/ -- nothing to reset." >&2
     exit 1
 fi
 
@@ -49,7 +49,7 @@ dump_xhci_debugfs() {
             echo
         done
     done
-    [ "$found" = 0 ] && echo "  (sin entradas xhci en /sys/kernel/debug/usb -- no disponible en este kernel/build)"
+    [ "$found" = 0 ] && echo "  (no xhci entries in /sys/kernel/debug/usb -- not available on this kernel/build)"
 }
 
 # An interrupted run (Ctrl-C, ssh drop, failed bind) between unbind and bind would leave the
@@ -68,17 +68,17 @@ trap 'exit 130' INT TERM HUP
 
 RESULTS=()
 for t in $(seq 1 "$TRIALS"); do
-    echo "########## INTENTO $t/$TRIALS ##########"
+    echo "########## TRIAL $t/$TRIALS ##########"
 
-    echo "=== ANTES ==="
+    echo "=== BEFORE ==="
     BEFORE=$(lsusb | grep -cE "$DEV_RE")
-    echo "  $BEFORE/5 dispositivos del headset enumerados."
+    echo "  $BEFORE/5 headset devices enumerated."
     lsusb | grep -E "$DEV_RE" | sed 's/^/    /'
     dump_xhci_debugfs
 
     echo
     echo "=== unbind $BUS ==="
-    echo -n "$BUS" > "$DRIVER_PATH/unbind" 2>&1 || { echo "!! unbind fallo"; RESULTS+=("intento $t: unbind FALLO"); continue; }
+    echo -n "$BUS" > "$DRIVER_PATH/unbind" 2>&1 || { echo "!! unbind failed"; RESULTS+=("trial $t: unbind FAILED"); continue; }
     UNBOUND=1
     echo "  ok."
 
@@ -89,14 +89,14 @@ for t in $(seq 1 "$TRIALS"); do
     if echo -n "$BUS" > "$DRIVER_PATH/bind" 2>&1; then
         UNBOUND=0
     else
-        echo "!! bind fallo"; RESULTS+=("intento $t: bind FALLO")
+        echo "!! bind failed"; RESULTS+=("trial $t: bind FAILED")
         rebind   # retries; leaving the bus unbound for the next trial would test nothing
         continue
     fi
     echo "  ok."
 
     echo
-    echo "=== esperando re-enumeracion (hasta 10s) ==="
+    echo "=== waiting for re-enumeration (up to 10s) ==="
     for i in $(seq 1 10); do
         sleep 1
         COUNT=$(lsusb | grep -cE "$DEV_RE")
@@ -104,30 +104,30 @@ for t in $(seq 1 "$TRIALS"); do
     done
 
     echo
-    echo "=== DESPUES ==="
+    echo "=== AFTER ==="
     AFTER=$(lsusb | grep -cE "$DEV_RE")
-    echo "  $AFTER/5 dispositivos del headset enumerados."
+    echo "  $AFTER/5 headset devices enumerated."
     lsusb | grep -E "$DEV_RE" | sed 's/^/    /'
     dump_xhci_debugfs
 
     if [ "$AFTER" -gt "$BEFORE" ]; then
-        VERDICT="MEJORO ($BEFORE -> $AFTER)"
+        VERDICT="IMPROVED ($BEFORE -> $AFTER)"
     elif [ "$AFTER" -eq "$BEFORE" ]; then
-        VERDICT="sin cambios ($BEFORE -> $AFTER)"
+        VERDICT="unchanged ($BEFORE -> $AFTER)"
     else
-        VERDICT="EMPEORO ($BEFORE -> $AFTER)"
+        VERDICT="WORSE ($BEFORE -> $AFTER)"
     fi
     echo
-    echo "--- intento $t: $VERDICT ---"
-    RESULTS+=("intento $t: $VERDICT")
+    echo "--- trial $t: $VERDICT ---"
+    RESULTS+=("trial $t: $VERDICT")
 
     if [ "$t" -lt "$TRIALS" ]; then
         echo
-        echo "(pausa de 5s antes del siguiente intento)"
+        echo "(5s pause before the next trial)"
         sleep 5
     fi
     echo
 done
 
-echo "########## RESUMEN ($TRIALS intento(s)) ##########"
+echo "########## SUMMARY ($TRIALS trial(s)) ##########"
 for r in "${RESULTS[@]}"; do echo "  $r"; done

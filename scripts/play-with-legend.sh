@@ -26,12 +26,12 @@ if [ $# -lt 1 ]; then
 fi
 
 if [ ! -x "$PLAY360" ]; then
-	echo "no encuentro play360.sh en $SCRIPT_DIR" >&2
+	echo "cannot find play360.sh in $SCRIPT_DIR" >&2
 	exit 1
 fi
 
 if [ ! -f "$CONTROLS_IMG" ]; then
-	echo "no encuentro la imagen de controles: $CONTROLS_IMG (CONTROLS_IMG=... para otra)" >&2
+	echo "cannot find the controls image: $CONTROLS_IMG (set CONTROLS_IMG=... for another)" >&2
 	exit 1
 fi
 

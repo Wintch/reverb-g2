@@ -18,10 +18,10 @@ docs/Screenshot_*.png
 Screenshot_*.png
 experiments/webcam/
 
-# Capturas de calibracion (fotos/videos de los LEDs, del casco, del banco).
-# NUNCA van al repo: es publico y una foto del lab puede llevar algo personal en el encuadre
-# sin que nadie lo note al subirla. Los NUMEROS viven en docs/ y en docs/pruebas.jsonl, que es
-# lo unico reproducible; el archivo original se queda fuera del arbol (T230).
+# Calibration captures (photos/videos of the LEDs, the headset, the bench).
+# NEVER committed: the repo is public and a lab photo can carry something personal in the frame
+# without anyone noticing at upload time. The NUMBERS live in docs/ and in docs/pruebas.jsonl, which is
+# the only reproducible part; the original file stays outside the tree (T230).
 docs/led-photometry/
 *.mp4
 *.mov

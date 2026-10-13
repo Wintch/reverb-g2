@@ -12,11 +12,11 @@ set -eu
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [ "$(id -u)" -ne 0 ]; then
-    echo "Necesita root. Corré: sudo $0" >&2
+    echo "Needs root. Run: sudo $0" >&2
     exit 1
 fi
 
-echo "=== copiando el .service corregido (el .sh ya esta en su lugar, ExecStart lo referencia ahi directo) ==="
+echo "=== copying the fixed .service (the .sh is already in place, ExecStart references it directly) ==="
 cp "$HERE/vr-launcher-console.service" /etc/systemd/system/vr-launcher-console.service
 chmod +x "$HERE/vr-launcher-console.sh"
 echo "  ok."
@@ -28,10 +28,10 @@ systemctl restart vr-launcher-console.service
 echo "  ok."
 
 echo
-echo "=== estado (deberia decir 'activating' esperando ~/.vr-ready, NO crash-looping) ==="
+echo "=== status (should say 'activating', waiting for ~/.vr-ready, NOT crash-looping) ==="
 sleep 2
 systemctl status vr-launcher-console.service --no-pager || true
 
 echo
-echo "=== si sigue fallando, esto muestra el error real ==="
+echo "=== if it still fails, this shows the real error ==="
 journalctl -u vr-launcher-console.service --no-pager -n 10

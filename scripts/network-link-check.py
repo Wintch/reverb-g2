@@ -25,7 +25,8 @@ Checks (~3s wall total, pings run in parallel):
   snapshot can easily land between -- the monitor's history is the honest
   instrument for "is the link ACTUALLY clean", not one lucky burst.
 
-Verdict: VERDE / AMARILLO / ROJO on stdout. Exit 0 unless the check itself
+Verdict: VERDE / AMARILLO / ROJO (green / yellow / red; tokens kept in Spanish,
+vr-launcher.py refers to them) on stdout. Exit 0 unless the check itself
 could not run (matching battery-check's contract with vr-launcher.py).
 """
 
@@ -102,11 +103,11 @@ def recent_monitor_alerts():
 
 
 def main():
-    print("=== chequeo de enlace ===")
+    print("=== link check ===")
     gw = default_gateway()
     if gw is None:
-        print("  SIN RUTA DEFAULT -- no hay salida a internet configurada")
-        print("  VEREDICTO: ROJO (solo titulos single-player)")
+        print("  NO DEFAULT ROUTE -- no internet exit configured")
+        print("  VERDICT: ROJO (RED; single-player titles only)")
         return
 
     p_gw, p_inet = start_ping(gw), start_ping(INET_TARGET)
@@ -115,21 +116,21 @@ def main():
     dns = dns_ok()
     alerts, monitor_fresh = recent_monitor_alerts()
 
-    fmt = lambda loss, rtt: f"{loss}% perdida" + (f" (rtt {rtt:.1f}ms)" if rtt is not None else "")
+    fmt = lambda loss, rtt: f"{loss}% loss" + (f" (rtt {rtt:.1f}ms)" if rtt is not None else "")
     print(f"  gateway {gw}: {fmt(gw_loss, gw_rtt)}")
     print(f"  internet ({INET_TARGET}): {fmt(inet_loss, inet_rtt)}")
-    print(f"  DNS ({DNS_NAME}): {'OK' if dns else 'FALLA'}")
+    print(f"  DNS ({DNS_NAME}): {'OK' if dns else 'FAIL'}")
     if monitor_fresh and alerts:
-        print(f"  monitor: {alerts} alertas de perdida en los ultimos 10 min"
-              f" (rafagas -- detalle en {MONITOR_LOG})")
+        print(f"  monitor: {alerts} loss alerts in the last 10 min"
+              f" (bursts -- details in {MONITOR_LOG})")
 
     if inet_loss >= 50 or gw_loss >= 50 or not dns:
-        verdict, note = "ROJO", "online injugable ahora mismo; single-player no depende de esto"
+        verdict, note = "ROJO", "online unplayable right now; single-player does not depend on this"
     elif inet_loss >= 10 or gw_loss >= 10 or (monitor_fresh and alerts >= 3):
-        verdict, note = "AMARILLO", "jugable; un titulo online puede sentir tirones en las rafagas"
+        verdict, note = "AMARILLO", "playable; an online title may stutter during bursts"
     else:
-        verdict, note = "VERDE", "enlace limpio"
-    print(f"  VEREDICTO: {verdict} -- {note}")
+        verdict, note = "VERDE", "clean link"
+    print(f"  VERDICT: {verdict} -- {note}")
 
 
 if __name__ == "__main__":

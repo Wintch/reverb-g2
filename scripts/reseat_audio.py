@@ -387,15 +387,15 @@ def _controllers():
 def main():
     stop_at_panel = "--stop-at-panel" in sys.argv
     if not available():
-        print("No hay reproductor de audio (pw-play/paplay/ffplay). Sin sonido.")
+        print("No audio player (pw-play/paplay/ffplay). No sound.")
     if not (shutil.which("espeak-ng") or shutil.which("espeak")):
-        print("Sin espeak-ng: solo tonos. Para voz: sudo apt install espeak-ng")
+        print("No espeak-ng: tones only. For voice: sudo apt install espeak-ng")
     sink = pick_sink()
-    print(f"Salida: {sink or 'la default del sistema'}  (cambiar con REVERB_AUDIO_SINK=)")
-    print(f"Voz: {VOICE}  (cambiar con REVERB_VOICE=, ej. es+f3)")
-    print("Escalera: 1 pitido nada | 2 una rama | 3 cámaras lentas | 4 panel oscuro |")
-    print("          5 'panel ignited' (soltá el cable) | arpegio 'ready to jack in'")
-    print("Ctrl+C para salir.\n")
+    print(f"Output: {sink or 'the system default'}  (change with REVERB_AUDIO_SINK=)")
+    print(f"Voice: {VOICE}  (change with REVERB_VOICE=, e.g. es+f3)")
+    print("Ladder: 1 beep nothing | 2 one branch | 3 slow cameras | 4 dark panel |")
+    print("          5 'panel ignited' (let go of the cable) | arpeggio 'ready to jack in'")
+    print("Ctrl+C to quit.\n")
     said = set()
     last_activate = 0.0
     # A healthy bring-up walks the whole ladder in about two seconds, and
@@ -413,7 +413,7 @@ def main():
             if key != prev:
                 first_seen = time.monotonic()
             print(f"  USB2 {'OK' if usb2 else '--'} | SS {'OK' if ss else '--'} | "
-                  f"cám {speed}M | DP {'OK' if dp else '--'} -> {key}     ",
+                  f"cam {speed}M | DP {'OK' if dp else '--'} -> {key}     ",
                   end="\r", flush=True)
             terminal = key == "ready" or (stop_at_panel and key == "lit")
             if terminal or time.monotonic() - first_seen >= QUIET_GRACE:
@@ -441,10 +441,10 @@ def main():
                     event("nocontrols")
 
             if key == "lit" and stop_at_panel:
-                print("\n  Panel encendido. (--stop-at-panel)")
+                print("\n  Panel lit. (--stop-at-panel)")
                 return 0
             if key == "ready":
-                print("\n  Sesión viva y panel escaneando. Listo.")
+                print("\n  Session live and panel scanning out. Ready.")
                 return 0
             time.sleep(1.5)
     except KeyboardInterrupt:

@@ -2,7 +2,7 @@
 # play360.sh - show a 360 / VR180 / flat video or photo in the headset.
 #
 #   ./play360.sh video.mp4              play it on a loop (5 minutes, then quit)
-#   ./play360.sh carpeta/               play every video in the carpeta, one after another
+#   ./play360.sh folder/                play every video in the folder, one after another
 #   ./play360.sh -t 60 video.mp4        play for 60 seconds
 #   ./play360.sh -s foto.jpg            a still photo instead of a video
 #   ./play360.sh -p 180 -e sbs v.mp4    force the projection / stereo layout
@@ -22,28 +22,28 @@
 # Transport keys (they need this script run from a real terminal, not piped or backgrounded -
 # the player reads them from stdin):
 #
-#   espacio  pausa / seguir            (mando: gatillo)
-#   [  ]     mas lento / mas rapido (0.125x .. 4x)
-#   1        velocidad normal
-#   h  l     seek -10s / +10s          (mando: stick X)
-#   arriba/abajo  zoom in / out        (mando: stick Y) - o ^ v por teclado
-#   0        zoom normal (1x)
-#   b  d     mas brillo / menos brillo (mando: A/B, mano derecha)
-#   9        brillo normal (1x)
-#   enter    recentrar "adelante"      (mando: apretar fuerte el grip)
-#   n        siguiente video de la playlist  (mando: Y, mano izquierda)
-#   q        salir                     (mando: mantener menu izquierdo ~1.5s, barra roja)
+#   espacio  pause / resume            (controller: trigger)
+#   [  ]     slower / faster (0.125x .. 4x)
+#   1        normal speed
+#   h  l     seek -10s / +10s          (controller: stick X)
+#   arriba/abajo  zoom in / out        (controller: stick Y) - or ^ v on the keyboard
+#   0        normal zoom (1x)
+#   b  d     brighter / dimmer         (controller: A/B, right hand)
+#   9        normal brightness (1x)
+#   enter    recenter "forward"        (controller: squeeze the grip hard)
+#   n        next video in the playlist  (controller: Y, left hand)
+#   q        quit                      (controller: hold left menu ~1.5s, red bar)
 #
-# HELLO_XR_THEME=night pinta de negro el espacio vacio fuera del video (default: gris claro).
+# HELLO_XR_THEME=night paints the empty space around the video black (default: light grey).
 #
 # Requires the stack to be up: ./jack-in.sh 3dof
 
 set -u
 
-# Dónde viven los árboles. El sistema principal los tiene en ~/Documents/linux_vr_base; el lab
-# (bootstrap-lab.sh) en ~/vr. Misma autodetección que jack-in.sh — hasta el 2026-08-04 esto estaba
-# hardcodeado al sistema principal y en el lab fallaba con "falta compilar hello_xr". VR_BASE=...
-# lo fuerza.
+# Where the source trees live. The main system has them in ~/Documents/linux_vr_base; the lab
+# (bootstrap-lab.sh) in ~/vr. Same autodetection as jack-in.sh -- until 2026-08-04 this was
+# hardcoded to the main system and failed in the lab with "falta compilar hello_xr"
+# (hello_xr not built). VR_BASE=... forces it.
 if [ -n "${VR_BASE:-}" ]; then
 	:
 elif [ -d "$HOME/Documents/linux_vr_base/monado/build" ]; then
@@ -75,26 +75,26 @@ while [ $# -gt 0 ]; do
 		-q) STATS=0; shift ;;
 		-h|--help) sed -n '2,37p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 		--) shift; while [ $# -gt 0 ]; do POSITIONAL+=("$1"); shift; done ;;
-		-*) echo "opcion desconocida: $1" >&2; exit 1 ;;
+		-*) echo "unknown option: $1" >&2; exit 1 ;;
 		*) POSITIONAL+=("$1"); shift ;;
 	esac
 done
 set -- "${POSITIONAL[@]}"
 
 if [ $# -lt 1 ]; then
-	echo "usage: $0 [-t SEGUNDOS] [-s] [-p 360|180|flat] [-e mono|sbs|tb] [-f AxB] [-w GRADOS] [-q] <archivo>" >&2
+	echo "usage: $0 [-t SECONDS] [-s] [-p 360|180|flat] [-e mono|sbs|tb] [-f AxB] [-w DEGREES] [-q] <file>" >&2
 	exit 1
 fi
 FILE="$1"
 # A directory is a playlist: every video in it plays in turn, sorted by name, wrapping at the
 # end. A single file loops forever instead.
-[ -e "$FILE" ] || { echo "no existe: $FILE" >&2; exit 1; }
-[ -f "$FILE" ] || [ -d "$FILE" ] || { echo "no es un archivo ni un directorio: $FILE" >&2; exit 1; }
+[ -e "$FILE" ] || { echo "does not exist: $FILE" >&2; exit 1; }
+[ -f "$FILE" ] || [ -d "$FILE" ] || { echo "not a file or a directory: $FILE" >&2; exit 1; }
 FILE=$(readlink -f "$FILE")
 
-[ -x "$HELLO_XR" ] || { echo "falta compilar hello_xr ($HELLO_XR)" >&2; exit 1; }
+[ -x "$HELLO_XR" ] || { echo "hello_xr is not built ($HELLO_XR)" >&2; exit 1; }
 if ! pgrep -f "targets/service/monado-service" >/dev/null; then
-	echo "Monado no está corriendo. Levantá el stack primero:  ./jack-in.sh 3dof" >&2
+	echo "Monado is not running. Bring the stack up first:  ./jack-in.sh 3dof" >&2
 	exit 1
 fi
 
@@ -116,23 +116,22 @@ fi
 #    mode; if it dies uncleanly (timeout's SIGTERM, Ctrl-C) the atexit restore never runs,
 #    so ALWAYS run `stty sane` afterwards or the shell is left half-mute.
 #
-#  - Piped/backgrounded (tests, automation): sin teclado real, así que el stdin de
-#    hello_xr viene de un `sleep infinity` por process substitution en vez de un pipe -
-#    nunca entrega EOF solo, pero tampoco bloquea este script como sí lo hacía un pipe
-#    literal `sleep N | hello_xr` (encontrado 2026-08-09: un pipe de verdad hace que la
-#    shell espere a LOS DOS lados, así que el script se quedaba colgado hasta que pasaran
-#    los N segundos aunque hello_xr ya hubiera terminado solo). `timeout` sobre hello_xr
-#    directo es lo que ahora acota la corrida de verdad; termina cuando hello_xr termina
-#    (solo, un gesto de salir, HELLO_XR_ANY_KEY_QUITS, un crash) o a los N segundos, lo que
-#    pase primero.
+#  - Piped/backgrounded (tests, automation): no real keyboard, so hello_xr's stdin comes
+#    from a `sleep infinity` via process substitution instead of a pipe -- it never
+#    delivers EOF on its own, but it also doesn't block this script the way a literal
+#    `sleep N | hello_xr` pipe did (found 2026-08-09: a real pipe makes the shell wait on
+#    BOTH sides, so the script hung until the N seconds elapsed even though hello_xr had
+#    already exited on its own). `timeout` directly on hello_xr is what now bounds the run;
+#    it ends when hello_xr ends (on its own, a quit gesture, HELLO_XR_ANY_KEY_QUITS, a
+#    crash) or after N seconds, whichever comes first.
 RUNTIME_ENV=(
 	XR_RUNTIME_JSON="$MONADO_BUILD/openxr_monado-dev.json"
 	IPC_IGNORE_VERSION=1
 )
 if [ -t 0 ]; then
-	echo "Reproduciendo $(basename "$FILE") - maximo ${SECONDS_TO_RUN}s."
-	echo "Teclas: [espacio] pausa | [ ] velocidad | 1 normal | h/l -10s/+10s | arriba/abajo (o ^ v) zoom | 0 zoom normal | b/d brillo | 9 brillo normal | enter recentra | n siguiente | q salir"
-	echo "Mando: gatillo pausa | stick X seek | stick Y zoom | A/B (der.) brillo | Y (izq.) siguiente | grip recentra | menu izq sostenido ~1.5s sale"
+	echo "Playing $(basename "$FILE") - max ${SECONDS_TO_RUN}s."
+	echo "Keys: [space] pause | [ ] speed | 1 normal | h/l -10s/+10s | up/down (or ^ v) zoom | 0 normal zoom | b/d brightness | 9 normal brightness | enter recenter | n next | q quit"
+	echo "Controller: trigger pause | stick X seek | stick Y zoom | A/B (right) brightness | Y (left) next | grip recenter | hold left menu ~1.5s to quit"
 	timeout --foreground "$SECONDS_TO_RUN" env \
 		"${RUNTIME_ENV[@]}" "${ENV_EXTRA[@]}" \
 		stdbuf -oL -eL "$HELLO_XR" --graphics Vulkan2
@@ -140,10 +139,10 @@ if [ -t 0 ]; then
 	stty sane 2>/dev/null
 	exit "$RC"
 else
-	echo "Reproduciendo $(basename "$FILE") hasta ${SECONDS_TO_RUN}s (sin teclado: stdin no es una terminal)."
-	# El sleep keepalive hay que matarlo a mano al final - nunca se entera de que su lector
-	# se fue (no escribe, asi que no hay SIGPIPE) y queda huerfano para siempre; se habian
-	# acumulado seis en una hora con la primera version de esto.
+	echo "Playing $(basename "$FILE") for up to ${SECONDS_TO_RUN}s (no keyboard: stdin is not a terminal)."
+	# The keepalive sleep has to be killed by hand at the end -- it never learns its reader
+	# went away (it doesn't write, so there is no SIGPIPE) and stays orphaned forever; six
+	# had piled up in an hour with the first version of this.
 	exec 3< <(exec sleep infinity)
 	STDIN_KEEPALIVE_PID=$!
 	timeout "$SECONDS_TO_RUN" env \

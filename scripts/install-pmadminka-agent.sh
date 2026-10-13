@@ -10,46 +10,46 @@ set -eu
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG="$HOME/.config/pmadminka-agent/config.json"
 
-echo "=== 1/3: chequeo de sintaxis antes de instalar nada ==="
+echo "=== 1/3: syntax check before installing anything ==="
 python3 -m py_compile "$HERE/pmadminka-agent.py" "$HERE/wmr_usb_ids.py" "$HERE/gui_env.py"
 echo "  ok."
 
 echo
 echo "=== 2/3: config ==="
 if [ ! -f "$CONFIG" ]; then
-    echo "  Falta $CONFIG -- necesario antes de instalar el service."
-    echo "  Creá el directorio y el archivo con la URL real del hub, por ejemplo:"
+    echo "  Missing $CONFIG -- required before installing the service."
+    echo "  Create the directory and the file with the real hub URL, for example:"
     echo
     echo "    mkdir -p \"$(dirname "$CONFIG")\""
     echo "    cat > \"$CONFIG\" <<'EOF'"
     echo '    {"server": "http://<hub-host>:8000"}'
     echo "    EOF"
     echo
-    echo "  Corré este instalador de nuevo despues de eso."
+    echo "  Run this installer again after that."
     exit 1
 fi
-echo "  ok, existe $CONFIG:"
+echo "  ok, $CONFIG exists:"
 cat "$CONFIG"
 
 echo
-echo "=== 3/3: instalando el service (systemd --user) ==="
+echo "=== 3/3: installing the service (systemd --user) ==="
 mkdir -p "$HOME/.config/systemd/user"
 cp "$HERE/pmadminka-agent.service" "$HOME/.config/systemd/user/"
 systemctl --user daemon-reload
-echo "  ok, copiado y recargado. NO habilitado todavia."
+echo "  ok, copied and reloaded. NOT enabled yet."
 
 echo
-echo "=== LISTO -- nada corriendo aun ==="
-echo "Para probarlo a mano primero (recomendado, así ves los logs en vivo):"
+echo "=== DONE -- nothing running yet ==="
+echo "To try it by hand first (recommended, so you see the logs live):"
 echo "  python3 $HERE/pmadminka-agent.py"
 echo
-echo "Para instalarlo de verdad (arranca ahora Y en cada login gráfico):"
+echo "To really install it (starts now AND on every graphical login):"
 echo "  systemctl --user enable --now pmadminka-agent.service"
 echo
-echo "Para ver logs despues de habilitarlo:"
+echo "To view logs after enabling it:"
 echo "  journalctl --user -u pmadminka-agent.service -f"
 echo
-echo "Para deshacer todo:"
+echo "To undo everything:"
 echo "  systemctl --user disable --now pmadminka-agent.service"
 echo "  rm ~/.config/systemd/user/pmadminka-agent.service"
 echo "  systemctl --user daemon-reload"

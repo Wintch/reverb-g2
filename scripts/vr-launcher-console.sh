@@ -46,7 +46,7 @@ for _i in $(seq 1 "$WAIT_MAX"); do
             # don't auto-launch a VR menu that leads nowhere good. Behave like
             # an ordinary Linux boot: leave the human at a normal
             # console/desktop to decide by hand.
-            echo "vr-launcher-console: casco listo pero sin controles ni gamepad -- sin auto-launch, consola normal."
+            echo "vr-launcher-console: headset ready but no controllers or gamepad -- no auto-launch, normal console."
             exec /sbin/agetty tty4 linux
         fi
         if [ "${CTRL_OK:-1}" != "1" ]; then
@@ -54,7 +54,7 @@ for _i in $(seq 1 "$WAIT_MAX"); do
             # on gamepad input alone (docs/pruebas.jsonl T127) -- don't force a
             # manual desktop detour just because the VR controllers specifically
             # are off. The launcher menu itself still shows what's pickable.
-            echo "vr-launcher-console: sin controles VR, pero hay gamepad -- lanzando el menu igual."
+            echo "vr-launcher-console: no VR controllers, but a gamepad is present -- launching the menu anyway."
         fi
         # Switch the visible console to tty4 -- with autologin now landing
         # straight on the (empty) GNOME desktop on tty1, the picker below
@@ -92,7 +92,7 @@ for _i in $(seq 1 "$WAIT_MAX"); do
         # systemd tear down the whole PAM/logind login-session scope
         # (killing Monado/Steam with it) the instant vr-launcher.py exits on
         # purpose right after handing off ("lanzado en background, no
-        # espera") -- confirmed then via a real BEGIN_SESSION followed by
+        # espera" -- Spanish: "launched in background, not waiting") -- confirmed then via a real BEGIN_SESSION followed by
         # "Server exiting: '0'" at the exact second runuser's PAM session
         # closed in the journal; `setsid` inside jack-in-wayland.sh doesn't
         # escape this, it only changes the kernel process session (job
