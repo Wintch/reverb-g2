@@ -158,16 +158,21 @@ def dwell(seconds, proc=None):
 
 
 def _kill(proc):
+    """Stop the player's whole process group (see launch_video), TERM first, then KILL."""
     if proc is None:
         return
     try:
-        if proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=8)
-            except Exception:
-                proc.kill()
-    except Exception:
+        pgid = os.getpgid(proc.pid)
+    except ProcessLookupError:
+        return
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+        try:
+            proc.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            pass
+        os.killpg(pgid, signal.SIGKILL)
+    except ProcessLookupError:
         pass
 
 
@@ -197,9 +202,11 @@ def launch_video(entry):
         print(f"[video] jack-in up failed: {up.stderr[-300:]}", file=sys.stderr)
         return None
     env = dict(os.environ, HELLO_XR_AUDIO="1")
+    # Own session, so _kill() can stop the whole group: the wrapper has no trap, and killing
+    # only it left timeout, hello_xr and play360's `sleep infinity` keepalive playing.
     return subprocess.Popen(
         ["bash", PLAY360, "-t", str(int(entry.get("seconds", 180))), entry["path"]],
-        env=env, stdin=subprocess.DEVNULL,
+        env=env, stdin=subprocess.DEVNULL, start_new_session=True,
     )
 
 
@@ -269,23 +276,37 @@ def main(argv):
     print(f"[{_now()}] === playlist '{name}' ({total} entries) ===", flush=True)
 
     stopped = False
-    for i, entry in enumerate(entries):
-        if not wait_if_paused():
-            stopped = True
-            break
-        if i > 0:
-            time.sleep(gap)     # breathing room + lets the USB2 branch settle
-        reason = run_entry(i, total, entry)
-        if reason == "stop":
-            stopped = True
-            break
+    try:
+        for i, entry in enumerate(entries):
+            if not wait_if_paused():
+                stopped = True
+                break
+            if i > 0:
+                time.sleep(gap)     # breathing room + lets the USB2 branch settle
+            try:
+                reason = run_entry(i, total, entry)
+            except (KeyError, ValueError, subprocess.TimeoutExpired) as e:
+                # A bad entry (missing path/appid, bad seconds) or a launcher timeout skips the
+                # entry instead of killing the round with the rig up and a stale status.
+                print(f"[{_now()}] entry {i + 1}: {type(e).__name__}: {e} -- skipped", file=sys.stderr, flush=True)
+                continue
+            if reason == "stop":
+                stopped = True
+                break
+    except BaseException:
+        stopped = True
+        raise
+    finally:
+        _finish(stopped)
+    return 0
 
+
+def _finish(stopped):
     write_status(state="stopping")
     voice("Lista la ronda" if not stopped else "Ronda detenida")
     teardown()
     write_status(state="stopped", current=None, ended_at=_now())
     print(f"[{_now()}] === playlist ended ({'stopped' if stopped else 'complete'}) ===", flush=True)
-    return 0
 
 
 if __name__ == "__main__":

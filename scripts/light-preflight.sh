@@ -52,9 +52,15 @@ force_down() {
 
 STATUS=failed
 VERDICT="ERROR: no data collected"
+# OWN_RIG=1 only once the guards below have passed and this run has taken the rig over:
+# before that, an exit (e.g. "refusing: a game is running") must not tear down a session
+# that belongs to someone else.
+OWN_RIG=0
 cleanup() {
-    kill "${PLAYER_PID:-}" 2>/dev/null
-    rig_clean || force_down
+    # The player runs in its own session (setsid below): kill the whole group, so timeout,
+    # hello_xr and play360's keepalive go too, not just the wrapper.
+    [ -n "${PLAYER_PID:-}" ] && kill -TERM -- "-$PLAYER_PID" 2>/dev/null
+    [ "$OWN_RIG" = 1 ] && { rig_clean || force_down; }
     attention '{"active": false}'
     log "light preflight end: status=$STATUS verdict=$VERDICT"
     echo "$STATUS $(date '+%F %T')" > "$DONE"
@@ -68,6 +74,7 @@ ST=$(python3 "$HERE/game-stop.py" status 2>/dev/null)
 if [ -n "$ST" ] && [ "$ST" != "no Proton game trees running" ]; then
     log "refusing: a game is running -- $ST"; exit 1
 fi
+OWN_RIG=1
 rig_clean || { log "rig not clean at start"; force_down; sleep 5; }
 
 # Live-discover the Wayland/X env (gui_env.py: DISPLAY/XAUTHORITY can't be hardcoded, they're
@@ -101,13 +108,13 @@ log "monado-service pid $(pgrep -x monado-service | head -1)"
 
 # The 360 player, same as soak-variant.py: a real OpenXR client on a static image so the camera
 # and tracking pipeline runs exactly as it does for a wearer; nobody has to hold anything.
-"$HOME/vr/play360.sh" -t "$((SECS + 30))" "$MEDIA" < /dev/null >"$PRE/light-$STAMP-player.log" 2>&1 &
+setsid "$HOME/vr/play360.sh" -t "$((SECS + 30))" "$MEDIA" < /dev/null >"$PRE/light-$STAMP-player.log" 2>&1 &
 PLAYER_PID=$!
 
 sleep "$SECS"
 log "sampling window complete"
 cp -f "$HOME/vr/jack-in-wayland.log" "$RAWLOG" 2>/dev/null || log "warning: could not copy jack-in-wayland.log"
-kill "$PLAYER_PID" 2>/dev/null
+kill -TERM -- "-$PLAYER_PID" 2>/dev/null
 "$HOME/vr/jack-in-wayland.sh" down >>"$LOG" 2>&1
 
 # Reuse soak-variant.py's parse_vit() for landmarks/keypoints p50/p10 (its fused-line skip is

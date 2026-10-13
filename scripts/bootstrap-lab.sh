@@ -141,9 +141,12 @@ do_deps() {
 			"$TARGET_HOME/.config/wireplumber/wireplumber.conf.d/"
 	}
 	if [ "$IS_ROOT" = "1" ]; then
-		"$RUNUSER" -u "$TARGET_USER" -- env HOME="$TARGET_HOME" bash -c "$(declare -f wp_install); wp_install"
+		# The child shell only sees what is passed: TARGET_HOME and REPO_DIR are not exported,
+		# and without them the rule was silently never installed.
+		"$RUNUSER" -u "$TARGET_USER" -- env HOME="$TARGET_HOME" TARGET_HOME="$TARGET_HOME" REPO_DIR="$REPO_DIR" \
+			bash -c "set -e; $(declare -f wp_install); wp_install" || return 1
 	else
-		wp_install
+		wp_install || return 1
 	fi
 	echo "    (needs 'systemctl --user restart wireplumber' to take effect - not run here,"
 	echo "    since this script may run as a different user/session than the target one)"

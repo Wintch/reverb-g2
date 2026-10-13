@@ -85,6 +85,12 @@ DEV=$(find_device) || {
 
 echo "companion: $DEV (bus $(cat "$DEV/busnum") dev $(cat "$DEV/devnum")), currently $(hidraw_node)"
 
+# Ctrl-C or a kill between the two writes below would leave the companion de-authorized
+# (gone until a replug or reboot): always re-authorize on the way out.
+reauthorize() { [ -w "$DEV/authorized" ] && echo 1 >"$DEV/authorized" 2>/dev/null || true; }
+trap reauthorize EXIT
+trap 'exit 130' INT TERM HUP
+
 for i in $(seq 1 "$COUNT"); do
 	before=$(hidraw_node)
 	echo "[$i/$COUNT] $(date +%H:%M:%S.%3N) de-authorizing for ${DOWN_S}s (was $before)"

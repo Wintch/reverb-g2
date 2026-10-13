@@ -67,6 +67,16 @@ kill_monado() {
 
 # mode 2 = 4320x2160@60 (the one that TURNS ON the panel) — this is the diff reference.
 # mode 0 = 2880x1440@90 native (fails).  mode 1 = 4320x2160@90 (fails).
+# Ctrl-C mid-capture left the usbmon `cat` streaming, Monado up and root-owned files.
+CATPID=""
+cleanup() {
+    [ -n "$CATPID" ] && kill "$CATPID" 2>/dev/null
+    kill_monado
+    chown "$REAL_USER" "$OUT"/hid-mode*.txt "$OUT"/jack-mode*.log 2>/dev/null
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM HUP
+
 FAILED=0
 for MODE in 2 0 1; do
     echo

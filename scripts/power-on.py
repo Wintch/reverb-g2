@@ -169,26 +169,55 @@ def id_path_for(dev_path):
     return m.group(1) if m else ""
 
 
+def headset_buses(lsusb_text):
+    """Root hubs ("usb3", ...) of the buses that show at least one headset device now."""
+    buses = []
+    for line in lsusb_text.splitlines():
+        m = re.match(r"Bus (\d+) Device \d+: ID (\S+)", line)
+        if m and m.group(2) in DEV_IDS:
+            bus = f"usb{int(m.group(1))}"
+            if bus not in buses:
+                buses.append(bus)
+    return buses
+
+
 def try_self_repair():
     """Software-only fix, zero physical contact: unbind/rebind the USB2 root
     hub (docs/pruebas.jsonl T117/T120-T122 validated this recovers the branch
     sometimes). Root-only -- caller must check os.geteuid() first. Returns
-    the new lsusb text after the attempt."""
-    for bus in ("usb3", "usb1"):
+    the new lsusb text after the attempt.
+
+    Only the buses the headset currently shows on are reset; usb3/usb1 (the lab
+    box's layout) are the fallback when none of its devices is visible. Stops at
+    the first bus that brings the headset back, and retries a failed rebind
+    rather than leave a root hub (and everything on it) unbound."""
+    buses = headset_buses(lsusb_output())
+    if not buses:
+        print("  no headset device visible on any bus: falling back to usb3, usb1 (lab layout)")
+        buses = ["usb3", "usb1"]
+    driver_unbind = Path("/sys/bus/usb/drivers/usb/unbind")
+    driver_bind = Path("/sys/bus/usb/drivers/usb/bind")
+    for bus in buses:
         if not Path(f"/sys/bus/usb/devices/{bus}").exists():
             continue
-        driver_unbind = Path("/sys/bus/usb/drivers/usb/unbind")
-        driver_bind = Path("/sys/bus/usb/drivers/usb/bind")
         try:
             driver_unbind.write_text(bus)
-            time.sleep(3)
-            driver_bind.write_text(bus)
         except OSError:
             continue
+        time.sleep(3)
+        for attempt in range(3):
+            try:
+                driver_bind.write_text(bus)
+                break
+            except OSError as e:
+                print(f"  rebind of {bus} failed ({e}), attempt {attempt + 1}/3")
+                time.sleep(2)
+        else:
+            print(f"  !! {bus} is still unbound: replug the headset or reboot")
         for _ in range(10):
             time.sleep(1)
             if headset_count(lsusb_output()) >= 4:
-                break
+                return lsusb_output()
     return lsusb_output()
 
 

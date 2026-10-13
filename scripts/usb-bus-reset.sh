@@ -52,6 +52,20 @@ dump_xhci_debugfs() {
     [ "$found" = 0 ] && echo "  (sin entradas xhci en /sys/kernel/debug/usb -- no disponible en este kernel/build)"
 }
 
+# An interrupted run (Ctrl-C, ssh drop, failed bind) between unbind and bind would leave the
+# whole bus unbound, keyboard, mouse and disks on it included: rebind on the way out.
+UNBOUND=0
+rebind() {
+    [ "$UNBOUND" = 1 ] || return 0
+    for _ in 1 2 3; do
+        echo -n "$BUS" > "$DRIVER_PATH/bind" 2>/dev/null && { UNBOUND=0; echo "  $BUS rebound on exit"; return 0; }
+        sleep 2
+    done
+    echo "!! $BUS is still unbound: replug or reboot" >&2
+}
+trap rebind EXIT
+trap 'exit 130' INT TERM HUP
+
 RESULTS=()
 for t in $(seq 1 "$TRIALS"); do
     echo "########## INTENTO $t/$TRIALS ##########"
@@ -65,13 +79,20 @@ for t in $(seq 1 "$TRIALS"); do
     echo
     echo "=== unbind $BUS ==="
     echo -n "$BUS" > "$DRIVER_PATH/unbind" 2>&1 || { echo "!! unbind fallo"; RESULTS+=("intento $t: unbind FALLO"); continue; }
+    UNBOUND=1
     echo "  ok."
 
     sleep 3
 
     echo
     echo "=== bind $BUS ==="
-    echo -n "$BUS" > "$DRIVER_PATH/bind" 2>&1 || { echo "!! bind fallo"; RESULTS+=("intento $t: bind FALLO"); continue; }
+    if echo -n "$BUS" > "$DRIVER_PATH/bind" 2>&1; then
+        UNBOUND=0
+    else
+        echo "!! bind fallo"; RESULTS+=("intento $t: bind FALLO")
+        rebind   # retries; leaving the bus unbound for the next trial would test nothing
+        continue
+    fi
     echo "  ok."
 
     echo

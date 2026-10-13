@@ -70,9 +70,14 @@ have_sudo() { sudo -n true 2>/dev/null && sudo -n -l "$POWER" >/dev/null 2>&1; }
 
 STATUS=failed
 WATCHDOG_STOPPED=0
+# OWN_RIG=1 only once the guards below have passed: an exit before that (e.g. "refusing: a
+# game is running") must not kill the player or tear down a session that is not this run's.
+OWN_RIG=0
 cleanup() {
-    pkill -x hello_xr 2>/dev/null
-    rig_clean || force_down
+    if [ "$OWN_RIG" = 1 ]; then
+        pkill -x hello_xr 2>/dev/null
+        rig_clean || force_down
+    fi
     if [ "$WATCHDOG_STOPPED" = 1 ]; then
         sudo -n systemctl start vr-power-watchdog.service 2>/dev/null && log "power watchdog restarted" || log "WARNING: could not restart vr-power-watchdog.service"
     fi
@@ -87,6 +92,7 @@ if [ -n "$ST" ] && [ "$ST" != "no Proton game trees running" ]; then
     log "refusing: a game is running -- $ST"; exit 1
 fi
 [ -x "$SWEEP" ] || { log "missing $SWEEP"; exit 1; }
+OWN_RIG=1
 rig_clean || { log "rig not clean at start"; force_down; sleep 5; }
 
 {

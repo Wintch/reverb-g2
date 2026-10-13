@@ -569,5 +569,14 @@ def main():
     log(f"done: {result}")
 
 
+def _exit_on_signal(signum, _frame):
+    # Python's default SIGTERM/SIGHUP handling ends the process without unwinding, so the
+    # `finally` and PowerControl.__exit__ above never ran: --force-kill from another run, or a
+    # closed terminal, left the power watchdog stopped and the GPU capped. SystemExit unwinds.
+    raise SystemExit(128 + signum)
+
+
 if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, _exit_on_signal)
+    signal.signal(signal.SIGHUP, _exit_on_signal)
     main()
