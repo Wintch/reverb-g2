@@ -1,0 +1,72 @@
+From 9ab29a4e8d6dc431c8ba5ed3ec86c7ecaae568de Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Mon, 12 Oct 2026 22:51:35 -0300
+Subject: [PATCH] openxr_data: the refresh-rate fallback returns a rate, not a
+ period
+
+Without XR_FB_display_refresh_rate, get_refresh_rate() returned the
+display period in seconds (0.011 for 90 Hz), so DisplayFrequency_Float
+read 0.011 and the compositor's 1000.0 / rate came out at about 90000 ms;
+before the first xrWaitFrame the period is 0 and that became infinity.
+0005 writes that value into the frame-timing fields.
+
+The fallback now inverts the period, assumes 90 Hz while it is still 0,
+and a non-finite or sub-1 Hz answer from the extension also falls back.
+This is in xrizer's base code, not only in our patches.
+
+Found by the 2026-10-12 code review (reverb-g2 docs/147, X03-2, X03-6).
+
+Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
+---
+ src/openxr_data.rs | 25 +++++++++++++++++--------
+ 1 file changed, 17 insertions(+), 8 deletions(-)
+
+diff --git a/src/openxr_data.rs b/src/openxr_data.rs
+index 1ee5b07..38c726d 100644
+--- a/src/openxr_data.rs
++++ b/src/openxr_data.rs
+@@ -569,24 +569,33 @@ impl<C: Compositor> OpenXrData<C> {
+     }
+ 
+     pub fn get_refresh_rate(&self) -> f32 {
++        // Without XR_FB_display_refresh_rate, the rate comes from the display period that
++        // xrWaitFrame reports. It is a period: the rate is its inverse (this returned the
++        // period in seconds, so 90 Hz read as 0.011 and 1000.0 / rate as ~90000 ms). Before
++        // the first xrWaitFrame the period is 0; assume 90 Hz rather than return 0 or inf.
++        const ASSUMED_HZ: f32 = 90.0;
+         let get_fallback_rate = || {
+-            Duration::from_nanos(
++            let period = Duration::from_nanos(
+                 self.display_period_nanos
+                     .load(Ordering::Relaxed)
+                     .try_into()
+-                    .unwrap(),
++                    .unwrap_or(0),
+             )
+-            .as_secs_f32()
++            .as_secs_f32();
++            if period > 0.0 {
++                1.0 / period
++            } else {
++                ASSUMED_HZ
++            }
+         };
+         if !self.enabled_extensions.fb_display_refresh_rate {
+             return get_fallback_rate();
+         }
+ 
+-        self.session_data
+-            .get()
+-            .session
+-            .get_display_refresh_rate()
+-            .unwrap_or_else(|_| get_fallback_rate())
++        match self.session_data.get().session.get_display_refresh_rate() {
++            Ok(rate) if rate.is_finite() && rate >= 1.0 => rate,
++            _ => get_fallback_rate(),
++        }
+     }
+ 
+     fn end_session(&self, session_data: &mut SessionData) {
+-- 
+2.47.3
+

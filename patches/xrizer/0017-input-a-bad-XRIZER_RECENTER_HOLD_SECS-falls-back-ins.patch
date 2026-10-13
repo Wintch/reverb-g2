@@ -1,0 +1,49 @@
+From cf4e6888c9f7f3aedfb79fde52b635bce2ff64d6 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Mon, 12 Oct 2026 22:51:35 -0300
+Subject: [PATCH] input: a bad XRIZER_RECENTER_HOLD_SECS falls back instead of
+ panicking
+
+Duration::from_secs_f32 panics on a negative, NaN, infinite or huge value,
+and recenter_hold_duration() ran it every frame the menu button was held,
+inside WaitGetPoses with the hold mutex locked. The value is now parsed
+once, and anything outside 0.1-60 s uses the 3 s default.
+
+Found by the 2026-10-12 code review (reverb-g2 docs/147, X01-1).
+
+Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
+---
+ src/input/legacy.rs | 17 ++++++++++++-----
+ 1 file changed, 12 insertions(+), 5 deletions(-)
+
+diff --git a/src/input/legacy.rs b/src/input/legacy.rs
+index 0ee0dec..c740f69 100644
+--- a/src/input/legacy.rs
++++ b/src/input/legacy.rs
+@@ -499,11 +499,18 @@ impl<C: openxr_data::Compositor> Input<C> {
+ }
+ 
+ fn recenter_hold_duration() -> std::time::Duration {
+-    std::env::var("XRIZER_RECENTER_HOLD_SECS")
+-        .ok()
+-        .and_then(|s| s.parse::<f32>().ok())
+-        .map(std::time::Duration::from_secs_f32)
+-        .unwrap_or(std::time::Duration::from_secs(3))
++    // Parsed once. Duration::from_secs_f32 panics on a negative, NaN, infinite or huge value,
++    // and this runs every frame the menu button is held, so anything outside 0.1-60 s falls
++    // back to the 3 s default instead of aborting the game.
++    static HOLD: std::sync::OnceLock<std::time::Duration> = std::sync::OnceLock::new();
++    *HOLD.get_or_init(|| {
++        std::env::var("XRIZER_RECENTER_HOLD_SECS")
++            .ok()
++            .and_then(|s| s.trim().parse::<f32>().ok())
++            .filter(|secs| secs.is_finite() && (0.1..=60.0).contains(secs))
++            .and_then(|secs| std::time::Duration::try_from_secs_f32(secs).ok())
++            .unwrap_or(std::time::Duration::from_secs(3))
++    })
+ }
+ 
+ mod marker {
+-- 
+2.47.3
+

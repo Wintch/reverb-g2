@@ -1,7 +1,10 @@
 # xrizer patches
 
-Two patches on top of xrizer `main` @ `6c3e45f` (the SHA `~/vr/xrizer` was cloned at, see
-`docs/06-known-issues.md` for the xrizer bring-up). Apply with plain `git am`, in order.
+Patches on top of xrizer `main` @ `6c3e45f` (the SHA `~/vr/xrizer` was cloned at, see
+`docs/06-known-issues.md` for the xrizer bring-up). That commit is on
+`github.com/Supreeeme/xrizer`; it is not on the `The-personified-devil` fork. Apply with plain
+`git am`, in order: all 17 apply (`applies-on-base.txt`), and `cargo test --lib` passes
+(88 tests, 2026-10-12).
 
 | patch | what |
 |---|---|
@@ -187,3 +190,14 @@ manifest did not cover; `get_or_create_legacy_actions` split into `get_or_create
 true, wearer confirmed Y=music / A=start / flight. Compiles clean (`cargo build --release`).
 Commit `23df986`, full writeup docs/89 §15. Known-benign follow-up: `pose_data.grip` bound twice
 in the merged call — dedup later.
+
+## 0014-0017 — fixes from the 2026-10-12 code review (docs/147)
+
+| patch | what |
+|---|---|
+| 0014 | 0013 broke upstream's own `load_actions_race` test: it passes on `6c3e45f` and through 0012, and fails from 0013 on. 0013 creates the legacy set inside `load_action_manifest()`, before attach, and a concurrent `frame_start_update()` synced the unattached set and panicked. The legacy branch now skips the sync while a manifest loads. Also, a repeated `SetActionManifestPath` no longer restarts the session when a manifest is already loaded (since 0004 every manifest session holds legacy actions, so each repeat cost a full restart). |
+| 0015 | Frame-timing ring (0006): one spare slot, so a full-history reader never gets the slot being written; reads are re-validated after the copy, and `GetFrameTimings` reads against one count snapshot. |
+| 0016 | The refresh-rate fallback (no `XR_FB_display_refresh_rate`) returned the display period in seconds, 0.011 for 90 Hz, which made 0005's `1000.0 / rate` about 90000 ms, or infinity before the first frame. It now returns Hz and assumes 90 while the period is unknown. The bug is in xrizer's base code. |
+| 0017 | A bad `XRIZER_RECENTER_HOLD_SECS` panicked inside `WaitGetPoses` (`Duration::from_secs_f32`). It is now parsed once and range-checked. |
+
+Built and unit-tested only, not run with a game yet.
