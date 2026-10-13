@@ -1,5 +1,15 @@
 # Next step
 
+> ## 2026-10-12 — full code review done, nothing fixed yet: read `docs/147` before trusting a tool
+>
+> 525 agents read every script, every patch series and the Monado fork branch (2191 entries,
+> ~1450 distinct, 0 critical, 10 distinct headline defects). Before relying on these, know that
+> they currently lie or break: `vr-cockpit.py` says GO with an unregistered controller and never
+> reads the battery; `collect-nv.sh` captures nothing; `ab-analyze.py` voids every hare_ware leg;
+> `apply-bpc-patch.sh` can leave the box with no nvidia module; Monado 0095 hangs every camera
+> teardown until SIGKILL; 0097's neck-arm sign is inverted in the shipped profiles. Fix plan and
+> owner decisions: `docs/147` §6 and §9.
+
 > ## START HERE (2026-09-07 ~04:00 -03 — the panel flicker is CLOSED; `docs/112` is the
 > one to read, and `docs/109`/`110`/`111` are superseded by it)
 >

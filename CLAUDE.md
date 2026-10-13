@@ -1,5 +1,9 @@
 # Context for the 90Hz lab agent
 
+> ## UPDATE 2026-10-12 — a full code review found tools that fail green: read `docs/147` first.
+> Nothing is fixed yet. Do not treat a GO from `vr-cockpit.py`, a pass from `verify-bpc.sh` or a
+> `collect-nv.sh` capture as evidence until the fixes in docs/147 §9 land.
+
 > ## UPDATE 2026-08-23 ~00:30 — the plan of record is `docs/67-pending-plan-2026-08-22.md`
 > (Aircar is the "like on Windows" exam, Cyberpilot second, controller 6DoF in parallel, Windows
 > capture deferred; acceptance criteria with numbers; S1 log). Read it and NEXT-STEP's START HERE
