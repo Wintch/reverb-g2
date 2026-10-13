@@ -10,10 +10,24 @@
 > clock (0114), `bootstrap-lab.sh`, the hello_xr series (all 25 apply now), xrizer (0014-0017,
 > one fixes a test 0013 broke) and NVIDIA 0002's lease hook. **2026-10-13 on the rig:** all of
 > them are built on review branches. The new Monado is live in `~/vr/monado/build` and passed a
-> camera-on teardown loop (8/8). The NVIDIA 0002 install waits on root
-> (`~/vr/backups/nv-0002-20261013/install-0002.sh`). The launcher's neck-arm values (Aircar
-> 100 mm, Cyberpilot 150 mm) were tuned with the inverted sign, so re-run that wearer A/B. Owner
-> decisions still open: `docs/147` §6.
+> camera-on teardown loop (8/8). NVIDIA 0002 is installed: 6/6 lease cycles, and a worn check
+> gave a 90 Hz panel. The player's seek, frame step, recenter, audio hand-back and playlist pass,
+> worn and in the log.
+>
+> **Resume here (paused 2026-10-13 by the owner):**
+> 1. **Neck-arm blind A/B on Aircar + one game through the patched xrizer, in one session.**
+>    Before anything, check that the shared Steam account is free (step 4). Then:
+>    `bash ~/vr/review-session/vrpath.sh review`, and for each blind label
+>    `aircar-up.sh <label> <0|100|200>` → worn fast-yaw → `aircar-down.sh`. Finish with
+>    `vrpath.sh restore`. Setup: lights on, Xbox pad on, headset on the desk until each variant
+>    has loaded. Confirm the game mapped `~/vr/xrizer-review` (`/proc/<pid>/maps`). Update
+>    `vr-launcher.py` `SLAM_PRED_NECK_ARM_MM` (Aircar 100, Cyberpilot 150) from the result.
+> 2. **Root check:** the owner re-runs `sudo bash ~/vr/backups/review-root-check.sh`. The first run's
+>    `/tmp` output was lost to the reboot; it now writes `~/vr/backups/review-root-check.txt`.
+>    Then fix the sudoers allowlist (`docs/147` §6).
+> 3. Owner decisions still open: `docs/147` §6.
+> 4. **Never kick anyone off the shared Steam account.** If a launch reaches Steam's
+>    `KickingOtherSession` prompt, stop and tell the owner (see CLAUDE.md).
 
 > ## START HERE (2026-09-07 ~04:00 -03 — the panel flicker is CLOSED; `docs/112` is the
 > one to read, and `docs/109`/`110`/`111` are superseded by it)

@@ -457,6 +457,13 @@ blocker.
   this exact check (grep "OpenVR runtime routing") and, as of docs/120, a `--fix-vrpath` flag
   that self-heals the file (reorders `runtime[]`, backs up the original). Restart Steam after
   fixing — an already-running game process won't pick up the new order.
+- **Never kick anyone off the shared Steam account** (owner rule, 2026-10-13). The account is
+  shared, and a launch while someone else plays it ends at Steam's "kick the other session"
+  prompt. `console_log.txt` shows `LaunchApp waiting for user response to KickingOtherSession
+  "<title>"`. Stop there: never click through it or automate past it. Report who is playing what
+  and resume later. The other interstitials are fine to answer after looking at them ("Grab your
+  controller!" → OK). A launch that silently never starts is usually waiting on one of these:
+  grep `GameAction [AppID <id>` in `~/.steam/debian-installation/logs/console_log.txt`.
 - **Killing the Steam wrapper does NOT stop the game** (found 2026-08-21, T244 close).
   `kill $(pgrep -f "AppId=NNN")` or matching the title in a cmdline only takes down
   `reaper`/`steam-launch-wrapper`/`proton`; the Windows binary keeps running under
