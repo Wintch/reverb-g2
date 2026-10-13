@@ -239,7 +239,7 @@ reassert_monitors() {
 
 	for entry in "${MONITOR_LAYOUT[@]}"; do
 		IFS='|' read -r name mode pos rot prim <<<"$entry"
-		args+=(--output "$name" --mode "$mode" --pos "${pos/x/+}" --rotate "$rot")
+		args+=(--output "$name" --mode "$mode" --pos "$pos" --rotate "$rot")
 		[ "$prim" = "primary" ] && args+=(--primary)
 		[ "$rot" != "normal" ] && rotated+=("$name:$rot")
 	done

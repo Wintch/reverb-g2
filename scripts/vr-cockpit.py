@@ -252,16 +252,18 @@ def process_start_epoch(pid):
 # glob timestamped variants; it corresponds to whatever monado-service is (or was
 # last) running.
 #
-# The battery-byte log line (`Controller battery raw byte: OLD -> NEW`) carries no
-# hand tag of its own -- only the surrounding context does (a `Reading left/right
-# controller config` line earlier in the stream). Each hand's FIRST-ever reading logs
+# Since patch 0073 the battery-byte log line carries the device name
+# (`Controller battery raw byte [<name>]: OLD -> NEW`) and the hand is read from it.
+# Older builds log it untagged (`Controller battery raw byte: OLD -> NEW`); then only
+# the surrounding context identifies the hand (a `Reading left/right controller
+# config` line earlier in the stream). Each hand's FIRST-ever untagged reading logs
 # as "0 -> byte" (last_input->battery starts at struct-zero); matched to whichever
 # hand's context was current. Every later reading is matched by continuity: OLD
 # equals whichever hand's last known value was OLD.
 # ==================================================================================
 _LEFT_RE = re.compile(r"^\s*left:\s*(.+)$")
 _RIGHT_RE = re.compile(r"^\s*right:\s*(.+)$")
-_BATTERY_RE = re.compile(r"Controller battery raw byte:\s*(\d+)\s*->\s*(\d+)")
+_BATTERY_RE = re.compile(r"Controller battery raw byte(?: \[([^\]]*)\])?:\s*(\d+)\s*->\s*(\d+)")
 _STICK_AUTOCENTER_RE = re.compile(
     r"stick autocenter (\w+): offset=\(([-\d.]+),\s*([-\d.]+)\)\s*\[(\d+) samples"
 )
@@ -297,19 +299,24 @@ def parse_session_log(path):
                 m = _LEFT_RE.match(line)
                 if m:
                     name = _strip_paren_suffix(m.group(1))
-                    result["left_registered"] = bool(name) and name.lower() != "none"
+                    result["left_registered"] = bool(name) and name.lower() not in ("none", "<none>")
                     result["left_name"] = name
 
                 m = _RIGHT_RE.match(line)
                 if m:
                     name = _strip_paren_suffix(m.group(1))
-                    result["right_registered"] = bool(name) and name.lower() != "none"
+                    result["right_registered"] = bool(name) and name.lower() not in ("none", "<none>")
                     result["right_name"] = name
 
                 m = _BATTERY_RE.search(line)
                 if m:
-                    old, new = int(m.group(1)), int(m.group(2))
-                    if old == 0:
+                    tag, old, new = (m.group(1) or "").lower(), int(m.group(2)), int(m.group(3))
+                    tagged = "left" if "left" in tag else "right" if "right" in tag else None
+                    if tagged:
+                        if battery_first[tagged] is None:
+                            battery_first[tagged] = new
+                        battery_last[tagged] = new
+                    elif old == 0:
                         target = hand_ctx if battery_last.get(hand_ctx) is None else None
                         if target is None:
                             other = "right" if hand_ctx == "left" else "left"

@@ -19,7 +19,7 @@ while IFS= read -r -d '' kv; do
     esac
 done < "/proc/$GUI_PID/environ"
 
-PREV=$(grep -c "$PAT" "$L" 2>/dev/null || echo 0)
+PREV=$(grep -c "$PAT" "$L" 2>/dev/null); PREV=${PREV:-0}
 START=$PREV
 say "Buscando. Movelo despacio delante del casco."
 echo "start count: $PREV"
@@ -28,7 +28,7 @@ END=$((SECONDS + SECS))
 LAST_SPOKE=0
 while [ "$SECONDS" -lt "$END" ]; do
     sleep 2
-    NOW=$(grep -c "$PAT" "$L" 2>/dev/null || echo 0)
+    NOW=$(grep -c "$PAT" "$L" 2>/dev/null); NOW=${NOW:-0}
     D=$((NOW - PREV))
     if [ "$D" -gt 0 ]; then
         echo "  +$D  (total $NOW)"

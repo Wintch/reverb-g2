@@ -28,7 +28,7 @@ def vang(a,b):
 
 grav_re=re.compile(r'\[HP Reverb G2 (Left|Right) Controller\].*q_solve=\((-?[\d.]+),(-?[\d.]+),(-?[\d.]+),(-?[\d.]+)\) q_imu=\((-?[\d.]+),(-?[\d.]+),(-?[\d.]+),(-?[\d.]+)\)')
 samp_re=re.compile(r'constellation sample #\d+: pos=\((-?[\d.]+), (-?[\d.]+), (-?[\d.]+)\) matched_blobs=(\d+) visible_leds=(\d+) reproj_err_px=([\d.]+)')
-drop_re=re.compile(r'gravity gate: dropped wrong-lobe sample, ([\d.]+) deg .* (\d+) dropped so far')
+drop_re=re.compile(r'gravity gate(?: \[[^\]]*\])?: dropped wrong-lobe sample, ([\d.]+) deg .* (\d+) dropped so far')
 
 recs=[]; pend=None; gap=0; drops=[]
 for l in open(sys.argv[1],errors='replace'):

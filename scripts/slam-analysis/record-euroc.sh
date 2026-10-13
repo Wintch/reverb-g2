@@ -100,7 +100,7 @@ grep -q "vit_of " "$LOG" 2>/dev/null || {
 
 > "$GO"
 say "Jack in. Ponete el casco tranquilo. Espero tu senal."
-echo ">> WAITING: touch $GO when the wearer is ready (recording is live, keep it short)"
+echo ">> WAITING: run \`echo go > $GO\` when the wearer is ready (recording is live, keep it short)"
 for _ in $(seq 1 900); do
 	[ -s "$GO" ] && break
 	sleep 1

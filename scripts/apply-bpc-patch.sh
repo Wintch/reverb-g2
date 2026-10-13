@@ -33,7 +33,6 @@ TARGET="$DKMS_DIR/src/nvidia-modeset/src/nvkms-dpy.c"
 
 if [ "${1:-}" = "--revert" ]; then
     echo "reverting..."
-    sed -i 's/} else if (pDpyEvo->parsedEdid\.info\.input\.u\.digital\.bpc != 0 \&\&\n/X/' "$TARGET" || true
     python3 - "$TARGET" <<'PY'
 import re, sys
 p = sys.argv[1]
@@ -49,7 +48,12 @@ PY
 else
     # The tree is edited directly (not via dkms.conf's PATCH[]) because the other three
     # patches are already applied there and a new PATCH[] would apply against the clean tree.
-    if grep -q "digital.bpc != 0" "$TARGET"; then
+    if grep -q "$PATCH_NAME" "$DKMS_DIR/dkms.conf" 2>/dev/null; then
+        # bootstrap-lab.sh patch-nv lists 0004 in PATCH[]: DKMS applies it to a copy at
+        # build time. Editing the tree as well would make that PATCH[] fail to apply.
+        echo "  dkms.conf already applies the patch through PATCH[], nothing to do"
+        exit 0
+    elif grep -q "digital.bpc != 0" "$TARGET"; then
         echo "  the patch is ALREADY applied, doing nothing"
     else
         python3 - "$TARGET" <<'PY'
@@ -75,8 +79,11 @@ grep -n -A1 "digital.bpc != 0\|digital.bpc < 8" "$TARGET" | head -6
 
 echo
 echo "=== rebuilding the module (takes a few minutes) ==="
-dkms remove "nvidia/$VER" --all 2>/dev/null || true
-dkms install "nvidia/$VER"
+# Build first and install over the old module: a failed build then leaves the working
+# module in place, instead of the box with no nvidia module at all after `dkms remove`.
+KVER="$(uname -r)"
+dkms build "nvidia/$VER" -k "$KVER" --force
+dkms install "nvidia/$VER" -k "$KVER" --force
 
 echo
 echo "DONE. YOU MUST REBOOT to load the new module."

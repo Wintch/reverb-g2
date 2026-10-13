@@ -41,7 +41,9 @@ def main():
     if cmd == "open":
         if len(sys.argv) < 3:
             sys.exit("missing mode")
-        n = len(rows) + 1
+        # Next free number, not len(rows) + 1: hand-written rows skip numbers, and a
+        # count-based id has already handed out T237 and T238 twice.
+        n = max((int(r["id"][1:]) for r in rows if r["id"][1:].isdigit()), default=0) + 1
         rec = {
             "id": f"T{n:03d}",
             "abierta": stamp(),

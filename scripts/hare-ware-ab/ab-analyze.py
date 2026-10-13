@@ -27,6 +27,8 @@ PHASES = {0: "INIT", 1: "FIND_INITIAL_OFFSET", 2: "FIND_RIGHT_EDGE", 3: "FIND_LE
           4: "REFINE_BLINK_DURATION", 5: "MAINTAIN_OFFSET"}
 
 # One cheap pre-filter so 600 MB logs are not regex-matched line by line.
+SHUTDOWN_TAIL_S = 5.0   # an HMD read-thread exit this close to the end of the log is the shutdown
+
 KEY = re.compile(
     r"Found pose for device|Dropping (?:slow|fast) sample|timesync counter|Entering search phase|"
     r"Triggering resync|companion|reading thread|RECONNECTED|giving up|Hololens Sensors|"
@@ -251,7 +253,9 @@ class Run:
                 (self.ctrl_late if self._mode_seen else self.ctrl_added).add(int(m.group(1)))
             return
         if "Using builder" in line:
-            self.builder = line.split("Using builder", 1)[1].strip().split()[0] if self.builder is None else self.builder
+            # Monado prints "Using builder <id>: <name>"; drop the colon so "wmr:" compares as "wmr".
+            if self.builder is None:
+                self.builder = line.split("Using builder", 1)[1].strip().split()[0].rstrip(":")
             return
         if "found display mode" in line:
             self._mode_seen = True
@@ -494,10 +498,14 @@ def analyse(run, width):
             flags.append("NUDGE_NOT_NEEDED: tracker still had %d poses in the 10 s before the nudge" % nz["poses_10s_before"])
     if r["drop_slow"] > 100:
         flags.append("DROPPING_SLOW: %d slow samples dropped (tracker not keeping up or storm)" % r["drop_slow"])
-    if run.comp_exit and not run.reconnects:
+    # The read thread also exits on a clean SIGTERM at the end of the leg; only an exit that
+    # the log outlives by more than SHUTDOWN_TAIL_S is a death.
+    live_exits = [t for t in run.comp_exit
+                  if t is None or run.dur_wall is None or t < run.dur_wall - SHUTDOWN_TAIL_S]
+    if live_exits and not run.reconnects:
         flags.append("HMD_READ_THREAD_DEAD: 'Exiting reading thread' at %s with no companion reconnect "
                      "(head IMU + tunnelled controllers gone; !3004 absent or failed)" % r["hmd_read_thread_exits"])
-    if run.comp_err and not run.comp_exit:
+    if run.comp_err and not live_exits:
         flags.append("COMPANION_ERRORS: %d error lines (max %d in a row); read thread survived" % (len(run.comp_err), r["companion_max_in_a_row"]))
     if run.reconnects:
         flags.append("COMPANION_RECONNECTED x%d (USB2 re-enumeration absorbed)" % len(run.reconnects))

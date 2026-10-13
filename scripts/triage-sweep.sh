@@ -63,7 +63,7 @@ for APPID in "$@"; do
 
     kill_game
     rm -f "$XRIZER_LOG"
-    CONN_BEFORE="$(grep -c client_connected "$LOG" 2>/dev/null || echo 0)"
+    CONN_BEFORE="$(grep -c client_connected "$LOG" 2>/dev/null)"; CONN_BEFORE=${CONN_BEFORE:-0}
 
     steam -applaunch "$APPID" >/dev/null 2>&1 &
 
@@ -89,7 +89,7 @@ for APPID in "$@"; do
     ps -eo args --no-headers | grep -iE "steamapps/common" \
       | grep -qviE "grep|steamwebhelper|reaper|entry-point|pressure-vessel|iscriptevaluator|/proton |xalia" && ALIVE=1
 
-    CONN_AFTER="$(grep -c client_connected "$LOG" 2>/dev/null || echo 0)"
+    CONN_AFTER="$(grep -c client_connected "$LOG" 2>/dev/null)"; CONN_AFTER=${CONN_AFTER:-0}
     NEWCONN=$((CONN_AFTER - CONN_BEFORE))
     XR=0; [ -s "$XRIZER_LOG" ] && XR=1
     FOCUSED=0

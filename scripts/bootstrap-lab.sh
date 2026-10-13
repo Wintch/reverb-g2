@@ -276,8 +276,13 @@ do_patch_nv() {
 		EOF
 	fi
 
-	$SUDO dkms remove "nvidia/$NVIDIA_VER" --all || true
-	$SUDO dkms install "nvidia/$NVIDIA_VER"
+	# Build first and install over the old module: a failed build then leaves the
+	# working module in place instead of a box with no nvidia module.
+	$SUDO dkms build "nvidia/$NVIDIA_VER" -k "$(uname -r)" --force || {
+		echo "dkms build failed; the previously installed module was left in place." >&2
+		exit 1
+	}
+	$SUDO dkms install "nvidia/$NVIDIA_VER" -k "$(uname -r)" --force || exit 1
 	echo
 	echo ">>> REBOOT. Then try 90 Hz:"
 	echo "    XRT_COMPOSITOR_DESIRED_MODE=0 ./jack-in.sh 3dof   # native 2880x1440@90"

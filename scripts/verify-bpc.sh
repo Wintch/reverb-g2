@@ -56,7 +56,7 @@ done
 ID=$(./scripts/testlog.py open "post-patch-0004 mode $MODE" "verify byte18 06->08 and panel at 90Hz")
 echo
 echo "=== TEST $ID: listening to the headset and presenting ==="
-setsid nohup ./scripts/panel-status.py 90 > "$S/status.txt" 2>&1 < /dev/null & disown
+setsid nohup python3 -u ./scripts/panel-status.py 90 > "$S/status.txt" 2>&1 < /dev/null & disown
 sleep 2
 # HMD_VK_SOLID=1 is mandatory here: this script prints "PUT ON THE HEADSET AND LOOK",
 # and hmd-vk's default pattern alternates colour every frame -- a ~30 Hz strobe at
@@ -64,12 +64,18 @@ sleep 2
 # false confirmations on 2026-08-06 (docs/19) and again on 2026-09-06 (docs/112).
 HMD_VK_SOLID=1 setsid nohup "$BUILD/hmd-vk" native "$MODE" 0 > "$S/vk.log" 2>&1 < /dev/null & disown
 
+VK_PID=$!
 sleep 25
 grep -E "NATIVE mode|fps presented" "$S/vk.log" | tail -2 | sed 's/^/  /'
+VK_DEAD=0
+kill -0 "$VK_PID" 2>/dev/null || { VK_DEAD=1; echo "  !! hmd-vk is not running any more; last lines of $S/vk.log:"; tail -5 "$S/vk.log" | sed 's/^/     /'; }
 
 echo
 echo "=== what the headset reports ==="
-python3 - "$S/status.txt" <<'PY'
+# Exit status of the verdict: 0 = byte 18 reads 8, 1 = still 6, 2 = nothing conclusive.
+# post-update-verify.sh gates on this script's exit status, so only 0 may pass.
+VERDICT=0
+python3 - "$S/status.txt" <<'PY' || VERDICT=$?
 import sys
 rows=[]
 for line in open(sys.argv[1]):
@@ -77,7 +83,7 @@ for line in open(sys.argv[1]):
     b=[int(x,16) for x in line.split("len=")[1].split(" ",1)[1].strip().split()]
     if len(b)>=23: rows.append(b)
 if not rows:
-    print("  (no messages -- the panel was already in that state)"); sys.exit()
+    print("  (no DEVICE_STATUS messages captured -- cannot confirm the bpc)"); sys.exit(2)
 for b in rows:
     ht=b[19]|(b[20]<<8); vt=b[21]|(b[22]<<8)
     print(f"  refresh={b[5]:<4} htotal={ht:<6} vtotal={vt:<6} bpc(byte18)={b[18]}  backlight(b1)={b[1]}")
@@ -87,8 +93,10 @@ if any(v==8 for v in bpc):
     print("  >>> THE PATCH WORKED: the headset reports 8 bits per component.")
 elif any(v==6 for v in bpc):
     print("  >>> byte 18 is STILL at 6. Either the patch never reached the module, or there's another clamp.")
+    sys.exit(1)
 else:
     print(f"  >>> byte 18 values seen: {sorted(set(bpc))}")
+    sys.exit(2)
 PY
 
 echo
@@ -96,3 +104,7 @@ echo "  The run keeps going indefinitely. PUT ON THE HEADSET AND LOOK."
 echo "  Close with:  ./scripts/testlog.py close $ID \"what you saw\""
 echo "  Kill with:  kill \$(pgrep -f 'hmd-vk')"
 echo "  raw output in: $S"
+
+[ "$VK_DEAD" = 1 ] && [ "$VERDICT" = 0 ] && VERDICT=2
+[ "$VERDICT" = 0 ] || echo "  !! verify-bpc: NOT confirmed (status $VERDICT)"
+exit "$VERDICT"

@@ -60,7 +60,7 @@ active_voice_gender() {
 # field's fail-open default in this script and in status-dashboard.py.
 audio_guide_enabled() {
 	local v
-	v="$(jq -r '.users[.active].audio_guide_enabled // true' "$USER_PROFILES_FILE" 2>/dev/null)"
+	v="$(jq -r '.users[.active].audio_guide_enabled | if . == null then true else . end' "$USER_PROFILES_FILE" 2>/dev/null)"
 	[ "$v" != "false" ]
 }
 

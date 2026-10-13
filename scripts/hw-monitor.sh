@@ -40,7 +40,7 @@ usb_state() {
 }
 
 dp_state() {
-    cat /sys/class/drm/card0-DP-*/status 2>/dev/null | grep -c connected
+    cat /sys/class/drm/card0-DP-*/status 2>/dev/null | grep -cx connected
 }
 
 echo "$(ts)  MONITOR START  $(usb_state) dp_connected=$(dp_state)" >> "$MONLOG"
