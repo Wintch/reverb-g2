@@ -15,6 +15,14 @@ What each does:
 - **0002** — VR HMD DRM-lease enablement. The Wayland lease machinery is dead code on X11,
   **but do not skip this patch**: its `nvkms-modepool.c` hunk marks the HMD's native mode
   as RandR-preferred, which the X11/SteamVR path needs.
+  **Updated 2026-10-12 (code review, docs/147 §9 step 7):** the CREATE_LEASE hook leaked one
+  `drm_master` reference per lease, and it held `idr_mutex` across the modeset locks, the
+  reverse of the REVOKE_LEASE path. It now snapshots the leased CRTCs, drops both, then
+  locks. It builds against 595.71.05 on kernel 6.12, but the module has **not been loaded on
+  the rig yet**: test a lease (`jack-in-wayland.sh up`) before the next DKMS install.
+  NVIDIA PR #1275 (the 615 port) still has the old hook. Still open: a lessee that exits
+  without REVOKE_LEASE leaves its head's `lesseeFlipPermissive` set (N01-3/9). Clearing it
+  on exit needs the `master_drop` path, which this change does not touch.
 > **2026-10-10, probably a no-op — verify before relying on 0003**: DPLib's `getManufId()`
 > (`dp_edid.h:129-135`) reads EDID bytes 8-9 little-endian (Apple's `06 10` is `case 0x1006` in the
 > same database), so the G2's `22 0e` reads **`0x0E22`**, not `0x220E`. Faulto's 0003 uses `0x0E22`

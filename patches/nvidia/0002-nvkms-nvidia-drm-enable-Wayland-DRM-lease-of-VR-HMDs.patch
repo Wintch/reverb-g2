@@ -1,7 +1,7 @@
-From 0e0f98c165238437d907d2391adc10a8ef40c30f Mon Sep 17 00:00:00 2001
+From 56bbe69f2d8e62288a38032adec53ed3ae2bd88d Mon Sep 17 00:00:00 2001
 From: Ashish Kumar Singh <ashishkmr472@gmail.com>
 Date: Thu, 21 May 2026 14:25:26 -0400
-Subject: [PATCH 2/3] nvkms/nvidia-drm: enable Wayland DRM-lease of VR HMDs
+Subject: [PATCH] nvkms/nvidia-drm: enable Wayland DRM-lease of VR HMDs
 
 Make NVIDIA-driven VR HMDs leasable and presentable over wp_drm_lease on Wayland
 (the kernel equivalent of the X11 "xrandr --set non-desktop 1" + Xorg flip-
@@ -16,20 +16,26 @@ permission path):
   lesseeFlipPermissive, set at CREATE_LEASE and cleared at REVOKE_LEASE, honored
   in nvCheckLayerPermissions().  [nvkms-api.h, nvkms-types.h, nvkms.c,
   nvkms-flip.c, nvidia-drm-drv.c]
+  The CREATE_LEASE hook snapshots the leased CRTCs under idr_mutex, then
+  drops it and the lessor reference before taking the modeset locks, the
+  same order as the REVOKE_LEASE path (2026-10-12: it had leaked one
+  drm_master reference per lease and held idr_mutex across the modeset
+  locks). Known gap: a lessee that exits without REVOKE_LEASE leaves its
+  head's flag set until the next revoke of that head.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ---
- kernel-open/common/inc/nvkms-kapi.h           | 19 +++++
- kernel-open/nvidia-drm/nvidia-drm-connector.c |  5 ++
- kernel-open/nvidia-drm/nvidia-drm-drv.c       | 79 +++++++++++++++++--
- src/nvidia-modeset/include/nvkms-types.h      |  4 +
- src/nvidia-modeset/interface/nvkms-api.h      | 27 +++++++
- .../kapi/interface/nvkms-kapi.h               | 19 +++++
- src/nvidia-modeset/kapi/src/nvkms-kapi.c      | 25 ++++++
- src/nvidia-modeset/src/nvkms-flip.c           |  6 ++
- src/nvidia-modeset/src/nvkms-modepool.c       | 59 ++++++++++++++
- src/nvidia-modeset/src/nvkms.c                | 27 +++++++
- 10 files changed, 264 insertions(+), 6 deletions(-)
+ kernel-open/common/inc/nvkms-kapi.h           |  19 ++++
+ kernel-open/nvidia-drm/nvidia-drm-connector.c |   5 +
+ kernel-open/nvidia-drm/nvidia-drm-drv.c       | 100 ++++++++++++++++--
+ src/nvidia-modeset/include/nvkms-types.h      |   4 +
+ src/nvidia-modeset/interface/nvkms-api.h      |  27 +++++
+ .../kapi/interface/nvkms-kapi.h               |  19 ++++
+ src/nvidia-modeset/kapi/src/nvkms-kapi.c      |  25 +++++
+ src/nvidia-modeset/src/nvkms-flip.c           |   6 ++
+ src/nvidia-modeset/src/nvkms-modepool.c       |  59 +++++++++++
+ src/nvidia-modeset/src/nvkms.c                |  27 +++++
+ 10 files changed, 285 insertions(+), 6 deletions(-)
 
 diff --git a/kernel-open/common/inc/nvkms-kapi.h b/kernel-open/common/inc/nvkms-kapi.h
 index 34ed6c8e..08c5bd6a 100644
@@ -85,10 +91,10 @@ index 2d5483a7..82227535 100644
      }
  
 diff --git a/kernel-open/nvidia-drm/nvidia-drm-drv.c b/kernel-open/nvidia-drm/nvidia-drm-drv.c
-index e4ae38a0..3b3cb173 100644
+index e4ae38a0..a28023a4 100644
 --- a/kernel-open/nvidia-drm/nvidia-drm-drv.c
 +++ b/kernel-open/nvidia-drm/nvidia-drm-drv.c
-@@ -1676,9 +1676,12 @@ static void nv_drm_finish_revoking_objects(struct drm_device *dev,
+@@ -1676,10 +1676,96 @@ static void nv_drm_finish_revoking_objects(struct drm_device *dev,
  
      nv_drm_for_each_crtc(crtc, dev) {
          struct nv_drm_crtc *nv_crtc = to_nv_crtc(crtc);
@@ -101,13 +107,16 @@ index e4ae38a0..3b3cb173 100644
 +            }
 +            nvKms->setLesseeFlipPermissive(to_nv_device(dev)->pDevice,
 +                                           nv_crtc->head, NV_FALSE);
-         }
-     }
- 
-@@ -1689,10 +1692,74 @@ static void nv_drm_finish_revoking_objects(struct drm_device *dev,
- #endif
- }
- 
++        }
++    }
++
++#if NV_DRM_MODESET_LOCK_ALL_END_ARGUMENT_COUNT == 3
++    DRM_MODESET_LOCK_ALL_END(dev, ctx, ret);
++#else
++    mutex_unlock(&dev->mode_config.mutex);
++#endif
++}
++
 +/*
 + * After CREATE_LEASE, mark each leased CRTC's apiHead lesseeFlipPermissive so
 + * the lessee's separate NVKMS popen (e.g. libnvidia-vulkan.so on the
@@ -122,6 +131,8 @@ index e4ae38a0..3b3cb173 100644
 +    struct drm_master *lessor, *lessee;
 +    struct nv_drm_device *nv_dev = to_nv_device(dev);
 +    struct drm_crtc *crtc;
++    NvU32 leased_crtcs = 0;
++    unsigned int crtc_index = 0;
 +#if NV_DRM_MODESET_LOCK_ALL_END_ARGUMENT_COUNT == 3
 +    int ret = 0;
 +    struct drm_modeset_acquire_ctx ctx;
@@ -140,10 +151,28 @@ index e4ae38a0..3b3cb173 100644
 +        return;
 +    }
 +
++    /*
++     * Snapshot the leased CRTCs under idr_mutex only, then drop it (and the
++     * counted lessor reference) before taking the modeset locks: the same
++     * order as the REVOKE_LEASE path, nv_drm_get_revoked_objects() and then
++     * nv_drm_finish_revoking_objects(). Holding idr_mutex across the modeset
++     * locks inverted that order.
++     */
 +    mutex_lock(&dev->mode_config.idr_mutex);
 +    lessee = nv_drm_find_lessee(lessor, create_lease.lessee_id);
-+    if (lessee == NULL) {
-+        mutex_unlock(&dev->mode_config.idr_mutex);
++    if (lessee != NULL) {
++        nv_drm_for_each_crtc(crtc, dev) {
++            if (crtc_index < 32 &&
++                idr_find(&lessee->leases, crtc->base.id) != NULL) {
++                leased_crtcs |= 1U << crtc_index;
++            }
++            crtc_index++;
++        }
++    }
++    mutex_unlock(&dev->mode_config.idr_mutex);
++    drm_master_put(&lessor);
++
++    if (leased_crtcs == 0) {
 +        return;
 +    }
 +
@@ -154,22 +183,18 @@ index e4ae38a0..3b3cb173 100644
 +    mutex_lock(&dev->mode_config.mutex);
 +#endif
 +
++    crtc_index = 0;
 +    nv_drm_for_each_crtc(crtc, dev) {
-+        if (idr_find(&lessee->leases, crtc->base.id) != NULL) {
++        if (crtc_index < 32 && (leased_crtcs & (1U << crtc_index))) {
 +            struct nv_drm_crtc *nv_crtc = to_nv_crtc(crtc);
 +            nvKms->setLesseeFlipPermissive(nv_dev->pDevice, nv_crtc->head,
 +                                           NV_TRUE);
-+        }
-+    }
-+
-+#if NV_DRM_MODESET_LOCK_ALL_END_ARGUMENT_COUNT == 3
-+    DRM_MODESET_LOCK_ALL_END(dev, ctx, ret);
-+#else
-+    mutex_unlock(&dev->mode_config.mutex);
-+#endif
-+    mutex_unlock(&dev->mode_config.idr_mutex);
-+}
-+
+         }
++        crtc_index++;
+     }
+ 
+ #if NV_DRM_MODESET_LOCK_ALL_END_ARGUMENT_COUNT == 3
+@@ -1692,7 +1778,9 @@ static void nv_drm_finish_revoking_objects(struct drm_device *dev,
  /*
   * Wrapper around drm_ioctl to hook in to upstream ioctl.
   *
@@ -180,7 +205,7 @@ index e4ae38a0..3b3cb173 100644
   */
  static long nv_drm_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
  {
-@@ -1704,7 +1771,6 @@ static long nv_drm_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+@@ -1704,7 +1792,6 @@ static long nv_drm_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
      int objects_count = 0;
  
      if (cmd == DRM_IOCTL_MODE_REVOKE_LEASE) {
@@ -188,7 +213,7 @@ index e4ae38a0..3b3cb173 100644
          nv_drm_get_revoked_objects(dev, file_priv, cmd, arg, &objects,
                                     &objects_count);
      }
-@@ -1713,11 +1779,12 @@ static long nv_drm_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+@@ -1713,11 +1800,12 @@ static long nv_drm_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
  
      if (cmd == DRM_IOCTL_MODE_REVOKE_LEASE && objects) {
          if (retcode == 0) {
@@ -487,5 +512,5 @@ index 865fbf05..89b80896 100644
  
      struct NvKmsPerOpen *pOpen = pOpenVoid;
 -- 
-2.53.0
+2.47.3
 
