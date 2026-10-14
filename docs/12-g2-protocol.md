@@ -337,7 +337,7 @@ GPU ──DisplayPort 1.4── ANX7530 ──2x MIPI-DSI── 2x LCD panel ─
 | 2 | 4320x2160@60 | 709150 kHz | 4420 × 2674 | 17.02 Gbps |
 
 3-block EDID: base + CEA + embedded **DisplayID 1.2** (tag `0x70`) with two **Type I**
-Detailed Timing descriptors. ManufID `0x220E` = `HPN`. (This line used to say "DisplayID
+Detailed Timing descriptors. ManufID `0x220E` = `HPN` [EDID spelling, big-endian bytes `22 0e`; NVIDIA DPLib `getManufId()` reads it little-endian as `0x0E22`, see patches/nvidia/README.md]. (This line used to say "DisplayID
 2.0 / Type VII" — the same error that had to be corrected in the published NVIDIA report;
 see the correction section in `docs/13`. The distinction matters: the 1.x parser path in
 NVKMS is exactly where the 6bpc clamp lives.)

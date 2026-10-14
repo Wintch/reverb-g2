@@ -667,7 +667,7 @@ forum post states:
 ```
 byte 0x14 = 0x80          digital, color bit depth = 000 (undefined)
 checksum base block 0xE8  block sum = 0
-ManufID 0x220E            = HPN
+ManufID 0x220E            = HPN   (EDID spelling; DPLib getManufId() reads 0x0E22)
 CTA byte 3 = 0x00         no YCbCr 4:4:4 nor 4:2:2
 DisplayID: 70 12 79 00 00 03   version 1.2, tag 0x03, 40 bytes = 2 Type I descriptors
 g2-edid-8bpc-repro.bin    differs in exactly 2 bytes: 0x14 and 0x7F, valid checksum

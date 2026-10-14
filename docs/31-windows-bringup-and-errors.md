@@ -293,7 +293,7 @@ New facts, not previously in this repo:
   firmware banks — matches `docs/12`'s STM32 DFU description (`bridge_fw_check_update`,
   multiple flash banks) but this is the first time actual version numbers were captured.
   Worth diffing against a future capture if a firmware update is ever applied.
-- **`Display EDID: 220e:36c1`** matches the already-known ManufID `0x220E` = `HPN` and
+- **`Display EDID: 220e:36c1`** matches the already-known ManufID `0x220E` (EDID spelling; DPLib reads `0x0E22`) = `HPN` and
   product `0x36c1` from `docs/12`/`docs/26` — cross-check, not new, but confirms the tool
   reads the same EDID this project has been fingerprinting all along.
 - **`HololensSensorsWinUsb.inf`, read in full 2026-08-16**: binds `USB\VID_045E&PID_0659&MI_03`

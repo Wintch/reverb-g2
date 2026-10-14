@@ -23,7 +23,7 @@ What each does:
   NVIDIA PR #1275 (the 615 port) still has the old hook. Still open: a lessee that exits
   without REVOKE_LEASE leaves its head's `lesseeFlipPermissive` set (N01-3/9). Clearing it
   on exit needs the `master_drop` path, which this change does not touch.
-> **2026-10-10, probably a no-op — verify before relying on 0003**: DPLib's `getManufId()`
+> **2026-10-14, CONFIRMED a no-op** (the G2 EDID `experiments/vblank/hmd.edid` has bytes 8-9 `22 0e`, so `getManufId()` = `0x0E22` and `product` = `0x36C1`; the AUR `nvidia-utils-g2` 615.78.08-2 carries the same dead `case 0x220E` inside Project-VR's patch). Earlier note, **2026-10-10, probably a no-op — verify before relying on 0003**: DPLib's `getManufId()`
 > (`dp_edid.h:129-135`) reads EDID bytes 8-9 little-endian (Apple's `06 10` is `case 0x1006` in the
 > same database), so the G2's `22 0e` reads **`0x0E22`**, not `0x220E`. Faulto's 0003 uses `0x0E22`
 > plus product `0x36C1`. 90 Hz never depended on this entry as far as we know (docs/144 §5).

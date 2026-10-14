@@ -467,7 +467,7 @@ render correct pixel content, specifically and only at 90 Hz.
 - **Community open-kernel patches for this headset**: in addition to my bpc patch, this
   system has three others applied against 595.71.05 — VESA DisplayID/DSC VSDB
   spec-correctness fixes, DRM-lease enablement for VR HMDs, and a `forceMaxLinkConfig` WAR
-  keyed on EDID ManufID 0x220E in `dp_wardatabase.cpp`. With all four applied on GA104, both
+  keyed on EDID ManufID 0x220E in `dp_wardatabase.cpp` (CORRECTION 2026-10-14: DPLib reads this as 0x0E22, so that `case` never matches the G2; 90 Hz does not depend on it). With all four applied on GA104, both
   90 Hz modes still fail physically. Mentioning it so nobody re-tests that combination:
   nothing found so far at the open kernel module level lights this panel at 90 Hz.
 - `NVreg_ResmanDebugLevel`: default is already `~0` (all bits); we suspect these debug
@@ -522,7 +522,7 @@ credits the author), replace the first sentence of that bullet with:
 - **Community open-kernel patches for this headset**: in addition to my bpc patch, this
   system has three patches from https://github.com/AshishKumar4/Project-VR applied against
   595.71.05 — VESA DisplayID/DSC VSDB spec-correctness fixes, DRM-lease enablement for VR
-  HMDs, and a `forceMaxLinkConfig` WAR keyed on EDID ManufID 0x220E in `dp_wardatabase.cpp`.
+  HMDs, and a `forceMaxLinkConfig` WAR keyed on EDID ManufID 0x220E in `dp_wardatabase.cpp` (CORRECTION 2026-10-14: dead case, DPLib reads 0x0E22).
   That repo reports 90 Hz working on an RTX 4080, but I could not confirm that result: its
   evidence is a successful Vulkan/OpenXR session and logs, and on this hardware a completely
   dark panel also produces a successful session at a happy 90.0 fps. With all four patches
