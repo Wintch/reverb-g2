@@ -132,3 +132,47 @@ Six joined rooms; only `general` (4574 messages), `discord-driver-wmr` (9) and
   participant says a G2 on Monado was "the best" they tried. Nothing about our work,
   hare_ware or the constellation fix.
 - No mention of Basalt, !2967/!2969, or our NVIDIA patches.
+
+## 9. Offline A/B of 0022 — result: no measurable difference (2026-10-18)
+
+Setup: `euroc-yaw2_20260829060819` (4 cameras, 9273 frames, 308 s), config
+`~/vr/basalt-g2-config.json`, 6 threads, 1x, serial and interleaved ctl/after/ctl/after.
+`ctl` = `~/vr/basalt-ctl` at `9c4b60d` (lab minus 0022); `after` = `lab` at `ede87bd`; both
+`basalt_vio` built 2026-10-17 (the 08-27 binary is kept as `basalt_vio.aug27`). Script:
+`~/vr/run-0022-ab.sh`; raw output `~/vr/logs/replay-0022/{ctlA,ctlB,aftA,aftB}/`.
+
+| metric | ctlA | ctlB | aftA | aftB |
+|---|---|---|---|---|
+| wall s | 332.5 | 329.8 | 330.9 | 330.3 |
+| rms ATE m | 0.5292 | 0.5291 | 0.5280 | 0.5280 |
+| position span m | 1.633 | 1.641 | 1.635 | 1.635 |
+| max 1 s displacement m | 0.6858 | 0.6859 | 0.6859 | 0.6859 |
+| windows > 0.5 m / > 1 m | 4 / 0 | 4 / 0 | 4 / 0 | 4 / 0 |
+| frontend p99 ms | 41.43 | 41.03 | 41.31 | 40.95 |
+| optimizer p99 ms | 18.60 | 18.89 | 18.24 | 18.54 |
+| landmarks p50 / p10, 0-30 deg/s | 146 / 34 | 154 / 40 | 150 / 44 | 150 / 44 |
+| landmarks p50 / p10, 30-90 | 207 / 35 | 207 / 35 | 207 / 34 | 207 / 34 |
+| landmarks p50 / p10, 90-180 | 118 / 5 | 118 / 5 | 118 / 5 | 118 / 5 |
+| landmarks p50 / p10, 180-360 | 24 / 0 | 24 / 0 | 24 / 0 | 24 / 0 |
+| keypoints p50 (all bands) | identical to ±2 | | | |
+
+Reading: every difference between ctl and after is inside the ctlA/ctlB spread (the noise
+floor: the 0-30 deg/s landmark p10 moves 34→40 between two identical control runs). No
+regression in drift, ATE, landmark survival or frame time; no gain either.
+
+Why this is the expected outcome: with `optical_flow_detection_nonoverlap = true`, the epipolar
+filter only judges ids shared by cam 0 and cam 2/3, and the optical axes of cam 2 and cam 3
+are 76.6° and 95.9° from cam 0 (cam 1: 19.4°) in `calib-g2-yaw2.json`. Cross-camera
+matches between cam 0 and the side cameras should be rare, so the line changes almost
+nothing for this rig. This was inferred from the geometry; the number of surviving
+cam0↔cam2/3 matches was **not** instrumented.
+
+Decision: keep 0022 (it is a correctness fix, harmless here, and it matters for rigs whose
+cameras overlap); **no headset session is justified for it** — the plan's gate was "live
+only if the offline result is non-null". Caveats: one dataset (yaw protocol), one config,
+replay feeds every frame (`outq_dropped=0`), and this proves nothing about `age_in/out` or
+the queue patches, which only exist on the live path.
+
+Residue: `~/vr/basalt-ctl` (worktree + build, a few GB) can be removed with
+`git -C ~/vr/basalt worktree remove --force ~/vr/basalt-ctl`; kept for now so the A/B can be
+re-run.
