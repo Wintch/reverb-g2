@@ -1,4 +1,4 @@
-# 148 — Basalt upstream sync and review, 2026-10-18
+# 149 — Basalt upstream sync and review, 2026-10-18
 
 Status: review done, **patch 0022 compiled but not yet measured**. Nothing here has been
 pushed anywhere.
