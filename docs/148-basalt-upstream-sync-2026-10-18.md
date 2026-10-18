@@ -176,3 +176,58 @@ the queue patches, which only exist on the live path.
 Residue: `~/vr/basalt-ctl` (worktree + build, a few GB) can be removed with
 `git -C ~/vr/basalt worktree remove --force ~/vr/basalt-ctl`; kept for now so the A/B can be
 re-run.
+
+## 10. Closing the Wayland gap for Oasis — LabWC and Hyprland (2026-10-18, in progress)
+
+Why: the LVRA announcement of Oasis going stable asks for testers; our rule is to leave
+nothing for others to test that we can test ourselves. Wayland for Oasis is **already
+tested and negative** (docs/119, 121, 122): X11 only works with the panel guard (docs/138);
+GNOME/mutter offers the lease but Oasis' `vrcompositor` loses a roundtrip race; KWin and
+Sway offer `wp_drm_lease_device_v1` with zero connectors on NVIDIA
+(`NVIDIA/open-gpu-kernel-modules#251`). Not yet tested: LabWC and Hyprland.
+
+- **LabWC 0.8.3**: installed from apt (user ran `sudo apt install labwc`). wlroots-based, so
+  the expectation is the Sway result; this is to confirm, not to assume.
+- **Hyprland**: not in Debian 13, and the latest (0.56.2) cannot build there
+  (`wayland-protocols` ≥ 1.49, `libinput` ≥ 1.29, Lua 5.5 vs Debian 1.44 / 1.28 / 5.4).
+  **v0.50.1** matches Debian's libraries. Hyprland has its own DRM-lease implementation
+  (`src/protocols/DRMLease.cpp`, on aquamarine, not wlroots), so it is an independent test.
+  Built in user space only: `scripts/build-hyprland-userspace.sh` →
+  `~/vr/hyprland-build/prefix` (hyprwayland-scanner 0.4.5, hyprutils 0.8.1, hyprlang 0.6.3,
+  hyprland-protocols 0.6.4, hyprgraphics 0.1.5, hyprcursor 0.1.12, aquamarine 0.9.2,
+  Hyprland v0.50.1, `clang-19`, XWayland/uwsm/hyprpm off). C++26 needs two local patches
+  for Debian's libstdc++ 14 (`scripts/hyprland-v0.50.1-debian13.diff`: a `string +
+  string_view` in `hyprctl/main.cpp:271` and `vector::insert_range` in
+  `src/helpers/Monitor.cpp:552`) and `git submodule update --init` for `udis86`. The ~100
+  `-dev` packages were installed by the user with sudo (agents must not sudo).
+  `Hyprland --version` runs: `0.50.1 ... v0.50.1`.
+- **Test harness**: `scripts/lease-test.sh <labwc|hyprland>`, run from a text VT
+  (Ctrl+Alt+F3) with the headset connected and awake. It starts the compositor, runs
+  `check-lease.sh` inside it, writes `~/vr/logs/lease-test-<name>-<stamp>.txt` and exits
+  (90 s timeout). The KDE X11 session on the other VT is left alone.
+- **Headset USB**: after the power cycle the headset was missing (0/5 devices, DP-1/2
+  disconnected) until the user re-seated it at the PC end; then 5/5.
+
+**Status: the two lease tests have NOT been run.** They need the user at a text console.
+
+### Still open (so nothing is silently dropped)
+
+1. Run `lease-test.sh labwc` and `lease-test.sh hyprland`; record the results here. If
+   Hyprland offers the connector, try Oasis on top of it (needs the headset and the other
+   AI sessions stopped).
+2. Oasis wrapped through Monado's `steamvr_lh` — the thing the wiki asks for; never tried
+   here (docs/138 is Oasis alone, "no Monado involved").
+3. Headset audio under Oasis (none heard; Monado's `hmd-audio.sh` exists for the other stack).
+4. Measured frame rate under Oasis (only "did not feel like 90").
+5. Y, left stick click and left grip buttons (unconfirmed, not broken).
+6. Do not post to LVRA until 2–5 are tested or explicitly listed as untested; the draft must
+   say Wayland was tested and failed (not "untested") and pin the GPU and driver
+   (Debian `nvidia-driver` 595.71.05 today; docs/122 ran 595.71.05-open).
+7. Basalt: `age_in/out` offset bias and stale comments (§3) need a code touch; `cam_calib.cpp`
+   `initCamExtrinsics` is a cherry-pick candidate for the next 4-camera recalibration.
+8. `~/vr/basalt-ctl` (229 MB) can be removed once the A/B no longer needs a re-run.
+9. Rotate the Matrix token pasted in chat on 2026-10-18 (Element → Settings → Sessions).
+10. Uncommitted elsewhere on iashur, unexplained or already known: `vr/tracy-profiler`
+    (`dtl/Diff.hpp` modified), `vr/xrizer` (`src/compositor.rs` modified, 14 local
+    commits, upstream is 13 commits and a v0.6 tag ahead), `linuxlab-kit`
+    (`rollback/manifest.jsonl` untracked).
