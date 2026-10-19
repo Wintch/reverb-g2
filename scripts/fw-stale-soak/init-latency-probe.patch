@@ -1,0 +1,26 @@
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
+index 13f896d3f..ba9adfdfc 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.c
++++ b/src/xrt/drivers/wmr/wmr_controller_base.c
+@@ -671,13 +671,19 @@ wmr_controller_base_init(struct wmr_controller_base *wcb,
+ 
+ 	/* Zero command. Reinits controller internal state */
+ 	fw_cmd = WMR_CONTROLLER_FW_CMD_INIT(0x06, 0x0, 0, 0);
+-	if (wmr_controller_send_fw_cmd_retry(wcb, &fw_cmd, 0x06, &fw_cmd_response, 3) < 0) {
++	int64_t t_probe0 = os_monotonic_get_ns();
++	int r_probe0 = wmr_controller_send_fw_cmd_retry(wcb, &fw_cmd, 0x06, &fw_cmd_response, 12);
++	WMR_WARN(wcb, "PROBE zero answered=%d after %d ms", r_probe0 >= 0, (int)((os_monotonic_get_ns() - t_probe0) / U_TIME_1MS_IN_NS));
++	if (r_probe0 < 0) {
+ 		return false;
+ 	}
+ 
+ 	/* Quiesce/restart controller tasks */
+ 	fw_cmd = WMR_CONTROLLER_FW_CMD_INIT(0x06, 0x04, 0xc1, 0x02);
+-	if (wmr_controller_send_fw_cmd_retry(wcb, &fw_cmd, 0x06, &fw_cmd_response, 3) < 0) {
++	int64_t t_probe1 = os_monotonic_get_ns();
++	int r_probe1 = wmr_controller_send_fw_cmd_retry(wcb, &fw_cmd, 0x06, &fw_cmd_response, 12);
++	WMR_WARN(wcb, "PROBE quiesce answered=%d after %d ms", r_probe1 >= 0, (int)((os_monotonic_get_ns() - t_probe1) / U_TIME_1MS_IN_NS));
++	if (r_probe1 < 0) {
+ 		return false;
+ 	}
+ 

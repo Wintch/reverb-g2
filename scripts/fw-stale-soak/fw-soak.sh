@@ -16,7 +16,7 @@
 set -u
 
 CYCLES=${1:?cycles per variant}; SETTLE=${2:-5}
-BIN=$HOME/vr/monado-2967-bin
+BIN=${FW_SOAK_BIN:-$HOME/vr/monado-2967-bin}
 STAMP=$(date +%Y%m%d-%H%M%S)
 OUT=$HOME/vr/logs/fw-soak-$STAMP; DONE=$OUT.done; STOP=$HOME/vr/logs/fw-soak-STOP
 mkdir -p "$OUT"; rm -f "$STOP"

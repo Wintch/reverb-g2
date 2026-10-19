@@ -59,8 +59,57 @@ read. Not valid as chunk tests (7 valid: base 4, F 3), and a limit of the init r
 absorbs one slow reply, not a controller that is not answering yet. Which of "idle" and "previous run
 aborted mid-read" is the trigger is not established.
 
+## Natural soaks (no injection), exact candidate binaries
+
+`fw-soak.sh`, `monado-cli test`, alternating R (`mbase`) and F (`mfix2`):
+
+| Soak | When | R | F |
+|---|---|---|---|
+| 15 cycles | minutes after re-pairing the controllers | 13/15 | 12/15 |
+| 20 cycles (F against `probe12`, see below) | 15 min later | n/a | 20/20 (`probe12` 20/20) |
+
+Failures of the first soak, classified: F cycles 4 and 5, three consecutive 250 ms timeouts on the **first**
+init command (retries ran and did not reach a reply); R cycles 6 and 15, one 250 ms timeout on the first init
+command (the single-shot case `b184f1ed2` targets); F cycle 6, `/dev/hidraw6` vanished before it was opened
+(the Bluetooth link dropped, nothing in the firmware path can cover that).
+
+`probe12` is `init-latency-probe.patch`: the two init commands with 12 attempts, logging the time to the
+first reply. In the clean soak 80 samples answered in 7 to 123 ms except two at about 306 ms (one retry
+each, exactly the late reply the single-shot code cannot survive). No sample was unanswered.
+
+Reading: there are two regimes. In the normal one replies take 7 to 120 ms with a rare ~300 ms outlier,
+and the fixes cover it. Right after the controllers were re-paired or woken they can stay silent for more
+than 750 ms on the first command, and neither R nor F recovers; the retry only changes which attempt gives
+up. That regime could not be provoked on demand (the controllers do not sleep within 10 minutes of
+idling), so it is documented, not solved. Whether a longer init window would cover it is untested.
+
+## Real session (worn)
+
+`worn-leg-2967.sh` = `worn-leg.sh` with the `monado-2967-v2` build allowed: `ab-run.sh` (`up 1 ctrl`, DRM
+lease on GNOME Wayland, controllers on the host BT adapter) plus `hello_xr` for 120 s, headset worn.
+Build: F on current main, 0 warnings, `ctest` 28/28.
+
+- Leg f2967-1: the launcher's first two attempts failed in controller creation just after the controllers
+  were shaken awake (`Failed to create controller`; `cmd 0x02 failed to read header for block 0`), the third
+  created them but found no leasable connector, because the killed earlier attempts left the lease
+  dangling. The same cold regime as above. No session.
+- Leg f2967-2 (controllers warm): `Socket ready (attempt 1/3)`, both controllers created, `hello_xr` rc=0,
+  119 pose samples per hand, no coredump, service gone and socket removed at the end. The recovery code ran
+  on its own: two 250 ms timeouts then success on attempt 3 of a chunk read, followed by two
+  `Discarding stale fw reply (block 3, 42+68 bytes, wanted 42)`. `tracked_s=0` is expected: current main
+  has no clock-conversion fix for the controllers (docs/135). 24 `Invalid packet received` lines (one every
+  ~6.3 s) are not in the 10-11 logs; the status dashboard polls controller state through `libmonado` of the
+  production build, so a protocol mismatch with the newer service is the likely cause (inferred, not checked).
+- Wearer feedback (controls, tracking, comfort): not recorded yet.
+
+## Incident: disk
+
+The persistent Bluetooth agent started for the re-pairing (`yes yes | bluetoothctl > ~/bt-agent.out`) wrote
+an error line per "yes" and grew to 24 GB in about three hours (root went from 82% to 94%). Stopped and
+removed; the replacement feeds one line every 20 s and discards its output.
+
 ## Bluetooth note
 
 Controllers used on Windows must be re-paired (`scripts/bt-controllers/bt-winorder.py`, docs/136). Keep a
-persistent agent running afterwards (`yes yes | bluetoothctl`), otherwise BlueZ refuses the later
+persistent agent running afterwards (`while sleep 20; do echo yes; done | bluetoothctl >/dev/null`, never an unbounded `yes` into a file), otherwise BlueZ refuses the later
 reconnect (`Refusing connection ...: setup in progress`) and drops the device.
