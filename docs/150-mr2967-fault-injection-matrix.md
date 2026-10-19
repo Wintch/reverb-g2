@@ -141,6 +141,35 @@ Reading: the two fixes help in the band where a reply takes 250 to ~750 ms (init
 which is what the 15:40 and reconnect measurements show. When the link answers in seconds, as in the evening
 soak, neither A nor B survives, and 12 attempts do not either (one first reply did not come in 4.3 s).
 
+## Night of 2026-10-19: fresh controller batteries, soak repeated
+
+The user replaced the batteries of both controllers after the slow-link evening. Same harness and binaries
+(`fw-soak.sh`, 20 cycles, `hwA` = no fixes, `hwB` = plus `4e3e6b419` and `b184f1ed2`, 20:45-21:00).
+
+| | A (no fixes) | B (with fixes) |
+|---|---|---|
+| both controllers created | 17/20 | 20/20 |
+| failed cycles | 11, 13, 19 | none |
+
+(`rc=139` in almost every row is the known `monado-service`/`monado-cli` teardown SIGSEGV, counted as created
+when `ctrls_created=2`; B cycle 7 exited 0.)
+
+The three A failures are exactly the modes the fixes target:
+- cycle 11: `Failed to read fw - stale reply for block 0 while reading block 3` (a late header reply landing on
+  the next header request; `4e3e6b419`);
+- cycles 13 and 19: one 250 ms timeout on an init command, the single-shot case (`b184f1ed2`). In cycle 19 the
+  first attempt had already timed out and recovered in the chunk loop, then a later single-shot command timed out.
+
+B logged retries (`attempt 1 of 3`) and stale-reply discards in 4 cycles, recovered each time, never needed
+attempt 3. Natural stale-chunk discards also occurred in A (cycles 3, 15, 17, 19) and are absorbed by the chunk
+loop already present in !2967.
+
+With fresh batteries the evening's seconds-long silences did not come back (every first reply fit the retry
+window), which fits the battery hypothesis for the slow period, but the regime was not reproduced on demand, so it
+stays a hypothesis. Together with the injection matrix (9/9 vs 0/9 and 8/8 vs 0/8) this is the first natural-link
+A/B in which the fixes show a measurable gain: 20/20 vs 17/20 (small numbers; read it as consistent with the
+mechanisms, not as a rate).
+
 ## Bluetooth note
 
 Controllers used on Windows must be re-paired (`scripts/bt-controllers/bt-winorder.py`, docs/136). Keep a
