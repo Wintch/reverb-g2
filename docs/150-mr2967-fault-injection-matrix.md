@@ -108,6 +108,39 @@ The persistent Bluetooth agent started for the re-pairing (`yes yes | bluetoothc
 an error line per "yes" and grew to 24 GB in about three hours (root went from 82% to 94%). Stopped and
 removed; the replacement feeds one line every 20 s and discards its output.
 
+## Evening of 2026-10-19: base with tracking (hw-ab-nofix), the link gets slow
+
+Arms: A = `monado-hw-nofix` (`hw-ab-nofix` d6950b865, !2967/!3004 lineage, no clock fix), B = `monado-2967-hw`
+(A plus `4e3e6b419` and `b184f1ed2`, cherry-picked as 730b31d2f and 1f9f99652; the diff is exactly
+`wmr_controller_base.c`, +24/-11). Build: 0 warnings, ctest 25/25, build tree on the NVMe. Cmake needs
+`-DUnwind_INCLUDE_DIR=/usr/include -DUnwind_LIBRARY=/usr/lib/x86_64-linux-gnu/libunwind.so.8` since
+`libunwind-19-dev` replaced the old package and moved the headers (Ceres then fails on glog otherwise).
+
+1. **Reconnect rounds** (`cold-wake.sh`, 10 rounds, 2 runs each, `probe12`): disconnecting both controllers
+   over BlueZ and letting them reconnect did not provoke the silent regime. 72 init commands, all answered,
+   median 19 ms; two first replies took ~291 and ~311 ms, over the 250 ms read timeout. Those two arrived
+   in 2 of 18 launches: a single-shot command (A) fails on them, a retry (B) absorbs them.
+2. **Worn legs, blind order** (`worn-seq-2967.sh`, 2 x 120 s, `hello_xr`): A and B gave the same numbers
+   (left hand tracked 119 s with 95-97 s frozen, right hand never tracked, ~1740 poses, both controllers
+   created, 0 firmware retries). Both legs, and all seven 10-11 legs on these bases, end with one SIGSEGV of
+   `monado-service` at teardown: not related to !2967. The wearer did not look at the controllers, so no
+   subjective report exists.
+3. **Natural soak, 20 cycles A vs B** (`fw-soak.sh`, 16:47-17:00): A 1/20, B 2/20 created both controllers.
+   Almost every run died on the first init command with no reply: A after one 250 ms timeout, B after the
+   three attempts (3 timeouts in 17 of 20 runs). Same failure, no advantage for B, because the silence is
+   longer than the retry window.
+4. **Idle against moving** (`idle-vs-moving.sh`, `probe12`, 12 attempts so a late reply is timed): first reply
+   latencies with nobody touching the controllers 652, 819, 79+171, no reply in 4.3 s, 2014 ms; while the
+   user waved them 286+231, 2505+1279, 871+1028, 379+239, 1423+300 ms. Moving them does not help: the
+   "idle controllers answer badly" idea is not supported. At 15:40 the same build answered in 7-123 ms.
+5. Link: RSSI -26 and -33 dBm, discovery off, load average 0.2, no scan or other Bluetooth client. The cause
+   of the slow period is not identified (candidates left: controller batteries, 2.4 GHz interference, the
+   adapter).
+
+Reading: the two fixes help in the band where a reply takes 250 to ~750 ms (init commands, header, chunks),
+which is what the 15:40 and reconnect measurements show. When the link answers in seconds, as in the evening
+soak, neither A nor B survives, and 12 attempts do not either (one first reply did not come in 4.3 s).
+
 ## Bluetooth note
 
 Controllers used on Windows must be re-paired (`scripts/bt-controllers/bt-winorder.py`, docs/136). Keep a

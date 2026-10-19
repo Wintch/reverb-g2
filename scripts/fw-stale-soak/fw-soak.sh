@@ -18,7 +18,7 @@ set -u
 CYCLES=${1:?cycles per variant}; SETTLE=${2:-5}
 BIN=${FW_SOAK_BIN:-$HOME/vr/monado-2967-bin}
 STAMP=$(date +%Y%m%d-%H%M%S)
-OUT=$HOME/vr/logs/fw-soak-$STAMP; DONE=$OUT.done; STOP=$HOME/vr/logs/fw-soak-STOP
+OUT=${FW_SOAK_OUT:-$HOME/vr/logs}/fw-soak-$STAMP; DONE=$OUT.done; STOP=${FW_SOAK_OUT:-$HOME/vr/logs}/fw-soak-STOP
 mkdir -p "$OUT"; rm -f "$STOP"
 say() { XDG_RUNTIME_DIR="/run/user/$(id -u)" espeak-ng -v es "$1" >/dev/null 2>&1 || true; }
 bt_nodes() { local n=0 h; for h in /sys/class/hidraw/hidraw*; do grep -q 'HID_ID=0005:0000045E:0000066A' "$h/device/uevent" 2>/dev/null && n=$((n + 1)); done; echo $n; }

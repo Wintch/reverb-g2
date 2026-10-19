@@ -29,7 +29,7 @@ say() { XDG_RUNTIME_DIR="/run/user/$(id -u)" espeak-ng -v es "$1" >/dev/null 2>&
 finish() { echo "$1" > "$DONE.tmp"; shift; for l in "$@"; do echo "$l" >> "$DONE.tmp"; done; mv "$DONE.tmp" "$DONE"; }
 
 rm -f "$DONE" "$DONE.tmp"
-case "$WT" in monado-hw|monado-hw-nofix|monado-2967-v2) ;; *) finish "status=refused reason=worktree must be monado-hw, monado-hw-nofix or monado-2967-v2"; exit 2;; esac
+case "$WT" in monado-hw|monado-hw-nofix|monado-2967-v2|monado-2967-hw) ;; *) finish "status=refused reason=worktree must be monado-hw, monado-hw-nofix, monado-2967-v2 or monado-2967-hw"; exit 2;; esac
 for f in "$SVC" "$HELLO"; do [ -x "$f" ] || { finish "status=refused reason=missing $f"; exit 2; }; done
 [ -r "$PHOTO" ] || { finish "status=refused reason=missing $PHOTO"; exit 2; }
 [ -f "$JSON" ] || { finish "status=refused reason=missing $JSON"; exit 2; }
