@@ -1,0 +1,35 @@
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
+index 13f896d3f..aa8f426db 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.c
++++ b/src/xrt/drivers/wmr/wmr_controller_base.c
+@@ -133,6 +133,30 @@ wmr_controller_send_fw_cmd(struct wmr_controller_base *wcb,
+ 		return -1;
+ 	}
+ 
++	/* TEST-ONLY fault injection (never upstreamed): drop the read for matching commands so the
++	 * reply arrives late, exactly like a >250 ms reply on a loaded BT link.
++	 * WMR_FWFAULT=cmd,blk,addr_min,addr_max,count  (-1 = any for cmd/blk) */
++	{
++		static int budget = -1000;
++		static int f[4];
++		if (budget == -1000) {
++			const char *e = getenv("WMR_FWFAULT");
++			budget = 0;
++			if (e != NULL && sscanf(e, "%d,%d,%d,%d,%d", &f[0], &f[1], &f[2], &f[3], &budget) != 5) {
++				budget = 0;
++			}
++		}
++		uint32_t a = __le32_to_cpu(fw_cmd->cmd.addr);
++		if (budget > 0 && (f[0] < 0 || f[0] == fw_cmd->cmd.cmd_id) &&
++		    (f[1] < 0 || f[1] == fw_cmd->cmd.block_id) && (int64_t)a >= f[2] && (int64_t)a <= (int64_t)(uint32_t)f[3]) {
++			budget--;
++			WMR_WARN(wcb, "FAULT-INJECT: dropping read for cmd %u blk %u addr %u (%d left)", fw_cmd->cmd.cmd_id,
++			         fw_cmd->cmd.block_id, a, budget);
++			os_nanosleep(timeout_ns);
++			return -ETIMEDOUT;
++		}
++	}
++
+ 	do {
+ 		int size = wmr_controller_read_sync(wcb, response->buf, sizeof(response->buf), timeout_ms);
+ 		if (size == -1) {
