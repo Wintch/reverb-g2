@@ -22,7 +22,7 @@ for r in $(seq 1 "$ROUNDS"); do
 		asked=0
 		for _ in $(seq 1 100); do
 			[ "$(nodes)" -ge 2 ] && break
-			[ $asked = 0 ] && [ "$SECONDS" -gt 0 ] && { sleep 12; [ "$(nodes)" -ge 2 ] || { say "Agitá los joysticks, por favor"; asked=1; }; }
+			[ $asked = 0 ] && [ "$SECONDS" -gt 0 ] && { sleep 12; [ "$(nodes)" -ge 2 ] || { say "Presioná un botón de cada joystick, por favor"; asked=1; }; }
 			sleep 0.5
 		done
 		[ "$(nodes)" -ge 2 ] || { echo "$r,$v,-,-,noctrl,0," >> "$OUT/results.csv"; continue; }

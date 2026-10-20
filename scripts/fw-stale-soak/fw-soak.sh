@@ -36,7 +36,7 @@ for i in $(seq 1 "$CYCLES"); do
 		asked=0
 		for _ in $(seq 1 120); do
 			[ "$(bt_nodes)" -ge 2 ] && break
-			[ $asked = 0 ] && { say "Agitá los joysticks, por favor"; asked=1; }
+			[ $asked = 0 ] && { say "Presioná un botón de cada joystick, por favor"; asked=1; }
 			sleep 0.5
 		done
 		n=$(bt_nodes)

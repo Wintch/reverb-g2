@@ -191,6 +191,31 @@ first try every time). Pair 1 and pair 2 favoured opposite arms, pair 3 does not
 varies run to run on this base (no clock fix, docs/135) and the data show no effect of the fixes in either
 direction. Every leg ends with the known teardown SIGSEGV of `monado-service`.
 
+## Night of 2026-10-19, cold reconnect rounds A vs B (hw base)
+
+`cold-wake.sh` (BlueZ disconnect of both controllers, run `monado-cli test` as soon as they are back, then again
+3 s later), `hwA` against `hwB`. A first attempt was void (the controllers did not come back after the first
+rounds; the wearer had to press a button on each, and I wrongly blamed the BlueZ agent: reconnecting worked
+afterwards with the agent unchanged, and the `authorization ... failed` lines also appear on good reconnects).
+Clean attempt, rounds 1 to 3 (the controllers stopped reconnecting by themselves after round 3 and the rest
+were `noctrl`, not counted):
+
+| | Runs creating both controllers | Failures |
+|---|---|---|
+| A (no fixes) | 3/6 | 3, all `stale reply for block 0 while reading block 3` (the case `4e3e6b419` fixes) |
+| B (with fixes) | 3/4 | 1: after the first controller was created and its config read, a single 250 ms timeout ended the creation |
+
+The B failure is the third init command, `0x06/0x21` ("Reset device time before controller outputs",
+`wmr_controller_base.c`), which still goes through the single-shot `wmr_controller_send_fw_cmd()`. That command
+does not exist on current `main` nor in !2967: it comes from the timesync work of the hw lineage
+(`65a418d52 WIP implementation of timesync protocol`), so there is nothing to add to !2967 for it. If that
+lineage is upstreamed, its `0x21` should use `wmr_controller_send_fw_cmd_retry()` too (resending only resets the
+device time again, the status reports are not enabled yet).
+
+The controllers did not light up on movement during these rounds, which the wearer says is not normal behaviour
+(a 1-2 mm move normally wakes them); cause not found. The fw-soak and cold-wake speaker cue now says to press a
+button, not to shake them.
+
 ## Bluetooth note
 
 Controllers used on Windows must be re-paired (`scripts/bt-controllers/bt-winorder.py`, docs/136). Keep a
