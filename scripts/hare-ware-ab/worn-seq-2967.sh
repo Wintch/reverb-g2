@@ -5,7 +5,7 @@
 set -u
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd); LOGS=$HOME/vr/logs; CLIENT_S=${1:-120}
 say() { XDG_RUNTIME_DIR="/run/user/$(id -u)" espeak-ng -v es "$1" >/dev/null 2>&1 || true; }
-if [ $((RANDOM % 2)) -eq 0 ]; then ORDER="monado-hw-nofix monado-2967-hw"; else ORDER="monado-2967-hw monado-hw-nofix"; fi
+if [ -n "${WORN_ORDER:-}" ]; then ORDER="$WORN_ORDER"; elif [ $((RANDOM % 2)) -eq 0 ]; then ORDER="monado-hw-nofix monado-2967-hw"; else ORDER="monado-2967-hw monado-hw-nofix"; fi
 echo "$ORDER" > "$LOGS/worn-order-2967.txt"
 i=0
 for wt in $ORDER; do

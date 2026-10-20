@@ -170,6 +170,27 @@ stays a hypothesis. Together with the injection matrix (9/9 vs 0/9 and 8/8 vs 0/
 A/B in which the fixes show a measurable gain: 20/20 vs 17/20 (small numbers; read it as consistent with the
 mechanisms, not as a rate).
 
+## Night of 2026-10-19, worn A/B with the wearer looking (3 blind pairs)
+
+`worn-seq-2967.sh` (2 x 120 s `hello_xr`, DRM lease, controllers on the host BT adapter), A = `monado-hw-nofix`,
+B = `monado-2967-hw` (A plus both fixes). The wearer held the controllers in front of the cameras for the first
+~20 s of pairs 2 and 3. A first attempt was void: stale `ab-<label>-*` logs of an earlier run made `worn-leg`
+think the socket was ready, so `hello_xr` started before the service and exited (clear old logs of the same label
+before a run). `worn-seq-2967.sh` now accepts `WORN_ORDER="<leg1 worktree> <leg2 worktree>"` to force the order.
+
+| Pair | Leg 1 | Leg 2 | Wearer (blind) |
+|---|---|---|---|
+| 1 | B | A | leg 1 clearly worse: controllers off to one side, slow, many jumps. Leg 2 did not respond at first, then improved to almost perfect |
+| 2 | B | A | leg 1 a bit better, right controller almost perfect at times. Leg 2 more position confusion, left often frozen |
+| 3 (forced) | A | B | left better than right in leg 1; both slow to start in both legs; not as good as the earlier legs |
+
+App-side frozen seconds (left+right, of 119 s each): B 27, 43, 95; A 56, 42, 79. Tracked seconds 108 to 119 per hand
+in every leg. No leg logged a firmware retry, a stale-reply discard or a creation failure, so the fixes never ran
+in these sessions (the changed code only touches firmware-block reads and the two init commands, which succeeded
+first try every time). Pair 1 and pair 2 favoured opposite arms, pair 3 does not separate them: tracking quality
+varies run to run on this base (no clock fix, docs/135) and the data show no effect of the fixes in either
+direction. Every leg ends with the known teardown SIGSEGV of `monado-service`.
+
 ## Bluetooth note
 
 Controllers used on Windows must be re-paired (`scripts/bt-controllers/bt-winorder.py`, docs/136). Keep a
