@@ -58,7 +58,8 @@ comments, or the room scan.
 2. **2026-10-22**: **Beyley** (the maintainer who rewrote Monado's constellation tracker in
    !2940 — the exact codebase our own 0012+ series and hare_ware's branch both sit on)
    replies. Firm but not hostile: there's already an in-progress, from-scratch CV1
-   driver + fusion rewrite of his own pending in !3015; gadLinux's fusion approach is "a
+   driver + fusion rewrite of his own pending in !3015 (CORRECTION 2026-10-30: it was already
+   on `main` as `54eebd9a4` when this was written, not pending); gadLinux's fusion approach is "a
    carbon copy of how I understand Oculus to do the fusion on PC", which he considers not
    extendable/maintainable across Monado's other drivers; he does not want to maintain two
    parallel fusion stacks; and he explicitly asks to wait until his own tracker work
