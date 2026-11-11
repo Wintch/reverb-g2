@@ -1,7 +1,7 @@
-From 8cb184145bdf8d5ec5354230ca4e4cffce0cba41 Mon Sep 17 00:00:00 2001
+From 680fade3d3db396781cd6353065f8328d808da5c Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Wed, 19 Aug 2026 03:04:51 -0300
-Subject: [PATCH 2/2] t/constellation: pre-delivery trusted-gravity gate --
+Subject: [PATCH] t/constellation: pre-delivery trusted-gravity gate --
  close T221's trigger-blindness loop
 
 T221 (2026-08-19, first worn run of the 0082 stack) measured trySeededRecovery
@@ -41,10 +41,10 @@ Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
  4 files changed, 210 insertions(+)
 
 diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
-index 01aab2ff3..a4e0dd0a7 100644
+index cf7b56036..9ce7bc15c 100644
 --- a/src/xrt/drivers/wmr/wmr_controller_base.c
 +++ b/src/xrt/drivers/wmr/wmr_controller_base.c
-@@ -66,6 +66,15 @@ DEBUG_GET_ONCE_BOOL_OPTION(wmr_controller_orient_fix, "WMR_CONTROLLER_ORIENT_FIX
+@@ -60,6 +60,15 @@ DEBUG_GET_ONCE_BOOL_OPTION(wmr_controller_full_cal_left, "WMR_CONTROLLER_FULL_CA
  //! pose. See the use site: 200 ms was shorter than the interval samples actually arrive at.
  DEBUG_GET_ONCE_NUM_OPTION(wmr_constellation_max_age_ms, "WMR_CONSTELLATION_MAX_AGE_MS", 500)
  DEBUG_GET_ONCE_FLOAT_OPTION(wmr_constellation_gravity_gate_deg, "WMR_CONSTELLATION_GRAVITY_GATE_DEG", 14.0f)
@@ -60,7 +60,7 @@ index 01aab2ff3..a4e0dd0a7 100644
  //! Gain applied to the yaw-only heading discrepancy between a GATE-ACCEPTED constellation
  //! solve (see WMR_CONSTELLATION_GRAVITY_GATE_DEG just above) and the IMU fusion's own,
  //! unreferenced heading (2026-08-17, docs/pruebas.jsonl T206/T207: gyro-Y dynamics are now
-@@ -1926,6 +1935,60 @@ constellation_tracking_source_get_trusted_orientation(struct t_constellation_tra
+@@ -1814,6 +1823,60 @@ constellation_tracking_source_get_trusted_orientation(struct t_constellation_tra
  	return true;
  }
  
@@ -121,7 +121,7 @@ index 01aab2ff3..a4e0dd0a7 100644
  void
  wmr_controller_base_add_to_constellation_tracker(struct wmr_controller_base *wcb,
                                                   struct t_constellation_tracker *tracker,
-@@ -1962,6 +2025,7 @@ wmr_controller_base_add_to_constellation_tracker(struct wmr_controller_base *wcb
+@@ -1850,6 +1913,7 @@ wmr_controller_base_add_to_constellation_tracker(struct wmr_controller_base *wcb
  	}
  	wcb->constellation.tracking_source.get_tracked_pose = constellation_tracking_source_get_tracked_pose;
  	wcb->constellation.tracking_source.get_trusted_orientation = constellation_tracking_source_get_trusted_orientation;

@@ -1,8 +1,8 @@
-From d7eed079ad13b59e1af3ad12285fcb2cfed528c4 Mon Sep 17 00:00:00 2001
+From b4d8b00956cb2ae3bed9c5611b02b4575d0466c8 Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Tue, 18 Aug 2026 05:23:35 -0300
-Subject: [PATCH] t/constellation: trusted-orientation prior plumbed into the
- correspondence search (the deep fix for yaw ghosts)
+Subject: [PATCH] t/constellation: trusted-orientation prior plumbed into
+ the correspondence search (the deep fix for yaw ghosts)
 
 The 0074 device-side gate rejects half-turn ghosts post-hoc, but by then
 the search already PICKED the ghost (losing the true pose that frame) and
@@ -34,10 +34,10 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  8 files changed, 515 insertions(+), 50 deletions(-)
 
 diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
-index a93966d04..9d8e7f6a2 100644
+index 808beccb1..90fad2389 100644
 --- a/src/xrt/drivers/wmr/wmr_controller_base.c
 +++ b/src/xrt/drivers/wmr/wmr_controller_base.c
-@@ -1328,18 +1328,25 @@ wmr_controller_base_init(struct wmr_controller_base *wcb,
+@@ -1215,18 +1215,25 @@ wmr_controller_base_init(struct wmr_controller_base *wcb,
  //! wmr_constellation_solve_yaw_error_rad, shared with the WMR_CONSTELLATION_YAW_PRIOR_DEG reject
  //! gate in constellation_sample_store -- see that function's own comment for why a second,
  //! independent consumer of the same measurement exists.
@@ -68,7 +68,7 @@ index a93966d04..9d8e7f6a2 100644
  
  	// World-frame rotation taking the fusion's CURRENT belief to the solve's belief -- same
  	// "target * inverse(current)" pattern t_tracker_slam.cpp's reset-offset transform (0057)
-@@ -1727,6 +1734,62 @@ constellation_tracking_source_get_tracked_pose(struct t_constellation_tracker_tr
+@@ -1614,6 +1621,62 @@ constellation_tracking_source_get_tracked_pose(struct t_constellation_tracker_tr
  	m_relation_history_get(wcb->constellation.relation_history, when_ns, out_relation);
  }
  
@@ -131,7 +131,7 @@ index a93966d04..9d8e7f6a2 100644
  void
  wmr_controller_base_add_to_constellation_tracker(struct wmr_controller_base *wcb,
                                                   struct t_constellation_tracker *tracker,
-@@ -1762,6 +1825,7 @@ wmr_controller_base_add_to_constellation_tracker(struct wmr_controller_base *wcb
+@@ -1649,6 +1712,7 @@ wmr_controller_base_add_to_constellation_tracker(struct wmr_controller_base *wcb
  		m_relation_history_create(&wcb->constellation.relation_history);
  	}
  	wcb->constellation.tracking_source.get_tracked_pose = constellation_tracking_source_get_tracked_pose;

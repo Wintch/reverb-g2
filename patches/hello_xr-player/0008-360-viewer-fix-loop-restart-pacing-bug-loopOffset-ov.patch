@@ -1,4 +1,4 @@
-From 6c6604cb0e7d69ca4a8a89596a1539be789bb86f Mon Sep 17 00:00:00 2001
+From e3c2f90bc65c03f03364b0a9c88865f1c02f909c Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Sun, 9 Aug 2026 00:44:05 -0300
 Subject: [PATCH] 360 viewer: fix loop-restart pacing bug (loopOffset
@@ -47,20 +47,19 @@ throughout with 0 renderer starves. Not yet re-verified against a SECOND
 symptom seen originally (a vertical "rolling" artifact on a different clip) - unconfirmed whether that was a visible symptom of this same bug or
 something separate; needs a look with the headset on.
 ---
- src/tests/hello_xr/video360.cpp | 32 +++++++++++++++++++++++++++++++-
- 1 file changed, 31 insertions(+), 1 deletion(-)
+ src/tests/hello_xr/video360.cpp | 31 ++++++++++++++++++++++++++++++-
+ 1 file changed, 30 insertions(+), 1 deletion(-)
 
 diff --git a/src/tests/hello_xr/video360.cpp b/src/tests/hello_xr/video360.cpp
-index 182ad70..08df22f 100644
+index 182ad70..b79be73 100644
 --- a/src/tests/hello_xr/video360.cpp
 +++ b/src/tests/hello_xr/video360.cpp
-@@ -387,7 +387,37 @@ struct Video360::Impl {
+@@ -387,7 +387,36 @@ struct Video360::Impl {
                  DrainDecoder(frame, swFrame, loopOffset, lastPts);
                  if (!loop) break;
                  avcodec_flush_buffers(dec);
 -                loopOffset = lastPts + frameDuration;
-+                // BUG (found 2026-08-09, see BUG_player_loop_speedup_2026-08-09.md in the
-+                // stereo3d-pack repo): this used to be a plain assignment, `loopOffset =
++                // BUG (found 2026-08-09): this used to be a plain assignment, `loopOffset =
 +                // lastPts + frameDuration`. lastPts is always the file's own RAW, 0-based
 +                // last timestamp (it naturally restarts near 0 every loop, since the file is
 +                // re-read from position 0 each time) - so the assignment silently threw away

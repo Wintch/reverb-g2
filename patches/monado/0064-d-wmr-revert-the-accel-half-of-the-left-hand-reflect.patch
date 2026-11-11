@@ -1,4 +1,4 @@
-From cf9eb716f87c06a7b65a9b58e2cb0b6280116106 Mon Sep 17 00:00:00 2001
+From 1f484b46c4a2083b4e217dbdd03e5a5a27b63caa Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Mon, 17 Aug 2026 18:45:50 -0300
 Subject: [PATCH] d/wmr: revert the accel half of the left-hand reflection --
@@ -14,26 +14,27 @@ no-absolute-yaw-reference problem.
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 ---
- src/xrt/drivers/wmr/wmr_controller_hp.c | 10 ++++++++++
- 1 file changed, 10 insertions(+)
+ src/xrt/drivers/wmr/wmr_controller_hp.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
 
 diff --git a/src/xrt/drivers/wmr/wmr_controller_hp.c b/src/xrt/drivers/wmr/wmr_controller_hp.c
-index 3f95c3b46..7eb5dab33 100644
+index 3f95c3b46..0aca8c0e7 100644
 --- a/src/xrt/drivers/wmr/wmr_controller_hp.c
 +++ b/src/xrt/drivers/wmr/wmr_controller_hp.c
-@@ -405,6 +405,16 @@ wmr_controller_hp_packet_parse(struct wmr_controller_hp *ctrl, const unsigned ch
+@@ -405,6 +405,17 @@ wmr_controller_hp_packet_parse(struct wmr_controller_hp *ctrl, const unsigned ch
  	if (wcb->base.device_type == XRT_DEVICE_TYPE_LEFT_HAND_CONTROLLER &&
  	    debug_get_bool_option_wmr_controller_left_yaw_gyro_invert()) {
  		last_input->imu.gyro.y = -last_input->imu.gyro.y;
-+		// MEASURED NEGATIVE RESULT, do not re-add (2026-08-17, T207): negating the
++		// MEASURED NEGATIVE RESULT, do not re-add (2026-08-17): negating the
 +		// accel Y here too -- which the frame-reconciliation algebra suggested as
 +		// the "coherent" diag(1,-1,1) on both sensors -- made the left controller
 +		// PRECESS: a 3D figure-8 wound up whole extra turns instead of closing
-+		// ("sigue pegando vueltas completas"), while the right's closed exactly.
++		// (a wearer reported it kept making full extra turns), while the right's
++		// closed exactly.
 +		// A flipped gravity reference fighting a correct gyro never settles. The
-+		// empirical truth is gyro-only: with just the gyro negation the wearer
-+		// reported all three axes rotating correctly ("los ejes parecen estar
-+		// bien"), leaving only a constant heading offset -- which is the separate
++		// empirical truth is gyro-only: with just the gyro negation a wearer
++		// reported all three axes rotating correctly, leaving only a constant
++		// heading offset -- which is the separate
 +		// no-absolute-yaw-reference problem, not a frame error.
  	}
  

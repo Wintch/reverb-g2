@@ -1,4 +1,4 @@
-From 7c73ebc6a797b8037e9e3267877d89fbe2f719e5 Mon Sep 17 00:00:00 2001
+From 2f9a999593b8a027600ba47b964c4464e4922c8d Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Tue, 18 Aug 2026 00:52:36 -0300
 Subject: [PATCH] d/wmr: WMR_STICK_AUTOCENTER -- per-stick center
@@ -20,7 +20,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  3 files changed, 124 insertions(+)
 
 diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
-index 86fd21594..9fb23b93b 100644
+index 08d659787..55fb769df 100644
 --- a/src/xrt/drivers/wmr/wmr_controller_base.c
 +++ b/src/xrt/drivers/wmr/wmr_controller_base.c
 @@ -31,6 +31,7 @@
@@ -31,7 +31,7 @@ index 86fd21594..9fb23b93b 100644
  #include <stdio.h>
  #include <stdlib.h>
  
-@@ -79,6 +80,11 @@ DEBUG_GET_ONCE_FLOAT_OPTION(wmr_controller_solve_yaw_correct, "WMR_CONTROLLER_SO
+@@ -73,6 +74,11 @@ DEBUG_GET_ONCE_FLOAT_OPTION(wmr_controller_solve_yaw_correct, "WMR_CONTROLLER_SO
  //! Radial thumbstick deadzone, applied by the per-model packet parsers. Off by default.
  DEBUG_GET_ONCE_FLOAT_OPTION(wmr_stick_deadzone, "WMR_STICK_DEADZONE", 0.0f)
  
@@ -43,7 +43,7 @@ index 86fd21594..9fb23b93b 100644
  //! UNVALIDATED PROTOTYPE, off by default. docs/03 in the reverb-g2 repo documents the WMR
  //! controllers powering off after ~15 min motionless. This resends the two connect-time
  //! commands (status-report enable + IMU-on, wmr_controller_base_init) periodically, in the
-@@ -1003,6 +1009,71 @@ wmr_controller_base_apply_stick_deadzone(struct xrt_vec2 *stick)
+@@ -956,6 +962,71 @@ wmr_controller_base_apply_stick_deadzone(struct xrt_vec2 *stick)
  	stick->y = fminf(fmaxf(stick->y * rescale, -1.0f), 1.0f);
  }
  
@@ -183,10 +183,10 @@ index d809d76d4..d2cdfe23e 100644
   * WMR_CONTROLLER_KEEPALIVE_S v2 (UNVALIDATED PROTOTYPE, default off): resend the two
   * connect-time enable commands to this controller if the configured interval has elapsed.
 diff --git a/src/xrt/drivers/wmr/wmr_controller_hp.c b/src/xrt/drivers/wmr/wmr_controller_hp.c
-index 3f6477303..353aa9958 100644
+index c25cd5337..612d0ef0f 100644
 --- a/src/xrt/drivers/wmr/wmr_controller_hp.c
 +++ b/src/xrt/drivers/wmr/wmr_controller_hp.c
-@@ -306,6 +306,10 @@ wmr_controller_hp_packet_parse(struct wmr_controller_hp *ctrl, const unsigned ch
+@@ -309,6 +309,10 @@ wmr_controller_hp_packet_parse(struct wmr_controller_hp *ctrl, const unsigned ch
  		last_input->thumbstick.values.y = 1.0f;
  	}
  

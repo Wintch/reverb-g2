@@ -1,4 +1,4 @@
-From 180013030de32104efa4051216515cbd676605aa Mon Sep 17 00:00:00 2001
+From 8c723403f1ea51b5ff99b64dfb1815fb7fa559d2 Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Mon, 17 Aug 2026 18:25:24 -0300
 Subject: [PATCH] hello_xr: solid color caps on the positive tip of each gizmo
@@ -14,9 +14,9 @@ half bright/half dim -- local frame, not world placement).
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 ---
  src/tests/hello_xr/graphicsplugin.h           |  5 +--
- src/tests/hello_xr/openxr_program.cpp         | 31 +++++++++++++++++
+ src/tests/hello_xr/openxr_program.cpp         | 30 +++++++++++++++++
  .../hello_xr/vulkan_shaders/cube_vert.glsl    | 33 ++++++++++++-------
- 3 files changed, 56 insertions(+), 13 deletions(-)
+ 3 files changed, 55 insertions(+), 13 deletions(-)
 
 diff --git a/src/tests/hello_xr/graphicsplugin.h b/src/tests/hello_xr/graphicsplugin.h
 index dc3040e..dbf0862 100644
@@ -35,16 +35,15 @@ index dc3040e..dbf0862 100644
  };
  
 diff --git a/src/tests/hello_xr/openxr_program.cpp b/src/tests/hello_xr/openxr_program.cpp
-index 8b14995..920c3ed 100644
+index 8b14995..a4ce6f3 100644
 --- a/src/tests/hello_xr/openxr_program.cpp
 +++ b/src/tests/hello_xr/openxr_program.cpp
-@@ -761,17 +761,48 @@ struct OpenXrProgram : IOpenXrProgram {
+@@ -761,17 +761,47 @@ struct OpenXrProgram : IOpenXrProgram {
       * mesh's baked per-face colours. Cube::GizmoAxis (0/1/2) is what tells cube_vert.glsl this
       * is a gizmo bar and which axis it is; -1 (the default for every other cube, reference
       * spaces included) keeps the original per-face colouring untouched.
 +     *
-+     * Tip cubes, added same day per the wearer's own live request ("metele un cubo en una punta
-+     * de cada eje"): one small solid cube capping the POSITIVE end of each bar only, slightly
++     * Tip cubes, added on request: one small solid cube capping the POSITIVE end of each bar only, slightly
 +     * larger than the bar's cross-section. Nothing marks the negative end. The asymmetry is the
 +     * point -- it makes handedness readable at a glance (three colour-coded caps, not a
 +     * symmetric jack), and because the three caps move as a rigid unit with the bars, an
@@ -59,8 +58,8 @@ index 8b14995..920c3ed 100644
      static void PushPoseGizmo(std::vector<Cube>& cubes, const XrPosef& pose, float scale) {
          constexpr float kLength = 0.12f;
          constexpr float kThick = 0.012f;
-+        // ~1.75x the bar's own cross-section (matches the wearer's own "3.5cm cube on a 2cm
-+        // bar" example ratio) -- big enough to read as a deliberate marker, not just a thicker
++        // ~1.75x the bar's own cross-section (matches a 3.5cm cube on a 2cm
++        // bar) -- big enough to read as a deliberate marker, not just a thicker
 +        // bit of bar.
 +        constexpr float kTipCube = kThick * 1.75f;
          const float len = kLength * scale;

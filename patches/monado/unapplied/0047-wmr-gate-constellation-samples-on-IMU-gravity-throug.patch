@@ -1,8 +1,8 @@
-From 63b5317c87394bb93f6ba5c3df595d5727245ce5 Mon Sep 17 00:00:00 2001
+From ad3690583c2b89ce4668dcd215a9f92b0d39e57c Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Thu, 13 Aug 2026 21:49:14 -0300
-Subject: [PATCH] wmr: gate constellation samples on IMU gravity through the
- identified Rx180 frame bridge
+Subject: [PATCH] wmr: gate constellation samples on IMU gravity through
+ the identified Rx180 frame bridge
 
 The constellation solve is bistable: with 5-6 blobs matched out of 32 LEDs,
 several blob-to-LED assignments reproject equally well, so wrong poses arrive
@@ -45,7 +45,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  2 files changed, 104 insertions(+), 2 deletions(-)
 
 diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
-index b2d0fbec7..6f8faa903 100644
+index 536352f98..86b0f25c2 100644
 --- a/src/xrt/drivers/wmr/wmr_controller_base.c
 +++ b/src/xrt/drivers/wmr/wmr_controller_base.c
 @@ -51,6 +51,7 @@ DEBUG_GET_ONCE_BOOL_OPTION(wmr_controller_imu_to_device, "WMR_CONTROLLER_IMU_TO_
@@ -56,7 +56,7 @@ index b2d0fbec7..6f8faa903 100644
  
  //! Radial thumbstick deadzone, applied by the per-model packet parsers. Off by default.
  DEBUG_GET_ONCE_FLOAT_OPTION(wmr_stick_deadzone, "WMR_STICK_DEADZONE", 0.0f)
-@@ -921,6 +922,72 @@ constellation_sample_store(struct t_constellation_tracker_device *device, struct
+@@ -1024,6 +1025,72 @@ constellation_sample_store(struct t_constellation_tracker_device *device, struct
  		return;
  	}
  
@@ -129,7 +129,7 @@ index b2d0fbec7..6f8faa903 100644
  	// Position only: the constellation solve's orientation is not used for anything (the IMU's is
  	// better), but the history needs both bits set or every reader treats the entry as invalid.
  	// The orientation stored here is therefore the solve's, and deliberately never read back out
-@@ -968,8 +1035,41 @@ constellation_sample_store(struct t_constellation_tracker_device *device, struct
+@@ -1071,8 +1138,41 @@ constellation_sample_store(struct t_constellation_tracker_device *device, struct
  		float dot = down_imu.x * down_solve.x + down_imu.y * down_solve.y + down_imu.z * down_solve.z;
  		float gravity_deg = (float)(acos(fmax(-1.f, fmin(1.f, dot))) * 180.0 / M_PI);
  
@@ -174,10 +174,10 @@ index b2d0fbec7..6f8faa903 100644
  
  	// Throttled to ~2/s at 30fps so this is readable in the log without needing the debug GUI.
 diff --git a/src/xrt/drivers/wmr/wmr_controller_base.h b/src/xrt/drivers/wmr/wmr_controller_base.h
-index 1fc342785..c9615760e 100644
+index d52cc6913..df0e1df0f 100644
 --- a/src/xrt/drivers/wmr/wmr_controller_base.h
 +++ b/src/xrt/drivers/wmr/wmr_controller_base.h
-@@ -160,6 +160,8 @@ struct wmr_controller_base
+@@ -164,6 +164,8 @@ struct wmr_controller_base
  		uint64_t sample_count;
  		//! Samples rejected for placing the controller implausibly far away, see the range check.
  		uint64_t out_of_range_count;

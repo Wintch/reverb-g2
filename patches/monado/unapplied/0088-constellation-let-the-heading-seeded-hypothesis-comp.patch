@@ -1,8 +1,8 @@
-From 15214e63f7a8322090d7920c0b74e96a07c1ad24 Mon Sep 17 00:00:00 2001
+From 8eafe655a27bd37cf10c2482082254e08796e270 Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Wed, 19 Aug 2026 16:18:53 -0300
-Subject: [PATCH] constellation: let the heading-seeded hypothesis compete, and
- stop the ungated prior branch admitting yaw-disagreeing poses
+Subject: [PATCH] constellation: let the heading-seeded hypothesis
+ compete, and stop the ungated prior branch admitting yaw-disagreeing poses
 
 Two changes from T224's design pass, both small, both aimed at the same gap: the layer
 that generates an assignment FROM the trusted heading already exists (0077/0082), it just

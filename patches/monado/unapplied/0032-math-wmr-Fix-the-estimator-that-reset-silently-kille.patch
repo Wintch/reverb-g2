@@ -1,7 +1,7 @@
-From 7336d308d2133eed3c39f3ceab069f67e2edec1c Mon Sep 17 00:00:00 2001
+From 71f3a7d45f02f5f8a73be85bf652a87a750496fe Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Wed, 12 Aug 2026 23:47:13 -0300
-Subject: [PATCH 32/35] math/wmr: Fix the estimator that reset() silently
+Subject: [PATCH] math/wmr: Fix the estimator that reset() silently
  killed, and stop applying P_imu_me by default
 
 Two corrections to the same day's work, both from review rather than from a new symptom.
@@ -35,7 +35,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
  3 files changed, 18 insertions(+), 5 deletions(-)
 
 diff --git a/src/xrt/auxiliary/math/m_imu_3dof.c b/src/xrt/auxiliary/math/m_imu_3dof.c
-index d87871560..ca1c5f981 100644
+index 446d6eef7..e11d42b12 100644
 --- a/src/xrt/auxiliary/math/m_imu_3dof.c
 +++ b/src/xrt/auxiliary/math/m_imu_3dof.c
 @@ -36,7 +36,6 @@ m_imu_3dof_init(struct m_imu_3dof *f, int flags)
@@ -62,7 +62,7 @@ index d87871560..ca1c5f981 100644
  	}
  
 diff --git a/src/xrt/auxiliary/math/m_imu_3dof.h b/src/xrt/auxiliary/math/m_imu_3dof.h
-index 6391141d8..3663ea9b8 100644
+index 833e34b6a..658577619 100644
 --- a/src/xrt/auxiliary/math/m_imu_3dof.h
 +++ b/src/xrt/auxiliary/math/m_imu_3dof.h
 @@ -84,8 +84,6 @@ struct m_imu_3dof
@@ -75,7 +75,7 @@ index 6391141d8..3663ea9b8 100644
  		uint64_t still_since_ns;
  		//! When the estimate last ran, so a long still stretch re-estimates periodically.
 diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
-index 74337325b..bdf830f4f 100644
+index aa30d769a..37d34f4c1 100644
 --- a/src/xrt/drivers/wmr/wmr_controller_base.c
 +++ b/src/xrt/drivers/wmr/wmr_controller_base.c
 @@ -36,7 +36,17 @@
@@ -97,3 +97,6 @@ index 74337325b..bdf830f4f 100644
  
  //! How stale a constellation sample may be before the controller falls back to the placeholder
  //! pose. See the use site: 200 ms was shorter than the interval samples actually arrive at.
+-- 
+2.47.3
+

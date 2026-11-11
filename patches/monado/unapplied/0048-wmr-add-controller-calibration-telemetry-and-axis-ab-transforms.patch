@@ -1,4 +1,4 @@
-From e26ac16b36a5ebfb37456bcb627338bf7524cd92 Mon Sep 17 00:00:00 2001
+From b939fbe2bc4b0d671f79c913a8af70ffbc304bb3 Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Sat, 15 Aug 2026 16:55:16 -0300
 Subject: [PATCH] wmr: add controller calibration telemetry and axis A/B
@@ -12,7 +12,7 @@ Co-authored-by: Codex <codex@openai.com>
  1 file changed, 82 insertions(+), 1 deletion(-)
 
 diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
-index 6f8faa903..29417b642 100644
+index 86b0f25c2..9254c8303 100644
 --- a/src/xrt/drivers/wmr/wmr_controller_base.c
 +++ b/src/xrt/drivers/wmr/wmr_controller_base.c
 @@ -47,6 +47,13 @@
@@ -29,7 +29,7 @@ index 6f8faa903..29417b642 100644
  
  //! How stale a constellation sample may be before the controller falls back to the placeholder
  //! pose. See the use site: 200 ms was shorter than the interval samples actually arrive at.
-@@ -614,8 +621,12 @@ wmr_controller_base_get_tracked_pose(struct xrt_device *xdev,
+@@ -717,8 +724,12 @@ wmr_controller_base_get_tracked_pose(struct xrt_device *xdev,
  	relation.pose = pose;
  
  	// Copy data while holding the lock.
@@ -43,7 +43,7 @@ index 6f8faa903..29417b642 100644
  
  	// Convert the IMU-frame orientation the fusion produces into the controller's own frame, the
  	// same conversion wmr_hmd.c:1184 applies to the headset with the same field. The controllers
-@@ -638,10 +649,80 @@ wmr_controller_base_get_tracked_pose(struct xrt_device *xdev,
+@@ -741,10 +752,80 @@ wmr_controller_base_get_tracked_pose(struct xrt_device *xdev,
  		struct xrt_quat imu_to_device = wcb->config.sensors.transforms.P_imu_me.orientation;
  		math_quat_rotate(&relation.pose.orientation, &imu_to_device, &relation.pose.orientation);
  	}
@@ -126,3 +126,4 @@ index 6f8faa903..29417b642 100644
  		*out_relation = relation;
 -- 
 2.47.3
+

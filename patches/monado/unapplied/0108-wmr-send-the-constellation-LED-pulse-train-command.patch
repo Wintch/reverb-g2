@@ -1,4 +1,4 @@
-From 61f02ff36b503c7e8c4b000a9ebe08b210a35183 Mon Sep 17 00:00:00 2001
+From bc77855b6f49fe69ca1fb504b5c5426c6e22f80c Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Sun, 13 Sep 2026 22:07:41 -0300
 Subject: [PATCH] wmr: send the constellation LED pulse-train command
@@ -60,10 +60,10 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
  3 files changed, 155 insertions(+)
 
 diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
-index 14e3682d6..56efc8e51 100644
+index 387a245a2..30776c1f7 100644
 --- a/src/xrt/drivers/wmr/wmr_controller_base.c
 +++ b/src/xrt/drivers/wmr/wmr_controller_base.c
-@@ -140,6 +140,16 @@ DEBUG_GET_ONCE_BOOL_OPTION(wmr_stick_autocenter, "WMR_STICK_AUTOCENTER", false)
+@@ -134,6 +134,16 @@ DEBUG_GET_ONCE_BOOL_OPTION(wmr_stick_autocenter, "WMR_STICK_AUTOCENTER", false)
  //! are unchanged.
  DEBUG_GET_ONCE_NUM_OPTION(wmr_controller_keepalive_s, "WMR_CONTROLLER_KEEPALIVE_S", 0)
  
@@ -80,7 +80,7 @@ index 14e3682d6..56efc8e51 100644
  //! WMR_CONTROLLER_HAPTICS (UNVALIDATED PROTOTYPE, default off, 2026-08-18). docs/03 in the
  //! reverb-g2 repo has said since this project's early days: "Haptics dead for a double
  //! reason: an output name that the bindings never reference + set_output never
-@@ -754,6 +764,127 @@ wmr_controller_base_send_keepalive_if_due(struct xrt_device *xdev)
+@@ -725,6 +735,127 @@ wmr_controller_base_send_keepalive_if_due(struct xrt_device *xdev)
  	wmr_controller_send_keepalive(wcb);
  }
  
@@ -209,10 +209,10 @@ index 14e3682d6..56efc8e51 100644
  //! (WMR_CONTROLLER_HAPTICS). Many OpenXR apps call xrApplyHapticFeedback every render frame
  //! to sustain a "continuous" rumble (90 Hz+ on this headset); the same tunnel also carries
 diff --git a/src/xrt/drivers/wmr/wmr_controller_base.h b/src/xrt/drivers/wmr/wmr_controller_base.h
-index 30f092376..91df33717 100644
+index 307b809ce..8cbf0e36d 100644
 --- a/src/xrt/drivers/wmr/wmr_controller_base.h
 +++ b/src/xrt/drivers/wmr/wmr_controller_base.h
-@@ -148,6 +148,17 @@ struct wmr_controller_base
+@@ -129,6 +129,17 @@ struct wmr_controller_base
  	//! See the keepalive prototype in wmr_controller_base_get_tracked_pose. Diagnostic-only,
  	//! off by default.
  	uint64_t last_keepalive_ns;
@@ -230,7 +230,7 @@ index 30f092376..91df33717 100644
  	//! Main fusion calculator.
  	struct m_imu_3dof fusion;
  	//! The last angular velocity from the IMU, for prediction.
-@@ -343,6 +354,17 @@ wmr_controller_base_apply_stick_autocenter(struct wmr_controller_base *wcb, stru
+@@ -318,6 +329,17 @@ wmr_controller_base_apply_stick_autocenter(struct wmr_controller_base *wcb, stru
  void
  wmr_controller_base_send_keepalive_if_due(struct xrt_device *xdev);
  
@@ -249,10 +249,10 @@ index 30f092376..91df33717 100644
   * WMR_CONTROLLER_HAPTICS (UNVALIDATED PROTOTYPE, default off): xrt_device::set_output
   * implementation shared by wmr_controller_hp.c (HP Reverb G2) and wmr_controller_og.c
 diff --git a/src/xrt/drivers/wmr/wmr_hmd.c b/src/xrt/drivers/wmr/wmr_hmd.c
-index ea1defc9c..369b4e276 100644
+index fbc9b9aa9..ef265ffc5 100644
 --- a/src/xrt/drivers/wmr/wmr_hmd.c
 +++ b/src/xrt/drivers/wmr/wmr_hmd.c
-@@ -1510,12 +1510,14 @@ wmr_hmd_send_controller_keepalives(struct wmr_hmd *wh)
+@@ -1089,12 +1089,14 @@ wmr_hmd_send_controller_keepalives(struct wmr_hmd *wh)
  		struct xrt_device *xdev = wmr_hmd_controller_connection_get_controller(left);
  		if (xdev != NULL) {
  			wmr_controller_base_send_keepalive_if_due(xdev);

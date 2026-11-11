@@ -1,0 +1,69 @@
+From cb1467742cfae270a3c95c59a57f0a34c520a7b7 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Wed, 11 Nov 2026 20:37:35 -0300
+Subject: [PATCH] d/wmr: Expose the headset's constellation tracker to
+ the WMR builder
+
+The builder registers the controllers with the tracker the headset created. Lab-full had
+this accessor in the same commit as the headset-side tracker setup, which the published
+series replaces with its own (0014); this adds only the accessor.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ src/xrt/drivers/wmr/wmr_hmd.c       |  7 +++++++
+ src/xrt/drivers/wmr/wmr_interface.h | 14 ++++++++++++++
+ 2 files changed, 21 insertions(+)
+
+diff --git a/src/xrt/drivers/wmr/wmr_hmd.c b/src/xrt/drivers/wmr/wmr_hmd.c
+index 5b5d4f10c..fb4ac1d75 100644
+--- a/src/xrt/drivers/wmr/wmr_hmd.c
++++ b/src/xrt/drivers/wmr/wmr_hmd.c
+@@ -46,6 +46,7 @@
+ 
+ #include "wmr_hmd.h"
+ #include "wmr_common.h"
++#include "wmr_interface.h"
+ #include "wmr_config_key.h"
+ #include "wmr_protocol.h"
+ #include "wmr_source.h"
+@@ -1822,6 +1823,12 @@ wmr_hmd_constellation_head_get_tracked_pose(struct t_constellation_tracker_track
+ 	}
+ }
+ 
++struct t_constellation_tracker *
++wmr_hmd_get_constellation_tracker(struct xrt_device *head)
++{
++	return wmr_hmd(head)->constellation.tracker;
++}
++
+ /*!
+  * Build the constellation tracker over the headset's own tracking cameras.
+  *
+diff --git a/src/xrt/drivers/wmr/wmr_interface.h b/src/xrt/drivers/wmr/wmr_interface.h
+index 159a06120..d21b3b4a9 100644
+--- a/src/xrt/drivers/wmr/wmr_interface.h
++++ b/src/xrt/drivers/wmr/wmr_interface.h
+@@ -152,6 +152,20 @@ wmr_create_bt_controller(struct xrt_prober *xp,
+                          struct xrt_device **out_xdev);
+ 
+ 
++struct t_constellation_tracker;
++
++/*!
++ * The constellation tracker created over the headset's tracking cameras, or NULL unless
++ * WMR_CONSTELLATION_CONTROLLERS is on and its creation succeeded.
++ *
++ * @param head A headset created by @ref wmr_create_headset.
++ *
++ * @ingroup drv_wmr
++ */
++struct t_constellation_tracker *
++wmr_hmd_get_constellation_tracker(struct xrt_device *head);
++
++
+ #ifdef __cplusplus
+ }
+ #endif
+-- 
+2.47.3
+

@@ -1,8 +1,8 @@
-From df93406f912f3bf58fe9fb3e2afb0f5d3e63e8e6 Mon Sep 17 00:00:00 2001
+From 4c095b71b61962bb91e29099f453ac80b909d13e Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Wed, 19 Aug 2026 15:12:40 -0300
-Subject: [PATCH] constellation: bound a published pose by its distance to the
- CAMERA, not to the world origin
+Subject: [PATCH] constellation: bound a published pose by its distance
+ to the CAMERA, not to the world origin
 
 T223 (2026-08-19, worn session) lost controller position entirely, silently, for
 minutes at a time, and the cause was a frame confusion in a sanity check.
@@ -77,10 +77,10 @@ Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
  3 files changed, 142 insertions(+), 8 deletions(-)
 
 diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
-index a4e0dd0a7..6ea580a45 100644
+index 9ce7bc15c..c83adacee 100644
 --- a/src/xrt/drivers/wmr/wmr_controller_base.c
 +++ b/src/xrt/drivers/wmr/wmr_controller_base.c
-@@ -66,6 +66,11 @@ DEBUG_GET_ONCE_BOOL_OPTION(wmr_controller_orient_fix, "WMR_CONTROLLER_ORIENT_FIX
+@@ -60,6 +60,11 @@ DEBUG_GET_ONCE_BOOL_OPTION(wmr_controller_full_cal_left, "WMR_CONTROLLER_FULL_CA
  //! pose. See the use site: 200 ms was shorter than the interval samples actually arrive at.
  DEBUG_GET_ONCE_NUM_OPTION(wmr_constellation_max_age_ms, "WMR_CONSTELLATION_MAX_AGE_MS", 500)
  DEBUG_GET_ONCE_FLOAT_OPTION(wmr_constellation_gravity_gate_deg, "WMR_CONSTELLATION_GRAVITY_GATE_DEG", 14.0f)
@@ -92,7 +92,7 @@ index a4e0dd0a7..6ea580a45 100644
  //! TRACKER-side twin of the gravity gate above (T221's trigger-blindness fix): when > 0, the
  //! constellation tracker asks for our fusion's down vector and rejects wrong-lobe candidates
  //! BEFORE committing/delivering them, so its recovery ladder actually runs during a ghost flood
-@@ -1616,16 +1621,59 @@ constellation_sample_store(struct t_constellation_tracker_device *device, struct
+@@ -1504,16 +1509,59 @@ constellation_sample_store(struct t_constellation_tracker_device *device, struct
  	// 2026-08-12 in a real game session: pos=(-3432890, -7235085, -15194503), i.e. thousands of
  	// kilometres, with 7 matched blobs. Finite, so the check below never sees it, and it would
  	// enter the history and therefore the tracker's own prior exactly like a NaN would.
@@ -158,7 +158,7 @@ index a4e0dd0a7..6ea580a45 100644
  		}
  		return;
  	}
-@@ -2030,6 +2078,11 @@ wmr_controller_base_add_to_constellation_tracker(struct wmr_controller_base *wcb
+@@ -1918,6 +1966,11 @@ wmr_controller_base_add_to_constellation_tracker(struct wmr_controller_base *wcb
  	struct t_constellation_tracker_device_params params = {
  	    .led_model = wcb->constellation.led_model,
  	    .tracking_source = &wcb->constellation.tracking_source,

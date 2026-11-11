@@ -1,8 +1,8 @@
-From b17ae1827c76b5c78338fe8e8ef8110130ef2720 Mon Sep 17 00:00:00 2001
+From 4b5e40146ba6307a4938572c49b11905569303b9 Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Mon, 17 Aug 2026 19:03:04 -0300
-Subject: [PATCH] d/wmr: WMR_CONTROLLER_SOLVE_YAW_CORRECT -- anchor fusion
- heading to gate-accepted constellation solves
+Subject: [PATCH] d/wmr: WMR_CONTROLLER_SOLVE_YAW_CORRECT -- anchor
+ fusion heading to gate-accepted constellation solves
 
 The missing absolute yaw reference (gravity anchors pitch/roll; nothing anchored
 heading -- boot attitude was the heading, T207's 'axes fine, pointing wrong').
@@ -20,10 +20,10 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  2 files changed, 158 insertions(+)
 
 diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
-index e692ae009..556d25bfd 100644
+index 9254c8303..c23050c81 100644
 --- a/src/xrt/drivers/wmr/wmr_controller_base.c
 +++ b/src/xrt/drivers/wmr/wmr_controller_base.c
-@@ -65,6 +65,16 @@ DEBUG_GET_ONCE_BOOL_OPTION(wmr_controller_orient_fix, "WMR_CONTROLLER_ORIENT_FIX
+@@ -59,6 +59,16 @@ DEBUG_GET_ONCE_BOOL_OPTION(wmr_controller_full_cal_left, "WMR_CONTROLLER_FULL_CA
  //! pose. See the use site: 200 ms was shorter than the interval samples actually arrive at.
  DEBUG_GET_ONCE_NUM_OPTION(wmr_constellation_max_age_ms, "WMR_CONSTELLATION_MAX_AGE_MS", 500)
  DEBUG_GET_ONCE_FLOAT_OPTION(wmr_constellation_gravity_gate_deg, "WMR_CONSTELLATION_GRAVITY_GATE_DEG", 14.0f)
@@ -40,7 +40,7 @@ index e692ae009..556d25bfd 100644
  
  //! Radial thumbstick deadzone, applied by the per-model packet parsers. Off by default.
  DEBUG_GET_ONCE_FLOAT_OPTION(wmr_stick_deadzone, "WMR_STICK_DEADZONE", 0.0f)
-@@ -1177,6 +1187,139 @@ wmr_controller_base_init(struct wmr_controller_base *wcb,
+@@ -1064,6 +1074,139 @@ wmr_controller_base_init(struct wmr_controller_base *wcb,
  #define WMR_CONSTELLATION_LED_RADIUS_M 0.003f
  #define WMR_CONSTELLATION_LED_VISIBILITY_ANGLE DEG_TO_RAD(75)
  
@@ -180,7 +180,7 @@ index e692ae009..556d25bfd 100644
  //! @ref t_constellation_tracker_device::push_constellation_tracker_sample. Feeds @ref
  //! wmr_controller_base.constellation.relation_history, which is what both the reported position and
  //! the tracker's own prior are read from. The last_* fields below are kept for the debug GUI.
-@@ -1282,6 +1425,19 @@ constellation_sample_store(struct t_constellation_tracker_device *device, struct
+@@ -1169,6 +1312,19 @@ constellation_sample_store(struct t_constellation_tracker_device *device, struct
  				}
  				return;
  			}

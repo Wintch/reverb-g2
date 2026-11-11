@@ -1,8 +1,8 @@
-From 22e081141e8d9c542bcac2a650a9ac810baaf5b8 Mon Sep 17 00:00:00 2001
+From 6144660c1b54a10062e225c2e19e1ac10143ce42 Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Sun, 13 Sep 2026 22:53:56 -0300
-Subject: [PATCH] c/constellation: WMR_CONSTELLATION_BLOB_TELEMETRY, blobs at
- the sink
+Subject: [PATCH] c/constellation: WMR_CONSTELLATION_BLOB_TELEMETRY,
+ blobs at the sink
 
 Log per-observation blob count, size and brightness where blob observations
 ARRIVE at the tracker -- deliberately above constellation_tracker_camera_push_blobs'
@@ -38,7 +38,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
  1 file changed, 52 insertions(+)
 
 diff --git a/src/xrt/tracking/constellation/t_constellation_tracker.cpp b/src/xrt/tracking/constellation/t_constellation_tracker.cpp
-index fe4630844..54893e2ed 100644
+index 34d5f4938..2f1576250 100644
 --- a/src/xrt/tracking/constellation/t_constellation_tracker.cpp
 +++ b/src/xrt/tracking/constellation/t_constellation_tracker.cpp
 @@ -93,6 +93,28 @@ DEBUG_GET_ONCE_BOOL_OPTION(constellation_seed_first, "WMR_CONSTELLATION_SEED_FIR
@@ -70,7 +70,7 @@ index fe4630844..54893e2ed 100644
  /*
   *
   * Helper functions
-@@ -1944,6 +1966,36 @@ constellation_tracker_camera_push_blobs(t_blob_sink *tbs, t_blob_observation *tb
+@@ -1829,6 +1851,36 @@ constellation_tracker_camera_push_blobs(t_blob_sink *tbs, t_blob_observation *tb
  
  	CT_TRACE(tracker, "Received blob observation with %u blobs", tbo->num_blobs);
  

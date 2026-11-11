@@ -1,11 +1,8 @@
-From b7c929c17f3db95bd6ed227f345b4e24c4a178dd Mon Sep 17 00:00:00 2001
+From 920297407a006c60e39484b6512a0182669fe52a Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Wed, 12 Aug 2026 23:38:10 -0300
-Subject: [PATCH 30/31] d/wmr: Put the controllers in the headset's tracking
+Subject: [PATCH] d/wmr: Put the controllers in the headset's tracking
  origin, and stop trusting bad samples
-MIME-Version: 1.0
-Content-Type: text/plain; charset=UTF-8
-Content-Transfer-Encoding: 8bit
 
 Four things the live sessions found, all in the controller path.
 
@@ -51,7 +48,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
  4 files changed, 128 insertions(+), 13 deletions(-)
 
 diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
-index 8e06ec291..74337325b 100644
+index bdebba54a..aa30d769a 100644
 --- a/src/xrt/drivers/wmr/wmr_controller_base.c
 +++ b/src/xrt/drivers/wmr/wmr_controller_base.c
 @@ -34,6 +34,14 @@
@@ -68,8 +65,8 @@ index 8e06ec291..74337325b 100644
 +
  //! Radial thumbstick deadzone, applied by the per-model packet parsers. Off by default.
  DEBUG_GET_ONCE_FLOAT_OPTION(wmr_stick_deadzone, "WMR_STICK_DEADZONE", 0.0f)
- #include <string.h>
-@@ -550,7 +558,21 @@ wmr_controller_base_get_tracked_pose(struct xrt_device *xdev,
+ 
+@@ -653,7 +661,21 @@ wmr_controller_base_get_tracked_pose(struct xrt_device *xdev,
  	// i.e. the ordinary age of the last 30 Hz camera frame. Patch 0016's clock alignment fixed it.
  	// The absolute value is kept anyway -- it costs nothing and the failure it guards against is
  	// silent.
@@ -92,7 +89,7 @@ index 8e06ec291..74337325b 100644
  	int64_t constellation_sample_age_ns = at_timestamp_ns - wcb->constellation.last_timestamp_ns;
  	if (constellation_sample_age_ns < 0) {
  		constellation_sample_age_ns = -constellation_sample_age_ns;
-@@ -583,6 +605,28 @@ wmr_controller_base_get_tracked_pose(struct xrt_device *xdev,
+@@ -686,6 +708,28 @@ wmr_controller_base_get_tracked_pose(struct xrt_device *xdev,
  	// Copy data while holding the lock.
  	os_mutex_lock(&wcb->data_lock);
  	relation.pose.orientation = wcb->fusion.rot;
@@ -121,7 +118,7 @@ index 8e06ec291..74337325b 100644
  	relation.angular_velocity = wcb->last_angular_velocity;
  	last_imu_timestamp_ns = wcb->last_imu_timestamp_ns;
  	os_mutex_unlock(&wcb->data_lock);
-@@ -720,7 +764,12 @@ wmr_controller_base_init(struct wmr_controller_base *wcb,
+@@ -823,7 +867,12 @@ wmr_controller_base_init(struct wmr_controller_base *wcb,
  	wcb->base.supported.position_tracking = false;
  	wcb->base.supported.hand_tracking = false;
  
@@ -135,7 +132,7 @@ index 8e06ec291..74337325b 100644
  
  	if (os_mutex_init(&wcb->conn_lock) != 0 || os_mutex_init(&wcb->data_lock) != 0) {
  		WMR_ERROR(wcb, "WMR Controller: Failed to init mutex!");
-@@ -754,6 +803,31 @@ wmr_controller_base_init(struct wmr_controller_base *wcb,
+@@ -857,6 +906,31 @@ wmr_controller_base_init(struct wmr_controller_base *wcb,
  
  	wmr_config_precompute_transforms(&wcb->config.sensors, NULL);
  
@@ -167,7 +164,7 @@ index 8e06ec291..74337325b 100644
  	/* Enable the status reports, IMU and control status reports */
  	const unsigned char wmr_controller_status_enable_cmd[64] = {0x06, 0x03, 0x01, 0x00, 0x02};
  	wmr_controller_send_bytes(wcb, wmr_controller_status_enable_cmd, sizeof(wmr_controller_status_enable_cmd));
-@@ -779,6 +853,25 @@ constellation_sample_store(struct t_constellation_tracker_device *device, struct
+@@ -882,6 +956,25 @@ constellation_sample_store(struct t_constellation_tracker_device *device, struct
  	struct wmr_controller_base *wcb =
  	    container_of(device, struct wmr_controller_base, constellation.device);
  
@@ -193,7 +190,7 @@ index 8e06ec291..74337325b 100644
  	// A non-finite sample must never reach the history, because the history is ALSO the tracker's
  	// prior (see constellation_tracking_source_get_tracked_pose): one NaN would be fed back into
  	// the solver, come out as another NaN, and poison every subsequent sample with no way back.
-@@ -879,7 +972,8 @@ constellation_tracking_source_get_tracked_pose(struct t_constellation_tracker_tr
+@@ -982,7 +1075,8 @@ constellation_tracking_source_get_tracked_pose(struct t_constellation_tracker_tr
  
  void
  wmr_controller_base_add_to_constellation_tracker(struct wmr_controller_base *wcb,
@@ -203,7 +200,7 @@ index 8e06ec291..74337325b 100644
  {
  	if (tracker == NULL || wcb->config.led_count == 0) {
  		return;
-@@ -927,12 +1021,25 @@ wmr_controller_base_add_to_constellation_tracker(struct wmr_controller_base *wcb
+@@ -1030,12 +1124,25 @@ wmr_controller_base_add_to_constellation_tracker(struct wmr_controller_base *wcb
  
  	wcb->constellation.tracker = tracker;
  
@@ -236,10 +233,10 @@ index 8e06ec291..74337325b 100644
  
  	u_var_add_gui_header(wcb, NULL, "Constellation tracking (telemetry only)");
 diff --git a/src/xrt/drivers/wmr/wmr_controller_base.h b/src/xrt/drivers/wmr/wmr_controller_base.h
-index 444f42048..1fc342785 100644
+index 3f39fa259..d52cc6913 100644
 --- a/src/xrt/drivers/wmr/wmr_controller_base.h
 +++ b/src/xrt/drivers/wmr/wmr_controller_base.h
-@@ -158,6 +158,8 @@ struct wmr_controller_base
+@@ -162,6 +162,8 @@ struct wmr_controller_base
  		struct t_constellation_tracker_sample_metrics last_metrics;
  		//! Samples received since registration, so "stuck at 0" is visible at a glance in the GUI.
  		uint64_t sample_count;
@@ -248,7 +245,7 @@ index 444f42048..1fc342785 100644
  
  		/*!
  		 * Every constellation sample this controller receives, keyed by the sample's own
-@@ -186,7 +188,8 @@ struct wmr_controller_base
+@@ -190,7 +192,8 @@ struct wmr_controller_base
   */
  void
  wmr_controller_base_add_to_constellation_tracker(struct wmr_controller_base *wcb,
@@ -259,10 +256,10 @@ index 444f42048..1fc342785 100644
  bool
  wmr_controller_base_init(struct wmr_controller_base *wcb,
 diff --git a/src/xrt/drivers/wmr/wmr_hmd.c b/src/xrt/drivers/wmr/wmr_hmd.c
-index 7739fa171..a68c9ce4b 100644
+index 324feb246..fbc9b9aa9 100644
 --- a/src/xrt/drivers/wmr/wmr_hmd.c
 +++ b/src/xrt/drivers/wmr/wmr_hmd.c
-@@ -1900,7 +1900,10 @@ wmr_hmd_setup_trackers(struct wmr_hmd *wh, struct xrt_slam_sinks *out_sinks, str
+@@ -2508,7 +2508,10 @@ wmr_hmd_setup_trackers(struct wmr_hmd *wh, struct xrt_slam_sinks *out_sinks, str
  	wmr_hmd_fill_slam_calibration(wh);
  
  	// Initialize 3DoF tracker
@@ -275,10 +272,10 @@ index 7739fa171..a68c9ce4b 100644
  	// Initialize SLAM tracker
  	struct xrt_slam_sinks *slam_sinks = NULL;
 diff --git a/src/xrt/targets/common/target_builder_wmr.c b/src/xrt/targets/common/target_builder_wmr.c
-index 5d1053549..b64c9842c 100644
+index 111d51814..31fea1502 100644
 --- a/src/xrt/targets/common/target_builder_wmr.c
 +++ b/src/xrt/targets/common/target_builder_wmr.c
-@@ -296,11 +296,13 @@ wmr_open_system_impl(struct xrt_builder *xb,
+@@ -312,11 +312,13 @@ wmr_open_system_impl(struct xrt_builder *xb,
  	if (constellation_tracker != NULL) {
  		if (left != NULL) {
  			wmr_controller_base_add_to_constellation_tracker((struct wmr_controller_base *)left,
@@ -294,3 +291,6 @@ index 5d1053549..b64c9842c 100644
  		}
  	}
  
+-- 
+2.47.3
+

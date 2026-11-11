@@ -1,8 +1,8 @@
-From 7cb73701b28bac44ba00217b96f0ae034ad60214 Mon Sep 17 00:00:00 2001
+From 1bb0312d8bd3fe2fa7ba57d33d89ea6703721755 Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Tue, 11 Aug 2026 20:01:04 -0300
-Subject: [PATCH] d/wmr: Fix container_of misuse in receive_ctrl_cam, resolving
- the clock-domain bug
+Subject: [PATCH] d/wmr: Fix container_of misuse in receive_ctrl_cam,
+ resolving the clock-domain bug
 
 The "device-specific" timestamp bug documented in c4df75db2's commit message
 and NEXT-STEP.md was not device-specific at all -- it was container_of being
@@ -41,7 +41,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
  2 files changed, 29 insertions(+), 21 deletions(-)
 
 diff --git a/src/xrt/drivers/wmr/wmr_source.c b/src/xrt/drivers/wmr/wmr_source.c
-index 298775038..5e5267874 100644
+index 8f2829382..9f4fa3545 100644
 --- a/src/xrt/drivers/wmr/wmr_source.c
 +++ b/src/xrt/drivers/wmr/wmr_source.c
 @@ -45,6 +45,20 @@
@@ -62,10 +62,10 @@ index 298775038..5e5267874 100644
 +	struct xrt_frame_sink *downstream; //!< Real blobwatch chain entry point
 +};
 +
- /*!
-  * Handles all the data sources from the WMR driver
-  *
-@@ -78,9 +92,8 @@ struct wmr_source
+ //! Largest backwards step in the converted IMU timeline still treated as clock-offset jitter
+ //! rather than a real discontinuity. Measured 2026-08-12 over one session: 281 backwards events,
+ //! p50 3.3 ms, p99 14.7 ms, max 17.3 ms. A device-clock restart looks nothing like this -- the
+@@ -89,9 +103,8 @@ struct wmr_source
  	// forwarding frames, but this ctrl path never did -- so constellation sample timestamps stayed in the raw
  	// hardware clock while get_tracked_pose compares against os_monotonic_get_ns(), a ~44.5M ms mismatch
  	// confirmed live (get_tracked_pose log: position_tracked=no, delta_ms in the tens of millions).
@@ -77,7 +77,7 @@ index 298775038..5e5267874 100644
  
  	bool is_running;              //!< Whether the device is streaming
  	bool first_imu_received;      //!< Don't send frames until first IMU sample
-@@ -125,16 +138,20 @@ void (*receive_cam[WMR_MAX_CAMERAS])(struct xrt_frame_sink *, struct xrt_frame *
+@@ -173,16 +186,20 @@ void (*receive_cam[WMR_MAX_CAMERAS])(struct xrt_frame_sink *, struct xrt_frame *
  };
  
  //! EXPERIMENT 2026-08-11: mirrors receive_cam0..3's "xf->timestamp += ws->cam_hw2mono" for the
@@ -103,7 +103,7 @@ index 298775038..5e5267874 100644
  }
  
  static void
-@@ -391,9 +408,10 @@ wmr_source_create(struct xrt_frame_context *xfctx,
+@@ -586,9 +603,10 @@ wmr_source_create(struct xrt_frame_context *xfctx,
  		// EXPERIMENT 2026-08-11: apply the same hw->mono clock correction the SLAM cam_sinks path gets
  		// (see receive_cam0..3) before frames reach blobwatch, so constellation sample timestamps end up
  		// in the same clock domain get_tracked_pose compares against. See the struct field comments.
@@ -118,26 +118,26 @@ index 298775038..5e5267874 100644
  
  	struct wmr_camera_open_config options = {
 diff --git a/src/xrt/tracking/constellation/t_constellation_tracker.cpp b/src/xrt/tracking/constellation/t_constellation_tracker.cpp
-index bd0d5303c..afe19e1bf 100644
+index bf4cced12..fbde8b8a8 100644
 --- a/src/xrt/tracking/constellation/t_constellation_tracker.cpp
 +++ b/src/xrt/tracking/constellation/t_constellation_tracker.cpp
-@@ -734,16 +734,6 @@ Camera::pushPose(CameraSample &camera_sample,
- 	    .average_brightness = average_brightness, // @todo compute this
- 	    .metrics = metrics,
- 	};
--	// KNOWN ISSUE, found 2026-08-11, NOT understood: at this exact point, sample.timestamp_ns is
--	// consistently correct (hw2mono-adjusted, matching Monado's host clock) for one device_id and
--	// consistently raw/uncorrected (device hardware clock) for another, deterministically -- confirmed
--	// with a temporary per-call trace, not a transient or a race. Both devices reach this same code
--	// path via the same Camera::pushPose, from the same camera_sample.timestamp_ns assigned once in
--	// CameraSample's constructor (t_constellation_tracker.cpp), which is itself fed by receive_ctrl_cam's
--	// "xf->timestamp += ws->cam_hw2mono" (wmr_source.c) -- so whatever the mechanism is, it depends on
--	// something about the device/camera pairing, not a simple missing conversion. This is why
--	// get_tracked_pose's freshness check still fails for at least one controller even with both the
--	// exposure fix and this clock fix applied. See docs/pruebas.jsonl for the full trace.
- 	t_constellation_tracker_device_push_sample(device->device, &sample);
- 
- 	{
+@@ -907,16 +907,6 @@ Camera::pushPose(CameraSample &camera_sample,
+ 		    .average_brightness = average_brightness, // @todo compute this
+ 		    .metrics = metrics,
+ 		};
+-		// KNOWN ISSUE, found 2026-08-11, NOT understood: at this exact point, sample.timestamp_ns is
+-		// consistently correct (hw2mono-adjusted, matching Monado's host clock) for one device_id and
+-		// consistently raw/uncorrected (device hardware clock) for another, deterministically -- confirmed
+-		// with a temporary per-call trace, not a transient or a race. Both devices reach this same code
+-		// path via the same Camera::pushPose, from the same camera_sample.timestamp_ns assigned once in
+-		// CameraSample's constructor (t_constellation_tracker.cpp), which is itself fed by receive_ctrl_cam's
+-		// "xf->timestamp += ws->cam_hw2mono" (wmr_source.c) -- so whatever the mechanism is, it depends on
+-		// something about the device/camera pairing, not a simple missing conversion. This is why
+-		// get_tracked_pose's freshness check still fails for at least one controller even with both the
+-		// exposure fix and this clock fix applied. See docs/pruebas.jsonl for the full trace.
+ 		t_constellation_tracker_device_push_sample(device->device, &sample);
+ 	} else {
+ 		CT_DEBUG(tracker,
 -- 
 2.47.3
 

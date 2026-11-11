@@ -1,7 +1,7 @@
-From 2ad7e1b2004122237fa03503e43af145c63aa8b9 Mon Sep 17 00:00:00 2001
+From 2fdf28ec836fd09e4783ade4f3dfe68ae156ba5b Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Wed, 12 Aug 2026 21:20:09 -0300
-Subject: [PATCH 28/29] d/wmr: Refuse non-finite poses at both constellation
+Subject: [PATCH] d/wmr: Refuse non-finite poses at both constellation
  boundaries
 
 The headset pose feeds the constellation tracker's camera mosaic origin, so a
@@ -26,17 +26,19 @@ The underlying source of the NaN is fixed separately in t_tracker_slam.cpp;
 these guards stay because a bad pose must not be able to propagate this far
 again.
 
+Rebase note: the published series gives the tracker the headset pose through wmr_constellation_head_source (see the rebased 0025), so the head-pose guard is added to wmr_hmd_constellation_head_get_tracked_pose instead of the lab-full function it was written against. The guard itself and the controller-side hunks are unchanged.
+
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 ---
- src/xrt/drivers/wmr/wmr_controller_base.c | 13 ++++++++++
- src/xrt/drivers/wmr/wmr_hmd.c             | 30 +++++++++++++++++++++++
- 2 files changed, 43 insertions(+)
+ src/xrt/drivers/wmr/wmr_controller_base.c | 13 ++++++++++++
+ src/xrt/drivers/wmr/wmr_hmd.c             | 26 +++++++++++++++++++++++
+ 2 files changed, 39 insertions(+)
 
 diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
-index 1ed1e2ab6..8e06ec291 100644
+index 1d92e9c99..bdebba54a 100644
 --- a/src/xrt/drivers/wmr/wmr_controller_base.c
 +++ b/src/xrt/drivers/wmr/wmr_controller_base.c
-@@ -779,6 +779,19 @@ constellation_sample_store(struct t_constellation_tracker_device *device, struct
+@@ -882,6 +882,19 @@ constellation_sample_store(struct t_constellation_tracker_device *device, struct
  	struct wmr_controller_base *wcb =
  	    container_of(device, struct wmr_controller_base, constellation.device);
  
@@ -57,12 +59,12 @@ index 1ed1e2ab6..8e06ec291 100644
  	// better), but the history needs both bits set or every reader treats the entry as invalid.
  	// The orientation stored here is therefore the solve's, and deliberately never read back out
 diff --git a/src/xrt/drivers/wmr/wmr_hmd.c b/src/xrt/drivers/wmr/wmr_hmd.c
-index 504806b93..7739fa171 100644
+index 007dfad92..324feb246 100644
 --- a/src/xrt/drivers/wmr/wmr_hmd.c
 +++ b/src/xrt/drivers/wmr/wmr_hmd.c
-@@ -1473,6 +1473,36 @@ wmr_hmd_constellation_tracking_source_get_tracked_pose(struct t_constellation_tr
- 		out_relation->relation_flags = (enum xrt_space_relation_flags)(
- 		    out_relation->relation_flags | XRT_SPACE_RELATION_POSITION_VALID_BIT);
+@@ -1835,6 +1835,32 @@ wmr_hmd_constellation_head_get_tracked_pose(struct t_constellation_tracker_track
+ 		out_relation->relation_flags =
+ 		    (enum xrt_space_relation_flags)(out_relation->relation_flags | XRT_SPACE_RELATION_POSITION_VALID_BIT);
  	}
 +
 +	// Last line of defence: this pose becomes the origin of every camera in the mosaic, so a single
@@ -81,19 +83,18 @@ index 504806b93..7739fa171 100644
 +		if ((reject_log_count++ % 200) == 0) {
 +			WMR_WARN(wh,
 +			         "Head pose for the constellation tracker is not usable (#%d): pos=(%f, %f, %f) "
-+			         "quat=(%f, %f, %f, %f) norm=%f flags=0x%x xret=%d",
++			         "quat=(%f, %f, %f, %f) flags=0x%x xret=%d",
 +			         reject_log_count, out_relation->pose.position.x, out_relation->pose.position.y,
 +			         out_relation->pose.position.z, out_relation->pose.orientation.x,
 +			         out_relation->pose.orientation.y, out_relation->pose.orientation.z,
-+			         out_relation->pose.orientation.w,
-+			         sqrt((double)out_relation->pose.orientation.x * out_relation->pose.orientation.x +
-+			              (double)out_relation->pose.orientation.y * out_relation->pose.orientation.y +
-+			              (double)out_relation->pose.orientation.z * out_relation->pose.orientation.z +
-+			              (double)out_relation->pose.orientation.w * out_relation->pose.orientation.w),
-+			         (unsigned int)out_relation->relation_flags, (int)xret);
++			         out_relation->pose.orientation.w, (unsigned int)out_relation->relation_flags,
++			         (int)xret);
 +		}
-+		*out_relation = (struct xrt_space_relation)XRT_SPACE_RELATION_ZERO;
++		U_ZERO(out_relation);
 +	}
  }
  
- /*!
+ struct t_constellation_tracker *
+-- 
+2.47.3
+

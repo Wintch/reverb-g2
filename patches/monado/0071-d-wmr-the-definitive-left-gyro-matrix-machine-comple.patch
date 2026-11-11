@@ -1,4 +1,4 @@
-From f8b332152d4a4f161f94ce4b5062328f039ba0d5 Mon Sep 17 00:00:00 2001
+From ac8212e83588aaad1444be6ad9b9c9993caa6707 Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Mon, 17 Aug 2026 21:45:36 -0300
 Subject: [PATCH] d/wmr: the definitive left gyro matrix -- machine-complete
@@ -19,7 +19,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  1 file changed, 101 insertions(+)
 
 diff --git a/src/xrt/drivers/wmr/wmr_controller_hp.c b/src/xrt/drivers/wmr/wmr_controller_hp.c
-index 7eb5dab33..ffc0d3832 100644
+index 0aca8c0e7..139f8e9c2 100644
 --- a/src/xrt/drivers/wmr/wmr_controller_hp.c
 +++ b/src/xrt/drivers/wmr/wmr_controller_hp.c
 @@ -37,6 +37,27 @@
@@ -50,9 +50,9 @@ index 7eb5dab33..ffc0d3832 100644
  #define WMR_TRACE(ctrl, ...) U_LOG_XDEV_IFL_T(&ctrl->base.base, ctrl->base.log_level, __VA_ARGS__)
  #define WMR_TRACE_HEX(ctrl, ...) U_LOG_XDEV_IFL_T_HEX(&ctrl->base.base, ctrl->base.log_level, __VA_ARGS__)
  #define WMR_DEBUG(ctrl, ...) U_LOG_XDEV_IFL_D(&ctrl->base.base, ctrl->base.log_level, __VA_ARGS__)
-@@ -415,6 +436,86 @@ wmr_controller_hp_packet_parse(struct wmr_controller_hp *ctrl, const unsigned ch
- 		// reported all three axes rotating correctly ("los ejes parecen estar
- 		// bien"), leaving only a constant heading offset -- which is the separate
+@@ -416,6 +437,86 @@ wmr_controller_hp_packet_parse(struct wmr_controller_hp *ctrl, const unsigned ch
+ 		// reported all three axes rotating correctly, leaving only a constant
+ 		// heading offset -- which is the separate
  		// no-absolute-yaw-reference problem, not a frame error.
 +
 +		// WMR_CONTROLLER_LEFT_GYRO_FIT (2026-08-18, T210 cradle refit, REPLACES the T209

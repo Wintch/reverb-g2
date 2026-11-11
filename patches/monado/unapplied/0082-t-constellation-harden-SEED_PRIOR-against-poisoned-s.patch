@@ -1,7 +1,7 @@
-From 9a797315a3f4d7821642549392e958c96b49cbe8 Mon Sep 17 00:00:00 2001
+From ef45d21396d3864402d50b5083058416e7e7811f Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Wed, 19 Aug 2026 00:25:37 -0300
-Subject: [PATCH 4/4] t/constellation: harden WMR_CONSTELLATION_SEED_PRIOR
+Subject: [PATCH] t/constellation: harden WMR_CONSTELLATION_SEED_PRIOR
  against poisoned seed positions
 
 First hardware run of 0077 (2026-08-19, everyday-system rig, controlled A/B)

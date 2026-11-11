@@ -1,0 +1,210 @@
+From 3a8c2ce63b32072c44931f73df1d099902296349 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Mon, 10 Aug 2026 19:19:42 -0300
+Subject: [PATCH] d/wmr: Build G2 controller LED model and register with
+ the constellation tracker
+
+Converts the LED positions/normals already parsed from the
+controller's own factory calibration (wmr_controller_config.leds,
+parsed since read_controller_config() but previously unused past
+logging the count) into a t_constellation_tracker_led_model, and
+registers it via t_constellation_tracker_add_device -- gated entirely
+on wmr_hmd_get_constellation_tracker() returning non-NULL, i.e. still
+behind WMR_CONSTELLATION_CONTROLLERS (default off).
+
+LED radius and visibility angle are estimates (not in the calibration
+JSON); no custom ring-occlusion model yet -- relies on the generic
+facing-dot check pose_metrics.c already does for every device, same as
+pssense. push_constellation_tracker_sample is a no-op for now; the
+tracker computes pose samples once a device is registered, but nothing
+stores or displays them yet (next patch). Device is deregistered on
+controller destroy.
+
+Still telemetry-only: no existing device output changes with the flag
+on or off.
+---
+ src/xrt/drivers/wmr/wmr_controller_base.c   | 71 +++++++++++++++++++++
+ src/xrt/drivers/wmr/wmr_controller_base.h   | 30 +++++++++
+ src/xrt/targets/common/target_builder_wmr.c | 16 +++++
+ 3 files changed, 117 insertions(+)
+
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
+index 6e696ef2e..9d199c71c 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.c
++++ b/src/xrt/drivers/wmr/wmr_controller_base.c
+@@ -660,6 +660,10 @@ wmr_controller_base_deinit(struct wmr_controller_base *wcb)
+ {
+ 	DRV_TRACE_MARKER();
+ 
++	if (wcb->constellation.tracker != NULL) {
++		t_constellation_tracker_remove_device(wcb->constellation.tracker, wcb->constellation.device_id);
++	}
++
+ 	// Remove the variable tracking.
+ 	u_var_remove_root(wcb);
+ 
+@@ -721,6 +725,7 @@ wmr_controller_base_init(struct wmr_controller_base *wcb,
+ 	wcb->log_level = log_level;
+ 	wcb->wcc = conn;
+ 	wcb->receive_bytes = receive_bytes;
++	wcb->constellation.device_id = XRT_CONSTELLATION_INVALID_DEVICE_ID;
+ 
+ 	if (controller_type == XRT_DEVICE_TYPE_LEFT_HAND_CONTROLLER) {
+ 		snprintf(wcb->base.str, ARRAY_SIZE(wcb->base.str), "WMR Left Controller");
+@@ -783,3 +788,69 @@ wmr_controller_base_init(struct wmr_controller_base *wcb,
+ 
+ 	return true;
+ }
++
++//! LED physical size isn't in the WMR calibration JSON (only position + normal) -- this is a
++//! reasonable estimate for the G2 controller ring, not a measured value. Revisit if 0016's
++//! telemetry shows a poor reprojection fit.
++#define WMR_CONSTELLATION_LED_RADIUS_M 0.003f
++#define WMR_CONSTELLATION_LED_VISIBILITY_ANGLE DEG_TO_RAD(75)
++
++//! Placeholder for @ref t_constellation_tracker_device::push_constellation_tracker_sample -- does
++//! nothing yet. Real handling (telemetry storage, live XYZ in the debug GUI) is a later patch;
++//! until then the tracker computes samples but they go nowhere, matching "plumbing only".
++static void
++constellation_sample_noop(struct t_constellation_tracker_device *device, struct t_constellation_tracker_sample *sample)
++{
++	(void)device;
++	(void)sample;
++}
++
++void
++wmr_controller_base_add_to_constellation_tracker(struct wmr_controller_base *wcb,
++                                                 struct t_constellation_tracker *tracker)
++{
++	if (tracker == NULL || wcb->config.led_count == 0) {
++		return;
++	}
++
++	for (int i = 0; i < wcb->config.led_count; i++) {
++		wcb->constellation.leds[i] = (struct t_constellation_tracker_led){
++		    .position = wcb->config.leds[i].pos,
++		    .normal = wcb->config.leds[i].norm,
++		    .radius_m = WMR_CONSTELLATION_LED_RADIUS_M,
++		    .visibility_angle = WMR_CONSTELLATION_LED_VISIBILITY_ANGLE,
++		    .id = i,
++		};
++	}
++
++	wcb->constellation.led_model = (struct t_constellation_tracker_led_model){
++	    .leds = wcb->constellation.leds,
++	    .led_count = (size_t)wcb->config.led_count,
++	    // No custom ring-occlusion model yet -- pose_metrics.c's built-in facing_dot/visibility_angle
++	    // check (same one pssense relies on) is a reasonable first pass. See t_constellation.h's own
++	    // note that WMR's inward-facing ring LEDs are exactly the motivating case for this callback
++	    // if the generic check turns out not to be enough.
++	    .compute_led_visibility = NULL,
++	};
++
++	wcb->constellation.device.push_constellation_tracker_sample = constellation_sample_noop;
++
++	struct t_constellation_tracker_device_params params = {
++	    .led_model = wcb->constellation.led_model,
++	    .tracking_source = NULL,
++	};
++
++	int ret = t_constellation_tracker_add_device(tracker, &params, &wcb->constellation.device,
++	                                             &wcb->constellation.device_id);
++	if (ret != 0) {
++		WMR_WARN(wcb, "Failed to register with constellation tracker, code %d -- stays orientation-only", ret);
++		wcb->constellation.device_id = XRT_CONSTELLATION_INVALID_DEVICE_ID;
++		return;
++	}
++
++	wcb->constellation.tracker = tracker;
++
++	WMR_INFO(wcb, "Registered with constellation tracker (%d LEDs, device id %d) -- telemetry only, no effect "
++	              "on the output pose yet",
++	         wcb->config.led_count, wcb->constellation.device_id);
++}
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.h b/src/xrt/drivers/wmr/wmr_controller_base.h
+index 62ae19197..d658051cb 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.h
++++ b/src/xrt/drivers/wmr/wmr_controller_base.h
+@@ -19,6 +19,8 @@
+ #include "util/u_device.h"
+ #include "util/u_logging.h"
+ #include "xrt/xrt_device.h"
++#include "tracking/t_constellation.h"
++#include "constellation/t_constellation_tracker.h"
+ 
+ #include "wmr_controller_protocol.h"
+ #include "wmr_config.h"
+@@ -128,8 +130,36 @@ struct wmr_controller_base
+ 	struct m_imu_3dof fusion;
+ 	//! The last angular velocity from the IMU, for prediction.
+ 	struct xrt_vec3 last_angular_velocity;
++
++	/*!
++	 * Optical LED constellation tracking state (WMR_CONSTELLATION_CONTROLLERS). Only populated
++	 * after a successful @ref wmr_controller_base_add_to_constellation_tracker call; otherwise
++	 * constellation_device_id stays XRT_CONSTELLATION_INVALID_DEVICE_ID and none of this is
++	 * used. Orientation tracking (fusion, above) is entirely unaffected either way.
++	 */
++	struct
++	{
++		//! Backing storage for constellation_led_model.leds, converted once from config.leds.
++		struct t_constellation_tracker_led leds[WMR_MAX_LEDS];
++		struct t_constellation_tracker_led_model led_model;
++		struct t_constellation_tracker_device device;
++		t_constellation_device_id_t device_id;
++		//! NULL unless device_id is valid; used only to remove the device from the tracker on destroy.
++		struct t_constellation_tracker *tracker;
++	} constellation;
+ };
+ 
++/*!
++ * Builds a constellation LED model from this controller's already-parsed factory calibration
++ * (@ref wmr_controller_config.leds) and registers it with @p tracker. No-op if @p tracker is
++ * NULL (WMR_CONSTELLATION_CONTROLLERS off or tracker creation failed) or @p wcb has no LEDs.
++ *
++ * @ingroup drv_wmr
++ */
++void
++wmr_controller_base_add_to_constellation_tracker(struct wmr_controller_base *wcb,
++                                                  struct t_constellation_tracker *tracker);
++
+ bool
+ wmr_controller_base_init(struct wmr_controller_base *wcb,
+                          struct wmr_controller_connection *conn,
+diff --git a/src/xrt/targets/common/target_builder_wmr.c b/src/xrt/targets/common/target_builder_wmr.c
+index 2ce81b8ad..111d51814 100644
+--- a/src/xrt/targets/common/target_builder_wmr.c
++++ b/src/xrt/targets/common/target_builder_wmr.c
+@@ -23,6 +23,7 @@
+ 
+ #include "wmr/wmr_common.h"
+ #include "wmr/wmr_interface.h"
++#include "wmr/wmr_controller_base.h"
+ 
+ #include <assert.h>
+ 
+@@ -304,6 +305,21 @@ wmr_open_system_impl(struct xrt_builder *xb,
+ 		xsysd->static_xdevs[xsysd->static_xdev_count++] = ht_right;
+ 	}
+ 
++	// Register controllers for optical positional tracking (WMR_CONSTELLATION_CONTROLLERS). No-op
++	// unless wmr_hmd_create_constellation_tracker (wmr_hmd.c) actually created a tracker; telemetry
++	// only for now, doesn't affect the pose either of these devices report.
++	struct t_constellation_tracker *constellation_tracker = wmr_hmd_get_constellation_tracker(head);
++	if (constellation_tracker != NULL) {
++		if (left != NULL) {
++			wmr_controller_base_add_to_constellation_tracker((struct wmr_controller_base *)left,
++			                                                 constellation_tracker);
++		}
++		if (right != NULL) {
++			wmr_controller_base_add_to_constellation_tracker((struct wmr_controller_base *)right,
++			                                                 constellation_tracker);
++		}
++	}
++
+ 	// Use hand tracking if no controllers.
+ 	if (left == NULL) {
+ 		left = ht_left;
+-- 
+2.47.3
+

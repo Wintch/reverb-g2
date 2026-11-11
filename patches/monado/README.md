@@ -136,26 +136,49 @@ message of each patch lists its variables and the measurement behind it.
 
 ## `unapplied/`: controller 6DoF work in progress
 
-28 patches that are **not part of the build**: `0016 0017 0024 0025 0027 0028 0030 0032 0034
-0047 0048 0066 0067 0070 0076 0077 0078 0082 0084 0085 0088 0107 0108 0109 0110 0111 0112
-0113`. They were developed on a lab branch (`lab-full`) whose history diverges from 0012-0017
-above and that was never published, so they do not apply on the pinned base. They cover the
-second half of controller position tracking: tracking origin and relation history, the
-yaw-ghost defenses (trusted prior, seeded recovery, gravity gate), solve-yaw anchoring, the LED
-pulse-train command, stick autocenter, haptics and telemetry. Treat them as a record of
-work in progress. Using them needs a rebase onto one base first. Context: `docs/03`,
-`docs/55`, `docs/125`.
+38 patches that are **not part of the build**, and that nothing reads: `0015a-0015h` (new),
+`0016 0017 0024 0025 0027 0028 0030 0032 0034 0047 0048 0066 0067 0070 0074 (new) 0076 0077
+0078 0082 0084 0085 0086 (new) 0088 0107 0108 0109 0110 0111 0112 0113`. They were developed on
+a lab branch (`lab-full`) whose history diverges from 0012-0017 above and that was never
+published. They cover the second half of controller position tracking: registering the
+controllers with the tracker, tracking origin and relation history, the yaw-ghost defenses
+(trusted prior, seeded recovery, gravity gate), solve-yaw anchoring, the LED pulse-train
+command, stick autocenter, haptics and telemetry. Context: `docs/03`, `docs/55`, `docs/125`.
+
+**Rebased on the published series (2026-11-11).** Everything in `unapplied/` except 0024 now
+applies in the order of `unapplied/applies-on-series.txt`, on top of the tip of
+`applies-on-base.txt`, with plain `git am`. The result compiles (`monado-service` and a full
+`ninja` build), and that is all that has been checked: **none of it is headset-validated**, so
+it stays out of `applies-on-base.txt` until it has been through a wearer session. What the
+rebase changed:
+
+- `0015a-0015h` are new. They are lab-full commits the series never exported (the
+  controller-side half of constellation tracking: LED model and tracker registration, sample
+  store, position fusion, log lines, the freshness fix) plus one accessor the builder needs.
+  The published 0014 only creates the tracker, and nothing after it could apply without them.
+  `0074` (`WMR_CONSTELLATION_YAW_PRIOR_DEG`) and `0086` (`solve_yaw_locked` made observable)
+  are the same kind: numbering gaps whose commits 0076 and 0107 build on.
+- `0016`, `0025` and `0028` carry a "Rebase note" in the commit message where
+  the code differs from the lab-full original. 0025 and 0028 are re-expressed on the
+  published `wmr_constellation_head_source`.
+- `0024` is skipped: it flips `WMR_CONSTELLATION_CONTROLLERS` back to false, which the published
+  series already has.
+- Apply `0016` and `0017` together: 0016 as written has a `container_of` misuse in
+  `receive_ctrl_cam` that 0017 fixes.
+- The files are the rebased versions. The lab-full originals were replaced.
 
 ## Known issues
 
 - **0015 is applied, but it carries the values that 0016 corrects.** 0015 uses controller
   exposure slot `camera_id + tcam_count` and exposure/gain 400/1, which were measured to be
-  wrong. The fix (flat `+2`, 6000/100, and a clock-domain fix) is 0016, which lives in
-  `unapplied/` and does not apply on this base. The tree `bootstrap-lab.sh` builds therefore
-  has the controller-frame path of 0015, which is gated by `WMR_CONSTELLATION_CONTROLLERS`.
-  Controller position tracking from this series is therefore unreliable. 0017 (a `container_of` fix in
-  0016's code) is unapplied for the same reason.
-- 0012-0015 and 0024-0035 come from two diverging histories. Do not mix them by hand.
+  wrong. The fix (flat `+2`, 6000/100, and a clock-domain fix) is 0016, now rebased onto this
+  series (with 0017 and the controller-side `0015a-0015h`) and compile-tested, but **not
+  headset-validated**: it needs a headset A/B before it moves into the series. The tree
+  `bootstrap-lab.sh` builds therefore still has the controller-frame path of 0015, which is
+  gated by `WMR_CONSTELLATION_CONTROLLERS`, and controller position tracking from this series
+  is unreliable.
+- 0012-0015 and 0024-0035 come from two diverging histories. The rebased `unapplied/` set
+  resolves that, but only on paper, until the A/B above has been done.
 
 ## Upstream status
 

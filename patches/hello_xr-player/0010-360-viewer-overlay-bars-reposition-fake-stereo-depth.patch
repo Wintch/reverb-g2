@@ -1,4 +1,4 @@
-From 3bae88cce26850c108793890499a27e9127a62a7 Mon Sep 17 00:00:00 2001
+From 82bae140c7840ada57fa6300448b1d11cab10382 Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Sun, 9 Aug 2026 02:48:52 -0300
 Subject: [PATCH] 360 viewer: overlay bars - reposition, fake stereo depth,
@@ -56,7 +56,7 @@ index 1bba34f..89d2120 100644
          // alpha *255. Only shown for a few seconds after the last transport-control touch, so
          // it doesn't sit on screen the whole time someone is just watching.
 diff --git a/src/tests/hello_xr/vulkan_shaders/frag.glsl b/src/tests/hello_xr/vulkan_shaders/frag.glsl
-index 756437b..967e444 100644
+index 756437b..d69a3bc 100644
 --- a/src/tests/hello_xr/vulkan_shaders/frag.glsl
 +++ b/src/tests/hello_xr/vulkan_shaders/frag.glsl
 @@ -38,6 +38,11 @@ void main()
@@ -93,24 +93,24 @@ index 756437b..967e444 100644
      // Progress bar and quit-hold bar (see below) draw over their screen-space strip whether or
      // not it's `inside` - a bar should never vanish just because it happens to fall outside the
      // content area (letterboxing in flat mode, the void beyond a 180 frame's edge, etc).
-+    // Found 2026-08-09: the strips used to sit at t in [0.94,0.98] / [0.02,0.06] - 2-4% from
-+    // the absolute edge of the render target. That's outside where anyone actually looks with
-+    // the headset on (no one rotates their eyes/head to the extreme edge of the lens just to
-+    // check a progress bar) - user report: "aparece muy abajo, no lo llego a ver". A first
-+    // move to [0.80,0.88] still wasn't enough ("se ve mejor, pero aun muy abajo") - the
-+    // effective comfortable/sharp area of this headset's optics is clearly smaller than the
-+    // nominal render FOV suggests. Moved much further inboard this time, explicitly trading
-+    // subtlety for guaranteed visibility per the user - fine if it eats into the content more.
-+    // Horizontal inset too (found same session): full-width (s 0..1) read as "goes off to the
-+    // sides" once the bar was actually inside the visible area - centered and narrowed to the
-+    // same comfortable window both bars now live in vertically.
++    // The strips used to sit at t in [0.94,0.98] / [0.02,0.06] - 2-4% from the absolute edge
++    // of the render target. That's outside where anyone actually looks with the headset on (no
++    // one rotates their eyes/head to the extreme edge of the lens just to check a progress
++    // bar); a wearer reported the bar sat too low to see. A first move to [0.80,0.88] was
++    // still reported as too low - the effective comfortable/sharp area of this headset's
++    // optics is clearly smaller than the nominal render FOV suggests. Moved much further
++    // inboard, explicitly trading subtlety for guaranteed visibility - fine if it eats into
++    // the content more.
++    // Horizontal inset too: full-width (s 0..1) read as running off to the sides once the bar
++    // was actually inside the visible area - centered and narrowed to the same comfortable
++    // window both bars now live in vertically.
 +    const float kBarSMin = 0.20;
 +    const float kBarSMax = 0.80;
 +
-+    // Found same session: drawn identically for both eyes (zero disparity), the bars read as
-+    // glued flat to the lens/at infinity, floating oddly against real stereo 3D content that
-+    // has its own depth from disparity baked into the footage - user, translated: "make it sit at the
-+    // distance of the video". Fake a comfortable fixed HUD depth (kHudMeters) instead of true
++    // Drawn identically for both eyes (zero disparity), the bars read as glued flat to the
++    // lens/at infinity, floating oddly against real stereo 3D content that has its own depth
++    // from disparity baked into the footage; the wanted behaviour is for the bars to sit at the
++    // distance of the video. Fake a comfortable fixed HUD depth (kHudMeters) instead of true
 +    // per-pixel depth (which isn't knowable - it's baked into whatever the footage shows):
 +    // shift each eye's copy of the bar by the small angle a real object at that depth would
 +    // subtend given a nominal IPD, same small-angle approximation (tan(x) ~= x) used

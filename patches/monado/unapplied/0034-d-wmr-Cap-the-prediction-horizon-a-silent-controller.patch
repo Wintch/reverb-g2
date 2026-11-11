@@ -1,7 +1,7 @@
-From e0d3db937609a02f870d601d39439bad02a8eb86 Mon Sep 17 00:00:00 2001
+From c9fa80002d863effca51f87d09d96fc3f78e8323 Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Thu, 13 Aug 2026 00:21:06 -0300
-Subject: [PATCH 34/35] d/wmr: Cap the prediction horizon -- a silent
+Subject: [PATCH] d/wmr: Cap the prediction horizon -- a silent
  controller must not keep turning
 
 WMR controllers gate their IMU on motion: ~30 seconds after the device stops
@@ -40,10 +40,10 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  1 file changed, 28 insertions(+), 2 deletions(-)
 
 diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
-index bdf830f4f..b2d0fbec7 100644
+index 37d34f4c1..536352f98 100644
 --- a/src/xrt/drivers/wmr/wmr_controller_base.c
 +++ b/src/xrt/drivers/wmr/wmr_controller_base.c
-@@ -646,9 +646,35 @@ wmr_controller_base_get_tracked_pose(struct xrt_device *xdev,
+@@ -749,9 +749,35 @@ wmr_controller_base_get_tracked_pose(struct xrt_device *xdev,
  		*out_relation = relation;
  	} else {
  		int64_t prediction_ns = at_timestamp_ns - last_imu_timestamp_ns;
@@ -81,3 +81,6 @@ index bdf830f4f..b2d0fbec7 100644
  	}
  
  	// Throttled log of what this function actually hands back to the app -- as opposed to
+-- 
+2.47.3
+

@@ -1,0 +1,53 @@
+From 61f5723dc5eb0f2d2d4a1786c15caaf8e1c66bab Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Tue, 11 Aug 2026 02:55:48 -0300
+Subject: [PATCH] d/wmr: Fix freshness check accepting stale samples with
+ a negative delta
+
+Found by testing: get_tracked_pose's freshness gate compared
+at_timestamp_ns - last_sample_ts against the 200ms threshold directly,
+with no lower bound. When the constellation tracker's sample timestamp
+(from the camera/blob-observation clock domain) reads ahead of
+Monado's own at_timestamp_ns -- observed several seconds ahead in
+testing, cause not fully understood, but real and reproducible -- the
+delta goes negative and is trivially "less than 200ms", so a single
+frozen, no-longer-updating sample kept passing as fresh for 6+ seconds
+straight while sample_count stayed flat. Exactly the "stale position
+silently marked tracked" failure mode the freshness check was
+supposed to prevent in the first place.
+
+Fix: compare the absolute value of the delta. Treats "suspiciously far
+in either time direction" as equally stale, which is the conservative
+choice until the two clock domains' relationship is actually
+understood.
+---
+ src/xrt/drivers/wmr/wmr_controller_base.c | 12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
+index e015ebc68..56b267295 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.c
++++ b/src/xrt/drivers/wmr/wmr_controller_base.c
+@@ -640,8 +640,18 @@ wmr_controller_base_get_tracked_pose(struct xrt_device *xdev,
+ 	// hasn't been seen by a camera recently, e.g. it's out of view or the feature is off -- a stale
+ 	// position silently marked "tracked" would be worse than the honest placeholder.
+ 	static const int64_t WMR_CONSTELLATION_MAX_SAMPLE_AGE_NS = 200000000; // 200ms, ~6 frames at 30fps
++	int64_t constellation_sample_age_ns = at_timestamp_ns - wcb->constellation.last_timestamp_ns;
++	if (constellation_sample_age_ns < 0) {
++		constellation_sample_age_ns = -constellation_sample_age_ns;
++	}
++	// Absolute value: the constellation tracker's blob-observation timestamps and Monado's own
++	// at_timestamp_ns aren't guaranteed to be in the same clock domain (observed the sample's
++	// timestamp reading several seconds AHEAD of at_timestamp_ns in testing) -- a plain "is it in the
++	// past and recent" check let a frozen, stale sample pass as fresh for 6+ seconds straight because
++	// the negative delta was trivially less than the threshold. Treat "suspiciously far in either
++	// direction" as equally stale.
+ 	if (wcb->constellation.tracker != NULL && wcb->constellation.sample_count > 0 &&
+-	    at_timestamp_ns - wcb->constellation.last_timestamp_ns < WMR_CONSTELLATION_MAX_SAMPLE_AGE_NS) {
++	    constellation_sample_age_ns < WMR_CONSTELLATION_MAX_SAMPLE_AGE_NS) {
+ 		pose.position = wcb->constellation.last_pose.position;
+ 		relation.relation_flags = (enum xrt_space_relation_flags)(
+ 		    relation.relation_flags | XRT_SPACE_RELATION_POSITION_VALID_BIT |
+-- 
+2.47.3
+

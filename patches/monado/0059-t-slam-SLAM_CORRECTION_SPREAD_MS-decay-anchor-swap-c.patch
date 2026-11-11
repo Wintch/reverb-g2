@@ -1,7 +1,7 @@
-From 3274494cf9f7101d32dab6996d1302d2ab861cdb Mon Sep 17 00:00:00 2001
+From f74fe0a28067c4795940b42b27ea4e7a58ae9dd1 Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Mon, 17 Aug 2026 16:57:30 -0300
-Subject: [PATCH 59/60] t/slam: SLAM_CORRECTION_SPREAD_MS -- decay anchor-swap
+Subject: [PATCH] t/slam: SLAM_CORRECTION_SPREAD_MS -- decay anchor-swap
  corrections instead of stepping (default off)
 
 Round-2 attempt at the ~200ms 'readjustment' snaps (T202: 4-4.6Hz
@@ -21,7 +21,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  1 file changed, 181 insertions(+)
 
 diff --git a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
-index b939d4805..2b2f70f35 100644
+index 3d92fa0de..bf2e92f33 100644
 --- a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
 +++ b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
 @@ -99,6 +99,7 @@ DEBUG_GET_ONCE_FLOAT_OPTION(slam_pos_deadzone, "SLAM_POS_DEADZONE_M", 0)
@@ -37,8 +37,8 @@ index b939d4805..2b2f70f35 100644
  	} reset_offset;
  
 +	//! Error-feedback smoothing of the DELIVERED pose stream across SLAM anchor arrivals
-+	//! (SLAM_CORRECTION_SPREAD_MS, default 0/off). T202's wearer characterization: the
-+	//! ~200ms "readjustment" snaps ("se siente como jittering de casco") happen at 4-4.6 Hz
++	//! (SLAM_CORRECTION_SPREAD_MS, default 0/off). Characterization from worn sessions: the
++	//! ~200ms "readjustment" snaps (felt as headset jitter) happen at 4-4.6 Hz
 +	//! while worn but are only weakly tied to which pose was the arriving anchor (x1.10
 +	//! correlation) and are rare at rest (0.088 Hz) -- so the fix has to smooth the
 +	//! DELIVERED stream continuously, not gate on anchor arrival the way the one euro
@@ -235,7 +235,7 @@ index b939d4805..2b2f70f35 100644
  //! Various filters to remove noise from the predicted trajectory.
  static void
  filter_pose(TrackerSlam &t, timepoint_ns when_ns, struct xrt_space_relation *out_relation)
-@@ -1675,6 +1844,8 @@ t_slam_get_tracked_pose(struct xrt_tracked_slam *xts, timepoint_ns when_ns, stru
+@@ -1674,6 +1843,8 @@ t_slam_get_tracked_pose(struct xrt_tracked_slam *xts, timepoint_ns when_ns, stru
  	predict_pose(t, when_ns, out_relation);
  	t.pred_traj_writer->push({when_ns, out_relation->pose});
  
@@ -244,7 +244,7 @@ index b939d4805..2b2f70f35 100644
  	filter_pose(t, when_ns, out_relation);
  	t.filt_traj_writer->push({when_ns, out_relation->pose});
  
-@@ -2153,6 +2324,16 @@ t_slam_create(struct xrt_frame_context *xfctx,
+@@ -2152,6 +2323,16 @@ t_slam_create(struct xrt_frame_context *xfctx,
  		          "into the output pose instead of teleporting (SLAM_RESET_OFFSET_CARRY=0 disables)");
  	}
  

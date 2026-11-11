@@ -1,4 +1,4 @@
-From c5b8bbeb66c02867e6b115be6669ef67a6063956 Mon Sep 17 00:00:00 2001
+From 58fa6bfd0895ba94cef094ca59a101650b4bd276 Mon Sep 17 00:00:00 2001
 From: brunduk <nikolai.viktorovich@gmail.com>
 Date: Tue, 18 Aug 2026 05:57:35 -0300
 Subject: [PATCH] t/constellation: WMR_CONSTELLATION_SEED_PRIOR -- seeded

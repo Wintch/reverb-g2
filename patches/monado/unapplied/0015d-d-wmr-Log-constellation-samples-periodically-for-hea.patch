@@ -1,0 +1,40 @@
+From e2e2e19a909f7563537579f0f44c305a7b6c2631 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Tue, 11 Aug 2026 02:16:32 -0300
+Subject: [PATCH] d/wmr: Log constellation samples periodically for
+ headless verification
+
+Throttled (every 15th sample, ~2/s at 30fps) INFO-level log line with
+position, matched blob count, visible LED count, and reprojection
+error -- lets 0016's telemetry be confirmed by reading the log while
+moving a controller, without needing to find/expand the debug GUI's
+"Constellation tracking" section (which is a collapsed
+CollapsingHeader by default, u_var_add_gui_header -- easy to miss).
+---
+ src/xrt/drivers/wmr/wmr_controller_base.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
+index adb43e8eb..1ef022a5f 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.c
++++ b/src/xrt/drivers/wmr/wmr_controller_base.c
+@@ -823,6 +823,16 @@ constellation_sample_store(struct t_constellation_tracker_device *device, struct
+ 	wcb->constellation.last_timestamp_ns = sample->timestamp_ns;
+ 	wcb->constellation.last_metrics = sample->metrics;
+ 	wcb->constellation.sample_count++;
++
++	// Throttled to ~2/s at 30fps so this is readable in the log without needing the debug GUI.
++	if (wcb->constellation.sample_count % 15 == 0) {
++		WMR_INFO(wcb,
++		        "constellation sample #%llu: pos=(%.3f, %.3f, %.3f) matched_blobs=%u "
++		        "visible_leds=%u reproj_err_px=%.2f",
++		        (unsigned long long)wcb->constellation.sample_count, sample->pose.position.x,
++		        sample->pose.position.y, sample->pose.position.z, sample->metrics.matched_blob_count,
++		        sample->metrics.visible_led_count, sample->metrics.reprojection_error);
++	}
+ }
+ 
+ void
+-- 
+2.47.3
+

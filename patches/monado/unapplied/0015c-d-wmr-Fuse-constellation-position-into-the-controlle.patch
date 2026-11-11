@@ -1,0 +1,77 @@
+From 3c7a94866539c2fd925a4164dc3401c320ff3411 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Mon, 10 Aug 2026 19:23:47 -0300
+Subject: [PATCH] d/wmr: Fuse constellation position into the
+ controller's output pose
+
+Replaces the hardcoded placeholder position ({0, 1.2, -0.5} +-0.2 on
+x) with the constellation tracker's last resolved position, when a
+sample has arrived within the last 200ms (~6 frames at 30fps).
+Orientation is untouched -- always comes from the existing IMU fusion
+(wcb->fusion.rot), exactly as before this whole series; the
+constellation solve only ever contributes position.
+
+Falls back to the old placeholder, with the POSITION_*_BIT flags left
+unset, whenever there's no fresh sample (feature off, or the
+controller currently out of camera view) -- a stale position marked
+"tracked" would be worse than the honest placeholder apps already
+handle.
+
+Adopts the tracker's own tracking origin
+(t_constellation_tracker_get_tracking_origin, XRT_TRACKING_TYPE_
+CONSTELLATION) instead of the generic XRT_TRACKING_TYPE_NONE one
+u_builder_setup_tracking_origins hands out -- same pattern pssense
+already uses for PSVR2. Sets supported.position_tracking = true.
+
+This is the first patch in the series where an app can actually see
+the controller move in 3D -- and the first that needs full on-head
+physical verification, no exceptions, per the project's own bar for
+this change.
+---
+ src/xrt/drivers/wmr/wmr_controller_base.c | 23 +++++++++++++++++++++++
+ 1 file changed, 23 insertions(+)
+
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
+index 4ba5c8c5d..adb43e8eb 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.c
++++ b/src/xrt/drivers/wmr/wmr_controller_base.c
+@@ -632,6 +632,21 @@ wmr_controller_base_get_tracked_pose(struct xrt_device *xdev,
+ 	} else {
+ 		pose.position.x = 0.2;
+ 	}
++
++	// Real position from the constellation tracker (WMR_CONSTELLATION_CONTROLLERS), if the last sample
++	// is fresh. Orientation below always comes from the IMU fusion regardless -- never overwritten by
++	// the constellation solve, which only ever contributes position. Falls back to the placeholder
++	// above (and drops the POSITION_*_BIT flags, exactly like before this patch) if the controller
++	// hasn't been seen by a camera recently, e.g. it's out of view or the feature is off -- a stale
++	// position silently marked "tracked" would be worse than the honest placeholder.
++	static const int64_t WMR_CONSTELLATION_MAX_SAMPLE_AGE_NS = 200000000; // 200ms, ~6 frames at 30fps
++	if (wcb->constellation.tracker != NULL && wcb->constellation.sample_count > 0 &&
++	    at_timestamp_ns - wcb->constellation.last_timestamp_ns < WMR_CONSTELLATION_MAX_SAMPLE_AGE_NS) {
++		pose.position = wcb->constellation.last_pose.position;
++		relation.relation_flags = (enum xrt_space_relation_flags)(
++		    relation.relation_flags | XRT_SPACE_RELATION_POSITION_VALID_BIT |
++		    XRT_SPACE_RELATION_POSITION_TRACKED_BIT);
++	}
+ 	relation.pose = pose;
+ 
+ 	// Copy data while holding the lock.
+@@ -855,6 +870,14 @@ wmr_controller_base_add_to_constellation_tracker(struct wmr_controller_base *wcb
+ 
+ 	wcb->constellation.tracker = tracker;
+ 
++	// Adopt the tracker's own tracking origin (XRT_TRACKING_TYPE_CONSTELLATION), same as pssense/PSVR2
++	// does for the same kind of camera-driven controller tracking. This is what makes the fused
++	// position in wmr_controller_base_get_tracked_pose meaningful in the space graph instead of
++	// composing against the generic placeholder origin u_builder_setup_tracking_origins hands out to
++	// XRT_TRACKING_TYPE_NONE devices -- see that function for the y=1.3 placeholder this replaces.
++	wcb->base.tracking_origin = t_constellation_tracker_get_tracking_origin(tracker);
++	wcb->base.supported.position_tracking = true;
++
+ 	u_var_add_gui_header(wcb, NULL, "Constellation tracking (telemetry only)");
+ 	u_var_add_ro_u64(wcb, &wcb->constellation.sample_count, "constellation.sample_count");
+ 	u_var_add_ro_vec3_f32(wcb, &wcb->constellation.last_pose.position, "constellation.position_m");
+-- 
+2.47.3
+

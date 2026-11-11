@@ -1,0 +1,108 @@
+From 1278055fba70d3327b58e7dc05017df54862e20d Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Mon, 10 Aug 2026 19:21:06 -0300
+Subject: [PATCH] d/wmr: Store constellation samples for the debug GUI
+ (telemetry only)
+
+Replaces the no-op push_constellation_tracker_sample stub with one
+that stores the tracker's latest pose/timestamp/metrics on the
+controller, and exposes it as read-only debug GUI vars:
+sample_count, position_m (live XYZ), matched_blobs, visible_leds,
+reprojection_error_px. This is the first point where a resolved 3D
+position from the constellation solver is actually visible anywhere
+-- it answers "is it still just rotating in place, or has it started
+moving in 3D" from the desktop, no headset-worn check needed.
+
+Storage is intentionally unsynchronized (GUI-only debug field, same
+category as wmr_camera.c's exposure/gain widgets) -- a torn read shows
+a stale value for one GUI frame, not a correctness issue.
+
+Still no effect on the device's actual reported pose or on any
+existing behavior with the flag off.
+---
+ src/xrt/drivers/wmr/wmr_controller_base.c | 26 +++++++++++++++++------
+ src/xrt/drivers/wmr/wmr_controller_base.h | 15 +++++++++++++
+ 2 files changed, 34 insertions(+), 7 deletions(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
+index 9d199c71c..4ba5c8c5d 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.c
++++ b/src/xrt/drivers/wmr/wmr_controller_base.c
+@@ -795,14 +795,19 @@ wmr_controller_base_init(struct wmr_controller_base *wcb,
+ #define WMR_CONSTELLATION_LED_RADIUS_M 0.003f
+ #define WMR_CONSTELLATION_LED_VISIBILITY_ANGLE DEG_TO_RAD(75)
+ 
+-//! Placeholder for @ref t_constellation_tracker_device::push_constellation_tracker_sample -- does
+-//! nothing yet. Real handling (telemetry storage, live XYZ in the debug GUI) is a later patch;
+-//! until then the tracker computes samples but they go nowhere, matching "plumbing only".
++//! @ref t_constellation_tracker_device::push_constellation_tracker_sample. Stores the sample for
++//! the debug GUI only -- nothing consumes this for the device's actual reported pose yet, that's
++//! a later patch, and orientation keeps coming exclusively from the IMU fusion as always.
+ static void
+-constellation_sample_noop(struct t_constellation_tracker_device *device, struct t_constellation_tracker_sample *sample)
++constellation_sample_store(struct t_constellation_tracker_device *device, struct t_constellation_tracker_sample *sample)
+ {
+-	(void)device;
+-	(void)sample;
++	struct wmr_controller_base *wcb =
++	    container_of(device, struct wmr_controller_base, constellation.device);
++
++	wcb->constellation.last_pose = sample->pose;
++	wcb->constellation.last_timestamp_ns = sample->timestamp_ns;
++	wcb->constellation.last_metrics = sample->metrics;
++	wcb->constellation.sample_count++;
+ }
+ 
+ void
+@@ -833,7 +838,7 @@ wmr_controller_base_add_to_constellation_tracker(struct wmr_controller_base *wcb
+ 	    .compute_led_visibility = NULL,
+ 	};
+ 
+-	wcb->constellation.device.push_constellation_tracker_sample = constellation_sample_noop;
++	wcb->constellation.device.push_constellation_tracker_sample = constellation_sample_store;
+ 
+ 	struct t_constellation_tracker_device_params params = {
+ 	    .led_model = wcb->constellation.led_model,
+@@ -850,6 +855,13 @@ wmr_controller_base_add_to_constellation_tracker(struct wmr_controller_base *wcb
+ 
+ 	wcb->constellation.tracker = tracker;
+ 
++	u_var_add_gui_header(wcb, NULL, "Constellation tracking (telemetry only)");
++	u_var_add_ro_u64(wcb, &wcb->constellation.sample_count, "constellation.sample_count");
++	u_var_add_ro_vec3_f32(wcb, &wcb->constellation.last_pose.position, "constellation.position_m");
++	u_var_add_ro_u32(wcb, &wcb->constellation.last_metrics.matched_blob_count, "constellation.matched_blobs");
++	u_var_add_ro_u32(wcb, &wcb->constellation.last_metrics.visible_led_count, "constellation.visible_leds");
++	u_var_add_ro_f64(wcb, &wcb->constellation.last_metrics.reprojection_error, "constellation.reprojection_error_px");
++
+ 	WMR_INFO(wcb, "Registered with constellation tracker (%d LEDs, device id %d) -- telemetry only, no effect "
+ 	              "on the output pose yet",
+ 	         wcb->config.led_count, wcb->constellation.device_id);
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.h b/src/xrt/drivers/wmr/wmr_controller_base.h
+index d658051cb..025b04f30 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.h
++++ b/src/xrt/drivers/wmr/wmr_controller_base.h
+@@ -146,6 +146,21 @@ struct wmr_controller_base
+ 		t_constellation_device_id_t device_id;
+ 		//! NULL unless device_id is valid; used only to remove the device from the tracker on destroy.
+ 		struct t_constellation_tracker *tracker;
++
++		/*!
++		 * Latest sample from the tracker, for the debug GUI only -- nothing reads this for the actual
++		 * device pose yet. Written from the tracker's own thread in
++		 * @ref wmr_controller_base_constellation_sample_store, read by the GUI thread via the
++		 * u_var_add_ro_* registrations in @ref wmr_controller_base_add_to_constellation_tracker.
++		 * Intentionally unsynchronized, same as the rest of this codebase's GUI-only debug fields
++		 * (e.g. wmr_camera.c's exposure/gain widgets) -- a torn read just shows a stale frame's value
++		 * for one GUI refresh, never a correctness issue.
++		 */
++		struct xrt_pose last_pose;
++		int64_t last_timestamp_ns;
++		struct t_constellation_tracker_sample_metrics last_metrics;
++		//! Samples received since registration, so "stuck at 0" is visible at a glance in the GUI.
++		uint64_t sample_count;
+ 	} constellation;
+ };
+ 
+-- 
+2.47.3
+

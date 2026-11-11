@@ -1,0 +1,42 @@
+# base = applied series of ../applies-on-base.txt (tip tree 3efadad4c864cc8d78826ed5481ad41fc4c3b321)
+# generated 2026-11-11 by rebasing; compile-tested only, NOT headset-validated
+# result: tip tree 029544a6ae34b95c36bf308ba8763e485bba5ce4; 37 listed, all apply with plain git am, monado-service and the full ninja build compile
+# 0015a-0015h, 0074 and 0086 are NEW files: lab-full commits the series never exported, needed as predecessors
+0015a-d-wmr-Build-G2-controller-LED-model-and-register-wit.patch
+0015b-d-wmr-Store-constellation-samples-for-the-debug-GUI-.patch
+0015c-d-wmr-Fuse-constellation-position-into-the-controlle.patch
+0015d-d-wmr-Log-constellation-samples-periodically-for-hea.patch
+0015e-d-wmr-Log-the-actual-get_tracked_pose-output-for-001.patch
+0015f-d-wmr-Log-timestamp-delta-in-get_tracked_pose-for-fr.patch
+0015g-d-wmr-Fix-freshness-check-accepting-stale-samples-wi.patch
+0015h-d-wmr-Expose-the-headset-s-constellation-tracker-to-.patch
+0016-d-wmr-Fix-controller-exposure-slot-mapping-add-clock.patch
+0017-d-wmr-Fix-container_of-misuse-in-receive_ctrl_cam.patch
+# SKIP 0024-d-wmr-Make-the-two-WMR_CONSTELLATION_CONTROLLERS-dec.patch -- its only change (WMR_CONSTELLATION_CONTROLLERS default false in wmr_hmd.c) is already the published series' state; the default-on commit it reverts (lab-full 5682a9bc6) is deliberately not carried
+0025-d-wmr-Give-the-constellation-tracker-the-headset-s-p.patch
+0027-d-wmr-Track-controllers-through-a-relation-history-a.patch
+0028-d-wmr-Refuse-non-finite-poses-at-both-constellation-.patch
+0030-d-wmr-Put-the-controllers-in-the-headset-s-tracking-.patch
+0032-math-wmr-Fix-the-estimator-that-reset-silently-kille.patch
+0034-d-wmr-Cap-the-prediction-horizon-a-silent-controller.patch
+0047-wmr-gate-constellation-samples-on-IMU-gravity-throug.patch
+0048-wmr-add-controller-calibration-telemetry-and-axis-ab-transforms.patch
+0066-d-wmr-WMR_CONTROLLER_SOLVE_YAW_CORRECT-anchor-fusion.patch
+0067-d-wmr-wrap-the-solve-yaw-error-to-180-and-distrust-g.patch
+0070-d-wmr-WMR_STICK_AUTOCENTER-per-stick-center-auto-cal.patch
+0074-d-wmr-WMR_CONSTELLATION_YAW_PRIOR_DEG-reject-yaw-gho.patch
+0076-t-constellation-trusted-orientation-prior-plumbed-in.patch
+0077-t-constellation-WMR_CONSTELLATION_SEED_PRIOR-seeded-.patch
+0078-d-wmr-WMR_CONTROLLER_HAPTICS-set_output-plumbing-for.patch
+0082-t-constellation-harden-SEED_PRIOR-against-poisoned-s.patch
+0084-t-constellation-pre-delivery-trusted-gravity-gate-cl.patch
+0085-constellation-bound-a-published-pose-by-its-distance.patch
+0086-d-wmr-make-solve_yaw_locked-observable-T223-s-named-.patch
+0088-constellation-let-the-heading-seeded-hypothesis-comp.patch
+0107-d-wmr-WMR_CONTROLLER_HEADING_CSV-per-solve-heading-a.patch
+0108-wmr-send-the-constellation-LED-pulse-train-command.patch
+0109-d-wmr-WMR_CONSTELLATION_RAW_SAMPLES_LOG-the-pre-gate.patch
+0110-d-wmr-WMR_CONTROLLER_LED_DUMP-log-the-constellation-.patch
+0111-c-constellation-WMR_CONSTELLATION_BLOB_TELEMETRY-blo.patch
+0112-d-wmr-drive-the-LED-pulse-train-for-BT-controllers.patch
+0113-t-constellation-contested-blob-escalation-for-device.patch
