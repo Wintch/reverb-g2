@@ -13,7 +13,7 @@
 #                                            down = teardown, ignores mode/tracking below
 #                                    mode: 0 = 2880x1440@90
 #                                          1 = 4320x2160@90  (the one Project-VR uses, default)
-#                                          2 = 4320x2160@60  (the only one that works today in X11)
+#                                          2 = 4320x2160@60  (60 Hz fallback)
 #                                    tracking: 3dof = IMU only, rotation only (default)
 #                                              6dof = real SLAM via Basalt (position + rotation)
 #                                              ctrl = head 3dof, but cameras ON and constellation
@@ -106,8 +106,14 @@ for arg in "$@"; do
 done
 MODE="${MODE:-1}"
 TRACKING="${TRACKING:-3dof}"
-VR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-[ -d "$HOME/vr/monado" ] && VR="$HOME/vr"
+# Where monado/, basalt/, xrizer/ live. VR_BASE overrides (same convention as jack-in.sh);
+# otherwise the directory holding this repo if it has a Monado build next to it, else ~/vr.
+if [ -n "${VR_BASE:-}" ]; then
+    VR="$VR_BASE"
+else
+    VR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+    [ -x "$VR/monado/build/src/xrt/targets/service/monado-service" ] || VR="$HOME/vr"
+fi
 SERVICE="$VR/monado/build/src/xrt/targets/service/monado-service"
 LOG="$VR/jack-in-wayland.log"
 SOCKET="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/monado_comp_ipc"
@@ -218,7 +224,7 @@ if [ "$ACTION" = down ]; then
     # left untouched on purpose -- a session that just failed is exactly the one you don't
     # want a teardown silently erasing.
     echo "Socket removed ($SOCKET). $LOG left untouched."
-    # Lifecycle marker for presence-sound-alert.sh (docs/103, 2026-09-06): appended, never
+    # Lifecycle marker for an optional external presence alert (not part of this repo): appended, never
     # truncates -- consistent with "$LOG left untouched" above. Only written if a previous
     # 'up' actually created the log; a 'down' with nothing to tear down stays silent.
     [ -f "$LOG" ] && echo "MONADO_MARKER: down" >> "$LOG"
@@ -267,7 +273,7 @@ xr_json_check
 # connected. If a bonded controller is asleep when the service starts, creating it fails and
 # that failure is fatal for the whole wmr builder: Monado silently falls back to the
 # Simulated HMD, the Simulated check below burns all retries, and the FAIL_MARKER then blocks
-# the next launch (measured 2026-10-03, docs/18 / MR !2967 note 3693637). So wait here, out
+# the next launch (measured 2026-10-03, docs/136, docs/146). So wait here, out
 # loud, for the controllers instead.
 #   * Only active when at least one "Motion controller" is bonded to the host adapter, so the
 #     headset-tunnel setup is untouched (nothing bonded -> silent skip).
@@ -316,8 +322,8 @@ if [ "${XDG_SESSION_TYPE:-}" != "wayland" ] && [ -S "/run/user/1000/wayland-0" ]
     # Wayland session is up and running (the socket check above proves it) -- recover its
     # real DISPLAY/XAUTHORITY/WAYLAND_DISPLAY instead of refusing outright. Same gui_env.py
     # already hand-copied into teardown-stress.sh/light-preflight.sh for this exact reason;
-    # wiring it in here once stops it from being forgotten by every new caller (docs/89-era
-    # "no hay graficas" incidents were all this: a real session up, just not inherited).
+    # wiring it in here once stops it from being forgotten by every new caller (a detached shell
+    # can report XDG_SESSION_TYPE=tty while a real session is up, just not inherited).
     ENVLINES=$(python3 - "$(dirname "${BASH_SOURCE[0]}")" <<'PY'
 import sys
 sys.path.insert(0, sys.argv[1])
@@ -500,8 +506,8 @@ if [ "$TRACKING" = "6dof" ]; then
     # changes moved nothing. SLAM_FILTER=none for an A/B.
     TRACKING_ENV+=("SLAM_FILTER=${SLAM_FILTER:-one_euro}")
     # The one euro filter's ORIENTATION cutoff, raised from Monado's compiled-in M_PI
-    # (3.14 Hz) to 20 Hz, validated live by the wearer on 2026-08-13 (T177): "casi
-    # perfecto", a few pixels of residual shimmer. It is only safe together with
+    # (3.14 Hz) to 20 Hz, confirmed in-headset on 2026-08-13 (T177): close to perfect,
+    # a few pixels of residual shimmer. It is only safe together with
     # SLAM_FILTER_BEFORE_PREDICT (the default in our build): with the filter at the output
     # stage, as upstream has it, the filter IS the continuous motion path and loosening it
     # like this puts Basalt's 12 deg p99 rotational jitter straight into the image. With
@@ -528,8 +534,8 @@ if [ "$TRACKING" = "6dof" ]; then
     #   3         19.9 Hz       7.18 deg        25.1 deg     10.8-11.6 %
     #
     # More threads cost frame pacing and buy tracking. 2 gets essentially all of 3's tracking
-    # quality for less of its cost, and the user's verdict wearing it was "mejoró MUCHO"
-    # against 1 thread -- which is the criterion that decides it here, per CLAUDE.md. That
+    # quality for less of its cost, and in-headset it was clearly better than 1 thread --
+    # the in-headset result is the criterion that decides it here. That
     # 159.8-degree step at 1 thread is not a head movement; it is the tracker losing it.
     #
     # NOTE, measured and surprising: this knob does NOT cap Basalt's total threads. At both 2
@@ -678,7 +684,7 @@ TRACKING_ENV+=("WMR_STICK_DEADZONE=${WMR_STICK_DEADZONE:-0.15}")
 
 # docs/51's per-launch NVIDIA direct-mode override, kept on the Wayland launcher as cheap
 # insurance for the allowlist-mismatch class docs/51 proved on the X11 path. NOTE (2026-08-19
-# T222): this override was tonight's FIRST suspect for the silent windowed fallback on THIS
+# T222): this override was the first suspect for the silent windowed fallback on THIS
 # path and was RULED OUT by the E1-E6 matrix -- launches failed with it and succeeded without
 # it; the real discriminator was the compositor log level (see the loud comment at
 # COMPOSITOR_LOG_DEFAULT above). Harmless when the allowlist would have matched anyway; never
@@ -721,8 +727,7 @@ fi
 # Wayland lease-connector event race in comp_window_direct_wayland: connectors arrive async
 # after binding wp_drm_lease_device_v1, and debug logging's extra milliseconds are what lets
 # them land before the target gives up -- the docs/43 quiet contract's warn default was
-# breaking every plain 'up' launch. Until the comp-side event-wait fix exists (named task,
-# NEXT-STEP), the compositor module stays at debug in EVERY action, quiet included -- its log
+# breaking every plain 'up' launch. Until a compositor-side event-wait fix exists, the compositor module stays at debug in EVERY action, quiet included -- its log
 # volume is bounded (init chatter, not a per-frame firehose like the scrubbed ones below).
 case "$ACTION" in
     dev)  VERBOSE_DEFAULT=1; PACING_DEFAULT=1; COMPOSITOR_LOG_DEFAULT=debug ;;
@@ -933,18 +938,17 @@ fi
 # remember. Patch 0042 exists precisely because the serial pacer requires the app's whole
 # cpu+draw+gpu sum to fit before its promised slot, so a title whose serial pipeline
 # exceeds 11.1 ms gets every other slot forever no matter how idle the machine is. It had
-# been measured in T169 and then left unwired, which is how this session ended up
-# reproducing the same fault from scratch: measured on Aircar with the headset held still,
+# been measured in T169 and then left unwired, so the same fault was later reproduced
+# from scratch: measured on Aircar with the headset held still,
 # serial 12.37% late frames with the median pinned at exactly one full period, against
 # 0.94 / 0.77 / 0.69% over three consecutive windows with this on. Same title, same cable
 # seat, nothing else changed. Same class of miss as Basalt's denser config: the fix
 # existed, was proven, and simply wasn't the default.
 #
-# THE COST IS REAL AND THE USER SEES IT, so it is written here rather than buried: in
-# pipelined mode he reports a ghost/trail whose separation grows with how fast he turns his
-# head -- the signature of latency, not of dropped frames. We traded judder for a stale
-# pose. His verdict was that the 6DoF nonetheless "se siente mucho mejor" and that this is
-# the new starting point, so it ships on. The next target is the pose prediction, not the
+# THE COST IS REAL AND VISIBLE, so it is written here rather than buried: in pipelined
+# mode a wearer sees a ghost/trail whose separation grows with head-turn speed -- the
+# signature of latency, not of dropped frames. It trades judder for a stale pose. In-headset
+# the 6DoF still felt clearly better overall, so it ships on. The next target is the pose prediction, not the
 # pacer. And note what this episode proves about the instrument: frame-pacing.sh counts
 # missed slots and is BLIND to latency, so this change reads as a pure 13x win in the tool
 # while the wearer watches a new artefact appear. Never accept that number alone.
@@ -971,7 +975,7 @@ fi
 # It is OFF by default because there is no known problem for it to solve. That WARN is a
 # benign, long-standing artifact of Monado + NVIDIA in direct mode -- present in healthy logs
 # since 2026-08-15, thousands of occurrences per session at a measured, correct 90 fps
-# (docs/96). The block that used to sit here blamed present_wait for a visible flicker; that
+# The block that used to sit here blamed present_wait for a visible flicker; that
 # was wrong. The flicker had two unrelated causes, both settled on 2026-09-07 (docs/112):
 # hmd-vk's default test pattern alternates colour every frame, and the xrizer brightness gain
 # was at 1.25x. Silencing the WARN is a cosmetic change, not a fix -- do not treat it as one.
@@ -996,7 +1000,7 @@ echo "Starting Monado (action $ACTION, mode $MODE, tracking $TRACKING) via DRM l
 # instead of waiting/retrying. This is downstream of the sysfs "connected" state we already
 # waited for above (that only proves the kernel/DRM side is up, not that mutter's own
 # hotplug handling has processed it) -- reproduced 3/3 in a row on 2026-08-09. Cheapest fix
-# without touching the live compositor (never do that live, see CLAUDE.md) or patching
+# without touching the live compositor (never restart the compositor during a live session) or patching
 # upstream C code: retry the whole launch a few times, same "let it settle, one clean retry"
 # pattern already used elsewhere in this project for hardware timing races.
 #
@@ -1052,7 +1056,7 @@ while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
     # XRT_ERROR_RUNTIME_FAILURE on xrGetSystem. Require BOTH the socket and a real mode.
     # And a real mode is STILL not enough (2026-08-17, caught live): if the wmr builder
     # fails to probe the headset -- e.g. the USB2 companion re-enumerating in exactly the
-    # wrong window, as it did tonight at 04:38:54 -- Monado silently falls back to the
+    # wrong window, as observed on 2026-08-17 -- Monado silently falls back to the
     # legacy builder's Simulated HMD, which still leases the connector and still logs
     # "found display mode". T050 documented this trap as a manual check; a launcher that
     # can retry should enforce it itself, so a legacy/Simulated session now counts as a
@@ -1092,11 +1096,9 @@ if [ "$SUCCESS" = 1 ]; then
     # The ONLY thing that clears the marker: a launch that actually reached a usable
     # compositor. Not an attempt, not a teardown, not the passage of time.
     rm -f "$FAIL_MARKER"
-    # Lifecycle marker for presence-sound-alert.sh (docs/103, 2026-09-06): a spoken
-    # confirmation that the runtime itself is live, distinct from the panel-blank/restore
-    # markers already handled there. Motivated by a live incident the same day: a wearer-test
-    # round produced zero presence alerts simply because monado-service was up with no app
-    # driving it, which read as a silent failure until diagnosed -- this closes that gap.
+    # Lifecycle marker for an optional external presence alert (not part of this repo): it
+    # confirms the runtime itself is live, distinct from the panel-blank/restore markers. Without
+    # it, monado-service up with no app driving it reads as a silent failure.
     echo "MONADO_MARKER: up" >> "$LOG"
     # --- Idle-blank suppression (2026-08-22) ---------------------------------------------
     # The desktop's own idle-blank (idle-delay=60s, set up 2026-08-22 for the "reduced
