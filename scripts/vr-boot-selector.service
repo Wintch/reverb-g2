@@ -16,8 +16,11 @@
 # hangs or misbehaves, Ctrl+Alt+F2 always gets a normal login prompt to fix
 # it from, independent of whatever this unit is doing on tty1.
 #
-# Install (only after testing scripts/vr-boot-selector.sh by hand first):
-#   sudo cp scripts/vr-boot-selector.service /etc/systemd/system/
+# Install (only after testing scripts/vr-boot-selector.sh by hand first). This file is a
+# TEMPLATE (@REPO_DIR@ = absolute path of the repo checkout, no trailing slash); either run
+# scripts/install-vr-boot-selector.sh, which substitutes it for you, or by hand from the repo root:
+#   sed "s|@REPO_DIR@|$PWD|g" scripts/vr-boot-selector.service \
+#       | sudo tee /etc/systemd/system/vr-boot-selector.service >/dev/null
 #   sudo systemctl enable getty@tty2.service
 #   sudo systemctl enable vr-boot-selector.service
 #
@@ -42,10 +45,11 @@ After=multi-user.target getty@tty1.service
 Conflicts=getty@tty1.service
 
 [Service]
-# System unit, installed by a verbatim copy: edit this ExecStart path to match where
-# this repo is checked out, and replace <user> with the lab account name, before
-# copying it to /etc/systemd/system.
-ExecStart=/home/<user>/Documents/reverb-g2/scripts/vr-boot-selector.sh 10
+# System unit (runs as root), rendered from this template at install time: @REPO_DIR@ becomes
+# the checkout path. The account the SDDM autologin targets is NOT set here: the script takes
+# it from VR_USER, defaulting to the owner of the checkout (override with an
+# Environment=VR_USER=<account> line in this section if the checkout is owned by someone else).
+ExecStart=@REPO_DIR@/scripts/vr-boot-selector.sh 10
 Type=idle
 Restart=no
 StandardInput=tty

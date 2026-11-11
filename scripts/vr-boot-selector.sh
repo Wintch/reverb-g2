@@ -29,7 +29,9 @@
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Account the SDDM autologin targets (same convention as vr-launcher-console.sh).
-VR_USER="${VR_USER:-$(id -nu 1000)}"
+# Default: the account that owns this repo checkout; override with VR_USER=<account>.
+VR_USER="${VR_USER:-$(stat -c %U "$HERE/..")}"
+[ "$VR_USER" = "root" ] && VR_USER="$(id -nu 1000)"   # a root-owned checkout says nothing about the desktop user
 TIMEOUT="${1:-10}"
 
 # Bigger, bolder console font for this bare VT -- purely cosmetic, never fatal:

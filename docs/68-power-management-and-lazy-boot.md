@@ -86,3 +86,12 @@ scripts/status-dashboard.py        uses rig_telemetry
 
 System-level (not in git): `systemctl enable --now vr-power-watchdog.service` and
 `/etc/sudoers.d/reverb-g2-power` installed.
+
+`scripts/vr-power-watchdog.service` is a template: its `ExecStart` carries `@REPO_DIR@`, the absolute
+path of the checkout. Render it at install time (from the repo root):
+
+```
+sed "s|@REPO_DIR@|$PWD|g" scripts/vr-power-watchdog.service \
+    | sudo tee /etc/systemd/system/vr-power-watchdog.service >/dev/null
+sudo systemctl daemon-reload && sudo systemctl enable --now vr-power-watchdog.service
+```

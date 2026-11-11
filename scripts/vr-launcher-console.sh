@@ -35,7 +35,9 @@
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 READY_FILE="/run/vr-ready"
 WAIT_MAX=60
-VR_USER="${VR_USER:-$(id -nu 1000)}"
+# Default: the account that owns this repo checkout; override with VR_USER=<account>.
+VR_USER="${VR_USER:-$(stat -c %U "$HERE/..")}"
+[ "$VR_USER" = "root" ] && VR_USER="$(id -nu 1000)"   # a root-owned checkout says nothing about the desktop user
 
 for _i in $(seq 1 "$WAIT_MAX"); do
     if [ -f "$READY_FILE" ] && [ -S "/run/user/1000/wayland-0" ]; then

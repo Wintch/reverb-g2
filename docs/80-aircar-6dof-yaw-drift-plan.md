@@ -275,7 +275,7 @@ has plenty and lets the IMU side drift (an IMU-bias reading of the at-rest walk 
 session; `scripts/replay-basalt-variants.py` runs N configs against one recording;
 `scripts/replay-phase-slice.py` cuts trajectories by the protocol phases (`scripts/euroc-phases.py` makes
 `phases.json` from the voice log; `scripts/euroc-shift.py` shifts camera stamps); `scripts/soak-variant.py`,
-`soak-grade.py`, `soak-families.py`, `soak-sequence.sh` run and grade unattended stationary soaks.
+`soak-grade.py` (`--families` groups runs by config recipe), `soak-sequence.sh` run and grade unattended stationary soaks.
 
 - `EUROC_RECORD_PATH` is a prefix (a timestamp is appended). Record the yaw dataset as PNG (~14 GB per
   10 min of tmpfs; **stop the session right after the protocol, the recorder runs until Monado dies**).
@@ -289,6 +289,9 @@ session; `scripts/replay-basalt-variants.py` runs N configs against one recordin
 All variants are `scripts/basalt-variants/<X>.json` (+ `.toml` wrappers). **Only P2 remains in the
 repo** (`scripts/basalt-variants/P2.json` and `P2.toml`; the others were removed after the sweep —
 this table is the record). The shipped global config is `scripts/basalt-g2-config.json` ("base").
+`P2.toml` is a template (Basalt needs an absolute `config-path` and TOML cannot expand `$HOME`): the repo copy
+uses `@HOME@`. To use it, copy both files into `~/vr/basalt-variants/` and resolve the placeholder:
+`cp scripts/basalt-variants/P2.json ~/vr/basalt-variants/ && sed "s|@HOME@|$HOME|g" scripts/basalt-variants/P2.toml > ~/vr/basalt-variants/P2.toml`.
 "Keys vs P2" is the literal JSON diff against P2.
 
 **P2** = recall on (`optical_flow_recall_enable`, default norms `[1.74, 0.96, 0.99, 0.44]`),

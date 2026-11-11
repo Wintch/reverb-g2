@@ -2,8 +2,12 @@
 # gnome-terminal + GNOME autostart approach (no longer used -- see
 # vr-launcher-console.sh for the reasoning). NOT installed/enabled by default.
 #
-# Install (test scripts/vr-launcher-console.sh by hand on a spare VT first):
-#   sudo cp scripts/vr-launcher-console.service /etc/systemd/system/
+# Install (test scripts/vr-launcher-console.sh by hand on a spare VT first). This file is a
+# TEMPLATE (@REPO_DIR@ = absolute path of the repo checkout, no trailing slash); from the
+# repo root:
+#   sed "s|@REPO_DIR@|$PWD|g" scripts/vr-launcher-console.service \
+#       | sudo tee /etc/systemd/system/vr-launcher-console.service >/dev/null
+#   sudo systemctl daemon-reload
 #   sudo systemctl enable vr-launcher-console.service
 #
 # Uninstall:
@@ -17,9 +21,11 @@ After=graphical.target getty@tty4.service
 Conflicts=getty@tty4.service
 
 [Service]
-# System unit, installed by a verbatim copy: edit this ExecStart path to match where
-# this repo is checked out: substitute <user> and the checkout path before installing.
-ExecStart=/home/<user>/Documents/reverb-g2/scripts/vr-launcher-console.sh
+# System unit (runs as root), rendered from this template at install time: @REPO_DIR@ becomes
+# the checkout path. The unprivileged account the picker drops to is NOT set here: the script
+# takes it from VR_USER, defaulting to the owner of the checkout (override with an
+# Environment=VR_USER=<account> line in this section if the checkout is owned by someone else).
+ExecStart=@REPO_DIR@/scripts/vr-launcher-console.sh
 Type=idle
 Restart=on-failure
 RestartSec=5

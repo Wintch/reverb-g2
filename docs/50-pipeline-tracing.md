@@ -123,17 +123,20 @@ throughout): a process executed as `monado-service-tracing` reports `comm` =
 14-byte string `monado-service`, so `pgrep -x monado-service` correctly does not match it,
 and `pgrep -x monado-service-` correctly does.
 
-`$VR_DIR/jack-in-wayland-tracing.sh` is a copy of the production launcher
-(`scripts/jack-in-wayland-tracing.sh` also committed to this repo, mirroring the existing
-`scripts/` ↔ `~/vr/` sync convention) with exactly three changes, everything else — the
-panel pre-activation, DP polling, `systemd-run --scope` login-session fix, `XRT_NO_STDIN`,
-mode/tracking argument handling — left untouched and reused as-is:
+`$VR_DIR/jack-in-wayland-tracing.sh` is a thin wrapper (`scripts/jack-in-wayland-tracing.sh`,
+also committed to this repo, mirroring the existing `scripts/` ↔ `~/vr/` sync convention)
+that exports three default-off hooks and `exec`s the production launcher. It was originally a
+full copy with exactly three changes; the copy fell ~400 lines behind production (docs/147),
+so the three changes are now hooks in `jack-in-wayland.sh` and everything else — the panel
+pre-activation, DP polling, `systemd-run --scope` login-session fix, `XRT_NO_STDIN`,
+mode/tracking argument handling — is the production code itself:
 
-1. `SERVICE="$VR/monado-service-tracing"` instead of the production build path.
-2. Every `pgrep -x monado-service` → `pgrep -x monado-service-` (6 occurrences: the `down`
-   handler, its wait/escalate loop, pre-launch hygiene, and the two failure-path cleanups).
-3. `LOG="$VR/jack-in-wayland-tracing.log"` — a separate log file, so a tracing run's log
-   never overwrites or interleaves with a production run's `jack-in-wayland.log`.
+1. `JACK_IN_SERVICE="$VR/monado-service-tracing"` instead of the production build path.
+2. `JACK_IN_SERVICE_COMM="monado-service-"` — the name every `pgrep -x` in the launcher
+   matches (`SVC_COMM`, default `monado-service`): the `down` handler, its wait/escalate
+   loop, pre-launch hygiene, and the failure-path cleanups.
+3. `JACK_IN_LOG="$VR/jack-in-wayland-tracing.log"` — a separate log file, so a tracing run's
+   log never overwrites or interleaves with a production run's `jack-in-wayland.log`.
 
 **What this does and does not solve.** It prevents *accidental cross-script kills* — running
 `jack-in-wayland.sh down` while a tracing capture is up leaves it running, and vice versa.

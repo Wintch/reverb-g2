@@ -10,6 +10,16 @@
 
 set -eu
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The unit is a template: @REPO_DIR@ is replaced by the checkout path (the directory holding
+# scripts/). Override with REPO_DIR=/path sudo -E ... if the checkout is somewhere else.
+REPO_DIR="${REPO_DIR:-$(dirname "$HERE")}"
+case "$REPO_DIR" in
+    /*) ;;
+    *) echo "REPO_DIR must be an absolute path (got: $REPO_DIR)" >&2; exit 1 ;;
+esac
+case "$REPO_DIR" in
+    *'|'*|*'&'*|*\\*) echo "REPO_DIR contains a character the sed substitution cannot handle: $REPO_DIR" >&2; exit 1 ;;
+esac
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "Needs root. Run: sudo $0" >&2
@@ -22,8 +32,12 @@ python3 -m py_compile "$HERE/power-on.py"
 echo "  ok."
 
 echo
-echo "=== 2/4: copying the service ==="
-cp "$HERE/vr-boot-selector.service" /etc/systemd/system/vr-boot-selector.service
+echo "=== 2/4: rendering the service (REPO_DIR=$REPO_DIR) ==="
+sed "s|@REPO_DIR@|$REPO_DIR|g" "$HERE/vr-boot-selector.service" > /etc/systemd/system/vr-boot-selector.service
+if grep -q '@[A-Z_]*@' /etc/systemd/system/vr-boot-selector.service; then
+    echo "unresolved placeholder left in the rendered unit; not enabling it" >&2
+    exit 1
+fi
 systemctl daemon-reload
 echo "  ok."
 

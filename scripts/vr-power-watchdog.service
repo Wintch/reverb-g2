@@ -6,8 +6,10 @@
 # running (checked every 10s, see vr-power-watchdog.py). Forces saver once on its own
 # startup, which is what makes every boot start "light" without a separate boot unit.
 #
-# Install:
-#   sudo cp scripts/vr-power-watchdog.service /etc/systemd/system/
+# Install. This file is a TEMPLATE (@REPO_DIR@ = absolute path of the repo checkout, no
+# trailing slash); from the repo root:
+#   sed "s|@REPO_DIR@|$PWD|g" scripts/vr-power-watchdog.service \
+#       | sudo tee /etc/systemd/system/vr-power-watchdog.service >/dev/null
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now vr-power-watchdog.service
 #
@@ -24,9 +26,9 @@ After=multi-user.target
 [Service]
 Type=simple
 Environment=PYTHONUNBUFFERED=1
-# System unit, installed by a verbatim copy: edit this ExecStart path to match where
-# this repo is checked out before installing (substitute <user> with the account that owns the checkout).
-ExecStart=/usr/bin/python3 /home/<user>/Documents/reverb-g2/scripts/vr-power-watchdog.py
+# System unit (runs as root), rendered from this template at install time: @REPO_DIR@ becomes
+# the checkout path.
+ExecStart=/usr/bin/python3 @REPO_DIR@/scripts/vr-power-watchdog.py
 Restart=on-failure
 RestartSec=5
 

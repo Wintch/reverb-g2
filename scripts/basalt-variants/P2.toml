@@ -1,7 +1,11 @@
 show-gui=0
-# Edit config-path to the absolute location of P2.json in your checkout (a TOML file cannot expand $HOME);
-# jack-in-wayland.sh generates its own TOML at launch with $HOME resolved.
-config-path="/home/<user>/vr/basalt-variants/P2.json"
+# TEMPLATE: Basalt needs an absolute config-path and a TOML file cannot expand $HOME, so the repo copy
+# carries the placeholder @HOME@. Install it into ~/vr with the placeholder resolved (P2.json goes next
+# to it), from the repo root:
+#   mkdir -p ~/vr/basalt-variants && cp scripts/basalt-variants/P2.json ~/vr/basalt-variants/
+#   sed "s|@HOME@|$HOME|g" scripts/basalt-variants/P2.toml > ~/vr/basalt-variants/P2.toml
+# (jack-in-wayland.sh generates its own TOML at launch with $HOME resolved; this P2 wrapper is not generated.)
+config-path="@HOME@/vr/basalt-variants/P2.json"
 marg-data=""
 print-queue=0
 use-double=0

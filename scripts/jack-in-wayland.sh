@@ -114,8 +114,12 @@ else
     VR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
     [ -x "$VR/monado/build/src/xrt/targets/service/monado-service" ] || VR="$HOME/vr"
 fi
-SERVICE="$VR/monado/build/src/xrt/targets/service/monado-service"
-LOG="$VR/jack-in-wayland.log"
+# Default-off hooks, used by jack-in-wayland-tracing.sh (docs/50) to swap the service binary
+# without forking this script. SVC_COMM is the kernel comm that pgrep -x matches: comm is
+# truncated to 15 bytes, so a binary named monado-service-tracing reports "monado-service-".
+SERVICE="${JACK_IN_SERVICE:-$VR/monado/build/src/xrt/targets/service/monado-service}"
+LOG="${JACK_IN_LOG:-$VR/jack-in-wayland.log}"
+SVC_COMM="${JACK_IN_SERVICE_COMM:-monado-service}"
 SOCKET="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/monado_comp_ipc"
 
 # FAIL_MARKER (docs/43). WHY IT EXISTS, and it is not defensive programming for its own sake:
@@ -183,7 +187,7 @@ if [ "$ACTION" = down ]; then
     # tail on a path containing "monado-service" -- gets killed too. First live use of
     # 'down' (2026-08-17) SIGTERM'd the invoking agent's own shell exactly this way.
     RUNNING=0
-    for p in $(pgrep -x monado-service); do
+    for p in $(pgrep -x "$SVC_COMM"); do
         RUNNING=1
         # SIGTERM first, deliberately -- the opposite of the kill -9 used elsewhere in
         # this script (that one is pre-launch hygiene against a stale process holding the
@@ -193,12 +197,12 @@ if [ "$ACTION" = down ]; then
     done
     if [ "$RUNNING" = 1 ]; then
         for _i in $(seq 1 10); do
-            pgrep -x monado-service >/dev/null || break
+            pgrep -x "$SVC_COMM" >/dev/null || break
             sleep 1
         done
-        if pgrep -x monado-service >/dev/null; then
+        if pgrep -x "$SVC_COMM" >/dev/null; then
             echo "  Still running after 10s, escalating to SIGKILL."
-            for p in $(pgrep -x monado-service); do kill -9 "$p" 2>/dev/null; done
+            for p in $(pgrep -x "$SVC_COMM"); do kill -9 "$p" 2>/dev/null; done
         fi
     else
         echo "  Not running."
@@ -350,7 +354,7 @@ fi
 [ -x "$SERVICE" ] || fail "can't find monado-service at $SERVICE"
 
 # SIGKILL doesn't clean up the socket, and a stale socket makes startup fail.
-for p in $(pgrep -x monado-service); do kill -9 "$p" 2>/dev/null; done
+for p in $(pgrep -x "$SVC_COMM"); do kill -9 "$p" 2>/dev/null; done
 sleep 2
 rm -f "$SOCKET"
 
@@ -1072,7 +1076,7 @@ while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
     # Failed attempt: don't leave a broken instance running into the next try (found the hard
     # way on 2026-08-07: had to manually pkill a service that had been "Socket ready" for
     # several failed launches in a row).
-    for p in $(pgrep -x monado-service); do kill -9 "$p" 2>/dev/null; done
+    for p in $(pgrep -x "$SVC_COMM"); do kill -9 "$p" 2>/dev/null; done
     rm -f "$SOCKET"
     ATTEMPT=$((ATTEMPT + 1))
 done
@@ -1137,7 +1141,7 @@ else
     echo "!! No usable compositor after $MAX_ATTEMPTS attempts (no leasable connector / no mode found / wmr builder fell back to Simulated)." >&2
     echo "!! Last lines of the log:" >&2
     tail -15 "$LOG" >&2
-    for p in $(pgrep -x monado-service); do kill -9 "$p" 2>/dev/null; done
+    for p in $(pgrep -x "$SVC_COMM"); do kill -9 "$p" 2>/dev/null; done
     rm -f "$SOCKET"
     fail "no usable compositor after $MAX_ATTEMPTS attempts (no leasable connector / no mode found / wmr builder fell back to Simulated)"
 fi
