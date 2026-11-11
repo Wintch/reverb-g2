@@ -30,12 +30,13 @@
 !*.example
 
 # Narrow binary exceptions, each one referenced by a doc.
-!docs/*.png
+!docs/a520m-rear-usb3-port-pairs.png
 !forum-attachments/*.bin
 
 # Never, even when the extension is allowed above.
 local-notes/
 CLAUDE.local.md
+.claude/
 NEXT-STEP.md
 power-on-stats.jsonl
 scripts/.private-patterns
