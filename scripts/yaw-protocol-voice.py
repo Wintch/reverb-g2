@@ -29,6 +29,11 @@ vg = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(vg)
 
 # (phase, text spoken at its start, seconds the phase lasts after the cue)
+# The spoken text is Spanish on purpose (it goes to the TTS voice, like the other spoken cues).
+# English gloss, in order: intro = hold still facing forward until told; yaw = ten fast
+# left-right head turns, like looking at two mirrors; settle = hold still; pitch = ten fast
+# nods; roll = ten fast tilts, ear toward each shoulder; free = play freely for a minute;
+# end = protocol finished, close the game when you like.
 SCRIPT = [
     ("intro", "Protocolo de yaw. Quedate quieto, mirando al frente, hasta que te avise.", 30),
     ("yaw", "Ahora, diez giros rápidos de cabeza, de izquierda a derecha, como mirando los dos espejos. Rápido, uno tras otro.", 25),

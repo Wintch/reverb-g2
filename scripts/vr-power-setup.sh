@@ -262,8 +262,8 @@ apply() {
 }
 
 # The deliberate opposite of --apply: minimum watts everywhere, for the machine sitting
-# idle between sessions (2026-08-23, T246 -- "arrancar light, prender full solo cuando el
-# juego realmente está andando"). Unlike --apply/--restore this has no saved-state dance:
+# idle between sessions (2026-08-23, T246 -- goal: start light, go full only while a
+# game is really running). Unlike --apply/--restore this has no saved-state dance:
 # saver is always the same deterministic target, not "whatever was there before". Deliberately
 # does NOT touch GPU persistence mode -- toggling it has been seen to disturb an attached
 # display's modeset on this card, and the desktop monitor lives on the same GPU (see this

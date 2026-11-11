@@ -811,7 +811,7 @@ PLAYLIST_CATALOG = [
      "appid": "591360", "tracking": "6dof", "seconds": 240},
 ]
 # The automatic "recommended round": sizzle video -> Aircar (approved 3dof) -> Dali.
-DEFAULT_PLAYLIST = {"name": "Ronda automática", "gap_seconds": 6,
+DEFAULT_PLAYLIST = {"name": "Automatic round", "gap_seconds": 6,
                     "entries": [dict(c) for c in PLAYLIST_CATALOG]}
 
 
@@ -829,10 +829,10 @@ def playlist_start(pl):
     if not os.path.exists(PLAYLIST_RUNNER):
         return False, "playlist-runner.py is not installed on this machine"
     if playlist_running():
-        return False, "ya hay una ronda corriendo"
+        return False, "a round is already running"
     entries = pl.get("entries") if isinstance(pl, dict) else None
     if not entries:
-        return False, "la ronda no tiene experiencias"
+        return False, "the round has no entries"
     os.makedirs(f"{HOME}/vr/logs", exist_ok=True)
     path = f"{HOME}/vr/logs/playlist-current.json"
     with open(path, "w") as f:
@@ -843,18 +843,18 @@ def playlist_start(pl):
     subprocess.Popen(["python3", PLAYLIST_RUNNER, path], stdout=log,
                      stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                      start_new_session=True)
-    return True, f"ronda '{pl.get('name', '?')}' lanzada ({len(entries)} experiencias)"
+    return True, f"round '{pl.get('name', '?')}' launched ({len(entries)} entries)"
 
 
 def playlist_control_cmd(cmd):
     mapped = {"resume": "run"}.get(cmd, cmd)
     if mapped not in ("run", "pause", "stop", "skip"):
-        return False, f"comando invalido: {cmd}"
+        return False, f"invalid command: {cmd}"
     if not playlist_running() and mapped != "stop":
-        return False, "no hay ronda corriendo"
+        return False, "no round running"
     with open(PLAYLIST_CONTROL, "w") as f:
         json.dump({"command": mapped}, f)
-    return True, f"comando: {cmd}"
+    return True, f"command: {cmd}"
 
 
 def playlist_status():
@@ -952,11 +952,11 @@ def set_brightness_gain(gain):
     os.makedirs(f"{HOME}/vr/logs", exist_ok=True)
     with open(BRIGHTNESS_FILE, "w") as f:
         f.write(f"{g:.3f}\n")
-    return True, f"brillo -> {g:.2f}x (live si hay juego con el xrizer nuevo)"
+    return True, f"brightness -> {g:.2f}x (live if a game is running on the new xrizer)"
 
 
 def set_resting_alert_delay_ms(delay_ms):
-    """Write the per-user "casco en la mesa" delay the presence-alert helper reads fresh on
+    """Write the per-user "headset on the desk" delay the presence-alert helper reads fresh on
     each doff commit. Same live-file pattern as set_brightness_gain/BRIGHTNESS_FILE --
     unlike PRESENCE_CONF_FILE (PRESENCE_ENABLE/PRESENCE_SCREENOFF_MS, jack-in-wide, needs
     a relaunch to apply), this one is picked up by the shell script's next doff event with
@@ -968,7 +968,7 @@ def set_resting_alert_delay_ms(delay_ms):
     os.makedirs(f"{HOME}/vr/logs", exist_ok=True)
     with open(RESTING_ALERT_DELAY_FILE, "w") as f:
         f.write(f"{d}\n")
-    return True, f"aviso 'en la mesa' -> {d} ms"
+    return True, f"alert 'on the desk' -> {d} ms"
 
 
 def save_presence_settings(enable_raw, screenoff_ms_raw):
@@ -1002,7 +1002,7 @@ def save_presence_settings(enable_raw, screenoff_ms_raw):
             f"PRESENCE_SCREENOFF_MS={screenoff_ms}\n"
         )
     os.replace(tmp, PRESENCE_CONF_FILE)
-    return True, "guardado -- se aplica en el próximo 'jack-in down/up' (no en caliente)"
+    return True, "saved -- applies on the next 'jack-in down/up' (not live)"
 
 
 def user_center():
@@ -1385,8 +1385,8 @@ PAGE = """<!doctype html>
       <div id="screen-empty" class="dim" data-i18n="preview_empty">no window to preview (start a game/player)</div>
     </div>
     <!-- Tracking cameras: MOVED here from inside the tabbed #panel-headset (2026-09-05,
-         "vista previa dejala siempre, al igual que las vistas en miniatura de las
-         camaras") -- both this and the Headset preview card above must stay visible
+         the preview must always stay visible, like the camera
+         thumbnails) -- both this and the Headset preview card above must stay visible
          regardless of which Headset/GPU/CPU instrument-bank tab is selected, so this
          whole card now lives in the untabbed operator-tray tier instead. -->
     <div class="card" id="camera-card">
@@ -1395,7 +1395,7 @@ PAGE = """<!doctype html>
       <div id="camera-note" class="dim" style="font-size:12px"></div>
       <div id="camera-expgain" class="dim" style="font-size:12px;margin-top:6px"></div>
       <div class="row" style="margin-top:6px">
-        <span>brillo (vista web)</span>
+        <span>brightness (web view)</span>
         <span><input type="range" id="camera-brightness" min="0.5" max="3" step="0.1" value="1" style="vertical-align:middle"> <span id="camera-brightness-val" class="dim">1.0x</span></span>
       </div>
     </div>
@@ -1482,9 +1482,9 @@ PAGE = """<!doctype html>
       <h2>Auto-standby (presence)</h2>
       <div class="row"><span>enabled</span><span><input type="checkbox" id="presence-enable-cb"></span></div>
       <div class="row"><span>screen-off timeout</span><span><input type="number" id="presence-screenoff-min" min="0" max="30" step="0.5" style="width:60px"> min</span></div>
-      <div class="row"><span></span><span><button onclick="savePresence()">Guardar</button></span></div>
+      <div class="row"><span></span><span><button onclick="savePresence()">Save</button></span></div>
       <div class="dim" id="presence-msg" style="font-size:12px"></div>
-      <div class="dim" style="font-size:12px;margin-top:4px">se aplica en el próximo 'jack-in down/up' -- nunca en caliente, Monado cachea la variable al arrancar (takes effect on the next jack-in down/up, never live)</div>
+      <div class="dim" style="font-size:12px;margin-top:4px">takes effect on the next 'jack-in down/up', never live (Monado caches the variable at startup)</div>
     </div>
   </div>
   <!-- Camera calibration: static, one-time per-camera intrinsics/pose reference data --
@@ -1708,13 +1708,13 @@ async function applyAudioOutputs() {
   const checked = [...document.querySelectorAll('#audio-devices input[type=checkbox][data-name]')]
     .filter(c => c.checked).map(c => c.dataset.name);
   const msg = document.getElementById('action-msg');
-  if (checked.length === 0) { msg.textContent = 'dejá al menos una salida activa'; return; }
-  msg.textContent = 'salidas -> ' + checked.length + ' ...';
+  if (checked.length === 0) { msg.textContent = 'leave at least one output active'; return; }
+  msg.textContent = 'outputs -> ' + checked.length + ' ...';
   try {
     const r = await fetch('/api/audio-outputs?names=' + encodeURIComponent(checked.join(',')), {method:'POST'});
     const d = await r.json();
-    msg.textContent = d.ok ? ('audio: ' + d.message) : ('FALLO: ' + d.message);
-  } catch(e) { msg.textContent = 'audio falló: ' + e; }
+    msg.textContent = d.ok ? ('audio: ' + d.message) : ('FAILED: ' + d.message);
+  } catch(e) { msg.textContent = 'audio failed: ' + e; }
 }
 async function setSinkVolume(name, pct) {
   try {
@@ -1726,8 +1726,8 @@ async function toggleMic(muted) {
   try {
     const r = await fetch('/api/mic?on=' + (muted ? '1' : '0'), {method:'POST'});
     const d = await r.json();
-    msg.textContent = d.ok ? ('mic ' + (muted ? 'ON' : 'OFF (mute)')) : ('mic FALLO: ' + d.message);
-  } catch(e) { msg.textContent = 'mic falló: ' + e; }
+    msg.textContent = d.ok ? ('mic ' + (muted ? 'ON' : 'OFF (mute)')) : ('mic FAILED: ' + d.message);
+  } catch(e) { msg.textContent = 'mic failed: ' + e; }
 }
 function renderAudioDevices(audio) {
   const el = document.getElementById('audio-devices');
@@ -1739,7 +1739,7 @@ function renderAudioDevices(audio) {
     el.dataset.sig = sig; el.innerHTML = '';
     // Mic row first (default OFF/muted).
     const micRow = document.createElement('div'); micRow.className = 'adev';
-    micRow.innerHTML = '<input type="checkbox" id="mic-cb"><span class="aname off">🎙️ Micrófono</span>' +
+    micRow.innerHTML = '<input type="checkbox" id="mic-cb"><span class="aname off">🎙️ Microphone</span>' +
                        '<span class="aval" id="mic-state">off</span>';
     micRow.querySelector('#mic-cb').onchange = e => toggleMic(e.target.checked);
     el.appendChild(micRow);
@@ -2046,11 +2046,11 @@ function gpuPowerHtml(p) {
 }
 function hmdThermalHtml(t) {
   if (!t || t.stale) {
-    return '<span class="dim">sin datos recientes -- monado no está corriendo (no recent data -- monado not running)</span>';
+    return '<span class="dim">no recent data -- monado not running</span>';
   }
   const readings = t.celsius_est.map((c, i) => `T${i} ${c.toFixed(1)}°C`).join('&ensp;');
   return `<div class="row"><span>${readings}</span></div>` +
-    '<div class="dim" style="font-size:12px">estimado, sin calibrar -- formula ICM-20602, no confirmada en vivo contra esta unidad (estimate, uncalibrated)</div>';
+    '<div class="dim" style="font-size:12px">estimate, uncalibrated -- ICM-20602 formula, not confirmed live against this unit</div>';
 }
 // Persistent presence-settings card (#presence-card, outside #grid's rebuilt innerHTML) --
 // same "skip while the user is mid-edit" guard the sink-volume slider already uses
@@ -2071,7 +2071,7 @@ async function savePresence() {
   const msgEl = document.getElementById('presence-msg');
   const enable = cb.checked ? 1 : 0;
   const ms = Math.max(0, Math.round(parseFloat(mins.value || '0') * 60000));
-  msgEl.textContent = 'guardando...';
+  msgEl.textContent = 'saving...';
   try {
     const r = await fetch(`/api/presence/save?enable=${enable}&screenoff_ms=${ms}`, {method: 'POST'});
     const d = await r.json();
@@ -2088,8 +2088,8 @@ async function tick() {
     if (d.attention && d.attention.active) {
       attn.style.display = 'block';
       attn.classList.add('pulsing');
-      attn.innerHTML = `<b>NEEDS HUMAN ASSISTANCE</b> -- ${d.attention.message || '(sin mensaje)'}` +
-        (d.attention.since ? ` <span style="opacity:.7">(desde ${d.attention.since})</span>` : '');
+      attn.innerHTML = `<b>NEEDS HUMAN ASSISTANCE</b> -- ${d.attention.message || '(no message)'}` +
+        (d.attention.since ? ` <span style="opacity:.7">(since ${d.attention.since})</span>` : '');
     } else {
       attn.style.display = 'none';
       attn.classList.remove('pulsing');
@@ -2375,15 +2375,15 @@ async function plStart(custom) {
     const catalog = JSON.parse(el.dataset.catalog || '[]');
     const picked = Array.from(document.querySelectorAll('.pl-cb'))
       .filter(cb => cb.checked).map(cb => catalog[parseInt(cb.dataset.i)]);
-    if (!picked.length) { document.getElementById('pl-msg').textContent = 'elegí al menos una experiencia'; return; }
-    const name = (document.getElementById('pl-name').value || 'Ronda').trim();
+    if (!picked.length) { document.getElementById('pl-msg').textContent = 'pick at least one experience'; return; }
+    const name = (document.getElementById('pl-name').value || 'Round').trim();
     body = JSON.stringify({ name: name, gap_seconds: 6, entries: picked });
   }
-  document.getElementById('pl-msg').textContent = 'lanzando ronda...';
+  document.getElementById('pl-msg').textContent = 'launching round...';
   try {
     const r = await fetch('/api/playlist/start', { method: 'POST', body: body });
     const d = await r.json();
-    document.getElementById('pl-msg').textContent = (d.ok ? 'OK -- ' : 'FALLO -- ') + d.message;
+    document.getElementById('pl-msg').textContent = (d.ok ? 'OK -- ' : 'FAILED -- ') + d.message;
   } catch (e) { document.getElementById('pl-msg').textContent = 'error: ' + e; }
 }
 async function plControl(cmd) {
@@ -2391,7 +2391,7 @@ async function plControl(cmd) {
   try {
     const r = await fetch('/api/playlist/control?cmd=' + cmd, { method: 'POST' });
     const d = await r.json();
-    document.getElementById('pl-msg').textContent = (d.ok ? '' : 'FALLO -- ') + d.message;
+    document.getElementById('pl-msg').textContent = (d.ok ? '' : 'FAILED -- ') + d.message;
   } catch (e) { document.getElementById('pl-msg').textContent = 'error: ' + e; }
 }
 async function tickPlaylist() {
@@ -2405,7 +2405,7 @@ async function tickPlaylist() {
       const rem = s.remaining_s != null ? (s.remaining_s + 's') : '';
       const paused = s.state === 'paused';
       live.innerHTML =
-        `<div class="row"><span><b>${s.name || 'Ronda'}</b> &nbsp; ${idx}/${s.total || '?'} &nbsp; ${s.current || ''}</span>` +
+        `<div class="row"><span><b>${s.name || 'Round'}</b> &nbsp; ${idx}/${s.total || '?'} &nbsp; ${s.current || ''}</span>` +
         `<span class="${paused ? 'warn' : 'ok'}">${s.state || ''} ${rem}</span></div>` +
         `<div style="margin-top:8px">
            <button onclick="plControl('pause')">${t('pl_pause')}</button>
@@ -2472,7 +2472,7 @@ async function refreshUserCenter() {
       <div class="row"><span>${t('cc_notes')}</span><input id="uc-notes" value="${esc(u.notes)}" style="width:260px"></div>
       <div class="row"><span>${t('cc_resting_delay')}</span>
         <select id="uc-resting-delay">${
-          [[0,'0 (instantáneo)'],[60000,'1 min'],[120000,'2 min'],[180000,'3 min'],[600000,'10 min']]
+          [[0,'0 (instant)'],[60000,'1 min'],[120000,'2 min'],[180000,'3 min'],[600000,'10 min']]
             .map(([v,l]) => `<option value="${v}" ${(u.resting_alert_delay_ms||0)===v?'selected':''}>${l}</option>`).join('')
         }</select></div>
       <div class="row"><span>${t('cc_voice_gender')}</span>
@@ -2510,7 +2510,7 @@ async function userSave() {
     audio_guide_enabled: document.getElementById('uc-audio-guide').checked,
     lang: currentLang });
   const d = await (await fetch('/api/user/save', {method:'POST', body})).json();
-  document.getElementById('uc-msg').textContent = (d.ok?'guardado ':'FALLO ')+d.message;
+  document.getElementById('uc-msg').textContent = (d.ok?'saved ':'FAILED ')+d.message;
 }
 (function() {
   let initial = 'en';
@@ -2706,9 +2706,9 @@ class Handler(BaseHTTPRequestHandler):
                 save_users(d)
                 set_brightness_gain(d["users"][name].get("brightness", 1.0))
                 set_resting_alert_delay_ms(d["users"][name].get("resting_alert_delay_ms", 0))
-                self._json_post(True, f"usuario activo: {name}")
+                self._json_post(True, f"active user: {name}")
             else:
-                self._json_post(False, f"no existe el usuario '{name}'")
+                self._json_post(False, f"user '{name}' does not exist")
         elif self.path.startswith("/api/user/save"):
             length = int(self.headers.get("Content-Length", 0))
             raw = self.rfile.read(length) if length else b"{}"
@@ -2732,7 +2732,7 @@ class Handler(BaseHTTPRequestHandler):
                 # otherwise Save would silently do nothing until the next user/select.
                 if d["active"] == name:
                     set_resting_alert_delay_ms(u.get("resting_alert_delay_ms", 0))
-                self._json_post(True, f"usuario '{name}' guardado")
+                self._json_post(True, f"user '{name}' saved")
             except Exception as e:
                 self._json_post(False, str(e))
         elif self.path.startswith("/api/action/"):

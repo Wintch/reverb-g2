@@ -20,8 +20,8 @@
     Steam's own config files. The only interactive part is the reseat wait,
     which mirrors the Linux script (Enter = re-check, S = skip).
 
-    Code and comments in English (repo rule); the on-screen text is Spanish, the
-    same as scripts/power-on.py, until vr_i18n.py grows an English preset.
+    Code, comments and on-screen text are all English (repo rule), like
+    scripts/power-on.py.
 
 .PARAMETER Quick
     Skip the interactive reseat wait -- report and exit. For scripted captures.
@@ -54,18 +54,18 @@ $ErrorActionPreference = "Continue"
 # whole diagnosis. WMR/Oasis needs the SuperSpeed group for tracking; without
 # it SteamVR reports "headset not detected".
 $USB2_BRANCH = @(
-    @{ Id = "VID_04B4&PID_6506"; Name = "Hub USB2 (cara 480M del hub del casco)" },
-    @{ Id = "VID_03F0&PID_0580"; Name = "Companion (control del panel/HID)" },
-    @{ Id = "VID_0BDA&PID_4C15"; Name = "Audio (auriculares del casco)" }
+    @{ Id = "VID_04B4&PID_6506"; Name = "USB2 hub (the 480M face of the headset hub)" },
+    @{ Id = "VID_03F0&PID_0580"; Name = "Companion (panel control/HID)" },
+    @{ Id = "VID_0BDA&PID_4C15"; Name = "Audio (headset earphones)" }
 )
 $SS_BRANCH = @(
-    @{ Id = "VID_04B4&PID_6504"; Name = "Hub SuperSpeed (cara 5 Gbps)" },
-    @{ Id = "VID_045E&PID_0659"; Name = "HoloLens Sensors (las 4 camaras)" }
+    @{ Id = "VID_04B4&PID_6504"; Name = "SuperSpeed hub (the 5 Gbps face)" },
+    @{ Id = "VID_045E&PID_0659"; Name = "HoloLens Sensors (the 4 cameras)" }
 )
 
 function Say-Step($n, $title) {
     Write-Host ""
-    Write-Host "> Paso $n/5 -- $title" -ForegroundColor Green
+    Write-Host "> Step $n/5 -- $title" -ForegroundColor Green
 }
 function Say-Ok($m)   { Write-Host "  [OK] $m"   -ForegroundColor Green }
 function Say-Bad($m)  { Write-Host "  [--] $m"   -ForegroundColor Red }
@@ -98,12 +98,12 @@ function Test-Branch($branch, [switch]$Detail) {
         $d = Get-G2Device $dev.Id
         if ($null -eq $d) {
             $missing += $dev
-            if ($Detail) { Say-Bad ("{0} -- AUSENTE ({1})" -f $dev.Name, $dev.Id) }
+            if ($Detail) { Say-Bad ("{0} -- MISSING ({1})" -f $dev.Name, $dev.Id) }
         } else {
             $status = if ($d.Status) { $d.Status } else { "OK" }
             if ($status -ne "OK") {
                 $missing += $dev
-                if ($Detail) { Say-Bad ("{0} -- presente pero en error: {1}" -f $dev.Name, $status) }
+                if ($Detail) { Say-Bad ("{0} -- present but in error: {1}" -f $dev.Name, $status) }
             } elseif ($Detail) {
                 Say-Ok ("{0}" -f $dev.Name)
             }
@@ -120,15 +120,15 @@ function Test-Branch($branch, [switch]$Detail) {
 function Wait-Reseat($recheck) {
     if ($Quick) { return "giveup" }
     Write-Host ""
-    Say-Warn "Esperando que reconectes -- [Enter] re-chequear ya | [S] seguir sin VR"
+    Say-Warn "Waiting for you to reconnect -- [Enter] recheck now | [S] continue without VR"
     $deadline = (Get-Date).AddSeconds(90)
     $answered = $false
     $lastPrint = Get-Date
     while ($true) {
         if ((Get-Date) -gt $deadline) {
             Write-Host ""
-            if ($answered) { Say-Warn "Se acabo el tiempo de espera (300s desde la ultima tecla)." }
-            else { Say-Warn "Se acabo el tiempo de espera (nadie apreto nada)." }
+            if ($answered) { Say-Warn "Wait timed out (300s since the last key)." }
+            else { Say-Warn "Wait timed out (nobody pressed anything)." }
             return "giveup"
         }
         while ([Console]::KeyAvailable) {
@@ -153,112 +153,112 @@ function Wait-Reseat($recheck) {
 }
 
 function Show-ReseatLadder($usb2Ok, $ssOk) {
-    Say-Warn "Hay que reconectar. En orden de probabilidad (docs/22, T171):"
+    Say-Warn "You need to reconnect. Most likely fix first (docs/22, T171):"
     if (-not $usb2Ok -and -not $ssOk) {
-        Say-Dim "  > Saca el USB del casco de la PC y metelo DERECHO y A FONDO, sosteniendo"
-        Say-Dim "    el peso del cable con la otra mano (cuelga y hace palanca)."
-        Say-Dim "  > Usa un puerto USB3 TRASERO de la placa madre (los del CPU). Los del"
-        Say-Dim "    frente y los del chipset no sirven para este casco."
+        Say-Dim "  > Unplug the headset USB from the PC and plug it back in STRAIGHT and ALL THE WAY,"
+        Say-Dim "    holding the cable weight with your other hand (it hangs and levers the plug)."
+        Say-Dim "  > Use a REAR USB3 port on the motherboard (the CPU-fed ones). The front"
+        Say-Dim "    ones and the chipset ones do not work for this headset."
     } elseif (-not $ssOk) {
-        Say-Dim "  > Falta la rama SuperSpeed (las camaras). SIN cambiar de puerto: saca el"
-        Say-Dim "    plug USB-C del adaptador, GIRALO 180 grados y metelo de nuevo, firme."
+        Say-Dim "  > The SuperSpeed branch is missing (the cameras). WITHOUT changing port: pull the"
+        Say-Dim "    USB-C plug out of the adapter, ROTATE it 180 degrees and reinsert it firmly."
     } else {
-        Say-Dim "  > Falta la rama USB2 (companion/audio). SIN cambiar de puerto: saca el"
-        Say-Dim "    plug USB-C del adaptador, GIRALO 180 grados y metelo de nuevo, firme."
+        Say-Dim "  > The USB2 branch is missing (companion/audio). WITHOUT changing port: pull the"
+        Say-Dim "    USB-C plug out of the adapter, ROTATE it 180 degrees and reinsert it firmly."
     }
-    Say-Dim "  > Sigue igual? Proba OTRO puerto USB3 trasero (cada puerto asienta distinto)."
-    Say-Dim "  > Nada? Reseat de la ficha del visor (detras del gasket magnetico) y despues"
-    Say-Dim "    TODO junto: USB + DP + brick de 18.5V afuera ~1 min, y reconectar."
+    Say-Dim "  > Still the same? Try ANOTHER rear USB3 port (every port seats differently)."
+    Say-Dim "  > Nothing? Reseat the connector at the visor end (behind the magnetic gasket), then"
+    Say-Dim "    everything together: USB + DP + 18.5V brick out for ~1 min, then reconnect."
 }
 
-Write-Host "=== Encendiendo el HP Reverb G2 (Windows) ===" -ForegroundColor Green
-Say-Dim "Esto corre en tu monitor normal. No hace falta administrador y no toca nada del sistema."
+Write-Host "=== Powering on the HP Reverb G2 (Windows) ===" -ForegroundColor Green
+Say-Dim "This runs on your normal monitor. It does not need administrator and does not touch anything on the system."
 
 $problems = @()
 
 # ---- 1/5: USB census ------------------------------------------------------
-Say-Step 1 "Esta todo conectado?"
+Say-Step 1 "Is everything connected?"
 $missUsb2 = Test-Branch $USB2_BRANCH -Verbose
 $missSs   = Test-Branch $SS_BRANCH -Verbose
 $usb2Ok = $missUsb2.Count -eq 0
 $ssOk   = $missSs.Count -eq 0
 
 if ($usb2Ok -and $ssOk) {
-    Say-Ok "5/5 piezas del casco responden (hub USB2, companion, audio, hub SS, camaras)."
+    Say-Ok "5/5 headset parts respond (USB2 hub, companion, audio, SS hub, cameras)."
 } else {
-    Say-Bad ("Rama USB2 {0} -- rama SuperSpeed {1}." -f
-            $(if ($usb2Ok) { "OK" } else { "AUSENTE" }),
-            $(if ($ssOk) { "OK" } else { "AUSENTE" }))
-    Say-Dim "Este es el cuadro que produce 'Headset not detected (108)': para WMR/Oasis el"
-    Say-Dim "casco no existe hasta que enumeran las DOS ramas -- la SuperSpeed sobre todo."
+    Say-Bad ("USB2 branch {0} -- SuperSpeed branch {1}." -f
+            $(if ($usb2Ok) { "OK" } else { "MISSING" }),
+            $(if ($ssOk) { "OK" } else { "MISSING" }))
+    Say-Dim "This is the picture that produces 'Headset not detected (108)': for WMR/Oasis the"
+    Say-Dim "headset does not exist until BOTH branches enumerate -- the SuperSpeed one above all."
     Show-ReseatLadder $usb2Ok $ssOk
     $outcome = Wait-Reseat {
         ((Test-Branch $USB2_BRANCH).Count -eq 0) -and ((Test-Branch $SS_BRANCH).Count -eq 0)
     }
     if ($outcome -eq "fixed") {
-        Say-Ok "5/5! Reconexion correcta, seguimos."
+        Say-Ok "5/5! Reconnected correctly, moving on."
         $usb2Ok = $true; $ssOk = $true
     } elseif ($outcome -eq "skip") {
-        Say-Warn "Saliendo a pedido tuyo."
+        Say-Warn "Exiting at your request."
         exit 1
     } else {
-        $problems += "El casco no enumera completo (rama " +
-                     $(if ($ssOk) { "USB2" } else { "SuperSpeed" }) + " ausente)."
+        $problems += "The headset does not enumerate completely (" +
+                     $(if ($ssOk) { "USB2" } else { "SuperSpeed" }) + " branch missing)."
     }
 }
 
 # ---- 2/5: which port ------------------------------------------------------
-Say-Step 2 "Estas en un puerto que sirve?"
+Say-Step 2 "Are you on a port that works?"
 $hub = Get-G2Device "VID_04B4&PID_6504"
 if (-not $hub) { $hub = Get-G2Device "VID_04B4&PID_6506" }
 if ($hub) {
     try {
         $loc = (Get-PnpDeviceProperty -InstanceId $hub.InstanceId `
                 -KeyName "DEVPKEY_Device_LocationInfo" -ErrorAction Stop).Data
-        Say-Dim "Ubicacion segun Windows: $loc"
+        Say-Dim "Location according to Windows: $loc"
     } catch { }
     if ($ssOk) {
-        Say-Ok "El hub SuperSpeed enumero: estas en un puerto USB 3.x real."
+        Say-Ok "The SuperSpeed hub enumerated: you are on a real USB 3.x port."
     } else {
-        Say-Bad "Solo aparece la cara USB2 del hub: o el puerto no es USB3, o el plug no asento."
-        Say-Dim "Oasis exige USB 3.0 para el tracking de los controles (Troubleshooting Guide)."
-        $problems += "El casco no esta en un puerto USB 3.x utilizable."
+        Say-Bad "Only the USB2 face of the hub shows up: either the port is not USB3, or the plug did not seat."
+        Say-Dim "Oasis requires USB 3.0 for controller tracking (Troubleshooting Guide)."
+        $problems += "The headset is not on a usable USB 3.x port."
     }
 } else {
-    Say-Warn "No hay ningun hub del casco enumerado -- nada que ubicar todavia."
+    Say-Warn "No headset hub is enumerated -- nothing to locate yet."
 }
 
 # ---- 3/5: controllers over Bluetooth --------------------------------------
-Say-Step 3 "Los controles estan vinculados (a la radio del casco)?"
-Say-Dim "En el G2 los controles NO van por el cable: son Bluetooth contra la radio del casco"
-Say-Dim "o la de la placa. Por eso el unico momento en que se abre la app de Oasis es para"
-Say-Dim "aparearlos/desbloquearlos -- despues no hace falta lanzarla nunca mas."
+Say-Step 3 "Are the controllers bonded (to the headset radio)?"
+Say-Dim "On the G2 the controllers do NOT go over the cable: they are Bluetooth against the headset radio"
+Say-Dim "or the motherboard one. That is why the only time the Oasis app gets opened is to"
+Say-Dim "pair/unlock them -- after that it never needs to be launched again."
 $bt = @()
 try {
     $bt = Get-PnpDevice -PresentOnly -ErrorAction Stop |
           Where-Object { $_.FriendlyName -match "Motion controller|Motion Controller" }
 } catch { }
 if ($bt.Count -ge 2) {
-    Say-Ok ("{0} controles apareados y presentes." -f $bt.Count)
+    Say-Ok ("{0} controllers paired and present." -f $bt.Count)
 } elseif ($bt.Count -eq 1) {
-    Say-Warn "Solo 1 control vinculado. Empareja el otro con el flujo de UNLOCK de Oasis"
-    Say-Dim "(pregunta por control, izquierdo primero): boton del compartimiento de pilas"
-    Say-Dim "apretado hasta el pulso lento del LED. El bond es contra la radio del CASCO."
+    Say-Warn "Only 1 controller bonded. Pair the other one with Oasis' UNLOCK flow"
+    Say-Dim "(it asks per controller, left first): battery-compartment button"
+    Say-Dim "held until the slow LED pulse. The bond is against the HEADSET radio."
 } else {
-    Say-Warn "No veo controles vinculados (no bloquea el casco, pero no vas a tener manos)."
-    Say-Dim "Vincula con el flujo de unlock de Oasis (izquierdo primero, boton de pilas hasta"
-    Say-Dim "el pulso lento). El bond es contra la radio del casco, no contra Windows."
+    Say-Warn "No bonded controllers seen (does not block the headset, but you will have no hands)."
+    Say-Dim "Bond with Oasis' unlock flow (left first, battery button held until"
+    Say-Dim "the slow pulse). The bond is against the headset radio, not against Windows."
 }
 
 # ---- 4/5: software state --------------------------------------------------
-Say-Step 4 "El software esta como Oasis lo necesita?"
+Say-Step 4 "Is the software the way Oasis needs it?"
 
 $build = [System.Environment]::OSVersion.Version.Build
 if ($build -ge 26100) {
-    Say-Ok "Windows 11 24H2 o mas nuevo (build $build) -- la configuracion soportada por Oasis."
+    Say-Ok "Windows 11 24H2 or newer (build $build) -- the configuration Oasis supports."
 } else {
-    Say-Warn "Build $build: Oasis pide 24H2 (build 26100+). En 23H2 hay que deshabilitar a mano"
-    Say-Dim "el dispositivo 'Mixed Reality' en el Administrador de dispositivos."
+    Say-Warn "Build ${build}: Oasis asks for 24H2 (build 26100+). On 23H2 you have to disable by hand"
+    Say-Dim "the 'Mixed Reality' device in Device Manager."
 }
 
 $steam = $null
@@ -266,7 +266,7 @@ foreach ($p in @("${env:ProgramFiles(x86)}\Steam", "$env:ProgramFiles\Steam", "C
     if (Test-Path (Join-Path $p "steamapps")) { $steam = $p; break }
 }
 if ($steam) {
-    Say-Ok "Steam en $steam"
+    Say-Ok "Steam at $steam"
     # Oasis is Steam app 3824490 -- installed means the appmanifest exists in
     # SOME library, not necessarily the default one.
     $libs = @($steam)
@@ -282,13 +282,13 @@ if ($steam) {
         if (Test-Path (Join-Path $l "steamapps\appmanifest_3824490.acf")) { $oasisFound = $true }
         if (Test-Path (Join-Path $l "steamapps\appmanifest_250820.acf"))   { $steamvrFound = $true }
     }
-    if ($steamvrFound) { Say-Ok "SteamVR instalado." }
-    else { Say-Bad "SteamVR no aparece instalado."; $problems += "Falta SteamVR." }
-    if ($oasisFound) { Say-Ok "Oasis Driver instalado (app 3824490)." }
-    else { Say-Bad "Oasis Driver NO instalado -- sin el, en 24H2 no hay runtime WMR de ningun tipo."
-           $problems += "Falta el Oasis Driver." }
+    if ($steamvrFound) { Say-Ok "SteamVR installed." }
+    else { Say-Bad "SteamVR does not appear installed."; $problems += "SteamVR is missing." }
+    if ($oasisFound) { Say-Ok "Oasis Driver installed (app 3824490)." }
+    else { Say-Bad "Oasis Driver NOT installed -- without it, 24H2 has no WMR runtime of any kind."
+           $problems += "The Oasis Driver is missing." }
 } else {
-    Say-Warn "No encontre la instalacion de Steam en las rutas tipicas."
+    Say-Warn "Could not find the Steam installation in the usual paths."
 }
 
 # openvrpaths.vrpath is what SteamVR actually reads to find external drivers.
@@ -298,24 +298,24 @@ $vrpath = Join-Path $env:LOCALAPPDATA "openvr\openvrpaths.vrpath"
 if (Test-Path $vrpath) {
     $txt = Get-Content $vrpath -Raw
     if ($txt -match "(?i)oasis") {
-        Say-Ok "El driver de Oasis esta registrado en openvrpaths.vrpath."
+        Say-Ok "The Oasis driver is registered in openvrpaths.vrpath."
     } else {
-        Say-Bad "openvrpaths.vrpath NO menciona Oasis: SteamVR no va a cargar el driver."
-        Say-Dim "Fix: cerra SteamVR y volve a correr el unlock desde la app de Oasis."
-        $problems += "El driver de Oasis no esta registrado en SteamVR."
+        Say-Bad "openvrpaths.vrpath does NOT mention Oasis: SteamVR will not load the driver."
+        Say-Dim "Fix: close SteamVR and run the unlock again from the Oasis app."
+        $problems += "The Oasis driver is not registered in SteamVR."
     }
     # The legacy WMR driver declares hmd_presence "*.*" -- it claims ANY headset --
     # while Oasis declares exactly "045E.0659" (the HoloLens Sensors device, i.e.
     # the SuperSpeed branch). Two drivers claiming the same headset, one of them
     # backed by a runtime that no longer exists on 24H2, is a prime 422 shape.
     if ($txt -match "(?i)MixedRealityVRDriver") {
-        Say-Warn "Tambien esta registrado el driver viejo de WMR (MixedRealityVRDriver, 'holographic')."
-        Say-Dim "En 24H2 ese driver ya no tiene runtime detras, y su manifiesto reclama CUALQUIER"
-        Say-Dim "casco (hmd_presence '*.*'), mientras Oasis reclama solo 045E.0659. Deshabilitalo:"
-        Say-Dim "SteamVR > Configuracion > Inicio/Apagado > Administrar complementos > 'holographic' OFF."
+        Say-Warn "The old WMR driver is also registered (MixedRealityVRDriver, 'holographic')."
+        Say-Dim "On 24H2 that driver no longer has a runtime behind it, and its manifest claims ANY"
+        Say-Dim "headset (hmd_presence '*.*'), while Oasis claims only 045E.0659. Disable it:"
+        Say-Dim "SteamVR > Settings > Startup/Shutdown > Manage Add-ons > 'holographic' OFF."
     }
 } else {
-    Say-Warn "No existe $vrpath (SteamVR nunca arranco en esta cuenta todavia)."
+    Say-Warn "$vrpath does not exist (SteamVR has never started on this account yet)."
 }
 
 # Safe mode: after a crash SteamVR disables third-party add-ons and then reports
@@ -328,27 +328,27 @@ if ($steam) {
         try {
             $s = Get-Content $vrsettings -Raw | ConvertFrom-Json
             if ($s.LastKnown -and $s.LastKnown.ActualHMDDriver) {
-                Say-Ok ("Ultimo casco visto por SteamVR: {0} via driver '{1}'" -f
+                Say-Ok ("Last headset seen by SteamVR: {0} via driver '{1}'" -f
                         $s.LastKnown.HMDModel, $s.LastKnown.ActualHMDDriver)
                 if ($s.LastKnown.ActualHMDDriver -eq "oasis") {
-                    Say-Dim "O sea: el unlock ya se hizo en esta maquina y Oasis anduvo. Si ahora da 108,"
-                    Say-Dim "mira el paso 1 antes que cualquier cosa de software."
+                    Say-Dim "That is: the unlock was already done on this machine and Oasis worked. If it now gives 108,"
+                    Say-Dim "look at step 1 before anything software-related."
                 }
             }
             if ($s.driver_oasis -and $s.driver_oasis.PSObject.Properties.Name -contains "enable" -and
                 -not $s.driver_oasis.enable) {
-                Say-Bad "El add-on 'oasis' esta DESHABILITADO en steamvr.vrsettings -- causa tipica de 422."
-                Say-Dim "SteamVR > Configuracion > Inicio/Apagado > Administrar complementos: 'oasis' en ON."
-                $problems += "El add-on de Oasis esta deshabilitado en SteamVR."
+                Say-Bad "The 'oasis' add-on is DISABLED in steamvr.vrsettings -- a typical cause of 422."
+                Say-Dim "SteamVR > Settings > Startup/Shutdown > Manage Add-ons: 'oasis' ON."
+                $problems += "The Oasis add-on is disabled in SteamVR."
             } else {
-                Say-Ok "El add-on de Oasis no figura deshabilitado."
+                Say-Ok "The Oasis add-on is not listed as disabled."
             }
             if ($s.driver_holographic -and $s.driver_holographic.PSObject.Properties.Name -contains "enable" -and
                 -not $s.driver_holographic.enable) {
-                Say-Ok "El add-on viejo 'holographic' (WMR) figura deshabilitado, como corresponde en 24H2."
+                Say-Ok "The old 'holographic' (WMR) add-on is listed as disabled, as it should be on 24H2."
             }
         } catch {
-            Say-Warn "No pude leer steamvr.vrsettings como JSON ($($_.Exception.Message))."
+            Say-Warn "Could not read steamvr.vrsettings as JSON ($($_.Exception.Message))."
         }
     }
 }
@@ -359,10 +359,10 @@ if ($steam) {
 $mrp = $null
 try { $mrp = Get-AppxPackage -Name "Microsoft.MixedReality.Portal" -ErrorAction Stop } catch { }
 if ($mrp) {
-    Say-Warn "Mixed Reality Portal sigue instalado: puede tomar el dispositivo USB y hacer"
-    Say-Dim "fallar el unlock ('Unexpected error while opening MR USB device: 6')."
+    Say-Warn "Mixed Reality Portal is still installed: it can grab the USB device and make"
+    Say-Dim "the unlock fail ('Unexpected error while opening MR USB device: 6')."
 } else {
-    Say-Ok "Sin Mixed Reality Portal instalado (lo esperable en 24H2)."
+    Say-Ok "Mixed Reality Portal not installed (expected on 24H2)."
 }
 
 # ---- Bonus: Windows tuning for measurements -------------------------------
@@ -394,21 +394,21 @@ function Get-PowerSetting($sub, $setting) {
     catch { return $null }
 }
 function Show-Setting($label, $value, $wanted) {
-    if ($null -eq $value) { Say-Dim "$label : (sin personalizar, valor por defecto del plan)" }
-    elseif ($value -eq $wanted) { Say-Ok "$label : $value (lo que queremos)" }
-    else { Say-Warn "$label : $value (queremos $wanted)" }
+    if ($null -eq $value) { Say-Dim "$label : (not customized, the plan default)" }
+    elseif ($value -eq $wanted) { Say-Ok "$label : $value (what we want)" }
+    else { Say-Warn "$label : $value (we want $wanted)" }
 }
 
 Write-Host ""
-Write-Host "> Ajustes de Windows que afectan las mediciones" -ForegroundColor Green
+Write-Host "> Windows settings that affect measurements" -ForegroundColor Green
 $isAdmin = ([Security.Principal.WindowsPrincipal] `
             [Security.Principal.WindowsIdentity]::GetCurrent()
            ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
-Show-Setting "USB selective suspend (0 = apagado)" (Get-PowerSetting $GUID_SUB_USB $GUID_USB_SUSP) 0
-Show-Setting "PCI Express ASPM (0 = apagado)"      (Get-PowerSetting $GUID_SUB_PCI $GUID_ASPM) 0
-Show-Setting "CPU minimo % (100 = sin bajar)"      (Get-PowerSetting $GUID_SUB_PROC $GUID_PROC_MIN) 100
-Show-Setting "CPU maximo %"                        (Get-PowerSetting $GUID_SUB_PROC $GUID_PROC_MAX) 100
+Show-Setting "USB selective suspend (0 = off)" (Get-PowerSetting $GUID_SUB_USB $GUID_USB_SUSP) 0
+Show-Setting "PCI Express ASPM (0 = off)"         (Get-PowerSetting $GUID_SUB_PCI $GUID_ASPM) 0
+Show-Setting "CPU minimum % (100 = never lower)"  (Get-PowerSetting $GUID_SUB_PROC $GUID_PROC_MIN) 100
+Show-Setting "CPU maximum %"                      (Get-PowerSetting $GUID_SUB_PROC $GUID_PROC_MAX) 100
 
 $hiberboot = $null
 try {
@@ -416,11 +416,11 @@ try {
                   -Name HiberbootEnabled -ErrorAction Stop).HiberbootEnabled
 } catch { }
 if ($hiberboot -eq 1) {
-    Say-Warn "Inicio rapido (fast startup) ENCENDIDO."
-    Say-Dim "Apagarlo importa dos veces: Windows no arranca desde un estado congelado (mediciones"
-    Say-Dim "reproducibles) y deja el NTFS limpio, que es lo que permite escribir en C: desde Linux."
+    Say-Warn "Fast startup is ON."
+    Say-Dim "Turning it off matters twice over: Windows does not boot from a frozen state (reproducible"
+    Say-Dim "measurements) and it leaves NTFS clean, which is what allows writing to C: from Linux."
 } elseif ($null -ne $hiberboot) {
-    Say-Ok "Inicio rapido apagado."
+    Say-Ok "Fast startup is off."
 }
 
 # Per-device USB power management -- the Device Manager checkbox "let the
@@ -438,16 +438,16 @@ try {
     }
 } catch { }
 if ($usbPm.Count -gt 0) {
-    Say-Warn ("{0} dispositivos USB con ahorro de energia propio activo (hubs incluidos)." -f $usbPm.Count)
+    Say-Warn ("{0} USB devices have their own power saving active (hubs included)." -f $usbPm.Count)
 } else {
-    Say-Ok "Ningun dispositivo USB con ahorro de energia propio activo (o no se pudo leer)."
+    Say-Ok "No USB device has its own power saving active (or it could not be read)."
 }
 
 if ($Tune) {
     if (-not $isAdmin) {
-        Say-Bad "-Tune necesita PowerShell COMO ADMINISTRADOR. No cambie nada."
+        Say-Bad "-Tune needs PowerShell AS ADMINISTRATOR. Nothing was changed."
     } else {
-        Say-Warn "Aplicando ajustes (esto cambia configuracion del sistema)..."
+        Say-Warn "Applying settings (this changes system configuration)..."
         & powercfg /setactive SCHEME_MIN 2>$null            # High performance
         & powercfg /setacvalueindex SCHEME_CURRENT $GUID_SUB_USB  $GUID_USB_SUSP 0
         & powercfg /setacvalueindex SCHEME_CURRENT $GUID_SUB_PCI  $GUID_ASPM     0
@@ -457,9 +457,9 @@ if ($Tune) {
         & powercfg /change monitor-timeout-ac 0
         & powercfg /change disk-timeout-ac 0
         & powercfg /setactive SCHEME_CURRENT
-        Say-Ok "Plan de energia en alto rendimiento, sin suspension USB/ASPM, CPU al 100%."
+        Say-Ok "Power plan set to high performance, no USB suspend/ASPM, CPU at 100%."
         & powercfg /h off 2>$null
-        Say-Ok "Hibernacion e inicio rapido apagados (y sin hiberfil.sys)."
+        Say-Ok "Hibernation and fast startup off (and no hiberfil.sys)."
         $n = 0
         foreach ($d in (Get-PnpDevice -Class USB -PresentOnly)) {
             $k = "HKLM:\SYSTEM\CurrentControlSet\Enum\$($d.InstanceId)\Device Parameters"
@@ -475,44 +475,44 @@ if ($Tune) {
                 } catch { }
             }
         }
-        Say-Ok "$n dispositivos USB con ahorro propio desactivado (efectivo tras reiniciar)."
+        Say-Ok "$n USB devices had their own power saving disabled (effective after a reboot)."
         try {
             Set-ItemProperty "HKCU:\System\GameConfigStore" -Name GameDVR_Enabled -Value 0 -ErrorAction Stop
-            Say-Ok "Game DVR apagado (dejaba de grabar en segundo plano durante las mediciones)."
+            Say-Ok "Game DVR turned off (it used to record in the background during measurements)."
         } catch { }
         Write-Host ""
-        Say-Dim "Para deshacer: powercfg /setactive SCHEME_BALANCED ; powercfg /h on ; y poner en 1"
-        Say-Dim "los EnhancedPowerManagementEnabled/SelectiveSuspendEnabled que se pusieron en 0."
+        Say-Dim "To undo: powercfg /setactive SCHEME_BALANCED ; powercfg /h on ; and set back to 1"
+        Say-Dim "the EnhancedPowerManagementEnabled/SelectiveSuspendEnabled values that were set to 0."
     }
 } else {
-    Say-Dim "Para aplicar todo esto: correr este script COMO ADMINISTRADOR con -Tune."
+    Say-Dim "To apply all of this: run this script AS ADMINISTRATOR with -Tune."
 }
 
 # ---- 5/5: verdict + error triage -----------------------------------------
-Say-Step 5 "Veredicto"
+Say-Step 5 "Verdict"
 if ($problems.Count -eq 0) {
-    Write-Host "  LISTO. " -ForegroundColor Green -NoNewline
-    Write-Host "Arranca SteamVR: el casco tiene que aparecer solo (no hace falta abrir Oasis)."
-    Say-Dim "Si es la primera vez en esta PC, o cambiaste GPU/reinstalaste Windows, hay que"
-    Say-Dim "correr una vez el unlock desde la app de Oasis -- ver docs/31."
+    Write-Host "  READY. " -ForegroundColor Green -NoNewline
+    Write-Host "Start SteamVR: the headset should show up on its own (no need to open Oasis)."
+    Say-Dim "If this is the first time on this PC, or you changed GPU / reinstalled Windows, you must"
+    Say-Dim "run the unlock once from the Oasis app -- see docs/31."
 } else {
-    Write-Host "  FALTA ALGO:" -ForegroundColor Yellow
+    Write-Host "  SOMETHING IS MISSING:" -ForegroundColor Yellow
     foreach ($p in $problems) { Say-Dim "  - $p" }
 }
 
 Write-Host ""
-Write-Host "--- Que significan los errores que ya viste ---" -ForegroundColor Cyan
-Say-Dim "108 'Headset not detected': SteamVR no tiene NINGUN casco. En este equipo eso"
-Say-Dim "     coincidio siempre con la enumeracion incompleta del paso 1 (tipicamente la"
-Say-Dim "     rama SuperSpeed sin entrar). Es un problema de cable/puerto, no de software:"
-Say-Dim "     arregla el paso 1 y desaparece. Segundo sospechoso, si el paso 1 da 5/5:"
-Say-Dim "     el driver de Oasis sin registrar en openvrpaths.vrpath (paso 4)."
-Say-Dim "422 'SteamVR encountered an unexpected problem': SteamVR SI arranco y el driver"
-Say-Dim "     fallo despues. Por eso es intermitente y por eso no lo arregla mover el cable."
-Say-Dim "     Orden de causas: add-on de Oasis deshabilitado por modo seguro tras un crash,"
-Say-Dim "     unlock que hay que rehacer (cambio de GPU / reinstalacion), SteamVR beta, y"
-Say-Dim "     datos de entorno corruptos (borrar WindowsHolographicDevices y rehacer Room Setup)."
-Say-Dim "498 'Failed to lease display': no es de Windows -- es el intento de SteamVR nativo"
-Say-Dim "     en Linux (docs/pruebas.jsonl T170). Si aparece aca, no lo mezcles con lo de arriba."
+Write-Host "--- What the errors you have already seen mean ---" -ForegroundColor Cyan
+Say-Dim "108 'Headset not detected': SteamVR has NO headset at all. On this machine that"
+Say-Dim "     always coincided with the incomplete enumeration in step 1 (typically the"
+Say-Dim "     SuperSpeed branch not coming up). It is a cable/port problem, not software:"
+Say-Dim "     fix step 1 and it goes away. Second suspect, if step 1 gives 5/5:"
+Say-Dim "     the Oasis driver not registered in openvrpaths.vrpath (step 4)."
+Say-Dim "422 'SteamVR encountered an unexpected problem': SteamVR DID start and the driver"
+Say-Dim "     failed afterwards. That is why it is intermittent and why moving the cable does not fix it."
+Say-Dim "     Causes in order: Oasis add-on disabled by safe mode after a crash,"
+Say-Dim "     unlock that must be redone (GPU change / reinstall), SteamVR beta, and"
+Say-Dim "     corrupt environment data (delete WindowsHolographicDevices and redo Room Setup)."
+Say-Dim "498 'Failed to lease display': not a Windows error -- it is the native SteamVR attempt"
+Say-Dim "     on Linux (docs/pruebas.jsonl T170). If it shows up here, do not mix it up with the above."
 Write-Host ""
-Say-Dim "Manual completo: docs/31-windows-bringup-and-errors.md"
+Say-Dim "Full manual: docs/31-windows-bringup-and-errors.md"

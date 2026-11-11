@@ -4,9 +4,8 @@ full performance the moment a VR session or a game is actually running, automati
 
 Why this exists (2026-08-23, T246): scripts/vr-power-setup.sh already knew how to pin the
 box to performance for a session (--apply) -- what was missing was the OTHER direction, and
-doing it without a human remembering to run anything. The user's framing: "arrancar light,
-prender la maquina full solo cuando el juego realmente esta andando" (start light, only go
-full when the game is really running). This is deliberately reactive/poll-based rather than
+doing it without a human remembering to run anything. The design goal: start light, only go
+full when the game is really running. This is deliberately reactive/poll-based rather than
 hooked into every possible launch path (vr-launcher.py, jack-in-wayland.sh, a remote
 run-queue, or a game started by hand from the Steam UI) -- there is no single choke point
 all of those share, but there IS a single answer to "is anything actually running right

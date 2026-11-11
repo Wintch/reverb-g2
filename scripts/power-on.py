@@ -5,9 +5,13 @@ walks through everything learned across the T110-T126 diagnostic marathon
 headset's own display -- this runs before anything is on your face). Ends
 in one of three states:
 
-  LISTO            -> stack came up clean, ready for jack-in-wayland.sh
-  TE NECESITO      -> a specific, physical, free fix (reconnect X)
-  HAY QUE COMPRAR  -> a specific part + part number (docs/26)
+  READY            -> stack came up clean, ready for jack-in-wayland.sh
+  I NEED YOU       -> a specific, physical, free fix (reconnect X)
+  PART NEEDED      -> a specific part + part number (docs/26)
+
+(The on-screen verdict banners are English; the verdict tokens written to
+power-on-stats.jsonl keep their original values "LISTO" / "TE NECESITO" /
+"HAY QUE COMPRAR" so existing log history stays comparable.)
 
   ./scripts/power-on.py [mode] [3dof|6dof]   (same args as jack-in-wayland.sh)
 
@@ -34,9 +38,8 @@ of a future Windows-equivalent checklist, per the project's diagnostic-
 toolkit direction (see docs/26). Don't over-abstract that
 now; this file is still Linux-specific end to end.
 
-User-facing strings are deliberately Spanish for now; the English preset via
-vr_i18n.py (the project's i18n path, per the English-in-git rule) is still
-pending, to be done as its own pass rather than piecemeal.
+User-facing strings are English (the English-in-git rule); a Spanish/Russian preset
+via vr_i18n.py (the project's i18n path) is still possible as its own pass.
 """
 import json
 import os
@@ -255,27 +258,27 @@ def reseat_instructions(usb2_ok, ss_ok):
     steps = []
     if not usb2_ok and not ss_ok:
         steps += [
-            "Desenchufá el USB del casco en la PC y volvé a meterlo DERECHO y A FONDO,",
-            "  sosteniendo el peso del cable con la otra mano (cuelga y hace palanca).",
-            "Usá un puerto USB3 TRASERO de la placa (los del CPU) -- los del frente no sirven.",
-            "¿Sigue en 0/5? Un lado especifico de este plug USB-C mata las DOS ramas a la vez",
-            "  (confirmado 3/3 -- docs/pruebas.jsonl T183): sacá el plug del adaptador,",
-            "  GIRALO 180° y metelo de nuevo, firme y a fondo, ANTES de probar otro puerto.",
+            "Unplug the headset USB from the PC and plug it back in STRAIGHT and ALL THE WAY,",
+            "  holding the cable weight with your other hand (it hangs and levers the plug).",
+            "Use a REAR USB3 port on the motherboard (the CPU-fed ones) -- the front ones do not work.",
+            "Still 0/5? One specific side of this USB-C plug kills BOTH branches at once",
+            "  (confirmed 3/3 -- docs/pruebas.jsonl T183): pull the plug out of the adapter,",
+            "  ROTATE it 180° and reinsert it firmly and fully, BEFORE trying another port.",
         ]
     elif not ss_ok:
         steps += [
-            "Falta la rama SuperSpeed (las cámaras). SIN cambiar de puerto: sacá el plug",
-            "  USB-C del adaptador, GIRALO 180° y metelo de nuevo, firme y a fondo.",
+            "The SuperSpeed branch is missing (the cameras). WITHOUT changing port: pull the",
+            "  USB-C plug out of the adapter, ROTATE it 180° and reinsert it firmly and fully.",
         ]
     else:
         steps += [
-            "Falta la rama USB2 (companion/audio). SIN cambiar de puerto: sacá el plug",
-            "  USB-C del adaptador, GIRALO 180° y metelo de nuevo, firme y a fondo.",
+            "The USB2 branch is missing (companion/audio). WITHOUT changing port: pull the",
+            "  USB-C plug out of the adapter, ROTATE it 180° and reinsert it firmly and fully.",
         ]
     steps += [
-        "¿Sigue igual? Probá OTRO puerto A trasero (cada puerto asienta distinto).",
-        "¿Nada? Reseat de la ficha del visor (detrás del gasket magnético) y después",
-        "  TODO junto: USB + DP + brick 18.5 V afuera ~1 min, reconectar (docs/22).",
+        "Still the same? Try ANOTHER rear A port (every port seats differently).",
+        "Nothing? Reseat the connector at the visor end (behind the magnetic gasket), then",
+        "  everything together: USB + DP + 18.5 V brick out for ~1 min, then reconnect (docs/22).",
     ]
     return steps
 
@@ -339,13 +342,13 @@ def wait_for_reseat(recheck, status_line):
                 return "fixed"
         return "giveup"
     print()
-    warn("Esperando que reconectes. Dos teclas, cada una seguida de Enter (no al mismo tiempo):")
-    dim(f"  Enter solo         -> re-chequeo ya mismo")
-    dim(f"  s, después Enter   -> DEJO DE ESPERAR ya y sigo SIN VR, escritorio 2D normal")
-    dim(f"Si no tocás nada: espero {WAIT_NO_HUMAN_S}s y paso igual al escritorio 2D, pero como falla")
-    dim("(para que quede registrado y lo reintentes cuando quieras -- ver docs/22).")
-    dim("Cada Enter reinicia el reloj de espera. Mientras tanto silencio los mensajes del kernel")
-    dim("en esta consola (siguen yendo al journal) para que no te tapen estas instrucciones.")
+    warn("Waiting for you to reconnect. Two keys, each followed by Enter (not at the same time):")
+    dim("  Enter alone        -> recheck right now")
+    dim("  s, then Enter      -> STOP WAITING now and continue WITHOUT VR, normal 2D desktop")
+    dim(f"If you touch nothing: I wait {WAIT_NO_HUMAN_S}s and go on to the 2D desktop anyway, but as a failure")
+    dim("(so it is logged and you can retry whenever you like -- see docs/22).")
+    dim("Every Enter restarts the wait clock. Meanwhile I silence kernel messages")
+    dim("on this console (they still go to the journal) so they do not bury these instructions.")
     console_quiet(True)
     try:
         deadline = time.monotonic() + WAIT_NO_HUMAN_S
@@ -355,9 +358,9 @@ def wait_for_reseat(recheck, status_line):
             if left <= 0:
                 print()
                 if answered:
-                    warn(f"Se acabó el tiempo de espera ({WAIT_HUMAN_S}s desde el último Enter).")
+                    warn(f"Wait timed out ({WAIT_HUMAN_S}s since the last Enter).")
                 else:
-                    warn("Se acabó el tiempo de espera (nadie apretó nada).")
+                    warn("Wait timed out (nobody pressed anything).")
                 return "giveup"
             r, _, _ = select.select([sys.stdin], [], [], min(3.0, left))
             pressed = False
@@ -401,8 +404,8 @@ def main():
     fail = Failure()
     stats = {"step_reached": 0}
 
-    print(f"{C_BOLD}=== Encendiendo el HP Reverb G2 ==={C_RESET}")
-    dim("Esto corre en tu monitor normal, no en el casco -- todavia no hay nada que ponerte.")
+    print(f"{C_BOLD}=== Powering on the HP Reverb G2 ==={C_RESET}")
+    dim("This runs on your normal monitor, not in the headset -- there is nothing to put on yet.")
 
     def give_up():
         """One step failed -- print the verdict now, log it, and stop -- don't start the next step.
@@ -411,20 +414,20 @@ def main():
         dead-ends the console forever, with nobody remote to recover it."""
         log_stats("TE NECESITO" if fail.kind == "physical" else "HAY QUE COMPRAR",
                    stats["step_reached"], {"reason": fail.reason, "part": fail.part})
-        print(f"\n{C_BOLD}=== Veredicto ==={C_RESET}")
+        print(f"\n{C_BOLD}=== Verdict ==={C_RESET}")
         if fail.kind == "physical":
-            print(f"{C_WARN}{C_BOLD}TE NECESITO.{C_RESET} {fail.reason}")
-            print("  Esto no cuesta plata -- es reconectar algo.")
+            print(f"{C_WARN}{C_BOLD}I NEED YOU.{C_RESET} {fail.reason}")
+            print("  This costs no money -- it is a matter of reconnecting something.")
             # Say HOW to retry, not just "retry": after this returns, the machine
             # goes to the graphical login and this console disappears. Without the
             # command there is no visible way back (T172: the operator could not
             # press Enter to retry once the console was gone).
-            print(f"  Para reintentar sin reiniciar: abrí una terminal y corré")
+            print("  To retry without rebooting: open a terminal and run")
             print(f"    {C_BOLD}{HERE / 'power-on.py'}{C_RESET}")
-            print("  (o Ctrl+Alt+F2 para una consola de texto, si el escritorio no llegó a arrancar).")
+            print("  (or Ctrl+Alt+F2 for a text console, if the desktop never came up).")
         else:
-            print(f"{C_BAD}{C_BOLD}HAY QUE COMPRAR.{C_RESET} {fail.reason}")
-            print(f"  Pieza: {fail.part} -- ver docs/26-diagnostic-toolkit-and-buying-guide.md para el link.")
+            print(f"{C_BAD}{C_BOLD}PART NEEDED.{C_RESET} {fail.reason}")
+            print(f"  Part: {fail.part} -- see docs/26-diagnostic-toolkit-and-buying-guide.md for the link.")
         if PRE_LOGIN:
             # Explicitly clear this on every failure path -- the autostart entry
             # on the other side only opens vr-launcher.py automatically if this
@@ -432,7 +435,7 @@ def main():
             # previous successful run must not leak into a session that starts
             # right after a failed one.
             READY_FILE.unlink(missing_ok=True)
-            print("  Volviendo al login gráfico en 5s (Ctrl+C para quedarte en esta consola)...")
+            print("  Returning to the graphical login in 5s (Ctrl+C to stay on this console)...")
             time.sleep(5)
             run(["systemctl", "isolate", "graphical.target"], timeout=15)
 
@@ -441,9 +444,9 @@ def main():
         continue to an ordinary 2D desktop. Distinct from give_up(): this is a
         choice, not a failure, so the verdict says so and nothing red is printed."""
         log_stats("SIN_VR_2D", stats["step_reached"], {"reason": fail.reason or "user skip"})
-        print(f"\n{C_BOLD}=== Veredicto ==={C_RESET}")
-        print(f"{C_WARN}{C_BOLD}SIN VR POR AHORA.{C_RESET} Seguís al escritorio normal (2D).")
-        print("  Cuando quieras reintentar: reconectá el casco y corré")
+        print(f"\n{C_BOLD}=== Verdict ==={C_RESET}")
+        print(f"{C_WARN}{C_BOLD}NO VR FOR NOW.{C_RESET} Continuing to the normal (2D) desktop.")
+        print("  When you want to retry: reconnect the headset and run")
         print(f"    {C_BOLD}{HERE / 'power-on.py'}{C_RESET}")
         if PRE_LOGIN:
             READY_FILE.unlink(missing_ok=True)
@@ -453,24 +456,24 @@ def main():
 
     # ---- 1/5: USB census ----------------------------------------------
     stats["step_reached"] = 1
-    step(1, "¿Está todo conectado?")
+    step(1, "Is everything connected?")
     lsusb_text = lsusb_output()
     count = headset_count(lsusb_text)
     if count >= 5:
-        ok("5/5 piezas del casco responden (hub, cámaras, controlador, audio).")
+        ok("5/5 headset parts respond (hub, cameras, controller, audio).")
     else:
         usb2_ok, ss_ok = branch_flags(lsusb_text)
-        bad(f"Solo {count}/5 piezas responden -- rama USB2 {'OK' if usb2_ok else 'AUSENTE'}, "
-            f"rama SuperSpeed {'OK' if ss_ok else 'AUSENTE'}.")
+        bad(f"Only {count}/5 parts respond -- USB2 branch {'OK' if usb2_ok else 'MISSING'}, "
+            f"SuperSpeed branch {'OK' if ss_ok else 'MISSING'}.")
         for line in lsusb_text.splitlines():
             if any(dev in line for dev in DEV_IDS):
                 print(f"    {line}")
         if count > 0 and os.geteuid() == 0:
-            dim("Intento primero un reset de bus por software (sin tocar nada físico)...")
+            dim("Trying a software bus reset first (without touching anything physical)...")
             lsusb_text = try_self_repair()
             count = headset_count(lsusb_text)
         if count >= 5:
-            ok("Se arregló solo -- 5/5 ahora, sin que tuvieras que tocar nada.")
+            ok("Fixed itself -- 5/5 now, without you having to touch anything.")
         else:
             # The software reset was already shown (T171, 2026-08-13) NOT to fix a
             # marginal seat: a full xhci rebind reproduced the identical half-dead
@@ -479,10 +482,10 @@ def main():
             # live that day: seat, then orientation, then other port, then visor.
             jlog = run(["journalctl", "-k", "--since", "2 min ago"])
             if re.search(r"error -71|Cannot enable", jlog.stdout):
-                dim("El kernel reintenta y falla (error -71): contacto marginal, no un cable roto del todo.")
+                dim("The kernel retries and fails (error -71): marginal contact, not a fully broken cable.")
             usb2_ok, ss_ok = branch_flags(lsusb_text)
             print()
-            warn("Hay que reconectar. Paso a paso, en orden de probabilidad (docs/22, T171):")
+            warn("You need to reconnect. Step by step, most likely fix first (docs/22, T171):")
             for s in reseat_instructions(usb2_ok, ss_ok):
                 print(f"    {C_WARN}»{C_RESET} {s}")
 
@@ -494,42 +497,42 @@ def main():
 
             def _status_census():
                 u2, ss = branch_flags(lsusb_text)
-                return (f"ahora {count}/5 -- USB2 {'✓' if u2 else '✗'} | "
-                        f"SuperSpeed {'✓' if ss else '✗'}  (5/5 = listo)")
+                return (f"now {count}/5 -- USB2 {'✓' if u2 else '✗'} | "
+                        f"SuperSpeed {'✓' if ss else '✗'}  (5/5 = ready)")
 
             outcome = wait_for_reseat(_recheck_census, _status_census)
             if outcome == "fixed":
-                ok("¡5/5! Reconexión correcta, seguimos.")
+                ok("5/5! Reconnected correctly, moving on.")
             elif outcome == "skip":
                 return continue_2d()
             else:
-                fail.set("Faltan piezas del casco y la reconexión no llegó a tiempo.", "physical")
+                fail.set("Headset parts are missing and the reconnection did not happen in time.", "physical")
     hub_dev = find_device_by_id("04b4", "6506") or find_device_by_id("04b4", "6504")
     if fail.reason:
         return give_up()
 
     # ---- 2/5: which physical port --------------------------------------
     stats["step_reached"] = 2
-    step(2, "¿Estás en un puerto que sabemos que funciona?")
+    step(2, "Are you on a port we know works?")
     idpath = id_path_for(hub_dev)
     if "usb-0:1" in idpath:
-        ok("Puerto conocido bueno (root port 1 -- validado en este equipo).")
+        ok("Known-good port (root port 1 -- validated on this machine).")
     elif "usb-0:4" in idpath:
-        bad("Puerto conocido MALO (root port 4): el USB2 de esta rama nunca enumera acá, aunque el USB3 sí.")
-        fail.set("Estás en un puerto trasero que no sirve para este casco (ver docs/00, root port 4).", "physical")
+        bad("Known-BAD port (root port 4): the USB2 of this branch never enumerates here, although the USB3 does.")
+        fail.set("You are on a rear port that does not work for this headset (see docs/00, root port 4).", "physical")
     elif "02:00.0" in idpath:
-        warn("Puerto USB2 del chipset (no del CPU) -- todo enumera pero sin carriles SuperSpeed (ver paso 3).")
-        fail.set("Estás en el USB2 del chipset -- las cámaras no van a andar bien acá.", "physical")
+        warn("Chipset USB2 port (not CPU-fed) -- everything enumerates but without SuperSpeed lanes (see step 3).")
+        fail.set("You are on the chipset USB2 -- the cameras will not work well here.", "physical")
     elif not idpath:
-        warn("No pude identificar el puerto (¿nada conectado en el paso 1?).")
+        warn("Could not identify the port (nothing connected in step 1?).")
     else:
-        warn(f"Puerto sin clasificar todavía ({idpath}) -- ninguno de los ya mapeados en docs/00.")
+        warn(f"Port not classified yet ({idpath}) -- none of those already mapped in docs/00.")
     if fail.reason:
         return give_up()
 
     # ---- 3/5: negotiated speed of the cameras (T126: enumerating != healthy)
     stats["step_reached"] = 3
-    step(3, "¿Las cámaras tienen el ancho de banda que necesitan?")
+    step(3, "Do the cameras have the bandwidth they need?")
     def camera_speed():
         # Re-find the device on every call: a reseat changes the sysfs path.
         d = find_device_by_id("045e", "0659")
@@ -542,14 +545,14 @@ def main():
 
     speed = camera_speed()
     if speed >= 5000:
-        ok(f"Cámaras a SuperSpeed real ({speed}M) -- el 6DoF/SLAM va a tener el ancho de banda que necesita.")
+        ok(f"Cameras at real SuperSpeed ({speed}M) -- 6DoF/SLAM will have the bandwidth it needs.")
     elif speed > 0:
         # Cameras attached through the USB2 face of the hub (seen live in T171):
         # they enumerate and even stream a little, but SLAM/constellation need the
         # 5 Gbps link. Same physical fix as a missing SS branch: the 180° flip.
-        bad(f"Cámaras enumeran pero solo a {speed}M (necesitan 5000M) -- la rama SuperSpeed no entró.")
-        warn("Fix probado (docs/06, T171): SIN cambiar de puerto, girá el plug USB-C 180°")
-        warn("  dentro del adaptador y metelo firme. Si no: otro puerto A trasero.")
+        bad(f"Cameras enumerate but only at {speed}M (they need 5000M) -- the SuperSpeed branch did not come up.")
+        warn("Proven fix (docs/06, T171): WITHOUT changing port, rotate the USB-C plug 180°")
+        warn("  inside the adapter and seat it firmly. If that fails: another rear A port.")
 
         def _recheck_speed():
             # Require the full census too -- a reseat that trades USB2 for SS
@@ -558,24 +561,24 @@ def main():
 
         def _status_speed():
             u2, ss = branch_flags(lsusb_output())
-            return (f"cámaras a {camera_speed()}M -- USB2 {'✓' if u2 else '✗'} | "
-                    f"SuperSpeed {'✓' if ss else '✗'}  (5/5 y 5000M = listo)")
+            return (f"cameras at {camera_speed()}M -- USB2 {'✓' if u2 else '✗'} | "
+                    f"SuperSpeed {'✓' if ss else '✗'}  (5/5 and 5000M = ready)")
 
         outcome = wait_for_reseat(_recheck_speed, _status_speed)
         if outcome == "fixed":
-            ok(f"Cámaras a SuperSpeed real ({camera_speed()}M) después de reconectar.")
+            ok(f"Cameras at real SuperSpeed ({camera_speed()}M) after reconnecting.")
         elif outcome == "skip":
             return continue_2d()
         else:
-            fail.set("Las cámaras quedaron sin ancho de banda SuperSpeed.", "physical")
+            fail.set("The cameras are left without SuperSpeed bandwidth.", "physical")
     else:
-        dim("Cámaras no detectadas todavía (se resuelve solo si el paso 1 se arregla).")
+        dim("Cameras not detected yet (this resolves itself if step 1 gets fixed).")
     if fail.reason:
         return give_up()
 
     # ---- 4/5: panel / DP fingerprint -----------------------------------
     stats["step_reached"] = 4
-    step(4, "¿El panel está despierto y es realmente el del G2?")
+    step(4, "Is the panel awake, and is it really the G2's?")
     panel_py = HERE / "panel.py"
     if not panel_py.exists():
         panel_py = VR / "panel.py"
@@ -601,15 +604,15 @@ def main():
                 break
             time.sleep(0.5)
     if dp_ok:
-        ok("Panel real del G2 confirmado (huella EDID, no solo 'conectado').")
+        ok("Real G2 panel confirmed (EDID fingerprint, not just 'connected').")
     else:
-        bad("El panel no despertó, o lo que hay conectado no es el G2.")
-        dim("El logo HP puede estar prendido igual -- es power+HID, independiente del DP; no alcanza solo.")
-        warn("Hay que revisar la parte de video. En orden (docs/22):")
-        print(f"    {C_WARN}»{C_RESET} El DP del casco A FONDO en la GPU (puerto trasero de la placa de video).")
-        print(f"    {C_WARN}»{C_RESET} El brick de 18.5 V enchufado y el barrel firme en la cajita del cable")
-        print(f"    {C_WARN}»{C_RESET}   (el LED de la cajita NO dice nada del 18.5 V: solo marca 5V del USB).")
-        print(f"    {C_WARN}»{C_RESET} ¿Nada? Reseat de la ficha del visor (detrás del gasket magnético).")
+        bad("The panel did not wake up, or what is connected is not the G2.")
+        dim("The HP logo may be lit anyway -- that is power+HID, independent of DP; it is not enough on its own.")
+        warn("The video side needs checking. In order (docs/22):")
+        print(f"    {C_WARN}»{C_RESET} The headset DP plug ALL THE WAY into the GPU (a port on the card's rear bracket).")
+        print(f"    {C_WARN}»{C_RESET} The 18.5 V brick plugged in and the barrel jack firm in the cable's little box")
+        print(f"    {C_WARN}»{C_RESET}   (the box LED says NOTHING about the 18.5 V: it only reflects USB 5V).")
+        print(f"    {C_WARN}»{C_RESET} Nothing? Reseat the connector at the visor end (behind the magnetic gasket).")
 
         def _recheck_panel():
             # Re-send the activation each pass -- the panel auto-powers-off ~3 s
@@ -623,26 +626,26 @@ def main():
                     time.sleep(0.5)
             return False
 
-        outcome = wait_for_reseat(_recheck_panel, lambda: "panel todavía sin responder...")
+        outcome = wait_for_reseat(_recheck_panel, lambda: "panel still not responding...")
         if outcome == "fixed":
             dp_ok = True
-            ok("Panel del G2 confirmado después de reconectar.")
+            ok("G2 panel confirmed after reconnecting.")
         elif outcome == "skip":
             return continue_2d()
         else:
-            fail.set("El panel no responde -- probá reconectar el cable en el extremo del visor.", "physical")
+            fail.set("The panel does not respond -- try reconnecting the cable at the visor end.", "physical")
     if fail.reason:
         return give_up()
 
     # ---- 5/5: controllers ------------------------------------------------
     stats["step_reached"] = 5
-    step(5, "¿Los controles están prendidos?")
+    step(5, "Are the controllers on?")
     gamepad_present = "045e:028e" in lsusb_output()
     if gamepad_present:
-        ok("Gamepad tipo Xbox 360 detectado -- sirve de respaldo si falta un control VR")
-        dim("  (fallback parcial, no todos los juegos lo aceptan -- ver docs/pruebas.jsonl T127).")
+        ok("Xbox 360-type gamepad detected -- works as a fallback if a VR controller is missing")
+        dim("  (partial fallback, not every game accepts it -- see docs/pruebas.jsonl T127).")
     if "controllers" in SKIP:
-        warn("SALTEADO a pedido (--skip=controllers) -- consecuencia: sin control físico en la sesión.")
+        warn("SKIPPED on request (--skip=controllers) -- consequence: no physical controller in the session.")
     else:
         ctrl_py = HERE / "controller-pair-check.py"
         if not ctrl_py.exists():
@@ -651,8 +654,8 @@ def main():
         ctrl_out = ctrl.stdout + ctrl.stderr
         left_ok = bool(re.search(r"left.*online", ctrl_out))
         right_ok = bool(re.search(r"right.*online", ctrl_out))
-        (ok if left_ok else warn)(f"Izquierdo: {'prendido y responde' if left_ok else 'NO responde'}")
-        (ok if right_ok else warn)(f"Derecho:   {'prendido y responde' if right_ok else 'NO responde'}")
+        (ok if left_ok else warn)(f"Left:  {'on and responding' if left_ok else 'NOT responding'}")
+        (ok if right_ok else warn)(f"Right: {'on and responding' if right_ok else 'NOT responding'}")
         if not (left_ok and right_ok):
             # Never blocks -- only the headset itself (steps 1-4) can stop the user.
             # Missing controllers are treated as temporary/non-fatal: they (or a
@@ -662,11 +665,11 @@ def main():
             # unlike Windows, connecting one after the session has already started
             # won't make Monado see it. Plug in before jack-in-wayland.sh actually
             # launches, or restart the session once it's on.
-            extra = " -- hay gamepad de respaldo" if gamepad_present else " -- sin gamepad de respaldo tampoco"
-            warn(f"Sigue sin controles por ahora{extra}. No bloquea, arrancamos igual.")
-            dim("Se pueden prender/conectar después -- pero el hot-plug de controles VR todavía no anda en")
-            dim("este stack (a diferencia de Windows): si los conectás con la sesión ya arrancada, Monado no")
-            dim("los va a ver hasta la próxima vez que arranque.")
+            extra = " -- a fallback gamepad is present" if gamepad_present else " -- and no fallback gamepad either"
+            warn(f"Still no controllers for now{extra}. Not blocking, starting anyway.")
+            dim("They can be switched on / connected later -- but VR-controller hot-plug does not work in")
+            dim("this stack yet (unlike Windows): if you connect them with the session already running,")
+            dim("Monado will not see them until the next time it starts.")
         # No battery check here on purpose. This step's own 0x16/0x17 status query works
         # standalone (any hidraw can be opened more than once), but the battery LEVEL only
         # travels inside each controller's 44-byte streamed input report, which only starts
@@ -680,14 +683,14 @@ def main():
             SKIP.add("controllers")
 
     # ---- Bonus: everything else on the USB bus, for context ---------------
-    print(f"\n{C_STEP}▸ Otros dispositivos USB de la PC (contexto, no bloquea nada){C_RESET}")
+    print(f"\n{C_STEP}▸ Other USB devices on the PC (context only, blocks nothing){C_RESET}")
     KNOWN = {
         "045e:028e": "Xbox 360 Controller",
-        "046d": "Logitech (mouse/teclado/receptor)",
+        "046d": "Logitech (mouse/keyboard/receiver)",
     }
     for line in lsusb_text.splitlines():
         if any(dev in line for dev in DEV_IDS):
-            continue  # ya mostrado en el paso 1
+            continue  # already shown in step 1
         m = re.search(r"ID (\w{4}:\w{4})", line)
         if not m:
             continue
@@ -699,7 +702,7 @@ def main():
     stats["step_reached"] = 5
     controllers_ok = "controllers" not in SKIP
     log_stats("LISTO", 5, {"mode": MODE, "tracking": TRACKING, "pre_login": PRE_LOGIN, "controllers_ok": controllers_ok, "gamepad_present": gamepad_present})
-    print(f"\n{C_BOLD}=== Veredicto ==={C_RESET}")
+    print(f"\n{C_BOLD}=== Verdict ==={C_RESET}")
     if PRE_LOGIN:
         # Run from a bare console (multi-user.target), before any desktop session
         # exists -- there's no Wayland session here to launch into yet. Real VR
@@ -723,19 +726,19 @@ def main():
         READY_FILE.write_text(
             f"{MODE} {TRACKING} {'1' if controllers_ok else '0'} {'1' if gamepad_present else '0'}\n"
         )
-        print(f"{C_OK}{C_BOLD}LISTO.{C_RESET} Hardware verificado, sin login todavía.")
-        print("  Andá al login y elegí 'GNOME' bajo la lista de Wayland (no X11, no KWin).")
+        print(f"{C_OK}{C_BOLD}READY.{C_RESET} Hardware verified, not logged in yet.")
+        print("  Go to the login screen and pick 'GNOME' under the Wayland list (not X11, not KWin).")
         if controllers_ok:
-            print(f"  {C_BOLD}Poné el casco{C_RESET} -- una vez logueado, el launcher se abre solo y levanta el juego.")
+            print(f"  {C_BOLD}Put the headset on{C_RESET} -- once logged in, the launcher opens by itself and starts the game.")
         elif gamepad_present:
-            print("  Sin controles VR, pero hay gamepad de respaldo -- el launcher se abre solo igual.")
+            print("  No VR controllers, but a fallback gamepad is present -- the launcher still opens by itself.")
         else:
-            print("  Sin controles ni gamepad todavía -- una vez logueado vas a caer al escritorio normal, sin auto-launch.")
-        print("  Subiendo a graphical.target en 5s...")
+            print("  No controllers or gamepad yet -- once logged in you will land on the normal desktop, no auto-launch.")
+        print("  Switching to graphical.target in 5s...")
         time.sleep(5)
         run(["systemctl", "isolate", "graphical.target"], timeout=15)
     else:
-        print(f"{C_OK}{C_BOLD}LISTO.{C_RESET} Abriendo el launcher (modo {MODE}, tracking {TRACKING})...")
+        print(f"{C_OK}{C_BOLD}READY.{C_RESET} Opening the launcher (mode {MODE}, tracking {TRACKING})...")
         launcher = HERE / "vr-launcher.py"
         os.execv(sys.executable, [sys.executable, str(launcher), MODE, TRACKING])
 

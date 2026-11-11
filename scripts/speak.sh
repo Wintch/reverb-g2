@@ -2,7 +2,7 @@
 # speak.sh -- speaks $1 using the ACTIVE dashboard profile's configured voice
 # (language accent + gender) via Piper (neural TTS) with an espeak-ng fallback.
 # Standalone and callable from anywhere -- ad-hoc narration (e.g. a live operator
-# summons: `~/vr/speak.sh "Atención, ponete el casco"`) goes through the exact
+# summons: `~/vr/speak.sh "Attention, put the headset on"`) goes through the exact
 # same logic as the presence-alert helper's own internal alert states, which
 # source this file as a library instead of duplicating any of it. ONE source of
 # truth for voice selection, the audio_guide_enabled gate, and the Piper/

@@ -446,7 +446,7 @@ def bring_up_monado():
     except subprocess.TimeoutExpired as e:
         print(f"jack-in-wayland.sh did not finish in 180s -- aborting and cleaning up.")
         partial = e.stdout if isinstance(e.stdout, (str, type(None))) else e.stdout.decode(errors="replace")
-        _save_jackin_output(partial, "(timeout a los 180s)", "timeout")
+        _save_jackin_output(partial, "(timeout after 180s)", "timeout")
         if partial:
             print(partial)
         # pgrep -x (exact comm), not -f -- matches jack-in-wayland.sh's own convention
@@ -512,12 +512,12 @@ def game_trees_status():
     """Returns (text, alive) from `game-stop.py status`. alive=False also when the script
     is missing -- then the caller says so and moves on, it does not invent a clean state."""
     if not GAME_STOP.exists():
-        return f"(no encuentro {GAME_STOP} -- no puedo verificar si quedo un juego corriendo)", False
+        return f"({GAME_STOP} not found -- cannot verify whether a game was left running)", False
     try:
         r = subprocess.run([sys.executable, str(GAME_STOP), "status"],
                            capture_output=True, text=True, timeout=15)
     except (subprocess.TimeoutExpired, OSError) as e:
-        return f"(game-stop.py status fallo: {e})", False
+        return f"(game-stop.py status failed: {e})", False
     text = (r.stdout or "").strip()
     alive = bool(text) and "no Proton game trees running" not in text
     return text, alive
@@ -668,11 +668,11 @@ def main():
     print("  VR launcher")
     print("==================================================")
     # Link verdict on screen while the user picks a title (or the timeout
-    # picks for them): a single-player pick can ignore an AMARILLO/ROJO,
+    # picks for them): a single-player pick can ignore an AMARILLO/ROJO (yellow/red) verdict,
     # an online pick shouldn't be surprised by it mid-match.
     check_network_link()
     print()
-    print("  [1] Player 360/VR180 (contenido de prueba)")
+    print("  [1] Player 360/VR180 (test content)")
     default_n = None
     for i, (name, _appid) in enumerate(games):
         n = 2 + i
@@ -687,7 +687,7 @@ def main():
     if default_n is None:
         # DEFAULT_GAME isn't installed right now -- fall back to the player,
         # never point the unattended default at a game that can't launch.
-        default_n, default_label = 1, "el player 360"
+        default_n, default_label = 1, "the 360 player"
     else:
         default_label = DEFAULT_GAME
     # Non-interactive pick (an agent driving a measurement session, or a future arcade mode):
