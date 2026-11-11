@@ -1,0 +1,42 @@
+From 2a67f76f78964027792557a077c89af3a9354259 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Mon, 17 Aug 2026 02:52:21 -0300
+Subject: [PATCH 8/8] optical_flow: default BASALT_IMU_NONBLOCK_CATCHUP ON
+ (validated, no-op on healthy path)
+
+Validated over a >15 min turntable soak with zero collapse (canonical docs/39).
+try_pop == the old blocking pop whenever the 250 Hz IMU is ahead of the image
+time -- i.e. always, except during the pathological empty-queue collapse -- so
+this only changes behaviour in the failure case, where extend-last-sample is
+strictly better than blocking ~600 ms. Set =0 to restore blocking (drift A/B).
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ .../basalt/optical_flow/frame_to_frame_optical_flow.h | 11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/include/basalt/optical_flow/frame_to_frame_optical_flow.h b/include/basalt/optical_flow/frame_to_frame_optical_flow.h
+index 78ccc9c..c3f2271 100644
+--- a/include/basalt/optical_flow/frame_to_frame_optical_flow.h
++++ b/include/basalt/optical_flow/frame_to_frame_optical_flow.h
+@@ -188,8 +188,15 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
+     // of the arriving IMU, so this catch-up loop blocks for real-time IMU -- a self-sustaining stall.
+     // Non-blocking integrates whatever is buffered and extends the last sample to curr_t_ns (the
+     // "pretend last IMU happened now" step below), trading a little prediction accuracy for no stall.
+-    // Default OFF pending a drift A/B; flip the default once confirmed (collapse gone + drift OK).
+-    static const bool nonblock = std::getenv("BASALT_IMU_NONBLOCK_CATCHUP") != nullptr;
++    // Default ON since 2026-08-17: validated over a >15 min turntable soak with zero collapse
++    // (docs/39 "Validation -- PASSED"), and a strict no-op on the healthy path (try_pop == the old
++    // blocking pop whenever the 250 Hz IMU is ahead of the image time, which is always except during
++    // the pathological empty-queue collapse). Set BASALT_IMU_NONBLOCK_CATCHUP=0 to restore the old
++    // blocking behaviour (e.g. for a drift A/B).
++    static const bool nonblock = [] {
++      const char* e = std::getenv("BASALT_IMU_NONBLOCK_CATCHUP");
++      return e == nullptr || (e[0] != '0' && e[0] != 'f' && e[0] != 'F');
++    }();
+ 
+     auto pop_imu = [&](ImuData<double>::Ptr& data) -> bool {
+       ImuData<double>::Ptr sample;
+-- 
+2.47.3
+

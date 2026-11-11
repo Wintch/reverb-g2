@@ -1,0 +1,304 @@
+From 0934ae0a70f62c01a91815d006f79409d274e508 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Thu, 27 Aug 2026 04:50:27 -0300
+Subject: [PATCH 2/2] a/tracking: SLAM_SESSION_ANCHOR_RADIUS_CM +
+ SLAM_QUAT_NORM_CHECK -- two more divergence guards (opt-in)
+
+The existing auto_reset guard (0023-a) catches divergence by INSTANTANEOUS
+implied speed -- a single step too fast to be a real head. It cannot see two
+other failure modes:
+
+  - Slow accumulated drift: many small steps, each individually far below the
+    speed threshold, that add up to the tracker reporting a position nowhere
+    near where the session actually started.
+  - A corrupted orientation quaternion riding along with an otherwise
+    plausible-looking position -- the speed guard only ever looks at npos.
+
+Both new checks reuse the existing auto_reset->tracker_reset() response path
+verbatim, including reset_offset's frame-continuity carry (0057) when enabled,
+and are gated the same way the speed guard already is (auto_reset.enabled,
+post-reset quiet_until settle window).
+
+SLAM_SESSION_ANCHOR_RADIUS_CM (integers only, like SLAM_AUTO_RESET_MAX_SPEED --
+DEBUG_GET_ONCE_NUM_OPTION parses integers, so this is centimetres, not metres;
+0 = disabled) captures the session's first accepted OUTPUT-frame pose once and
+resets if a later pose ever drifts further than the radius. Requires
+SLAM_RESET_OFFSET_CARRY to be on (the default) -- without it a reset changes
+the raw tracker frame with nothing correcting it back, making a distance
+measured against an anchor from the old frame meaningless; if set without
+carry, this logs a warning and stays off rather than silently doing nothing.
+
+CAVEAT, left in deliberately: because reset_offset re-anchors the OUTPUT pose
+onto wherever the drift already carried it, tracker_reset() restarts the VIO's
+internal state but the reported position does not move back toward the
+session anchor by even one centimetre. A genuine slow-drift trip is therefore
+not self-healing the way a speed-spike trip is -- it will keep re-triggering
+(rate-limited to the quiet_until window) until real motion or the tracker's
+own loop closure brings the position back under the radius. This is a real,
+disclosed limitation of the response path, not something this patch
+special-cases -- flagged for whoever runs the wearer A/B this is gated behind,
+since it may mean this is more useful as a diagnostic signal than a real
+recovery mechanism as shipped.
+
+SLAM_QUAT_NORM_CHECK (0 = disabled) rejects a pose whose orientation
+quaternion norm falls outside [0.5, 1.5], checked at the very top of the loop
+body before nrot is used for anything -- in particular before reset_offset's
+anchor-solve, which would otherwise bake a corrupt rotation into the
+persistent output-frame transform for the rest of the session.
+
+Both checks compare against a NaN-safe negated range (`!(x >= lo && x <= hi)`)
+rather than the direct threshold form (`x < lo || x > hi`) used elsewhere in
+this file for the same kind of check: a comparison against NaN is always
+false in IEEE-754, so the direct form would let a NaN pose -- the literal
+motivating case SLAM_QUAT_NORM_CHECK exists to catch -- pass through
+completely undetected. Caught by two independent adversarial reviews before
+this shipped, along with the gating and reset_offset-dependency issues above;
+none of these three were present in the first draft.
+
+Independent origin, reimplemented against this codebase's actual current
+auto_reset/reset_offset/correction machinery: inspired by a community fork's
+divergence-guard work (Faulto/reverb-g2-linux) which independently arrived at
+similar anchor-radius and quaternion-sanity checks against a different
+Monado fork base -- reasoned addition here, not a live-incident fix and not a
+ported diff, hence NOT YET HARDWARE-VALIDATED. Both new options default off
+pending a wearer A/B.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ src/xrt/auxiliary/tracking/t_tracker_slam.cpp | 192 ++++++++++++++++++
+ 1 file changed, 192 insertions(+)
+
+diff --git a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+index 5b4d1bcf7..6792a7754 100644
+--- a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
++++ b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+@@ -103,6 +103,13 @@ DEBUG_GET_ONCE_OPTION(slam_filter, "SLAM_FILTER", nullptr)
+ DEBUG_GET_ONCE_NUM_OPTION(slam_auto_reset_max_speed, "SLAM_AUTO_RESET_MAX_SPEED", 10)
+ DEBUG_GET_ONCE_BOOL_OPTION(slam_reset_offset_carry, "SLAM_RESET_OFFSET_CARRY", true)
+ DEBUG_GET_ONCE_NUM_OPTION(slam_correction_spread_ms, "SLAM_CORRECTION_SPREAD_MS", 0)
++//! NOTE like SLAM_AUTO_RESET_MAX_SPEED above, this is DEBUG_GET_ONCE_NUM_OPTION (integers
++//! only) -- the radius is in CENTIMETRES, not metres, so a real-world value (e.g. 450 for
++//! 4.5 m) survives the integer parse. 0 = disabled.
++DEBUG_GET_ONCE_NUM_OPTION(slam_session_anchor_radius_cm, "SLAM_SESSION_ANCHOR_RADIUS_CM", 0)
++//! 0 = disabled (default), nonzero = enabled. Not a BOOL option so it matches the on/off
++//! convention already used by every other divergence-guard var above.
++DEBUG_GET_ONCE_NUM_OPTION(slam_quat_norm_check, "SLAM_QUAT_NORM_CHECK", 0)
+ DEBUG_GET_ONCE_BOOL_OPTION(euroc_record, "EUROC_RECORD", false)
+ DEBUG_GET_ONCE_OPTION(euroc_record_path, "EUROC_RECORD_PATH", nullptr)
+ DEBUG_GET_ONCE_OPTION(slam_csv_path, "SLAM_CSV_PATH", "evaluation/")
+@@ -383,6 +390,38 @@ struct TrackerSlam
+ 		             //!< WMR constellation tracker both call get_tracked_pose.
+ 	} correction;
+ 
++	//! Session-anchor divergence guard (SLAM_SESSION_ANCHOR_RADIUS_CM, default 0/off).
++	//! auto_reset above catches divergence by INSTANTANEOUS implied speed -- a single step
++	//! too fast to be a real head. That guard cannot see slow accumulated drift: many small
++	//! steps, each individually far below the speed threshold, that add up to the tracker
++	//! reporting a position nowhere near where the session actually started. Inspired by a
++	//! community fork's independent divergence-guard work (Faulto/reverb-g2-linux) which
++	//! adds exactly this kind of anchor-radius check; see flush_poses for where the anchor
++	//! is captured and compared, and the response path this reuses verbatim from auto_reset.
++	//! NOT YET HARDWARE-VALIDATED -- reasoned addition pending a wearer A/B, default off.
++	struct
++	{
++		bool enabled = false;
++		double radius_m = 0.0;
++		bool have_anchor = false;         //!< True once @ref anchor_pos holds the session's first pose
++		xrt_vec3 anchor_pos = XRT_VEC3_ZERO; //!< First accepted OUTPUT-frame position this session
++	} session_anchor;
++
++	//! Orientation-quaternion sanity guard (SLAM_QUAT_NORM_CHECK, default 0/off). A
++	//! corrupted pose from the VIT tracker need not show up as an impossible position or
++	//! speed -- a NaN, zero, or otherwise garbage quaternion can carry a plausible-looking
++	//! position while its orientation is nonsense. Checked at the very top of flush_poses'
++	//! loop body, before nrot is used for anything -- in particular before reset_offset's
++	//! anchor-solve, which would otherwise bake a corrupt rotation into the persistent
++	//! output-frame transform for the rest of the session. Same auto_reset response path,
++	//! reused verbatim. Inspired by the same community fork referenced by @ref
++	//! session_anchor above. NOT YET HARDWARE-VALIDATED -- reasoned addition pending a
++	//! wearer A/B, default off.
++	struct
++	{
++		bool enabled = false;
++	} quat_norm_check;
++
+ 	int dropped_bundles = 0;                      //!< Consecutive bundles dropped for that reason
+ 	//! Candidate timestamp of a rejected insane forward jump (INT64_MIN = none). A single
+ 	//! corrupted timestamp must never become last_cam_ts[0]: accepted once, every following
+@@ -1082,6 +1121,59 @@ flush_poses(TrackerSlam &t)
+ 		xrt_quat nrot{data.ox, data.oy, data.oz, data.ow};
+ 		xrt_vec3 nvel{data.vx, data.vy, data.vz};
+ 
++		// Orientation-quaternion sanity guard (SLAM_QUAT_NORM_CHECK, default off -- see
++		// TrackerSlam::quat_norm_check's doc comment). Must run HERE, before nrot is used
++		// for anything -- in particular before the reset_offset block just below, which
++		// (when awaiting_anchor) solves a persistent output-frame transform straight out of
++		// nrot; a corrupt norm there wouldn't just corrupt this one pose, it would corrupt
++		// every pose reset_offset carries forward for the rest of the session. Same
++		// auto_reset->tracker_reset() response as the speed-based guard further down,
++		// reused verbatim, including the reset_offset anchor capture so output-frame
++		// continuity survives this kind of reset too -- fetched directly here rather than
++		// via the `lr`/`lts` locals below, which this check runs strictly before.
++		//
++		// Gated on auto_reset.enabled/quiet_until too, matching every other guard in this
++		// function -- SLAM_AUTO_RESET=0 must disable ALL reset-on-divergence behavior, not
++		// just the speed check, and this must not be able to re-fire during the other
++		// guards' post-reset settle window either (adversarial review caught both as real
++		// bugs before this shipped: SLAM_AUTO_RESET=0 not fully disabling this check, and a
++		// reset-loop risk on noisy re-localization poses inside quiet_until).
++		if (t.quat_norm_check.enabled && t.auto_reset.enabled && nts > t.auto_reset.quiet_until) {
++			double qnorm = sqrt((double)nrot.x * nrot.x + (double)nrot.y * nrot.y +
++			                     (double)nrot.z * nrot.z + (double)nrot.w * nrot.w);
++			// NaN-safe by construction: a comparison against NaN is always false in
++			// IEEE-754, so `qnorm < 0.5 || qnorm > 1.5` would let a NaN norm (the
++			// literal motivating case this guard exists for) pass through silently --
++			// caught in adversarial review. Negating an inclusive "sane" range instead
++			// means ANY non-finite qnorm trips the `!` and is correctly rejected.
++			if (!(qnorm >= 0.5 && qnorm <= 1.5)) {
++				t.auto_reset.count++;
++				SLAM_WARN("Tracker diverged: orientation quaternion norm %.3f outside "
++				          "[0.5, 1.5] at ts=%" PRId64 ". Resetting (reset #%" PRIu64
++				          " this session).",
++				          qnorm, nts, t.auto_reset.count);
++				if (t.reset_offset.enabled) {
++					xrt_space_relation last_good = XRT_SPACE_RELATION_ZERO;
++					int64_t last_good_ts;
++					t.slam_rels.get_latest(&last_good_ts, &last_good);
++					// Prefer the last RAW pose over slam_rels' possibly-filtered
++					// one, same preference the `lr` fetch below applies -- see
++					// its comment for why (T177).
++					t.reset_offset.anchor =
++					    t.filter.have_last_raw ? t.filter.last_raw : last_good.pose;
++					t.reset_offset.awaiting_anchor = true;
++				}
++				vit_result_t rres = t.vit.tracker_reset(t.tracker);
++				if (rres != VIT_SUCCESS) {
++					SLAM_ERROR("Failed to reset the diverged tracker (%d)", rres);
++				}
++				// Same post-reset settling window as the speed-based guard.
++				t.auto_reset.quiet_until = nts + 2LL * U_TIME_1S_IN_NS;
++				t.vit.pose_destroy(pose);
++				break;
++			}
++		}
++
+ 		// Captured BEFORE the reset_offset block below, which clears this flag the
+ 		// instant it consumes it -- correction spreading further down needs to know
+ 		// whether THIS pose is the reset's first post-reset anchor, and by the time it
+@@ -1239,6 +1331,78 @@ flush_poses(TrackerSlam &t)
+ 			}
+ 		}
+ 
++		// Session-anchor divergence guard (SLAM_SESSION_ANCHOR_RADIUS_CM, default off --
++		// see TrackerSlam::session_anchor's doc comment). Catches the failure mode the
++		// speed check above cannot: drift too slow, frame to frame, to ever trip a
++		// speed threshold, that nonetheless carries the reported position far from where
++		// the session actually started. npos here is already reset_offset-corrected (by
++		// the ingest block near the top of this loop, if enabled) and has survived the
++		// speed guard just above, so this is exactly "a later accepted OUTPUT-frame pose".
++		//
++		// The anchor is captured ONCE, from the session's first accepted pose, and never
++		// recaptured on a later auto-reset -- reset_offset's whole job is keeping the
++		// output frame continuous across a reset (see its doc comment), so the anchor
++		// stays valid without needing to know a reset happened.
++		//
++		// CAVEAT, left in deliberately rather than hidden: with SLAM_RESET_OFFSET_CARRY on
++		// (the default), the response below re-anchors reset_offset onto lr.pose -- the
++		// last accepted OUTPUT position, i.e. wherever the drift already carried the
++		// wearer to. tracker_reset() restarts the VIO's internal state, but the CARRIED
++		// output position does not move back toward the session anchor by even one
++		// centimetre. So a genuine slow-drift trip is not fixed by this reset the way a
++		// speed-spike trip is: distance from the anchor stays at/over the radius, and
++		// (rate-limited to once per quiet_until window, ~2 s) this will keep re-triggering
++		// until real head motion or the tracker's own loop closure brings the position back
++		// under the radius. This is a real, expected limitation of reusing the existing
++		// response path unmodified, not an oversight -- flagged here for whoever runs the
++		// wearer A/B this whole guard is gated behind.
++		//
++		// Requires reset_offset.enabled: this guard's anchor_pos is only meaningful in a
++		// CONTINUOUS output frame. With SLAM_RESET_OFFSET_CARRY=0 (non-default but
++		// supported), a reset from ANY guard changes the raw tracker frame with nothing
++		// correcting it back, so a distance measured against an anchor captured in the old
++		// frame is physically meaningless -- caught in adversarial review. Simplest correct
++		// fix: this guard only runs when reset_offset is actually on.
++		if (t.session_anchor.enabled && t.reset_offset.enabled && t.auto_reset.enabled &&
++		    nts > t.auto_reset.quiet_until) {
++			if (!t.session_anchor.have_anchor) {
++				t.session_anchor.anchor_pos = npos;
++				t.session_anchor.have_anchor = true;
++			} else {
++				xrt_vec3 apos = t.session_anchor.anchor_pos;
++				double adx = npos.x - apos.x, ady = npos.y - apos.y, adz = npos.z - apos.z;
++				double anchor_dist = sqrt(adx * adx + ady * ady + adz * adz);
++				// NaN-safe by construction, same reasoning as the quat-norm guard
++				// above: negate an inclusive "sane" range instead of comparing
++				// against the failure threshold directly, so a non-finite
++				// anchor_dist (e.g. from a NaN npos this guard runs AFTER the
++				// quat-norm guard but not necessarily WITH it enabled) is
++				// correctly treated as divergence instead of silently passing.
++				if (!(anchor_dist <= t.session_anchor.radius_m)) {
++					t.auto_reset.count++;
++					SLAM_WARN("Tracker diverged: %.3f m from the session anchor "
++					          "(radius %.3f m) at ts=%" PRId64
++					          ". Resetting (reset #%" PRIu64 " this session).",
++					          anchor_dist, t.session_anchor.radius_m, nts,
++					          t.auto_reset.count);
++					if (t.reset_offset.enabled) {
++						// Same "last known-good OUTPUT pose" capture as the
++						// speed guard above -- see its comment.
++						t.reset_offset.anchor = lr.pose;
++						t.reset_offset.awaiting_anchor = true;
++					}
++					vit_result_t rres = t.vit.tracker_reset(t.tracker);
++					if (rres != VIT_SUCCESS) {
++						SLAM_ERROR("Failed to reset the diverged tracker (%d)",
++						           rres);
++					}
++					t.auto_reset.quiet_until = nts + 2LL * U_TIME_1S_IN_NS;
++					t.vit.pose_destroy(pose);
++					break;
++				}
++			}
++		}
++
+ 		// Compute new relation based on new pose and velocities since last pose
+ 		xrt_space_relation rel{};
+ 		rel.relation_flags = XRT_SPACE_RELATION_BITMASK_ALL;
+@@ -2390,6 +2554,34 @@ t_slam_create(struct xrt_frame_context *xfctx,
+ 		          correction_spread_ms);
+ 	}
+ 
++	long session_anchor_radius_cm = debug_get_num_option_slam_session_anchor_radius_cm();
++	t.session_anchor.enabled = session_anchor_radius_cm > 0;
++	t.session_anchor.radius_m = (double)session_anchor_radius_cm / 100.0;
++	if (t.session_anchor.enabled && !t.reset_offset.enabled) {
++		// This guard's anchor is only meaningful in a continuous output frame, which only
++		// reset_offset guarantees (SLAM_RESET_OFFSET_CARRY=0) -- see the guard's own
++		// caveat comment in flush_poses. Rather than silently no-op, say so.
++		SLAM_WARN("SLAM_SESSION_ANCHOR_RADIUS_CM is set but SLAM_RESET_OFFSET_CARRY=0 -- the "
++		          "session-anchor guard needs reset_offset's frame continuity to mean anything "
++		          "and will NOT run until SLAM_RESET_OFFSET_CARRY is enabled (the default).");
++		t.session_anchor.enabled = false;
++	}
++	if (t.session_anchor.enabled) {
++		SLAM_INFO("Session-anchor divergence guard on: resetting if the output position ever "
++		          "drifts more than %.2f m from the session's first accepted pose "
++		          "(SLAM_SESSION_ANCHOR_RADIUS_CM=0 disables). NOT YET HARDWARE-VALIDATED -- "
++		          "pending a wearer A/B, see TrackerSlam::session_anchor.",
++		          t.session_anchor.radius_m);
++	}
++
++	t.quat_norm_check.enabled = debug_get_num_option_slam_quat_norm_check() != 0;
++	if (t.quat_norm_check.enabled) {
++		SLAM_INFO("Orientation quaternion norm sanity guard on: resetting if a pose's "
++		          "orientation quaternion norm falls outside [0.5, 1.5] "
++		          "(SLAM_QUAT_NORM_CHECK=0 disables). NOT YET HARDWARE-VALIDATED -- pending "
++		          "a wearer A/B, see TrackerSlam::quat_norm_check.");
++	}
++
+ 	t.filter.one_euro_before_predict = debug_get_bool_option_slam_filter_before_predict();
+ 	SLAM_INFO("One euro filter runs %s prediction (SLAM_FILTER_BEFORE_PREDICT=%d)",
+ 	          t.filter.one_euro_before_predict ? "BEFORE" : "after", t.filter.one_euro_before_predict);
+-- 
+2.47.3
+

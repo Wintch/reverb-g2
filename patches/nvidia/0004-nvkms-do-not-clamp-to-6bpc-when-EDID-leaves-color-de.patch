@@ -1,0 +1,37 @@
+From 9644d298c724bd3ae399594a1898fd80ea09a5ee Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Wed, 5 Aug 2026 10:19:06 -0300
+Subject: [PATCH] nvkms-dpy: don't clamp DP sinks to 6 bpc when EDID color
+ depth is undefined
+
+An EDID 1.4 digital sink that leaves the Video Input Definition Color Bit
+Depth field at 000 ("undefined") is parsed into input.u.digital.bpc = 0.
+The DisplayPort branch of nvDpyGetOutputColorFormatInfo() tests `bpc < 8`,
+so an undeclared depth is treated as a request for 6 bpc and the link is
+driven at 18 bpp for every mode the sink advertises.
+
+The DSI branch of the same function already treats an unrecognized bpc as
+8. Make the DP branch agree: only clamp to 6 when the sink actually
+declared a depth below 8, and otherwise fall through to the existing 8 bpc
+default. EDIDs that declare a depth are unaffected.
+---
+ src/nvidia-modeset/src/nvkms-dpy.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/nvidia-modeset/src/nvkms-dpy.c b/src/nvidia-modeset/src/nvkms-dpy.c
+index 2716d84..aa96dae 100644
+--- a/src/nvidia-modeset/src/nvkms-dpy.c
++++ b/src/nvidia-modeset/src/nvkms-dpy.c
+@@ -3465,7 +3465,8 @@ NvKmsDpyOutputColorFormatInfo nvDpyGetOutputColorFormatInfo(
+                         NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_10;
+                     colorFormatsInfo.yuv444.maxBpc =
+                         NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_10;
+-                } else if (pDpyEvo->parsedEdid.info.input.u.digital.bpc < 8) {
++                } else if (pDpyEvo->parsedEdid.info.input.u.digital.bpc != 0 &&
++                           pDpyEvo->parsedEdid.info.input.u.digital.bpc < 8) {
+                     colorFormatsInfo.rgb444.maxBpc =
+                         NV_KMS_DPY_ATTRIBUTE_CURRENT_COLOR_BPC_6;
+                     colorFormatsInfo.yuv444.maxBpc =
+-- 
+2.47.3
+

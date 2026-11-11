@@ -1,0 +1,99 @@
+From 2ad7e1b2004122237fa03503e43af145c63aa8b9 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Wed, 12 Aug 2026 21:20:09 -0300
+Subject: [PATCH 28/29] d/wmr: Refuse non-finite poses at both constellation
+ boundaries
+
+The headset pose feeds the constellation tracker's camera mosaic origin, so a
+single non-finite value there turns every controller position it produces into
+NaN. And a non-finite sample must never reach the controller's relation history,
+because that history is ALSO the tracker's prior: one NaN goes back into the
+solver, comes out as another, and poisons every later sample with no way back.
+
+Both observed live on 2026-08-12 in a real game session (Aircar): both
+controllers reporting (nan, nan, nan) indefinitely, with the relation still
+flagged POSITION_VALID | POSITION_TRACKED.
+
+Not math_pose_validate(): its quaternion check compares the norm against 1 with a
+tolerance of FLOAT_EPSILON, which a perfectly usable pose fails once filtering
+and prediction accumulate a little numerical error. Measured: it rejected 5528
+consecutive SLAM head poses in 40 s -- every single one -- and with no valid
+origin the tracker skipped every frame, so the controllers went from noisy to
+nothing at all. math_quat_validate_within_1_percent is the in-tree validator
+meant for this, and the position check is what catches the NaN either way.
+
+The underlying source of the NaN is fixed separately in t_tracker_slam.cpp;
+these guards stay because a bad pose must not be able to propagate this far
+again.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ src/xrt/drivers/wmr/wmr_controller_base.c | 13 ++++++++++
+ src/xrt/drivers/wmr/wmr_hmd.c             | 30 +++++++++++++++++++++++
+ 2 files changed, 43 insertions(+)
+
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
+index 1ed1e2ab6..8e06ec291 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.c
++++ b/src/xrt/drivers/wmr/wmr_controller_base.c
+@@ -779,6 +779,19 @@ constellation_sample_store(struct t_constellation_tracker_device *device, struct
+ 	struct wmr_controller_base *wcb =
+ 	    container_of(device, struct wmr_controller_base, constellation.device);
+ 
++	// A non-finite sample must never reach the history, because the history is ALSO the tracker's
++	// prior (see constellation_tracking_source_get_tracked_pose): one NaN would be fed back into
++	// the solver, come out as another NaN, and poison every subsequent sample with no way back.
++	// Observed live 2026-08-12 in a real game session -- both controllers stuck at (nan, nan, nan)
++	// indefinitely.
++	// Same tolerance note as the head-pose guard in wmr_hmd.c: the position check is what catches
++	// the NaN, and the quaternion is validated at 1 percent rather than at FLOAT_EPSILON.
++	if (!math_vec3_validate(&sample->pose.position) ||
++	    !math_quat_validate_within_1_percent(&sample->pose.orientation)) {
++		WMR_DEBUG(wcb, "constellation sample is not finite -- dropping it");
++		return;
++	}
++
+ 	// Position only: the constellation solve's orientation is not used for anything (the IMU's is
+ 	// better), but the history needs both bits set or every reader treats the entry as invalid.
+ 	// The orientation stored here is therefore the solve's, and deliberately never read back out
+diff --git a/src/xrt/drivers/wmr/wmr_hmd.c b/src/xrt/drivers/wmr/wmr_hmd.c
+index 504806b93..7739fa171 100644
+--- a/src/xrt/drivers/wmr/wmr_hmd.c
++++ b/src/xrt/drivers/wmr/wmr_hmd.c
+@@ -1473,6 +1473,36 @@ wmr_hmd_constellation_tracking_source_get_tracked_pose(struct t_constellation_tr
+ 		out_relation->relation_flags = (enum xrt_space_relation_flags)(
+ 		    out_relation->relation_flags | XRT_SPACE_RELATION_POSITION_VALID_BIT);
+ 	}
++
++	// Last line of defence: this pose becomes the origin of every camera in the mosaic, so a single
++	// non-finite value here turns every controller position the tracker produces into NaN. Reported
++	// as invalid instead, which the tracker already handles by skipping the observation.
++	// NOT math_pose_validate(): its quaternion check compares the norm against 1 with a tolerance of
++	// FLOAT_EPSILON (~1.2e-7), which a perfectly usable pose fails after filtering and prediction
++	// accumulate a little numerical error. Measured 2026-08-12: it rejected 5528 consecutive SLAM
++	// head poses in 40 s -- every single one -- and with no valid origin the tracker skipped every
++	// frame, so the controllers went from noisy to nothing. math_quat_validate_within_1_percent is
++	// the in-tree validator meant for this; combined with the position check it still catches the
++	// NaN this guard exists for.
++	if (!math_vec3_validate(&out_relation->pose.position) ||
++	    !math_quat_validate_within_1_percent(&out_relation->pose.orientation)) {
++		static int reject_log_count = 0;
++		if ((reject_log_count++ % 200) == 0) {
++			WMR_WARN(wh,
++			         "Head pose for the constellation tracker is not usable (#%d): pos=(%f, %f, %f) "
++			         "quat=(%f, %f, %f, %f) norm=%f flags=0x%x xret=%d",
++			         reject_log_count, out_relation->pose.position.x, out_relation->pose.position.y,
++			         out_relation->pose.position.z, out_relation->pose.orientation.x,
++			         out_relation->pose.orientation.y, out_relation->pose.orientation.z,
++			         out_relation->pose.orientation.w,
++			         sqrt((double)out_relation->pose.orientation.x * out_relation->pose.orientation.x +
++			              (double)out_relation->pose.orientation.y * out_relation->pose.orientation.y +
++			              (double)out_relation->pose.orientation.z * out_relation->pose.orientation.z +
++			              (double)out_relation->pose.orientation.w * out_relation->pose.orientation.w),
++			         (unsigned int)out_relation->relation_flags, (int)xret);
++		}
++		*out_relation = (struct xrt_space_relation)XRT_SPACE_RELATION_ZERO;
++	}
+ }
+ 
+ /*!

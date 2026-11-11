@@ -1,0 +1,80 @@
+From 9c4b60db89687656dcf6dc66578f4f0072cad18e Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Fri, 28 Aug 2026 18:48:17 -0300
+Subject: [PATCH] vit: age_in_ms/age_out_ms on the collapse-log lines (0020) +
+ VIT_QUEUE_DEPTH for both live queues (0021, default 2)
+
+---
+ src/vit/vit_tracker.cpp | 31 +++++++++++++++++++++++++++----
+ 1 file changed, 27 insertions(+), 4 deletions(-)
+
+diff --git a/src/vit/vit_tracker.cpp b/src/vit/vit_tracker.cpp
+index 3df298a..955d1fd 100644
+--- a/src/vit/vit_tracker.cpp
++++ b/src/vit/vit_tracker.cpp
+@@ -446,7 +446,22 @@ struct Tracker::Implementation {
+     // 0.5-0.9 s old. vio_enforce_realtime cannot fix this: it drops in the VIO stage,
+     // downstream of this queue. Two slots keep the frontend busy while the next frame is
+     // being assembled; push_frame's drop-oldest policy (below) does the rest.
+-    image_data_queue->set_capacity(2);
++    // reverb-g2 0021 (2026-08-28): VIT_QUEUE_DEPTH=<n> sets BOTH live queues (this one and the
++    // optical-flow -> VIO queue below) to n instead of 2. Why: with 0020's age_in/age_out on
++    // the collapse lines, a worn Aircar session showed exposure -> tracker input at a flat
++    // 11 ms and exposure -> pose out at p50 59 / p90 170 / p99 265 ms while the frontend ran
++    // 29 / 39 / 53 and the backend ~17 / 32 -- neither stage explains the tail, the 2 + 2
++    // queue slots do (4 frames x 33 ms after one slow backend frame). The backend is NOT
++    // saturated now (17 ms p50 vs 66 in the 08-17 measurement that chose 2), so depth 1
++    // bounds the pose age to ~2 frames + processing and drops a frame only on a real stall.
++    // Default 2 = unchanged. Deterministic mode ignores it as before.
++    static const long queue_depth = [] {
++      const char* e = std::getenv("VIT_QUEUE_DEPTH");
++      long v = e != nullptr ? std::atol(e) : 2L;
++      return v < 1 ? 1L : (v > 10 ? 10L : v);
++    }();
++    if (queue_depth != 2) std::cout << "VIT_QUEUE_DEPTH: live queues capped at " << queue_depth << " (default 2)\n";
++    image_data_queue->set_capacity(queue_depth);
+ 
+     vio = VioEstimatorFactory::getVioEstimator(vio_config, calib, constants::g, true, use_double);
+     imu_data_queue = &vio->imu_data_queue;
+@@ -466,7 +481,7 @@ struct Tracker::Implementation {
+     const char* vnb = std::getenv("BASALT_VISION_NONBLOCK");
+     const bool vision_nonblock = vnb == nullptr || (vnb[0] != '0' && vnb[0] != 'f' && vnb[0] != 'F');
+     if (!deterministic && vision_nonblock) {
+-      vio->vision_data_queue.set_capacity(2);
++      vio->vision_data_queue.set_capacity(queue_depth);  // 0021: was a literal 2
+       // Drop-oldest on THIS queue is a measured negative result (2026-08-17, same night,
+       // one relaunch later): the backend then only ever sees the newest survivor, frames
+       // arrive ~400 ms apart, every one of them crosses the keyframe threshold, and the
+@@ -596,9 +611,14 @@ struct Tracker::Implementation {
+                                ? 0.0
+                                : std::chrono::duration<double, std::milli>(now - last_in).count();
+           double ts_gap_ms = last_in_ts == 0 ? 0.0 : (double)(partial_frame->t_ns - last_in_ts) / 1e6;
++          // reverb-g2 0020: age of the frame at this point = now - its (mid-exposure) stamp.
++          // steady_clock is CLOCK_MONOTONIC on glibc, the same clock Monado stamps with, so
++          // this is the exposure -> tracker-input latency (USB, decode, hw2mono, queue).
++          double age_in_ms = (double)(std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count() -
++                                      partial_frame->t_ns) / 1e6;
+           std::cout << "vit_collapse IN  wall_ms=" << wall_ms << " frame_ts_gap_ms=" << ts_gap_ms
+                     << " imgq=" << image_data_queue->size() << " dropped=" << input_frames_dropped
+-                    << " t_ns=" << partial_frame->t_ns << std::endl;
++                    << " t_ns=" << partial_frame->t_ns << " age_in_ms=" << age_in_ms << std::endl;
+           last_in = now;
+           last_in_ts = partial_frame->t_ns;
+         }
+@@ -689,9 +709,12 @@ struct Tracker::Implementation {
+                              : std::chrono::duration<double, std::milli>(now - last_out).count();
+         int64_t frame_ts = data->input_images->t_ns;
+         double ts_gap_ms = last_out_ts == 0 ? 0.0 : (double)(frame_ts - last_out_ts) / 1e6;
++        // reverb-g2 0020: age of the pose at output = exposure -> frontend -> backend -> here.
++        double age_out_ms = (double)(std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count() -
++                                     frame_ts) / 1e6;
+         std::cout << "vit_collapse OUT wall_ms=" << wall_ms << " frame_ts_gap_ms=" << ts_gap_ms
+                   << " imgq=" << image_data_queue->size() << " dropped=" << input_frames_dropped
+-                  << " t_ns=" << frame_ts << std::endl;
++                  << " t_ns=" << frame_ts << " age_out_ms=" << age_out_ms << std::endl;
+         last_out = now;
+         last_out_ts = frame_ts;
+       }
+-- 
+2.47.3
+

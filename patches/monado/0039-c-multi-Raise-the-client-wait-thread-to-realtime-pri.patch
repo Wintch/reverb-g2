@@ -1,0 +1,52 @@
+From 2d1d53563490b6ddef37442a3594c689726c70b4 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Thu, 13 Aug 2026 01:37:32 -0300
+Subject: [PATCH 39/39] c/multi: Raise the client wait thread to realtime
+ priority
+
+The per-client wait thread takes slot_lock and list_and_timing_lock -- the
+same locks the SCHED_FIFO(99) 'Multi Client Module' main loop needs on every
+iteration -- but ran at SCHED_OTHER. With tracking threads eating 4+ of 6
+cores it could be preempted while holding a lock, stalling the RT main loop on
+a lock owned by a descheduled thread: classic priority inversion, and the
+free-running fake pacer converts any such one-off stall into a permanent
+whole-period phase shift (see the pacer instrumentation commit).
+
+Uses the same helper the main loop already uses; at equal SCHED_FIFO priority
+neither preempts the other mid-critical-section.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/xrt/compositor/multi/comp_multi_compositor.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/src/xrt/compositor/multi/comp_multi_compositor.c b/src/xrt/compositor/multi/comp_multi_compositor.c
+index 33675d43f..4c8264bea 100644
+--- a/src/xrt/compositor/multi/comp_multi_compositor.c
++++ b/src/xrt/compositor/multi/comp_multi_compositor.c
+@@ -21,6 +21,7 @@
+ #include "util/u_debug.h"
+ #include "util/u_handles.h"
+ #include "util/u_trace_marker.h"
++#include "util/u_thread_priority.h"
+ #include "util/u_distortion_mesh.h"
+ 
+ #include "multi/comp_multi_private.h"
+@@ -247,6 +248,14 @@ run_func(void *ptr)
+ 	U_TRACE_SET_THREAD_NAME("Multi Client Module: Waiter");
+ 	os_thread_helper_name(&mc->wait_thread.oth, "Multi Client Module: Waiter");
+ 
++	// This thread takes slot_lock and list_and_timing_lock -- the same locks the
++	// SCHED_FIFO main loop needs every iteration. Left at SCHED_OTHER it can be
++	// preempted by any busy tracking thread while holding them, stalling the RT
++	// main loop on a lock owned by a descheduled thread (classic priority
++	// inversion; the free-running fake pacer then converts that one stall into a
++	// permanent whole-period phase shift). Raise it like the main loop does.
++	u_try_to_set_realtime_priority_on_thread(U_LOGGING_INFO, "Multi Client Module: Waiter");
++
+ 	os_thread_helper_lock(&mc->wait_thread.oth);
+ 
+ 	// Signal the start function that we are enterting the loop.
+-- 
+2.47.3
+

@@ -1,0 +1,184 @@
+#!/bin/bash
+# vr-boot-selector.sh -- runs on a bare text console (multi-user.target), before
+# any desktop session exists. Two options, DEFAULT IS NOW AUTO (changed
+# 2026-08-09 after T129/T130 validated live, with real failing hardware, that
+# the diagnostic hands off to graphical.target no matter what happens --
+# success or failure -- so every unattended boot doubles as a live health
+# check instead of silently skipping straight to login):
+#
+#   [a] Auto     -- (default, on timeout too) -- run power-on.py --pre-login
+#                    now, in the console, no desktop running yet.
+#   [m] Manual   -- skip the diagnostic, boot straight into the normal
+#                    graphical login (SDDM).
+#
+# Hard ceiling below (coreutils `timeout`) is the actual safety net now that
+# auto is unattended-default: power-on.py's own per-call timeouts (run()'s
+# default 10s) bound individual subprocess calls, but there was never an
+# overall ceiling on the whole diagnostic -- this adds one, so a stuck
+# console still can't happen even if some future change breaks that
+# per-call bounding.
+#
+# DRY RUN: this script is safe to run by hand in any terminal right now --
+# it doesn't touch systemd targets unless you explicitly pick [a] and the
+# diagnostic passes (power-on.py --pre-login does that part, see there).
+# Nothing here is installed as a boot-time service yet; that's a separate,
+# deliberate step (see the .service file next to this script).
+#
+#   ./scripts/vr-boot-selector.sh [timeout_seconds, default 10]
+
+set -u
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Account the SDDM autologin targets (same convention as vr-launcher-console.sh).
+VR_USER="${VR_USER:-$(id -nu 1000)}"
+TIMEOUT="${1:-10}"
+
+# Bigger, bolder console font for this bare VT -- purely cosmetic, never fatal:
+# on a real VT it makes the boot screen legible from a few steps away (kiosk-
+# style); in any other context (xterm, ssh, CI) setfont just errors harmlessly.
+setfont Lat15-TerminusBold24x12 >/dev/null 2>&1 || true
+
+G='\033[1;92m'   # bright green -- the "matrix" accent, cosmetic only
+R='\033[0m'
+
+echo -e "${G}=================================================="
+echo -e "  HP Reverb G2 -- boot selector"
+echo -e "==================================================${R}"
+echo -e "  ${G}[a] Auto${R}    -- diagnostic right now, on the console, no desktop"
+echo -e "  ${G}[m] Manual${R}  -- normal boot (graphical login), as usual"
+echo
+echo "  No choice within ${TIMEOUT}s -> Auto (default)."
+echo
+
+CHOICE=""
+read -r -t "$TIMEOUT" -n 1 -p "Choose [a/m]: " CHOICE || true
+echo
+
+# SDDM autologin, conditional on the choice -- found live 2026-08-09/10: the
+# user's actual expectation is that Auto means "no login prompt at all,
+# straight through to the game", and the visual login screen is specifically
+# a Manual-mode thing. SDDM reads its config fresh each time it starts
+# (hasn't started yet at this point in multi-user.target), so writing/
+# removing this drop-in right here, before either branch hands off, is
+# enough -- no cross-boot staleness, this script runs on every single boot.
+# Session=gnome-wayland.desktop specifically (not gnome.desktop) because
+# that name exists ONLY under /usr/share/wayland-sessions/ -- gnome.desktop
+# exists in BOTH wayland-sessions/ and xsessions/, and this project's own
+# hard-won lesson (CLAUDE.md) is that picking the wrong "GNOME" entry (X11,
+# or the wrong Wayland one) breaks the DRM lease Monado needs. If SDDM can't
+# honor autologin for any reason, it just falls back to its normal login
+# screen -- this can't lock anyone out.
+#
+# TRIED AND REVERTED, 2026-08-10 (T144): pointed this at a bare-mutter session .desktop
+# instead, on the theory that it'd finally work because THIS script's own
+# power-on.py --pre-login call below already activates the panel (step 4)
+# before SDDM even starts -- so mutter would see the connector already
+# connected at ITS OWN startup, the one case already confirmed working live
+# (T142, connector present -> lease offered
+# correctly). The theory itself was never actually disproven -- what broke
+# it is one level up: SDDM's AUTOLOGIN path never even tried the bare-mutter session.
+# Manually picking "Mutter (bare, no shell)" from SDDM's own graphical
+# session list worked fine (confirmed live, same night) -- proving the
+# .desktop file itself is valid and discovered normally. But with
+# Session=<bare-mutter>.desktop written into this exact file byte-for-byte
+# correct (verified with `xxd`, no encoding/whitespace issue) well before
+# SDDM ever starts (this printf runs synchronously long before the
+# `systemctl isolate graphical.target` at the end of this script), SDDM's
+# own log on the very next boot went straight to reading
+# gnome-wayland.desktop -- no attempt at mutter-bare logged anywhere, not
+# even a failed one. Ruled out, each confirmed live: a second write
+# resetting the file, a second vr-boot-selector.service run, a race between
+# this script's write and SDDM's own start (journalctl timestamps show the
+# write is a full ~19s before sddm.service even starts), and any other
+# script in this repo touching 98-vr-autologin.conf. Best remaining guess,
+# NOT confirmed: SDDM's autologin path may resolve the session against a
+# session list that's scanned/cached separately from (and earlier than) the
+# interactive greeter's own live directory scan, so a .desktop file added
+# the same session doesn't show up there yet -- untested, would need
+# SDDM source review or a reboot with the file present from an EARLIER
+# boot to distinguish "autologin never sees new sessions" from "autologin
+# never works for mutter-bare specifically". Revisit with fresh eyes before
+# trying this again; don't just retry the same write-and-reboot loop.
+SDDM_AUTOLOGIN_CONF=/etc/sddm.conf.d/98-vr-autologin.conf
+case "$CHOICE" in
+    m|M)
+        rm -f "$SDDM_AUTOLOGIN_CONF"
+        echo "=== MANUAL -- normal graphical boot ==="
+        ;;
+    *)
+        # A fixed lab user (VR_USER), not `logname` -- nobody's logged in yet at this
+        # point (bare console, pre-graphical.target), logname would have
+        # nothing real to report. Matches vr-launcher-console.sh's own
+        # VR_USER convention.
+        printf '[Autologin]\nUser=%s\nSession=gnome-wayland.desktop\n' "$VR_USER" > "$SDDM_AUTOLOGIN_CONF"
+        echo -e "${G}=== AUTO (default, or timeout) -- running power-on.py --pre-login ===${R}"
+        # No 'exec' here on purpose: power-on.py already hands off to
+        # graphical.target on both its success AND failure paths, but this
+        # wrapper is the actual safety net if the script crashes before
+        # reaching either -- recoverability shouldn't depend on power-on.py
+        # behaving correctly. `timeout` (coreutils) is the hard ceiling on
+        # top of that, so this console can never hang indefinitely.
+        #
+        # THE CEILING WAS 120s AND IT WAS WRONG (T172, 2026-08-13). That number
+        # was sized for the fully automatic run (T129/T130 took 10-38s), but
+        # power-on.py grew an INTERACTIVE step the day before: when a USB branch
+        # is missing it prints the reseat ladder and waits for the human to fix
+        # the cable. The two safety mechanisms then fought each other -- the user
+        # was mid-reseat when `timeout` killed the diagnostic and the machine
+        # jumped to the login screen with no way back to the prompt. The human
+        # wait is now bounded by power-on.py itself (90s if nobody answers, 300s
+        # rearmed on every Enter), so this ceiling goes back to being what it was
+        # meant to be: an absurd-case backstop, not a normal-path guillotine.
+        # Worst realistic case is three interactive waits (census, cameras,
+        # panel) = ~15 min, hence 1200s.
+        #
+        # Logged through `script` rather than a plain `| tee`: StandardOutput=tty
+        # means none of this reaches the journal (the same debuggability hole
+        # that cost hours on the tty4 launcher, see CLAUDE.md), but a pipe would
+        # make power-on.py's stdout a non-tty and silently drop all its colors --
+        # and red/yellow carry real meaning there. `script` keeps a pty, so the
+        # console looks identical and the log gets everything.
+        BOOT_LOG=/var/log/vr-boot-selector.log
+        : >> "$BOOT_LOG" 2>/dev/null || BOOT_LOG=/tmp/vr-boot-selector.log
+        { echo; echo "=== $(date -Is) power-on.py --pre-login ==="; } >> "$BOOT_LOG" 2>/dev/null
+        # --foreground is load-bearing, not cosmetic (found live 2026-08-15, this
+        # exact boot: T182). Without it, `timeout` puts power-on.py in a NEW
+        # process group that is NOT the terminal's foreground group (confirmed:
+        # `sh -c "timeout ..."` here is dash, which forks rather than exec-
+        # replacing itself, so `timeout` lands on its own PID and self-assigns
+        # setpgid(0,0) -- a real, consequential group split, not a no-op). The
+        # instant power-on.py's own interactive wait (wait_for_reseat) tries to
+        # read stdin -- ANY keypress, [Enter] or [s]+[Enter] alike -- the kernel
+        # sends it SIGTTIN for reading from a background process group, whose
+        # default action is STOP. Not paused: stopped for good, in ps state 'T',
+        # not scheduled at all, so neither its own 90s/300s wait_for_reseat clock
+        # nor the outer 1200s `timeout` ceiling can save it -- a signal sent to a
+        # stopped process stays pending, unacted-on, until something SIGCONTs it,
+        # which nothing here ever does. This reproduced 1:1 in a synthetic pty
+        # harness (scratchpad) matching this exact process tree, confirmed against
+        # the live stuck session from this same boot: `timeout --foreground` keeps
+        # power-on.py in the terminal's foreground group and the read just works.
+        # This was very likely also the real cause behind T172's "ya no pude
+        # apretar enter para volver a reintentar" (Spanish: "I could no longer
+        # press enter to retry") -- the WAIT_HUMAN_S rearm logic
+        # added there never actually got to run, because the very first Enter
+        # already froze the process before reaching it.
+        if command -v script >/dev/null 2>&1; then
+            script -q -e -a "$BOOT_LOG" \
+                -c "timeout --foreground 1200 python3 -u '$HERE/power-on.py' --pre-login 1 3dof"
+            rc=$?
+        else
+            timeout --foreground 1200 python3 -u "$HERE/power-on.py" --pre-login 1 3dof
+            rc=$?
+        fi
+        echo
+        if [ "$rc" -eq 124 ]; then
+            echo "diagnostic hung (1200s timeout, rc=124) -- forcing graphical login."
+            echo "log: $BOOT_LOG"
+        else
+            echo "diagnostic finished (rc=$rc). Switching to graphical login in 3s..."
+        fi
+        sleep 3
+        ;;
+esac
+
+exec systemctl isolate graphical.target

@@ -1,0 +1,178 @@
+From cfebcd72b3bfff8bc52943f10f9d01993776b806 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Wed, 12 Aug 2026 21:20:09 -0300
+Subject: [PATCH 29/29] a/tracking: Make the output filters safe for more than
+ one caller
+
+The one euro filter divides by dt = when_ns - its own last timestamp
+(m_filter_one_euro.c:243) with no guard, and that timestamp is unsigned, so a
+query for an earlier instant underflows and the resulting NaN is stored in the
+filter permanently.
+
+That was invisible while the compositor was the only caller, since it always
+asks about a predicted display time that advances. It stopped being invisible
+when the WMR constellation tracker started asking for the headset's pose at
+CAMERA FRAME timestamps, which are in the past. Measured 2026-08-12 on a Reverb
+G2: the headset's own pose returning (-nan, nan, -nan) with flags 0x33 and
+XRT_SUCCESS, permanently, and only with SLAM_FILTER=one_euro.
+
+A mutex does not fix this and was tried first -- the problem is the ordering,
+not the race. Neither does a plain "must be newer than the last one" latch: one
+caller passed when_ns = 5216735132270448003 (~165 years, against normal values
+around 7e12) exactly once, and the latch then rejected every pose for the rest
+of the session -- 11 filtered against 3489 skipped. The filter had switched
+itself off and nothing said so; the wearer felt it as jitter.
+
+What this does:
+
+  - Plausibility is checked against os_monotonic_get_ns(), which no single bad
+    value can move. Implausible queries get the raw pose and do NOT move the
+    latch.
+  - Among plausible timestamps the filters still require time to move forward.
+  - Near-simultaneous repeat queries (measured as pairs 17-19 us apart, the
+    second always slightly earlier) are answered with the last FILTERED result
+    rather than the raw pose -- two views of one frame disagreeing by the full
+    amplitude of the jitter the filter removes is worse than either alone.
+    Genuinely older queries still get the raw pose, which is the honest answer
+    for a different instant and what a tracker wants anyway.
+  - A mutex, because the state is now genuinely shared.
+  - A standing applied/skipped/implausible count in the log, because this failed
+    silently once and nothing would have shown it.
+
+After: applied 5000, skipped 2939 of which 1760 answered from the last filtered
+pose, 53 implausible -- against applied 16, skipped 7984 with the latch.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ src/xrt/auxiliary/tracking/t_tracker_slam.cpp | 104 ++++++++++++++++++
+ 1 file changed, 104 insertions(+)
+
+diff --git a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+index dbbc478d9..83d6369b2 100644
+--- a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
++++ b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+@@ -346,6 +346,50 @@ struct TrackerSlam
+ 		struct xrt_space_relation last = XRT_SPACE_RELATION_ZERO;   //!< Last filtered relation
+ 		struct xrt_space_relation target = XRT_SPACE_RELATION_ZERO; //!< Target relation
+ 
++		/*!
++		 * Guards every piece of filter state in this struct. All of these filters are stateful and
++		 * were written assuming a single caller, which held until a second thread started asking
++		 * this tracker for poses (the WMR constellation tracker asks for the headset's pose from
++		 * its camera thread, to place head-mounted cameras in the world).
++		 *
++		 * Unlocked, the one euro filter computes its dt against a timestamp another thread has
++		 * already moved, so dt reaches zero or goes negative, the division blows up, and the NaN is
++		 * STORED in the filter -- every later pose comes back NaN with the relation still flagged
++		 * valid and tracked. Measured 2026-08-12: the headset's own pose came back
++		 * (-nan, nan, -nan) with flags 0x33 and XRT_SUCCESS, permanently, and only with
++		 * SLAM_FILTER=one_euro.
++		 */
++		Mutex mutex;
++
++		/*!
++		 * Timestamp of the last pose the filters below actually consumed. They are all stateful and
++		 * assume time only moves forward: the one euro filter divides by
++		 * dt = when_ns - (its own last ts) (m_filter_one_euro.c, m_vec3_div_scalar) with no guard,
++		 * and its ts is unsigned, so a query for an EARLIER instant underflows and the resulting
++		 * NaN is stored in the filter for good.
++		 *
++		 * That stayed invisible while the compositor was the only caller, since it always asks
++		 * about a predicted display time that advances. It stopped being invisible when the WMR
++		 * constellation tracker started asking for the headset's pose at CAMERA FRAME timestamps,
++		 * which are in the past: the two interleave, dt goes negative, and every pose afterwards --
++		 * including the one the application sees -- comes back NaN, still flagged valid and tracked.
++		 * Measured 2026-08-12; a mutex does NOT fix this, the order is the problem, not the race.
++		 *
++		 * Queries at or before this timestamp now skip filtering and get the raw pose, which is what
++		 * a tracker wants anyway; the filters keep seeing only the forward-moving stream.
++		 */
++		timepoint_ns last_filtered_when_ns = INT64_MIN;
++
++		//! Queries whose timestamp is nowhere near the real clock, see filter_pose.
++		uint64_t implausible_when_count = 0;
++		uint64_t applied_count = 0; //!< Poses the filters actually ran on.
++		uint64_t skipped_count = 0; //!< Poses skipped for going backwards in time.
++		uint64_t reused_count = 0;  //!< Of those, ones answered with @ref last_filtered.
++
++		//! Last filtered result, handed to near-simultaneous repeat queries, see filter_pose.
++		struct xrt_space_relation last_filtered = XRT_SPACE_RELATION_ZERO;
++		bool have_last_filtered = false;
++
+ 		// One euro filter
+ 		bool use_one_euro_filter = false;
+ 		m_filter_euro_vec3 pos_oe;     //!< One euro position filter
+@@ -1007,6 +1051,63 @@ filter_pose(TrackerSlam &t, timepoint_ns when_ns, struct xrt_space_relation *out
+ 		//! types before so as to not have redundant copies of ff logic.
+ 	}
+ 
++	// See TrackerSlam::filter::mutex and last_filtered_when_ns -- every filter below mutates state
++	// shared across callers, and none of them tolerate time going backwards.
++	unique_lock filter_lock(t.filter.mutex);
++
++	// Sanity-check against the real clock FIRST, not against the previous query. Measured
++	// 2026-08-12: a caller passed when_ns = 5216735132270448003 (~165 years, against normal values
++	// around 7e12) exactly once, and a plain "must be newer than the last one" latch then rejected
++	// every subsequent pose for the entire session -- 11 filtered against 3489 skipped, i.e. the one
++	// euro filter silently switched itself off and the wearer felt the raw jitter. An absolute bound
++	// cannot be poisoned by a single bad value the way a latch can.
++	const timepoint_ns now_ns = (timepoint_ns)os_monotonic_get_ns();
++	const timepoint_ns FILTER_PLAUSIBLE_NS = 5LL * U_TIME_1S_IN_NS;
++	if (when_ns < now_ns - FILTER_PLAUSIBLE_NS || when_ns > now_ns + FILTER_PLAUSIBLE_NS) {
++		t.filter.implausible_when_count++;
++		if (t.filter.implausible_when_count == 1 || (t.filter.implausible_when_count % 1000) == 0) {
++			SLAM_WARN("filter_pose: implausible when_ns %lld (now %lld), pose returned unfiltered "
++			          "[%lu so far]",
++			          (long long)when_ns, (long long)now_ns,
++			          (unsigned long)t.filter.implausible_when_count);
++		}
++		return; // out_relation stays raw, and the latch below is deliberately NOT moved
++	}
++
++	// Among plausible timestamps, the filters still need time to move forward -- see
++	// last_filtered_when_ns.
++	if (when_ns <= t.filter.last_filtered_when_ns) {
++		t.filter.skipped_count++;
++		// A query for essentially the same instant as the last filtered one -- measured here as
++		// pairs 17-19 us apart, the second always slightly earlier -- must not come back RAW while
++		// its twin came back filtered, or two views of the same frame disagree by the whole
++		// amplitude of the jitter the filter exists to remove. Hand back the last filtered result
++		// instead; over tens of microseconds the difference is nothing.
++		//
++		// Genuinely older queries (the constellation tracker asks about camera frames ~30 ms back)
++		// fall through and get the raw pose, which is the honest answer for a different instant and
++		// what a tracker wants anyway.
++		const timepoint_ns FILTER_SAME_INSTANT_NS = 2LL * U_TIME_1MS_IN_NS;
++		if (t.filter.have_last_filtered &&
++		    when_ns > t.filter.last_filtered_when_ns - FILTER_SAME_INSTANT_NS) {
++			*out_relation = t.filter.last_filtered;
++			t.filter.reused_count++;
++		}
++		return;
++	}
++	t.filter.last_filtered_when_ns = when_ns;
++
++	// Cheap standing answer to "is the filter actually doing anything". It silently stopped once
++	// already (see last_filtered_when_ns) and nothing would have shown it; a ratio in the log does.
++	t.filter.applied_count++;
++	if ((t.filter.applied_count % 5000) == 0) {
++		SLAM_INFO("filter_pose: applied %lu, skipped %lu (%lu answered from the last filtered "
++		          "pose), %lu implausible",
++		          (unsigned long)t.filter.applied_count, (unsigned long)t.filter.skipped_count,
++		          (unsigned long)t.filter.reused_count,
++		          (unsigned long)t.filter.implausible_when_count);
++	}
++
+ 	if (t.filter.use_exponential_smoothing_filter) {
+ 		xrt_space_relation &last = t.filter.last;
+ 		xrt_space_relation &target = t.filter.target;
+@@ -1024,6 +1125,9 @@ filter_pose(TrackerSlam &t, timepoint_ns when_ns, struct xrt_space_relation *out
+ 			m_filter_euro_quat_run(&t.filter.rot_oe, when_ns, &p.orientation, &p.orientation);
+ 		}
+ 	}
++
++	t.filter.last_filtered = *out_relation;
++	t.filter.have_last_filtered = true;
+ }
+ 
+ static void

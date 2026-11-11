@@ -1,0 +1,83 @@
+From e0d3db937609a02f870d601d39439bad02a8eb86 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Thu, 13 Aug 2026 00:21:06 -0300
+Subject: [PATCH 34/35] d/wmr: Cap the prediction horizon -- a silent
+ controller must not keep turning
+
+WMR controllers gate their IMU on motion: ~30 seconds after the device stops
+moving, it stops sending samples entirely. Measured 2026-08-13, and the signature
+was exact -- both controllers' bias estimators went silent at estimate #16, i.e.
+~32 s after coming to rest, every time, and resumed instantly (counter continuing
+#16 -> #17) on a single button press.
+
+get_tracked_pose extrapolated the last angular velocity over an unbounded horizon.
+For a device that has been silent for minutes, that painted a steady rotation at
+whatever residual velocity it happened to freeze with: measured 31-47 deg/min with
+R^2 = 1.000 -- perfectly linear because it is arithmetic, not measurement.
+
+That fake rotation is what a string of "gyro drift" measurements this session
+actually measured, and its dependence on the frozen instantaneous velocity is why
+consecutive measurements of the same resting controller disagreed by up to 5x
+(9.4 / 51.5 / 71.7 deg/min). The controlled demonstration: waking ONE controller
+and letting it re-sleep changed its extrapolation rate from 30.5 to 46.6 deg/min
+while the untouched one held 32.7-34.1 across three windows.
+
+Prediction is now capped at 100 ms -- covering every legitimate compositor
+lookahead -- and a device silent for over 1 s reports its last fused pose with
+zero velocities: not a steady rotation, and no velocities an app would use to
+keep extrapolating the same fiction on its side.
+
+What this reframes, honestly: the gyro-bias story (estimator never called,
+72/20 deg/min) remains real -- the head, which never sleeps, measurably converges
+on a ~65 deg/min bias, matching the wearer's 3dof roll-drift reports -- but the
+RESTING-controller drift numbers mixed live-fusion drift with sleep extrapolation
+in unknown proportion. With this cap, a resting controller holds still, and live
+fusion drift is measurable inside the ~30 s window the firmware allows.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/xrt/drivers/wmr/wmr_controller_base.c | 30 +++++++++++++++++++++--
+ 1 file changed, 28 insertions(+), 2 deletions(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
+index bdf830f4f..b2d0fbec7 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.c
++++ b/src/xrt/drivers/wmr/wmr_controller_base.c
+@@ -646,9 +646,35 @@ wmr_controller_base_get_tracked_pose(struct xrt_device *xdev,
+ 		*out_relation = relation;
+ 	} else {
+ 		int64_t prediction_ns = at_timestamp_ns - last_imu_timestamp_ns;
+-		double prediction_s = time_ns_to_s(prediction_ns);
+ 
+-		m_predict_relation(&relation, prediction_s, out_relation);
++		// Cap the prediction horizon. WMR controllers SLEEP after minutes of stillness and stop
++		// sending IMU entirely; without a cap, this extrapolated the last known angular velocity
++		// for as long as the device stayed silent. Measured 2026-08-13: a sleeping controller's
++		// frozen residual velocity of ~0.009 rad/s painted a ~31 deg/min rotation with R^2 =
++		// 1.000 for MINUTES -- perfectly linear because it is not a measurement at all, it is
++		// arithmetic. That fake rotation was mistaken for gyro drift repeatedly, and its
++		// dependence on whatever instantaneous velocity the device fell asleep with is why
++		// consecutive "drift" measurements disagreed by up to 5x. Forensics: the fusion's own
++		// update counters stop advancing (the estimator log shows the instance going silent), so
++		// the device is provably not sampling while the output keeps turning.
++		//
++		// 100 ms covers every legitimate compositor lookahead; a device silent for longer than
++		// 1 s is asleep or gone, and the honest report is its last fused pose with zero
++		// velocities -- NOT a steady rotation, and not velocities an app would use to keep
++		// extrapolating the same fiction on its side.
++		const int64_t WMR_MAX_PREDICTION_NS = 100 * 1000 * 1000;
++		const int64_t WMR_IMU_SILENT_NS = 1000 * 1000 * 1000;
++		if (prediction_ns > WMR_IMU_SILENT_NS) {
++			relation.angular_velocity = (struct xrt_vec3){0.f, 0.f, 0.f};
++			relation.linear_velocity = (struct xrt_vec3){0.f, 0.f, 0.f};
++			*out_relation = relation;
++		} else {
++			if (prediction_ns > WMR_MAX_PREDICTION_NS) {
++				prediction_ns = WMR_MAX_PREDICTION_NS;
++			}
++			double prediction_s = time_ns_to_s(prediction_ns);
++			m_predict_relation(&relation, prediction_s, out_relation);
++		}
+ 	}
+ 
+ 	// Throttled log of what this function actually hands back to the app -- as opposed to

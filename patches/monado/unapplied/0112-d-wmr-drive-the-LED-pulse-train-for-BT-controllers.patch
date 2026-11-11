@@ -1,0 +1,104 @@
+From 43280602800edcb6144155d366f28ab293eef619 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Sat, 3 Oct 2026 18:53:55 -0300
+Subject: [PATCH] d/wmr: drive the LED pulse train for BT controllers; per-hand
+ intensity; first-send log
+
+wmr_hmd.c only ticks the LED pulse train (and the keepalive) for controllers in its
+own tunnelled table, so WMR_CONTROLLER_LED_INTENSITY was a silent no-op for every
+controller created through wmr_bt_controller.c (host Bluetooth adapter). Tick it from
+the BT read loop; the command rate-limits itself and does nothing unless the env option
+is set, so default behaviour is unchanged.
+
+Add WMR_CONTROLLER_LED_INTENSITY_LEFT/_RIGHT (0 = unset): the Windows capture drives
+the left ring ~1.3-1.4x longer than the right (~225 vs ~165). Log one INFO line per
+controller on the first command so a run can prove the command went out.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ src/xrt/drivers/wmr/wmr_bt_controller.c   | 10 ++++++++++
+ src/xrt/drivers/wmr/wmr_controller_base.c | 19 ++++++++++++++++++-
+ src/xrt/drivers/wmr/wmr_controller_base.h |  2 ++
+ 3 files changed, 30 insertions(+), 1 deletion(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_bt_controller.c b/src/xrt/drivers/wmr/wmr_bt_controller.c
+index 10cf24e2b..71c9198ff 100644
+--- a/src/xrt/drivers/wmr/wmr_bt_controller.c
++++ b/src/xrt/drivers/wmr/wmr_bt_controller.c
+@@ -80,6 +80,16 @@ read_packets(struct wmr_bt_connection *conn)
+ 	struct wmr_controller_connection *wcc = (struct wmr_controller_connection *)conn;
+ 	wmr_controller_connection_receive_bytes(wcc, now_ns, buffer, size);
+ 
++	// A controller on the host adapter is not in wmr_hmd.c's tunnelled controller table, so
++	// wmr_hmd_send_controller_keepalives never reaches it: WMR_CONTROLLER_LED_INTENSITY was a
++	// silent no-op for every controller created through this file. Drive the LED pulse train
++	// from the read loop instead (>=20 Hz packet rate, the command is rate-limited internally
++	// and does nothing unless the env option is set, so default behaviour is unchanged).
++	struct wmr_controller_base *wcb = conn->base.wcb;
++	if (wcb != NULL) {
++		wmr_controller_base_send_led_pulse_if_due(&wcb->base);
++	}
++
+ 	return true;
+ }
+ 
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
+index b4e1d3544..aa894ae15 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.c
++++ b/src/xrt/drivers/wmr/wmr_controller_base.c
+@@ -178,6 +178,11 @@ DEBUG_GET_ONCE_NUM_OPTION(wmr_controller_keepalive_s, "WMR_CONTROLLER_KEEPALIVE_
+ //! uses 200. See wmr_controller_send_led_pulse_train() for what this commands and why it was
+ //! missing.
+ DEBUG_GET_ONCE_NUM_OPTION(wmr_controller_led_intensity, "WMR_CONTROLLER_LED_INTENSITY", 0)
++//! Per-hand overrides of the above (0 = not set, use WMR_CONTROLLER_LED_INTENSITY). Windows does not
++//! drive the two rings equally: reverb-g2 docs/re-windows/04 measured report 0x08 (left) at ~1.3-1.4x
++//! the on-time of 0x10 (right), i.e. roughly 225 vs 165 in this 1..399 scale, varying over time.
++DEBUG_GET_ONCE_NUM_OPTION(wmr_controller_led_intensity_left, "WMR_CONTROLLER_LED_INTENSITY_LEFT", 0)
++DEBUG_GET_ONCE_NUM_OPTION(wmr_controller_led_intensity_right, "WMR_CONTROLLER_LED_INTENSITY_RIGHT", 0)
+ //! Resend rate for the above, in Hz. Windows drives it at a median gap of 66.5 ms (~15/s)
+ //! continuously from tracking-start to tracking-stop -- measured over all 10,503 pulse-train
+ //! commands in the 730 s USBPcap capture (reverb-g2 docs/re-windows/04 §3).
+@@ -884,6 +889,12 @@ static void
+ wmr_controller_send_led_pulse_train(struct wmr_controller_base *wcb)
+ {
+ 	long intensity = debug_get_num_option_wmr_controller_led_intensity();
++	long per_hand = wcb->base.device_type == XRT_DEVICE_TYPE_LEFT_HAND_CONTROLLER
++	                    ? debug_get_num_option_wmr_controller_led_intensity_left()
++	                    : debug_get_num_option_wmr_controller_led_intensity_right();
++	if (per_hand > 0) {
++		intensity = per_hand;
++	}
+ 	if (intensity <= 0) {
+ 		return;
+ 	}
+@@ -920,7 +931,13 @@ wmr_controller_send_led_pulse_train(struct wmr_controller_base *wcb)
+ 		return;
+ 	}
+ 
+-	wmr_controller_send_bytes(wcb, pkt, sizeof(pkt));
++	bool sent = wmr_controller_send_bytes(wcb, pkt, sizeof(pkt));
++	if (!wcb->led_pulse_logged) {
++		wcb->led_pulse_logged = true;
++		U_LOG_IFL_I(wcb->log_level, "WMR Controller (%s): first LED pulse-train command sent (intensity %ld, %u Hz): %s",
++		            wcb->base.device_type == XRT_DEVICE_TYPE_LEFT_HAND_CONTROLLER ? "left" : "right", intensity,
++		            (unsigned)hz, sent ? "ok" : "FAILED");
++	}
+ }
+ 
+ void
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.h b/src/xrt/drivers/wmr/wmr_controller_base.h
+index 3c93a7d1d..1b3ed9dc8 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.h
++++ b/src/xrt/drivers/wmr/wmr_controller_base.h
+@@ -162,6 +162,8 @@ struct wmr_controller_base
+ 	uint64_t last_led_pulse_ns;
+ 	uint8_t led_cmd_counter;
+ 	uint8_t led_ts_counter;
++	//! True once the first LED pulse-train command has been logged (one INFO line per controller).
++	bool led_pulse_logged;
+ 	//! Main fusion calculator.
+ 	struct m_imu_3dof fusion;
+ 	//! The last angular velocity from the IMU, for prediction.
+-- 
+2.47.3
+

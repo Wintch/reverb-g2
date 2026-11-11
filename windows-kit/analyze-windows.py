@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""Analyzes the Windows capture and diffs it against what was measured on Linux.
+
+Run BACK ON LINUX, on the .tsv that run-diagnostics.ps1 produces.
+
+Looks for the two channels discovered on 2026-08-04:
+
+  0x05  DEVICE_STATUS  from the 03f0:0580 companion, 33 bytes.
+        byte 5      refresh in decimal      (confirmed: 0x3c=60, 0x5a=90)
+        byte 18     bpc-related             (06 unpatched, 08 with the bpc patch)
+        bytes 19-20 htotal little-endian    (confirmed against the EDID)
+        bytes 21-22 vtotal little-endian    (confirmed against the EDID)
+        byte 6                              the only byte that doesn't match Windows
+                                             even at 60Hz (which works on both sides) --
+                                             probably a session/reconnect counter,
+                                             not something OS-specific. See docs/13 (docs/16 is superseded, see its banner).
+
+  0x03  HoloLens Sensors FIRMWARE LOG 045e:0659, 509 bytes, ASCII.
+        format: magic "Dlo+" | 4B ts | 2B seq | 1B level | text
+
+  ./analyze-windows.py windows-90hz.tsv [windows-60hz.tsv]
+"""
+import re, sys
+
+# Captured on Linux on 2026-08-05 WITH the bpc patch applied (scripts/capture-hid.sh,
+# raw usbmon -- see hid-mode{0,2}.txt). The previous version of this dictionary was from
+# BEFORE the patch (2026-08-04) and contaminated any comparison against Windows: byte 18
+# alone was already enough to make the difference read as "patch yes/no" instead of
+# "different OS". With these values, the 60Hz that works on both sides comes out IDENTICAL
+# byte for byte except for byte 6 (see note above) -- confirms what docs/13 had already found.
+REF_LINUX = {
+    "60Hz WORKS  (Linux, patched)": "05 01 01 01 01 3c 00 00 00 05 2c 14 04 00 77 77 00 00 08 44 11 72 0a 01 00 80 00 80 00 80 00 80",
+    "90Hz injected 2880x1440 timing (Linux, patched; superseded, docs/16)": "05 01 01 01 01 5a 00 00 00 0c 1a 1e 02 00 77 00 00 00 08 a4 0b 3e 06 01 00 80 00 80 ff ff ff ff",
+    # This one was already compared against Windows in docs/13 (T004, 2026-08-05) and came
+    # out BYTE-IDENTICAL -- no need to recapture it. Kept here for reference, not to chase again.
+    "90Hz injected 4320x2160 timing (Linux, patched; already confirmed identical to Windows in docs/13)":
+        "05 01 01 01 01 5a 00 00 00 09 38 1e 04 00 77 77 00 00 08 44 11 e4 08 01 00 80 00 80 00 80 00 80 02",
+}
+
+
+def parse_tsv(path):
+    """Returns (status, fwlog): lists of bytes for each channel.
+
+    The HID payload can land in two different columns depending on whether
+    Wireshark dissects it as HID or leaves it raw: usb.capdata (bulk/isochronous)
+    or usbhid.data (interrupt recognized as an HID report) -- the DEVICE_STATUS
+    we're looking for is precisely interrupt, so it lives in usbhid.data, NOT in
+    usb.capdata. We check the last two columns just in case.
+    """
+    status, fwlog = [], []
+    for line in open(path, errors="replace"):
+        cols = line.rstrip("\n").split("\t")
+        # usb.capdata and usbhid.data are mutually exclusive per frame -- at most
+        # one of the two columns is populated. We take the first one that has something.
+        data = next((c.strip() for c in cols[-2:] if c.strip()), "")
+        if not data:
+            continue
+        try:
+            b = bytes.fromhex(data.replace(":", ""))
+        except ValueError:
+            continue
+        if not b:
+            continue
+        if b[0] == 0x05 and len(b) >= 23:
+            status.append(b)
+        elif b[0] == 0x03 and len(b) > 64:
+            fwlog.append(b)
+    return status, fwlog
+
+
+def show_status(b):
+    ht = b[19] | (b[20] << 8)
+    vt = b[21] | (b[22] << 8)
+    return (f"refresh={b[5]:<4} htotal={ht:<6} vtotal={vt:<6} "
+            f"b1={b[1]} b9={b[9]:02x} b10={b[10]:02x} b12={b[12]:02x} "
+            f"b14={b[14]:02x} b15={b[15]:02x}")
+
+
+def fw_entries(buf):
+    out = []
+    for m in re.finditer(re.escape(b"Dlo+"), buf):
+        p = m.end()
+        if p + 7 > len(buf):
+            continue
+        seq = int.from_bytes(buf[p + 4:p + 6], "little")
+        body = buf[p + 7:]
+        end = body.find(b"\x00")
+        txt = (body[:end] if end >= 0 else body).decode("ascii", "replace").strip()
+        if txt:
+            out.append((seq, txt))
+    return out
+
+
+def main():
+    if len(sys.argv) < 2:
+        sys.exit(__doc__)
+    for path in sys.argv[1:]:
+        print(f"\n{'='*78}\n  {path}\n{'='*78}")
+        status, fwlog = parse_tsv(path)
+        print(f"  DEVICE_STATUS (0x05): {len(status)}   FIRMWARE LOG (0x03): {len(fwlog)}")
+
+        if status:
+            print("\n  --- panel states seen on Windows ---")
+            seen = set()
+            for b in status:
+                h = b.hex(" ")
+                if h in seen:
+                    continue
+                seen.add(h)
+                print(f"    {show_status(b)}")
+                print(f"      {h}")
+
+        if fwlog:
+            print("\n  --- firmware log ---")
+            seen = set()
+            for b in fwlog:
+                for seq, txt in fw_entries(b):
+                    if (seq, txt) in seen:
+                        continue
+                    seen.add((seq, txt))
+                    mark = "!!" if re.search(r"error|fail|err", txt, re.I) else "  "
+                    print(f"    {mark} seq={seq:<7} {txt}")
+
+    print(f"\n{'='*78}\n  REFERENCE: what was measured on Linux\n{'='*78}")
+    for k, v in REF_LINUX.items():
+        print(f"  {k}\n    {v}")
+    print("""
+  WHAT TO LOOK FOR:
+  If Windows at 90Hz (with the panel ON) shows bytes 9/10/12/14/15/24-31
+  different from those in the "90Hz injected ... timing" references above, those bytes are
+  the difference. The 90 Hz issue itself is resolved by patch 0004 (docs/19); these are
+  historical injected-timing references, kept for comparison. If they're identical, the headset
+  is in the same state on both systems.
+""")
+
+
+main()

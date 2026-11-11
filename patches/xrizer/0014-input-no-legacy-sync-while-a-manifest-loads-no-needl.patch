@@ -1,0 +1,65 @@
+From 4db93531486143dcaaf74d66b39ad4d1ccc23058 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Mon, 12 Oct 2026 22:51:35 -0300
+Subject: [PATCH] input: no legacy sync while a manifest loads, no needless
+ session restart
+
+Two problems in the manifest-load path after patches 0004 and 0013:
+
+- 0013 creates the legacy action set inside load_action_manifest(),
+  before the sets are attached. A frame_start_update() on another thread
+  in that window took the legacy-only branch and synced an unattached set:
+  XR_ERROR_ACTIONSET_NOT_ATTACHED, and the unwrap panicked. Upstream's
+  load_actions_race test catches it: it passes on 6c3e45f and through
+  0012, and failed from 0013 on. The legacy branch now skips the sync while
+  loading_actions is set, the same guard the None arm already had.
+- Since 0004 every manifest session also holds legacy actions, so every
+  repeated SetActionManifestPath restarted the whole session (a write lock
+  on every API thread, a visible hitch) and then load_action_manifest()
+  returned early. The restart now happens only when no manifest is loaded.
+
+Found by the 2026-10-12 code review (reverb-g2 docs/147, X02-1, X02-8).
+All 88 lib tests pass.
+
+Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
+---
+ src/input.rs | 14 +++++++++++++-
+ 1 file changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/src/input.rs b/src/input.rs
+index 28466c5..07581ff 100644
+--- a/src/input.rs
++++ b/src/input.rs
+@@ -1314,9 +1314,14 @@ impl<C: openxr_data::Compositor> vr::IVRInput011_Interface for Input<C> {
+         info!("loading action manifest from {path:?}");
+ 
+         // We need to restart the session if the legacy actions have already been attached.
++        // Not when a manifest is already loaded: since 0004/0013 that session holds legacy
++        // actions too, and load_action_manifest() returns early for a second manifest, so a
++        // restart there was a full session teardown (and a frame hitch) for nothing.
+         self.loading_actions.store(true, Ordering::Relaxed);
+         let mut data = self.openxr.session_data.get();
+-        if data.input_data.get_legacy_actions().is_some() {
++        if data.input_data.get_legacy_actions().is_some()
++            && data.input_data.get_loaded_actions().is_none()
++        {
+             drop(data);
+             self.openxr.restart_session();
+             data = self.openxr.session_data.get();
+@@ -1632,6 +1637,13 @@ impl<C: openxr_data::Compositor> Input<C> {
+ 
+         match input_data.get_legacy_actions() {
+             Some(actions) => {
++                // While an action manifest loads, the legacy set exists (0013 creates it inside
++                // load_action_manifest) but is not attached yet: syncing it then fails with
++                // XR_ERROR_ACTIONSET_NOT_ATTACHED and the unwrap panics. Same guard as the
++                // None arm below; upstream's load_actions_race test catches it.
++                if self.loading_actions.load(Ordering::Relaxed) {
++                    return;
++                }
+                 data.session
+                     .sync_actions(&[
+                         xr::ActiveActionSet::new(&actions.set),
+-- 
+2.47.3
+

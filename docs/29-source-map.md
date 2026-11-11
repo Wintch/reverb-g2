@@ -1,0 +1,137 @@
+# 29 — Source map: every repo, fork, and forum thread this project depends on
+
+Purpose: one place with every external URL this project actually uses or has checked,
+with *why it matters*, so neither machine (nor a future session on either one) re-clones,
+re-searches for, or re-litigates something already found. Keep this current when a new
+source gets pulled in or an old one turns out to be a dead end -- a wrong or stale entry
+here is worse than no entry, so update in place rather than leaving it to rot.
+
+## This project
+
+- **`github.com/Wintch/reverb-g2`** -- this repo. Docs, patches, scripts. Start from
+  `README.md` and `docs/06-known-issues.md` for current status, not from this file.
+
+## Core upstream repos, actively patched (each has a `patches/<name>/` dir here)
+
+- **Monado** -- `gitlab.freedesktop.org/monado/monado` -- the OpenXR runtime the whole
+  stack runs on. Our G2 driver work lives in `patches/monado/`, pinned on `main@735e29e4e`
+  (`patches/monado/README.md` lists the series). The MR-sized pieces are submitted
+  upstream (see below); the controller 6DoF work in `patches/monado/unapplied/` is not
+  filed.
+- **Basalt** -- `gitlab.freedesktop.org/mateosss/basalt` -- the VIO/SLAM library behind
+  head tracking (`VIT_SYSTEM_LIBRARY_PATH`). Our patches are in `patches/basalt/` (collapse fixes, queue bounds,
+  instrumentation, recall-patch pruning; see `patches/basalt/README.md`).
+- **xrizer** -- `github.com/Supreeeme/xrizer` -- an OpenVR-compat shim that runs SteamVR
+  titles against an OpenXR runtime (i.e. against Monado) without `vrmonitor`. Our patches
+  (`patches/xrizer/`) are written against its `main`; the
+  `github.com/The-personified-devil/xrizer` fork (still linked from `README.md`) is a
+  separate line. Verify which one you are on before cloning fresh.
+- **OpenXR-SDK-Source** -- `github.com/KhronosGroup/OpenXR-SDK-Source` -- upstream source
+  for `hello_xr`, the reference OpenXR client this project extended into its own
+  360/VR180/8K60 player (our changes are in `patches/hello_xr-player/`).
+
+## NVIDIA driver
+
+- **`github.com/Wintch/open-gpu-kernel-modules`** -- our fork, carries the 6bpc-clamp fix
+  (`patches/nvidia/0004-nvkms-do-not-clamp-to-6bpc-when-EDID-leaves-color-de.patch`) that resolved the 90Hz bug. `upstream`
+  remote points at NVIDIA's own repo below.
+- **`github.com/NVIDIA/open-gpu-kernel-modules`** -- upstream. Our PR:
+  `github.com/NVIDIA/open-gpu-kernel-modules/pull/1275`.
+
+## Forum threads -- status and root-cause tracking, don't re-derive what's already posted
+
+- **Our own bug, RESOLVED** -- `forums.developer.nvidia.com/t/.../379240` ("clamped to
+  6 bpc...", internal bug **5923212**). Confirmed 2026-08-06: the 6bpc clamp was the real
+  fix, clean 90Hz confirmed on this Ampere GPU. Answers "does anything run above 60Hz on
+  this stack" -- **yes, since 2026-08-06, this headset does**, on this same NVIDIA driver.
+  See `docs/19-nvidia-bug-5923212-followup.md` and `docs/21-project-retrospective.md`.
+- **Original community report** -- `forums.developer.nvidia.com/t/.../337744` ("Reverb G2
+  unable to drive more than 60Hz on NVIDIA") -- where bug 5923212 was first raised by
+  someone else; our thread built on this.
+- **Related, other headsets, same driver family** --
+  `forums.developer.nvidia.com/t/.../341244` (DRM lease acquisition failures across NVIDIA
+  drivers/hardware in general, not G2-specific).
+
+## Reference forks, not merged in, worth re-checking if the local approach stalls
+
+- **`gitlab.freedesktop.org/thaytan/monado`, branch `dev-constellation-controller-tracking`**
+  -- an existing, working reference implementation of WMR controller 6DoF via constellation
+  tracking (used by Envision-XR; wiki updated 2026-07-30 as of the last check). Our own
+  constellation series (`patches/monado/0012`-`0015` applied, the rest in
+  `patches/monado/unapplied/`) is an independent implementation, not a merge of this fork --
+  a trial merge was done once (8 conflicts, all mechanical CMake/device-list wiring, none
+  touching our own patched files) and abandoned, not because it failed, but to avoid
+  rewriting code under active upstream review at the time. Worth revisiting if our own
+  controller-tracking problem (`docs/03-controllers.md`, `docs/06-known-issues.md`) needs a
+  different approach than ours.
+
+## Our own upstream submissions (Monado merge requests)
+
+| MR | branch | what | status |
+|---|---|---|---|
+| `!2967` | `wmr-hid-resilience` | companion-drop tolerance, fw-read retry, bounded status wait | open |
+| `!2968` | `wmr-controller-input-fixes` | squeeze click, haptic name, input timestamps, stick deadzone | open |
+| `!2969` | `wmr-camera-stream-toggle` | `WMR_CAMERAS=0` | open |
+| `!3004` | `companion-hot-reconnect` | back off the companion read on a dropout, reopen the hidraw node after a USB re-enumeration | open |
+| `!3020` | `wmr-camera-stop-drain` | make `wmr_camera_stop` wait for in-flight transfers | open |
+| `!2971` | `steamvr-drv-origin-rpath` | `$ORIGIN` runtime path for pressure-vessel | merged |
+| `!3021` | `euroc-playback-cam-count` | EuRoC playback camera count | merged |
+| `!3036` | `prober-string-descriptor-length` | treat a positive string-descriptor length as success (`docs/145`) | merged |
+
+All at `gitlab.freedesktop.org/monado/monado/-/merge_requests/<number>`. The upstream MR
+pages are the source of truth for status; `docs/18-monado-upstreaming.md` holds the MR
+bodies and the submission runbook, `patches/monado/README.md` the series.
+
+## Community references
+
+- **LVRA wiki (Linux VR Adoption)** -- `wiki.vronlinux.org/docs/hardware/` (source repo:
+  `gitlab.com/lvra/lvra.gitlab.io`, file `content/docs/hardware/_index.md`) -- community
+  hardware-compat wiki. Had a stale G2-on-NVIDIA entry; it has since been corrected upstream
+  (90 Hz requires driver patches).
+
+## Internal surveys already done -- read these before re-researching from scratch
+
+- **`docs/23-game-compatibility.md`** -- every SteamVR title tried against xrizer, with
+  Steam AppID + SteamDB link, working/broken/failed/untested status and notes. Check here
+  before re-testing a game that might already have a verdict.
+- **`docs/25-standalone-app-research.md`** -- desk research on engines/toolkits for a
+  future standalone OpenXR app (not verified on hardware).
+- **`docs/26-diagnostic-toolkit-and-buying-guide.md`** -- hardware fault decision tree +
+  tool list, companion to `docs/22`.
+- **`docs/27-verbose-logging-survey.md`** / **`docs/28-log-map.md`** -- what verbose
+  logging exists across the stack (Steam/Proton/engines/OpenXR loader) and where to find
+  it, so a new debugging session doesn't re-survey logging options from scratch.
+
+## External leads checked, found unreliable or inconclusive -- don't re-chase without new evidence
+
+- **`github.com/AshishKumar4/Project-VR`** claims a working 90Hz G2 + full 6-DoF
+  controller tracking (LED constellation + a 15-error-state EKF fusing optical/IMU) --
+  found via a web search while stuck on our own controller-tracking
+  exposure bug. **Already investigated and found unreliable by this project itself**, see
+  `docs/06-known-issues.md`'s "CAUTION: Project-VR is NOT a verified positive case"
+  section (2026-08-04): 0 stars/forks/issues/PRs, zero external mentions anywhere, a
+  single initial-dump commit, never validated on Ampere (only Ada/RTX 4080), zero
+  images or video across 177 files, and its "evidence" is a successful OpenXR
+  session/log -- exactly the false-positive class this project already caught 9 times
+  (API happily reports 90fps with a dead panel). Its DSC-as-cause theory for 90Hz was
+  separately ruled out too (same doc, next section down). The 6-DoF/EKF claim inherits
+  the same skepticism by extension -- no photo/video proof exists for that either. Only
+  reason to revisit: if the author (or anyone) posts actual video proof.
+- **`github.com/OpenHMD/OpenHMD` issue #295** -- a different headset (HP Reverb
+  Professional/VR1000, not G2) and a different reverse-engineered driver stack (OpenHMD,
+  not Monado), but a strikingly similar symptom: DisplayPort never powers the panel while
+  USB/rotational tracking works fine, with firmware-side errors including `"unknown
+  message type: 23"` -- notable because our own 2026-08-11 firmware debug error
+  (`hololens_handle_debug` in `wmr_hmd.c`, verbatim text from the headset's own firmware,
+  not Monado-generated) was `"ERROR: CommandSet st 0, cmd 0, reqCmd 23"` -- same number,
+  possibly the same underlying WMR-family protocol command, unconfirmed. **That OpenHMD
+  thread has no resolution either** -- the reporter offered hardware/patch testing
+  collaboration and nothing came of it publicly. Command/message-type 23 being an
+  apparent sticking point across two independent reverse-engineering efforts (OpenHMD and
+  whatever informs Monado's own WMR driver) is worth remembering if this recurs, but
+  isn't an answer by itself.
+- **NVIDIA driver "565.77.01 required for G2 on Linux"** -- surfaced once in an AI web
+  search summary while researching the above, **could not be confirmed by a follow-up
+  search** (no changelog or forum post found mentioning this). Treat as unverified/likely
+  a search-summarization artifact, not a real claim -- don't act on it without finding a
+  primary source first.

@@ -1,0 +1,26 @@
+From ede87bd4d37691624e942bafd80c5f2f463e83a6 Mon Sep 17 00:00:00 2001
+From: Mateo de Mayo <mateo.demayo@tum.de>
+Date: Sun, 20 Sep 2026 14:55:20 +0200
+Subject: [PATCH] Fix multi camera essential constraint index
+
+(cherry picked from commit b8ac608f545bbfca865c5d50a37f17cf76db1fbe)
+---
+ include/basalt/optical_flow/optical_flow.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/include/basalt/optical_flow/optical_flow.h b/include/basalt/optical_flow/optical_flow.h
+index b446f5c..dedef1c 100644
+--- a/include/basalt/optical_flow/optical_flow.h
++++ b/include/basalt/optical_flow/optical_flow.h
+@@ -219,7 +219,7 @@ class OpticalFlowTyped : public OpticalFlowBase {
+     E.resize(getNumCams());
+     for (size_t i = 0; i < getNumCams(); i++) {
+       Eigen::Matrix4d Ed;
+-      SE3 T_i_j = calib.T_i_c[0].inverse() * calib.T_i_c[1];
++      SE3 T_i_j = calib.T_i_c[0].inverse() * calib.T_i_c[i];
+       computeEssential(T_i_j.template cast<double>(), Ed);
+       E[i] = Ed.cast<Scalar>();
+     }
+-- 
+2.47.3
+

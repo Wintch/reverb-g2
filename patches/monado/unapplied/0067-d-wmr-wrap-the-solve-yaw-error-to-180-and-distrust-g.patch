@@ -1,0 +1,74 @@
+From d57f51374e652651f83ba9099c6623b5cd76f8c8 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Mon, 17 Aug 2026 20:59:02 -0300
+Subject: [PATCH] d/wmr: wrap the solve-yaw error to +-180 and distrust ghost
+ solves after heading lock
+
+First hardware contact with 0066 (T208) caught two defects in one log: (1) the yaw
+error from 2*atan2 spans (-2pi,2pi] unwrapped, so errors beyond +-180 (logged live:
+-352.7 deg = really +7.3; 245.5 = really -114.5) stepped the LONG way around and
+drove BOTH controllers into endless rotation. Wrapped to (-pi,pi]. (2) 0047's open
+near-pure-yaw ghost solves land at wildly different headings; chasing them unlocked
+good headings. Now: any error trusted before first lock (boot offset up to 180),
+then once observed <15 deg (locked), sudden errors >60 deg are skipped as ghosts.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/xrt/drivers/wmr/wmr_controller_base.c | 26 +++++++++++++++++++++++
+ src/xrt/drivers/wmr/wmr_controller_base.h |  3 +++
+ 2 files changed, 29 insertions(+)
+
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
+index 556d25bfd..86fd21594 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.c
++++ b/src/xrt/drivers/wmr/wmr_controller_base.c
+@@ -1279,6 +1279,32 @@ apply_solve_yaw_correction(struct wmr_controller_base *wcb,
+ 	// and the result stays well-defined all the way through +-180 deg.
+ 	float yaw_error_rad = 2.0f * atan2f(yaw_only.y, yaw_only.w);
+ 
++	// WRAP to (-pi, pi] -- 2*atan2 spans (-2pi, 2pi], and an unwrapped error beyond +-180
++	// steps the LONG way around the circle. Caught live on first hardware contact (T208):
++	// the log showed error=-352.7 deg (really +7.3) and error=245.5 (really -114.5), and the
++	// anchor drove BOTH controllers into endless rotation chasing the long way.
++	if (yaw_error_rad > (float)M_PI) {
++		yaw_error_rad -= 2.0f * (float)M_PI;
++	} else if (yaw_error_rad < -(float)M_PI) {
++		yaw_error_rad += 2.0f * (float)M_PI;
++	}
++
++	// Ghost-solve trust window (0047's open near-pure-yaw mis-assignments produce solves at
++	// wildly different headings with equally-good reprojection): before the heading has ever
++	// locked, trust any error (the boot offset can legitimately be up to 180). Once the
++	// error has been observed small (<15 deg = locked), a sudden huge error (>60 deg) is far
++	// more likely a ghost cluster than a real re-offset -- skip it rather than un-locking a
++	// good heading. A REAL large re-offset cannot physically happen without a tracker reset.
++	const float yaw_lock_rad = 15.0f * ((float)M_PI / 180.0f);
++	const float yaw_distrust_rad = 60.0f * ((float)M_PI / 180.0f);
++	if (wcb->constellation.solve_yaw_locked && fabsf(yaw_error_rad) > yaw_distrust_rad) {
++		os_mutex_unlock(&wcb->data_lock);
++		return;
++	}
++	if (fabsf(yaw_error_rad) < yaw_lock_rad) {
++		wcb->constellation.solve_yaw_locked = true;
++	}
++
+ 	float step_rad = gain * yaw_error_rad;
+ 	if (step_rad > max_step_rad) {
+ 		step_rad = max_step_rad;
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.h b/src/xrt/drivers/wmr/wmr_controller_base.h
+index f85117648..d809d76d4 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.h
++++ b/src/xrt/drivers/wmr/wmr_controller_base.h
+@@ -168,6 +168,9 @@ struct wmr_controller_base
+ 		uint64_t gravity_gate_drop_count;
+ 		//! Gate-accepted solves that fed WMR_CONTROLLER_SOLVE_YAW_CORRECT (0 while off).
+ 		uint64_t solve_yaw_correction_count;
++		//! Set once the solve-yaw error has been observed small (heading acquired);
++		//! afterwards, huge sudden errors are distrusted as 0047's yaw-ghost solves.
++		bool solve_yaw_locked;
+ 
+ 		/*!
+ 		 * Every constellation sample this controller receives, keyed by the sample's own
+-- 
+2.47.3
+

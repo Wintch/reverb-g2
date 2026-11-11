@@ -1,0 +1,97 @@
+From e39af96830a90d49764099d7762f75bafcce3256 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Thu, 13 Aug 2026 01:20:57 -0300
+Subject: [PATCH] d/wmr: Survive transient read errors on the Hololens Sensors
+ device
+
+A single os_hid_read() -1 on the Hololens Sensors device returned false
+from hololens_sensors_read_packets(), which broke wmr_run_thread()'s loop
+and ended the thread permanently -- taking with it every IMU sample, the
+SLAM tracking feed, and the tunnelled controller packets, while
+monado-service kept compositing the last pose. Seen live 2026-08-13
+(docs/pruebas.jsonl T166): one -1 early in a session, tracking frozen for
+its entire remainder, device still enumerated and healthy on the bus.
+
+The commit that made control_read_packets() tolerant (0001) described this
+exact shared-thread risk in its own message but only fixed the
+companion->IMU direction, leaving the IMU channel itself -- the most
+load-bearing of the three HID channels -- as the only one still fatal on a
+transient hiccup.
+
+Same shape as the Bluetooth controller tunnel's existing fix
+(wmr_bt_controller.c): tolerate up to 10 consecutive failures with a
+visible WARN each time, reset the counter on any successful read, then
+give up with the original ERROR. A 10ms sleep on the failure path keeps a
+genuinely dead fd (poll() returning POLLNVAL instantly) from busy-spinning
+through the bound.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/xrt/drivers/wmr/wmr_hmd.c | 31 +++++++++++++++++++++++++++++--
+ src/xrt/drivers/wmr/wmr_hmd.h |  7 +++++++
+ 2 files changed, 36 insertions(+), 2 deletions(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_hmd.c b/src/xrt/drivers/wmr/wmr_hmd.c
+index a68c9ce4b..e7572d336 100644
+--- a/src/xrt/drivers/wmr/wmr_hmd.c
++++ b/src/xrt/drivers/wmr/wmr_hmd.c
+@@ -511,9 +511,36 @@ hololens_sensors_read_packets(struct wmr_hmd *wh)
+ 	os_mutex_unlock(&wh->hid_lock);
+ 
+ 	if (size < 0) {
+-		WMR_ERROR(wh, "Error reading from Hololens Sensors device. Call to os_hid_read returned %i", size);
+-		return false;
++		// The Hololens Sensors device shares the headset's internal USB2 hub with
++		// the companion device, which is already known to transiently drop off and
++		// re-enumerate under panel load (see control_read_packets()). A single read
++		// error here used to permanently kill this thread -- and with it every IMU
++		// sample, the SLAM tracking feed, and the tunnelled controller packets --
++		// even though the device itself stays enumerated and healthy (seen live
++		// 2026-08-13: one -1, tracking frozen for the rest of the session, device
++		// still on the bus). Tolerate a bounded run of consecutive failures
++		// instead, same shape as the Bluetooth controller tunnel
++		// (wmr_bt_controller.c). Unlike the companion device this feed is
++		// load-bearing for tracking, so warn loudly and give up after a bound
++		// rather than tolerating forever.
++		wh->hololens_consecutive_read_errors++;
++		if (wh->hololens_consecutive_read_errors >= 10) {
++			WMR_ERROR(wh,
++			          "Error reading from Hololens Sensors device: %d consecutive read errors, "
++			          "giving up. Call to os_hid_read returned %i",
++			          wh->hololens_consecutive_read_errors, size);
++			return false;
++		}
++		WMR_WARN(wh,
++		         "Error reading from Hololens Sensors device (%d in a row). Call to os_hid_read returned %i",
++		         wh->hololens_consecutive_read_errors, size);
++		// The healthy path is paced by the blocking 100ms os_hid_read above, but a
++		// dead fd makes poll() return POLLNVAL instantly -- this sleep keeps the
++		// failure path from busy-spinning until the bound trips.
++		os_nanosleep(U_TIME_1MS_IN_NS * 10);
++		return true;
+ 	}
++	wh->hololens_consecutive_read_errors = 0;
+ 	if (size == 0) {
+ 		WMR_TRACE(wh, "No more data to read");
+ 		return true; // No more messages, return.
+diff --git a/src/xrt/drivers/wmr/wmr_hmd.h b/src/xrt/drivers/wmr/wmr_hmd.h
+index 1958422ae..41aff5a08 100644
+--- a/src/xrt/drivers/wmr/wmr_hmd.h
++++ b/src/xrt/drivers/wmr/wmr_hmd.h
+@@ -88,6 +88,13 @@ struct wmr_hmd
+ 	struct os_hid_device *hid_hololens_sensors_dev;
+ 	struct os_mutex hid_lock;
+ 
++	/*!
++	 * Consecutive os_hid_read() failures on hid_hololens_sensors_dev, reset on
++	 * any successful read. Bounds how long a transient hiccup is tolerated
++	 * before giving up on the IMU/SLAM/controller-tunnel feed for good.
++	 */
++	int hololens_consecutive_read_errors;
++
+ 	/*!
+ 	 * This is the vendor specific companion device of the Hololens Sensors.
+ 	 * When activated, it will report the physical IPD adjustment and proximity
+-- 
+2.47.3
+

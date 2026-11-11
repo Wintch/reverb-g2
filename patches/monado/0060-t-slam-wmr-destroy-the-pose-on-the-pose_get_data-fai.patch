@@ -1,0 +1,56 @@
+From d32d03e43b260ec18f7952c6f459d49c55ebc7da Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Mon, 17 Aug 2026 16:59:27 -0300
+Subject: [PATCH 60/60] t/slam+wmr: destroy the pose on the pose_get_data
+ failure path; print the factory IMU calibration once per boot
+
+Two small T204 follow-ups. The pose_get_data failure exit in flush_poses leaked one
+vit_pose_t per occurrence (every other loop exit destroys it). And nothing in this
+project had ever printed the factory IMU mix matrices actually in use (Basalt's
+print_calibration() is dead code) -- yet a degenerate gyro mix_matrix would manifest
+exactly as the measured motion-proportional roll drift and yaw->tilt coupling; one
+INFO block per boot closes that blind spot for free.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/xrt/auxiliary/tracking/t_tracker_slam.cpp | 3 +++
+ src/xrt/drivers/wmr/wmr_hmd.c                 | 9 +++++++++
+ 2 files changed, 12 insertions(+)
+
+diff --git a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+index 2b2f70f35..fbd171035 100644
+--- a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
++++ b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+@@ -1059,6 +1059,9 @@ flush_poses(TrackerSlam &t)
+ 		vres = t.vit.pose_get_data(pose, &data);
+ 		if (vres != VIT_SUCCESS) {
+ 			SLAM_ERROR("Failed to get pose data from VIT tracker");
++			// Every other exit of this loop destroys the pose; this one leaked it
++			// (found during the T204 leak hunt -- rare path, real leak).
++			t.vit.pose_destroy(pose);
+ 			return false;
+ 		}
+ 
+diff --git a/src/xrt/drivers/wmr/wmr_hmd.c b/src/xrt/drivers/wmr/wmr_hmd.c
+index 790fd8ab4..9427aa41e 100644
+--- a/src/xrt/drivers/wmr/wmr_hmd.c
++++ b/src/xrt/drivers/wmr/wmr_hmd.c
+@@ -1738,6 +1738,15 @@ wmr_hmd_get_imu_calib(struct wmr_hmd *wh)
+ 	            .noise_std = {gn.x, gn.y, gn.z},
+ 	        },
+ 	};
++
++	// T204 blind spot: nothing in this project had ever printed the factory IMU calibration
++	// actually in use (Basalt's print_calibration() is dead code), yet a wrong/degenerate
++	// gyro mix_matrix would manifest EXACTLY as the measured motion-proportional roll drift
++	// (+0.9 deg/min worn vs ~0 at rest) and the yaw->tilt coupling. One INFO block per boot.
++	WMR_INFO(wh, "IMU factory calib: gyro mix [%f %f %f; %f %f %f; %f %f %f] bias [%f %f %f]", //
++	         gt[0], gt[1], gt[2], gt[3], gt[4], gt[5], gt[6], gt[7], gt[8], go.x, go.y, go.z);
++	WMR_INFO(wh, "IMU factory calib: accel mix [%f %f %f; %f %f %f; %f %f %f] bias [%f %f %f]", //
++	         at[0], at[1], at[2], at[3], at[4], at[5], at[6], at[7], at[8], ao.x, ao.y, ao.z);
+ 	return calib;
+ }
+ 
+-- 
+2.47.3
+

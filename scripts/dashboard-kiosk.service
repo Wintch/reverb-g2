@@ -1,0 +1,31 @@
+# dashboard-kiosk.service -- NOT installed/enabled by default, same convention
+# as the other unit files in this directory: test scripts/dashboard-kiosk.sh
+# by hand first, install as a separate deliberate step.
+#
+# Opens the status dashboard in a fullscreen Chrome kiosk window once the
+# graphical session (and the dashboard server) are up. Runs as a normal
+# windowed Wayland client inside the existing GNOME session -- it does NOT
+# own a VT/getty the way vr-boot-selector.sh does, so it never competes with
+# that unit or with sddm for a console (see vr-boot-selector.service's own
+# header for why that distinction matters on this machine).
+#
+# Install (after testing scripts/dashboard-kiosk.sh by hand, and after
+# status-dashboard.service is installed and confirmed running):
+#   cp scripts/dashboard-kiosk.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now dashboard-kiosk.service
+
+[Unit]
+Description=VR lab status dashboard, shown fullscreen in Chrome kiosk mode
+After=graphical-session.target status-dashboard.service
+Wants=status-dashboard.service
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/Documents/reverb-g2/scripts/dashboard-kiosk.sh
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

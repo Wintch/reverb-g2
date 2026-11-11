@@ -1,0 +1,27 @@
+# vr-profile.conf -- per-person calibration read by jack-in-wayland.sh.
+#
+# Copy to ~/vr/vr-profile.conf and put your own numbers in. Not tracked with real values,
+# because these are physical properties of a person, not of the project.
+#
+# WHAT TO MEASURE: the height of your EYES off the floor, in metres, in the posture you
+# actually play in. Not your stature -- eyes sit roughly 11 cm below the top of the head,
+# and sitting down changes it by far more than that.
+#
+# Easiest way to get it right: stand (or sit) as you would to play, have someone measure
+# from the floor to the outer corner of your eye. A tape against a wall and a pencil mark
+# works as well. Being within a centimetre or two is plenty; the current default is a
+# hardcoded 1.6 m for everyone, so almost any real measurement is an improvement.
+#
+# WHY IT MATTERS: Monado never measures the floor. It places the STAGE space a hardcoded
+# 1.6 m below wherever the headset is when tracking starts, so the world is built assuming
+# your eyes are exactly there. Seated, that is out by around half a metre -- the floor ends
+# up near your knees and everything sits too high.
+#
+# Which of the two is used comes from VR_POSTURE (standing|seated, default standing):
+#
+#     VR_POSTURE=seated ./jack-in-wayland.sh 1 6dof
+#
+# VR_EYE_HEIGHT_M=<metres> in the environment overrides both, for measuring.
+
+EYE_HEIGHT_STANDING_M=1.60
+EYE_HEIGHT_SEATED_M=1.20

@@ -1,0 +1,56 @@
+From 72da60566815b37c16798f4f38f98536c2a5dbfa Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Sun, 13 Sep 2026 17:01:30 -0300
+Subject: [PATCH 105/106] t/builder-wmr: WMR_DISABLE to let a lower-priority
+ builder take the head
+
+The prober selects the first builder that is CERTAIN it can create a head device, and a
+connected WMR headset always makes this builder certain. That makes it impossible to reach
+any other head-providing device without physically unplugging the headset -- in particular
+the euroc player (EUROC_PATH + EUROC_HMD), which replays a recorded dataset through the real
+tracker so that tracking and prediction configs can be compared offline against identical
+input.
+
+WMR_DISABLE=1 reports an all-zero estimate without touching the device list, so the prober
+moves on exactly as it would with nothing plugged in.
+---
+ src/xrt/targets/common/target_builder_wmr.c | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/src/xrt/targets/common/target_builder_wmr.c b/src/xrt/targets/common/target_builder_wmr.c
+index b64c9842c..31fea1502 100644
+--- a/src/xrt/targets/common/target_builder_wmr.c
++++ b/src/xrt/targets/common/target_builder_wmr.c
+@@ -33,6 +33,14 @@
+ 
+ DEBUG_GET_ONCE_LOG_OPTION(wmr_log, "WMR_LOG", U_LOGGING_INFO)
+ 
++//! Decline to build even when a WMR headset is plugged in, so that a lower-priority builder can
++//! take the head role instead. The case this exists for: replaying a recorded EuRoC dataset
++//! through the euroc player (EUROC_PATH + EUROC_HMD) to compare tracking/prediction configs
++//! offline. The prober picks the first builder that is *certain* it can create a head, and a
++//! connected G2 always makes this one certain, so the euroc device could never be reached
++//! without physically unplugging the headset.
++DEBUG_GET_ONCE_BOOL_OPTION(wmr_disable, "WMR_DISABLE", false)
++
+ 
+ /*
+  *
+@@ -112,6 +120,14 @@ wmr_estimate_system(struct xrt_builder *xb,
+ 	size_t xpdev_count = 0;
+ 	xrt_result_t xret = XRT_SUCCESS;
+ 
++	// See WMR_DISABLE above. Report an all-zero estimate without touching the device list, so
++	// the prober moves on to the next builder exactly as it would with nothing plugged in.
++	if (debug_get_bool_option_wmr_disable()) {
++		U_LOG_IFL_I(log_level, "WMR_DISABLE is set, declining to build.");
++		*out_estimate = estimate;
++		return XRT_SUCCESS;
++	}
++
+ 	/*
+ 	 * Pre device looking stuff.
+ 	 */
+-- 
+2.47.3
+

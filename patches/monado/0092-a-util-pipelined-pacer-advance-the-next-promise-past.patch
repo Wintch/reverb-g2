@@ -1,0 +1,85 @@
+From 61fcd315ab584d5203e2a081549186d5303eb08d Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Fri, 21 Aug 2026 16:31:16 -0300
+Subject: [PATCH] a/util: pipelined pacer, advance the next promise past the
+ previous GATE, not the shifted promise
+
+The pipelined model (U_PACING_APP_PIPELINED) promises a frame one display
+period after its gate slot.  predict_display_time() then required the NEXT
+prediction to lie past the previous *promise* (last_returned_ns, which already
+carried that shift) and added the shift again on top -- so consecutive
+promises were spaced at least two display periods apart by construction.  Any
+app on which the pipelined model engaged was paced to exactly half the panel
+rate.
+
+Measured live on a Reverb G2 at 90 Hz, Dead Herring VR through xrizer, app
+frame rate counted from "Delivered frame" lines (the real instrument,
+docs/32): 44-45 fps before, 58 fps with this change alone (the remaining gap is
+calc_app_period doubling on the structurally-inflated gpu_time column, see the
+companion note), 89 fps with U_PACING_APP_USE_MIN_FRAME_PERIOD=true on top.
+Neither serial mode (63 fps) nor halving the render target (45 fps at 90 W GPU)
+moved the original ceiling, which is how it was isolated to bookkeeping.
+
+Keep the gate slot (promise minus the shift it carried) in
+last_returned_gate_ns and compare the next prediction against that.
+---
+ src/xrt/auxiliary/util/u_pacing_app.c | 19 +++++++++++++++----
+ 1 file changed, 15 insertions(+), 4 deletions(-)
+
+diff --git a/src/xrt/auxiliary/util/u_pacing_app.c b/src/xrt/auxiliary/util/u_pacing_app.c
+index cef1346d9..006624b2b 100644
+--- a/src/xrt/auxiliary/util/u_pacing_app.c
++++ b/src/xrt/auxiliary/util/u_pacing_app.c
+@@ -173,6 +173,15 @@ struct pacing_app
+ 	} last_input;
+ 
+ 	int64_t last_returned_ns;
++	/*!
++	 * The GATE slot behind the last returned promise: last_returned_ns minus
++	 * the pipelined promise shift that was applied to it. The next prediction
++	 * must advance past this, NOT past the shifted promise -- comparing against
++	 * the promise and then adding the shift again spaced every promise two
++	 * display periods apart, which paced every pipelined app to exactly half
++	 * the panel rate (45 of 90 fps, measured live 2026-08-21).
++	 */
++	int64_t last_returned_gate_ns;
+ };
+ 
+ 
+@@ -259,9 +268,9 @@ last_sample_displayed(const struct pacing_app *pa)
+ }
+ 
+ static int64_t
+-last_return_predicted_display(const struct pacing_app *pa)
++last_return_gate(const struct pacing_app *pa)
+ {
+-	return pa->last_returned_ns;
++	return pa->last_returned_gate_ns;
+ }
+ 
+ static int64_t
+@@ -390,10 +399,11 @@ predict_display_time(const struct pacing_app *pa, int64_t now_ns, int64_t displa
+ 	// Start from the last time that the driver displayed something.
+ 	int64_t val = last_sample_displayed(pa);
+ 
+-	// Return a time after the last returned display time. Add half the
++	// Return a time after the last returned GATE slot (the promise minus the
++	// pipelined shift it carried -- see last_returned_gate_ns). Add half the
+ 	// display period to the comparison for robustness when the last display
+ 	// time shifts slightly with respect to the last sample.
+-	while (val <= last_return_predicted_display(pa) + (app_period_ns / 2)) {
++	while (val <= last_return_gate(pa) + (app_period_ns / 2)) {
+ 		val += app_period_ns;
+ 	}
+ 
+@@ -591,6 +601,7 @@ pa_predict(struct u_pacing_app *upa,
+ 	int64_t gpu_done_time_ns = wake_up_time_ns + total_app_time_ns(pa);
+ 
+ 	pa->last_returned_ns = predict_ns;
++	pa->last_returned_gate_ns = predict_ns - pipelined_promise_shift_ns(pa, display_period_ns);
+ 
+ 	*out_wake_up_time = wake_up_time_ns;
+ 	*out_predicted_display_time = predict_ns;
+-- 
+2.47.3
+

@@ -1,0 +1,83 @@
+From 63cf1ffb6860f06406f0d274fd88a9670e13c5c5 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Mon, 17 Aug 2026 01:53:20 -0300
+Subject: [PATCH 5/8] vit: frontend (optical-flow) instrumentation for the SLAM
+ collapse (VIT_COLLAPSE_LOG)
+
+The pose-rate collapse is upstream of the VIO backend (opt/marg stay ~2ms with bounded
+state, second-validated 2026-08-17) -- it is in the optical-flow frontend. Time processFrame
+and recallPoints() specifically, and log tracked-keypoint count + the patches-map size (patches
+are 'never getting deleted' per the TODO in addPoints, and grow unbounded when recall is enabled).
+One run pins whether it is the recall/patches leak or another frontend stage. Off by default.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ .../frame_to_frame_optical_flow.h             | 30 +++++++++++++++++++
+ 1 file changed, 30 insertions(+)
+
+diff --git a/include/basalt/optical_flow/frame_to_frame_optical_flow.h b/include/basalt/optical_flow/frame_to_frame_optical_flow.h
+index 87675bd..53bdc73 100644
+--- a/include/basalt/optical_flow/frame_to_frame_optical_flow.h
++++ b/include/basalt/optical_flow/frame_to_frame_optical_flow.h
+@@ -54,6 +54,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ #include <basalt/utils/keypoints.h>
+ #include <basalt/vi_estimator/landmark_database.h>
+ 
++#include <chrono>
++#include <cstdlib>
++#include <iostream>
++
+ namespace basalt {
+ 
+ /// Unlike PatchOpticalFlow, FrameToFrameOpticalFlow always tracks patches
+@@ -207,6 +211,18 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
+ 
+     const size_t num_cams = getNumCams();
+ 
++    // Env-gated SLAM-collapse frontend instrumentation (VIT_COLLAPSE_LOG). The pose-rate collapse
++    // is upstream of the VIO (opt/marg stay ~2ms) -> it is here in the optical-flow frontend. Time
++    // the whole processFrame and recallPoints() specifically, and log tracked-keypoint count and
++    // the patches map size (patches are "never getting deleted" per the TODO in addPoints, and grow
++    // unbounded when recall is enabled). Off by default (one getenv).
++    static const bool of_log = std::getenv("VIT_COLLAPSE_LOG") != nullptr;
++    std::chrono::steady_clock::time_point of_t0, of_rec0, of_rec1;
++    if (of_log) {
++      of_t0 = std::chrono::steady_clock::now();
++      of_rec0 = of_rec1 = of_t0;
++    }
++
+     if (t_ns < 0) {
+       t_ns = curr_t_ns;
+ 
+@@ -276,7 +292,9 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
+ 
+       for (size_t i = 0; i < num_cams; i++) updateCellCounts(i);
+ 
++      if (of_log) of_rec0 = std::chrono::steady_clock::now();
+       if (config.optical_flow_recall_enable) recallPoints();
++      if (of_log) of_rec1 = std::chrono::steady_clock::now();
+       transforms->input_images->addTime("frontend_recall_ended");
+       addPoints();
+       filterPoints();
+@@ -288,6 +306,18 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
+       output_queue->push(transforms);
+     }
+ 
++    if (of_log) {
++      auto of_t1 = std::chrono::steady_clock::now();
++      size_t nkp = 0;
++      if (transforms) {
++        for (size_t i = 0; i < transforms->keypoints.size(); i++) nkp += transforms->keypoints[i].size();
++      }
++      double total_ms = std::chrono::duration<double, std::milli>(of_t1 - of_t0).count();
++      double recall_ms = std::chrono::duration<double, std::milli>(of_rec1 - of_rec0).count();
++      std::cout << "vit_of total_ms=" << total_ms << " recall_ms=" << recall_ms << " keypoints=" << nkp
++                << " patches=" << patches.size() << std::endl;
++    }
++
+     frame_counter++;
+   }
+ 
+-- 
+2.47.3
+

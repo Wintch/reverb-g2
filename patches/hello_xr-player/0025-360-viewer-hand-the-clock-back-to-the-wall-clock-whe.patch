@@ -1,0 +1,50 @@
+From 636546fa5a9da4e6846673d2adbee89d7fe5936d Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Mon, 12 Oct 2026 22:38:56 -0300
+Subject: [PATCH] 360 viewer: hand the clock back to the wall clock when the
+ audio ends
+
+With HELLO_XR_AUDIO=1 the audio thread is the master clock: it publishes
+a position after every pa_simple_write. When the audio stream ended, or
+ended before the video, nothing published or invalidated it, so
+playbackTime froze at the last value: the end of the video stayed frozen
+on screen, Finished() never became true and a playlist never advanced.
+
+When no audio packet arrives for 250 ms, mark the audio clock invalid.
+AcquireCurrentSlot() then continues from the last position on the wall
+clock, and takes the audio clock back if packets resume.
+
+Found by the 2026-10-12 code review (reverb-g2 docs/147, H06-1). Not yet
+tried with a two-file playlist.
+
+Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
+---
+ src/tests/hello_xr/video360.cpp | 12 ++++++++++--
+ 1 file changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/src/tests/hello_xr/video360.cpp b/src/tests/hello_xr/video360.cpp
+index 3d76688..db22b03 100644
+--- a/src/tests/hello_xr/video360.cpp
++++ b/src/tests/hello_xr/video360.cpp
+@@ -773,8 +773,16 @@ struct Video360::Impl {
+             QueuedAudioPacket item{nullptr, 0.0};
+             {
+                 std::unique_lock<std::mutex> lock(audioMutex);
+-                audioPacketAvailable.wait(lock,
+-                                          [this] { return quit.load() || audioResetPending || !audioQueue.empty(); });
++                // No packet for a while means the audio stream has ended (or ends before the
++                // video). Stop being the master clock then: the last clock written stays put,
++                // and video would freeze on it and a playlist would never advance. The video
++                // clock carries on from it on the wall clock until audio is back.
++                if (!audioPacketAvailable.wait_for(lock, std::chrono::milliseconds(250), [this] {
++                        return quit.load() || audioResetPending || !audioQueue.empty();
++                    })) {
++                    audioClockValid.store(false, std::memory_order_relaxed);
++                    continue;
++                }
+                 if (quit.load() || audioResetPending) continue;
+                 item = audioQueue.front();
+                 audioQueue.pop_front();
+-- 
+2.47.3
+

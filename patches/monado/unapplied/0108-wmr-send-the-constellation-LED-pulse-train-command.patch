@@ -1,0 +1,272 @@
+From 61f02ff36b503c7e8c4b000a9ebe08b210a35183 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Sun, 13 Sep 2026 22:07:41 -0300
+Subject: [PATCH] wmr: send the constellation LED pulse-train command
+
+Upstream Monado, and this stack until now, issue no LED command to a WMR
+controller at all -- only a fixed status-enable and IMU-on report at connect.
+Windows' CrystalKeySetLedPulseTrain sends one continuously for the whole
+tracking session, at a median gap of 66.5 ms (~15/s, all 10,503 commands in the
+730 s USBPcap capture). Measured consequence, reverb-g2 docs/re-windows/04 and
+the T230 photometry: on Windows one ring photographs at ~2.45x the blob area and
+~1.9x the light flux of the other; on Linux the two are identical and both dim.
+
+The packet format is verified three ways that agree: Jan Schmidt's
+fill_timesync_packet() on thaytan/monado dev-constellation-controller-tracking
+(4d18710, 2023-07-03), his 2019 OpenHMD dev-wmr constant, and a field-by-field
+decode of the real capture. The first command on the wire,
+06 21 03 00 00 00 00 00 00 80 2c, decodes to intensity=200, ts=0, U2=800,
+flags=1, ts_ctr=1 -- all five agree with the documented defaults, so the layout
+is pinned down rather than inferred. buf[0]=0x03 plus this controller's
+hmd_cmd_base (0x5 left / 0xd right) gives HMD reports 0x08 and 0x10, exactly the
+two report IDs the capture recorded.
+
+fill_led_pulse_train_packet() is a port of thaytan's function, same project and
+same BSL-1.0 licence, attributed at the use site. Driven from wmr_hmd.c's run
+thread next to the keepalive tick, which lives for the whole life of the HMD
+device and holds no locks across the call.
+
+WMR_CONTROLLER_LED_INTENSITY defaults to 0 = send nothing, i.e. the historical
+behaviour stays the control arm of the A/B. WMR_CONTROLLER_LED_HZ defaults to 15.
+
+NOT VERIFIED: this resends a CONSTANT packet. Windows recomputes TS every time
+from the predicted next camera exposure -- that is the whole point of the
+timesync half of the command -- while we send the connection-time values
+(ts=0, U2=800, flags=1) on every resend, because this driver has no exposure-time
+prediction to feed it. The device demonstrably accepts exactly these values as
+its first command, so this is safe to send, but a constant ts means the LED train
+is NOT locked to camera exposure. A null result therefore would not clear the LED
+hypothesis, only "intensity alone, free-running".
+
+First worn-adjacent result (2026-09-13, controllers in hand, headset on the desk,
+ctrl mode): the wearer reports both rings visibly brighter at intensity 200 than
+at 0. UNBLINDED -- the observer knew which arm was which -- so this opens the
+question rather than settling it; the objective distance sweep against docs/125's
+visibility cliff is the real test and has not run yet.
+
+Watch item: the intensity-200 run logged one
+"wmr_hmd_controller_create: Failed to create controller" that the intensity-0 run
+did not. It recovered -- both controllers ended up created, bound to roles and
+registered with the constellation tracker -- and one sample against one proves
+nothing, but there is a plausible mechanism (tunnel traffic for controller 0
+overlapping controller 1's creation handshake) so it needs watching across more
+runs before this is turned on by default.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ src/xrt/drivers/wmr/wmr_controller_base.c | 131 ++++++++++++++++++++++
+ src/xrt/drivers/wmr/wmr_controller_base.h |  22 ++++
+ src/xrt/drivers/wmr/wmr_hmd.c             |   2 +
+ 3 files changed, 155 insertions(+)
+
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
+index 14e3682d6..56efc8e51 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.c
++++ b/src/xrt/drivers/wmr/wmr_controller_base.c
+@@ -140,6 +140,16 @@ DEBUG_GET_ONCE_BOOL_OPTION(wmr_stick_autocenter, "WMR_STICK_AUTOCENTER", false)
+ //! are unchanged.
+ DEBUG_GET_ONCE_NUM_OPTION(wmr_controller_keepalive_s, "WMR_CONTROLLER_KEEPALIVE_S", 0)
+ 
++//! Constellation LED pulse-train intensity, 1..399. 0 (the default) sends nothing at all and
++//! keeps the historical behaviour, so this is opt-in and cleanly A/B-able against it. Windows
++//! uses 200. See wmr_controller_send_led_pulse_train() for what this commands and why it was
++//! missing.
++DEBUG_GET_ONCE_NUM_OPTION(wmr_controller_led_intensity, "WMR_CONTROLLER_LED_INTENSITY", 0)
++//! Resend rate for the above, in Hz. Windows drives it at a median gap of 66.5 ms (~15/s)
++//! continuously from tracking-start to tracking-stop -- measured over all 10,503 pulse-train
++//! commands in the 730 s USBPcap capture (reverb-g2 docs/re-windows/04 §3).
++DEBUG_GET_ONCE_NUM_OPTION(wmr_controller_led_hz, "WMR_CONTROLLER_LED_HZ", 15)
++
+ //! WMR_CONTROLLER_HAPTICS (UNVALIDATED PROTOTYPE, default off, 2026-08-18). docs/03 in the
+ //! reverb-g2 repo has said since this project's early days: "Haptics dead for a double
+ //! reason: an output name that the bindings never reference + set_output never
+@@ -754,6 +764,127 @@ wmr_controller_base_send_keepalive_if_due(struct xrt_device *xdev)
+ 	wmr_controller_send_keepalive(wcb);
+ }
+ 
++/*!
++ * Pack the 12-byte constellation LED pulse-train command.
++ *
++ * Ported from Jan Schmidt's fill_timesync_packet() on
++ * gitlab.freedesktop.org/thaytan/monado, branch dev-constellation-controller-tracking
++ * (WMR_MOTION_CONTROLLER_LED_CONTROL, 4d18710 2023-07-03). Same project, same BSL-1.0 licence.
++ * The bit layout and the field semantics are his; only the fixed-argument wrapper below is ours.
++ *
++ *   buf[0]  0x03  command id. wmr_hmd_controller.c's send_bytes_to_controller() adds this
++ *                 controller's hmd_cmd_base (0x5 left / 0xd right), giving HMD reports 0x08 and
++ *                 0x10 -- exactly the two report IDs the Windows capture recorded.
++ *   buf[1]  8-bit command counter, shared with the keepalive command family.
++ *   ts_ctr  2-bit counter, cycles 1,2,3 and must never be 0.
++ *   U1      9-bit LED intensity / pulse length, clamped 1..399, Windows default 200.
++ *   TS      55-bit sync timestamp in microseconds, from camera exposure timings.
++ *   U2      11-bit unknown. Windows' first packet is always 800.
++ *   F       3-bit "LED train type". Windows always sends 1.
++ *
++ * Cross-checked field by field against the first command of the real capture,
++ * 06 21 03 00 00 00 00 00 00 80 2c: it decodes to intensity=200, ts=0, U2=800, flags=1,
++ * ts_ctr=1 -- all five agree with the documented defaults, so the layout is pinned down rather
++ * than inferred.
++ */
++static void
++fill_led_pulse_train_packet(
++    uint8_t buf[12], uint8_t cmd_ctr, uint8_t ts_ctr, int led_intensity, uint64_t ts, int U2, uint8_t flags)
++{
++	ts_ctr = (ts_ctr & 0x3);
++	led_intensity = led_intensity < 1 ? 1 : (led_intensity > 399 ? 399 : led_intensity);
++	U2 = U2 < 0 ? 0 : (U2 > 1023 ? 1023 : U2);
++
++	buf[0] = 0x3;
++	buf[1] = cmd_ctr;
++	buf[2] = ts_ctr | ((led_intensity & 0x3f) << 2);
++	buf[3] = ((led_intensity >> 6) & 0x7) | ((ts & 0x1f) << 3);
++	buf[4] = ts >> 5;
++	buf[5] = ts >> 13;
++	buf[6] = ts >> 21;
++	buf[7] = ts >> 29;
++	buf[8] = ts >> 37;
++	buf[9] = ts >> 45;
++	buf[10] = ((ts >> 53) & 0x3) | (U2 << 2);
++	buf[11] = ((U2 >> 6) & 0x1f) | ((flags & 0x3) << 5);
++}
++
++/*!
++ * Command the controller's constellation LED brightness (WMR_CONTROLLER_LED_INTENSITY).
++ *
++ * THE GAP THIS CLOSES. Upstream Monado, and this stack until now, issue no LED command to a WMR
++ * controller at all -- only a fixed status-enable and IMU-on report at connect. Windows'
++ * CrystalKeySetLedPulseTrain sends this command continuously for the whole tracking session.
++ * Measured consequence (reverb-g2 docs/re-windows/04, T230 photometry): on Windows the left ring
++ * photographs at ~2.45x the blob area and ~1.9x the light flux of the right one; on Linux the two
++ * are identical and both dim. The wearer reports the same thing by eye. The suspected downstream
++ * effect is docs/125's visibility cliff -- 118 constellation poses in 20 s at 50 cm, and exactly
++ * zero at both 75 cm and 1 m -- which is what under-illuminated LEDs would produce.
++ *
++ * WHAT IS VERIFIED vs. WHAT IS NOT. The packet format is verified three ways that agree: thaytan's
++ * implementation, thaytan's 2019 OpenHMD dev-wmr constant, and a field-by-field decode of the real
++ * USBPcap capture (see fill_led_pulse_train_packet above). What is NOT verified is this function's
++ * choice to resend a CONSTANT packet. Windows recomputes TS every time from the predicted next
++ * camera exposure, which is the whole point of the timesync half of the command; we send the
++ * connection-time values (ts=0, U2=800, flags=1) on every resend because this driver has no
++ * exposure-time prediction to feed it. The device demonstrably accepts exactly these values as its
++ * first command, so this is safe to send, but a constant ts means the LED train is NOT locked to
++ * camera exposure -- so a null result here does not clear the LED hypothesis, it only clears
++ * "intensity alone, free-running". Doing it properly needs wmr_camera.c's exposure timestamps
++ * plumbed through, which is a separate and much larger change.
++ *
++ * Off by default (intensity 0) so the historical behaviour stays the control arm of the A/B.
++ */
++static void
++wmr_controller_send_led_pulse_train(struct wmr_controller_base *wcb)
++{
++	long intensity = debug_get_num_option_wmr_controller_led_intensity();
++	if (intensity <= 0) {
++		return;
++	}
++
++	long hz = debug_get_num_option_wmr_controller_led_hz();
++	if (hz <= 0) {
++		hz = 15;
++	}
++	uint64_t interval_ns = U_TIME_1S_IN_NS / (uint64_t)hz;
++	uint64_t now_ns = os_monotonic_get_ns();
++
++	// Same pattern as the keepalive above: decide under data_lock, send outside it, because
++	// wmr_controller_send_bytes takes conn_lock one call down and there is no need to hold both.
++	uint8_t pkt[12];
++	bool due = false;
++	os_mutex_lock(&wcb->data_lock);
++	if (wcb->last_led_pulse_ns == 0 || (now_ns - wcb->last_led_pulse_ns) >= interval_ns) {
++		wcb->last_led_pulse_ns = now_ns;
++
++		// The 2-bit counter cycles 1,2,3 and must never be 0 -- including on the very first
++		// packet, where a calloc'd struct would otherwise start it at 0.
++		if (wcb->led_ts_counter < 1 || wcb->led_ts_counter > 3) {
++			wcb->led_ts_counter = 1;
++		}
++		uint8_t ts_ctr = wcb->led_ts_counter;
++		wcb->led_ts_counter = (ts_ctr == 3) ? 1 : (uint8_t)(ts_ctr + 1);
++
++		fill_led_pulse_train_packet(pkt, wcb->led_cmd_counter++, ts_ctr, (int)intensity, 0, 800, 1);
++		due = true;
++	}
++	os_mutex_unlock(&wcb->data_lock);
++
++	if (!due) {
++		return;
++	}
++
++	wmr_controller_send_bytes(wcb, pkt, sizeof(pkt));
++}
++
++void
++wmr_controller_base_send_led_pulse_if_due(struct xrt_device *xdev)
++{
++	struct wmr_controller_base *wcb = wmr_controller_base(xdev);
++	wmr_controller_send_led_pulse_train(wcb);
++}
++
+ //! Minimum spacing between haptic reports actually written to the shared tunnel
+ //! (WMR_CONTROLLER_HAPTICS). Many OpenXR apps call xrApplyHapticFeedback every render frame
+ //! to sustain a "continuous" rumble (90 Hz+ on this headset); the same tunnel also carries
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.h b/src/xrt/drivers/wmr/wmr_controller_base.h
+index 30f092376..91df33717 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.h
++++ b/src/xrt/drivers/wmr/wmr_controller_base.h
+@@ -148,6 +148,17 @@ struct wmr_controller_base
+ 	//! See the keepalive prototype in wmr_controller_base_get_tracked_pose. Diagnostic-only,
+ 	//! off by default.
+ 	uint64_t last_keepalive_ns;
++
++	/*!
++	 * WMR_CONTROLLER_LED_INTENSITY state -- the LED pulse-train command this driver
++	 * historically never sent. @ref last_led_pulse_ns is the monotonic time of the last
++	 * command (0 before the first), @ref led_cmd_counter the 8-bit counter shared with the
++	 * keepalive command family, and @ref led_ts_counter the 2-bit counter the device expects
++	 * to see cycle 1,2,3,1,... and never 0. See wmr_controller_send_led_pulse_train().
++	 */
++	uint64_t last_led_pulse_ns;
++	uint8_t led_cmd_counter;
++	uint8_t led_ts_counter;
+ 	//! Main fusion calculator.
+ 	struct m_imu_3dof fusion;
+ 	//! The last angular velocity from the IMU, for prediction.
+@@ -343,6 +354,17 @@ wmr_controller_base_apply_stick_autocenter(struct wmr_controller_base *wcb, stru
+ void
+ wmr_controller_base_send_keepalive_if_due(struct xrt_device *xdev);
+ 
++/*!
++ * Send the constellation LED pulse-train command if WMR_CONTROLLER_LED_INTENSITY is set and
++ * enough time has passed. Driven from wmr_hmd.c's run thread next to the keepalive tick, for
++ * the same reason: that thread lives for the whole life of the HMD device and holds no locks
++ * across the call. No-op (one clock read) when the option is unset.
++ *
++ * @ingroup drv_wmr
++ */
++void
++wmr_controller_base_send_led_pulse_if_due(struct xrt_device *xdev);
++
+ /*!
+  * WMR_CONTROLLER_HAPTICS (UNVALIDATED PROTOTYPE, default off): xrt_device::set_output
+  * implementation shared by wmr_controller_hp.c (HP Reverb G2) and wmr_controller_og.c
+diff --git a/src/xrt/drivers/wmr/wmr_hmd.c b/src/xrt/drivers/wmr/wmr_hmd.c
+index ea1defc9c..369b4e276 100644
+--- a/src/xrt/drivers/wmr/wmr_hmd.c
++++ b/src/xrt/drivers/wmr/wmr_hmd.c
+@@ -1510,12 +1510,14 @@ wmr_hmd_send_controller_keepalives(struct wmr_hmd *wh)
+ 		struct xrt_device *xdev = wmr_hmd_controller_connection_get_controller(left);
+ 		if (xdev != NULL) {
+ 			wmr_controller_base_send_keepalive_if_due(xdev);
++			wmr_controller_base_send_led_pulse_if_due(xdev);
+ 		}
+ 	}
+ 	if (right != NULL) {
+ 		struct xrt_device *xdev = wmr_hmd_controller_connection_get_controller(right);
+ 		if (xdev != NULL) {
+ 			wmr_controller_base_send_keepalive_if_due(xdev);
++			wmr_controller_base_send_led_pulse_if_due(xdev);
+ 		}
+ 	}
+ }
+-- 
+2.47.3
+

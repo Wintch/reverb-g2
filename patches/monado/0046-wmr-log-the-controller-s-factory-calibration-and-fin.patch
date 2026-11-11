@@ -1,0 +1,74 @@
+From a30028f3e68d5035e67ca79c5ed93c931f43a572 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Thu, 13 Aug 2026 20:03:52 -0300
+Subject: [PATCH] wmr: log the controller's factory calibration, and find the
+ IMU-to-LED-model bridge in it
+
+wmr_controller_base.c has carried a note since 2026-08-12 saying an IMU-backed
+prior on the constellation solve is "NOT a drop-in", because the solve's
+orientation and the IMU fusion's live in different frames -- the LED model in
+the controller's calibration frame, the fusion in the IMU's own -- and that
+resolving that fixed transform from the factory calibration is what such a
+prior needs first. Measured then: the gravity axis alone disagrees by 104-161
+degrees, bimodally, matching the two position clusters of a bistable solve.
+
+That transform turns out to be parsed already and sitting unused. The
+controller config carries both the LED model and the inertial sensors from the
+same CalibrationInformation block, so `sensors.accel.pose` is the bridge. This
+logs it once per controller at parse time; identity would have meant the data
+is genuinely absent, so the line answers the question either way.
+
+Read off two real G2 controllers:
+
+    left  32 LEDs | accel pose p=( 0.0342 -0.0777 0.0031) q=(0.3573  0.6183 -0.3495 0.6066)
+    right 32 LEDs | accel pose p=(-0.0328 -0.0767 0.0025) q=(0.3573 -0.6228  0.3440 0.6050)
+
+Not identity: 105.3 and 105.5 degrees of rotation, 85 and 83 mm of offset, and
+the two are mirror images of each other as left/right should be. And 105.3
+degrees is the LOW MODE of the 104-161 degree disagreement measured before --
+within a degree.
+
+So the blocker's premise is answered, and the bimodality gets an explanation
+with a discriminator attached: apply the transform and the correct pose's
+gravity-axis disagreement should collapse toward zero while the wrong one keeps
+the remaining ~161, which is exactly the outside information needed to break a
+tie that no threshold on the tracker's own metrics can (measured 2026-08-13:
+~20 cm of scatter between solutions for a motionless controller, each reporting
+an excellent 0.17 px reprojection error).
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ src/xrt/drivers/wmr/wmr_config.c | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/src/xrt/drivers/wmr/wmr_config.c b/src/xrt/drivers/wmr/wmr_config.c
+index 90957271c..80a0812ad 100644
+--- a/src/xrt/drivers/wmr/wmr_config.c
++++ b/src/xrt/drivers/wmr/wmr_config.c
+@@ -589,6 +589,23 @@ wmr_controller_config_parse(struct wmr_controller_config *c, char *json_string,
+ 		c->led_count++;
+ 	}
+ 
++	// Does the factory calibration actually carry the IMU's pose inside the same frame the
++	// LED model lives in? That transform is the missing piece for an IMU-backed prior on the
++	// constellation solve -- the solve is bistable (measured 2026-08-13: ~20 cm of scatter
++	// between solutions for a motionless controller, each reporting an excellent 0.17 px
++	// reprojection error), no threshold on its own metrics can separate the two poses, and
++	// the IMU is the only independent evidence available. It was blocked on "the two live in
++	// different frames"; this line answers whether the bridge is already parsed and sitting
++	// unused, or genuinely absent. Identity here means absent.
++	WMR_INFO(log_level,
++	         "controller calib: %d LEDs | accel pose p=(%.4f %.4f %.4f) q=(%.4f %.4f %.4f %.4f) | "
++	         "gyro pose p=(%.4f %.4f %.4f)",
++	         c->led_count, c->sensors.accel.pose.position.x, c->sensors.accel.pose.position.y,
++	         c->sensors.accel.pose.position.z, c->sensors.accel.pose.orientation.x,
++	         c->sensors.accel.pose.orientation.y, c->sensors.accel.pose.orientation.z,
++	         c->sensors.accel.pose.orientation.w, c->sensors.gyro.pose.position.x,
++	         c->sensors.gyro.pose.position.y, c->sensors.gyro.pose.position.z);
++
+ 	cJSON_Delete(json_root);
+ 
+ 	return true;
+-- 
+2.47.3
+

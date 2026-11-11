@@ -1,0 +1,42 @@
+From aa68be11774a064203321c95ffbc1128fb908ae3 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Sun, 16 Aug 2026 22:18:27 -0300
+Subject: [PATCH] wmr: add WMR_HMD_THREAD_NO_RT diagnostic gate (T194/T195)
+
+Env-gated skip of the SCHED_FIFO max-priority request on the WMR read
+thread, added to test whether that priority combined with 0049's 10ms
+backoff sleep was starving Basalt's own threads via preemption churn.
+
+Tested (T195): disabling it did NOT stop the SLAM pose-rate collapse,
+and a real perf sched trace separately showed the thread's own
+scheduling delay is negligible (max 0.026ms) -- this rules out the
+theory rather than confirming it. Left in place, off by default, as a
+cheap diagnostic knob rather than reverted, since it cost nothing to
+keep and the question may come up again.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ src/xrt/drivers/wmr/wmr_hmd.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_hmd.c b/src/xrt/drivers/wmr/wmr_hmd.c
+index da3d33d64..894e1b6b1 100644
+--- a/src/xrt/drivers/wmr/wmr_hmd.c
++++ b/src/xrt/drivers/wmr/wmr_hmd.c
+@@ -732,7 +732,12 @@ wmr_run_thread(void *ptr)
+ 
+ #ifdef XRT_OS_LINUX
+ 	// Try to raise priority of this thread.
+-	u_linux_try_to_set_realtime_priority_on_thread(wh->log_level, "WMR: USB-HMD");
++	// T194 experiment: WMR_HMD_THREAD_NO_RT=1 skips this to test whether SCHED_FIFO max
++	// priority combined with 0049's 10ms backoff sleep is what starves Basalt's own
++	// threads (see docs/pruebas.jsonl T194). Temporary, not a real fix either way.
++	if (getenv("WMR_HMD_THREAD_NO_RT") == NULL) {
++		u_linux_try_to_set_realtime_priority_on_thread(wh->log_level, "WMR: USB-HMD");
++	}
+ #endif
+ 
+ 
+-- 
+2.47.3
+

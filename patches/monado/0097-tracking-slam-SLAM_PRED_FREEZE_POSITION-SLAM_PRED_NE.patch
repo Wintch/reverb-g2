@@ -1,0 +1,123 @@
+From 17083b7dbc3999dd6e9201e88fdd962eb11a159e Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Wed, 26 Aug 2026 18:41:34 -0300
+Subject: [PATCH] tracking/slam: SLAM_PRED_FREEZE_POSITION +
+ SLAM_PRED_NECK_ARM_MM (seated 6dof head)
+
+Two env-gated refinements to predict_pose() that make seated head 6dof feel like
+3dof (wearer A/B on Aircar, 2026-08-26; docs/80). Both default off = no change.
+
+- SLAM_PRED_FREEZE_POSITION: with pred_type >= GYRO, clear the linear-velocity valid
+  bit before m_predict_relation so do_position() holds position at the last SLAM
+  anchor while orientation is still gyro-predicted. Removes the linear_velocity*dt
+  overshoot: a fast seated head yaw makes the optical centre trace an arc so SLAM
+  reports a real linear velocity, and extrapolating it across the full ~120-190ms
+  SLAM latency threw the seat ~50cm and accumulated to metres.
+
+- SLAM_PRED_NECK_ARM_MM: freezing alone left orientation "now" paired with position
+  "~150ms ago" (a timestamp split read as the seat sliding). Model the eye's offset
+  from the neck pivot as a lever arm and add (R_pred - R_anchor)*arm to the frozen
+  position, so the eye swings along the natural neck arc as orientation predicts
+  forward. 150mm (forward-dominant dir) measured best; roll unaffected, pitch minor,
+  yaw drift 2-4m -> bounded ~1m only on very fast turns.
+
+Recommended seated recipe also enables the existing SLAM_CORRECTION_SPREAD_MS (50)
+to spread the per-anchor position correction and stop the periodic re-anchor snap.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ src/xrt/auxiliary/tracking/t_tracker_slam.cpp | 52 +++++++++++++++++++
+ 1 file changed, 52 insertions(+)
+
+diff --git a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+index 0bddab08a..5b4d1bcf7 100644
+--- a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
++++ b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+@@ -87,6 +87,8 @@ DEBUG_GET_ONCE_BOOL_OPTION(slam_ui, "SLAM_UI", false)
+ DEBUG_GET_ONCE_BOOL_OPTION(slam_submit_from_start, "SLAM_SUBMIT_FROM_START", false)
+ DEBUG_GET_ONCE_NUM_OPTION(slam_openvr_groundtruth_device, "SLAM_OPENVR_GROUNDTRUTH_DEVICE", 0)
+ DEBUG_GET_ONCE_NUM_OPTION(slam_prediction_type, "SLAM_PREDICTION_TYPE", long(SLAM_PRED_DEAD_RECKONING))
++DEBUG_GET_ONCE_BOOL_OPTION(slam_pred_freeze_position, "SLAM_PRED_FREEZE_POSITION", false)
++DEBUG_GET_ONCE_NUM_OPTION(slam_pred_neck_arm_mm, "SLAM_PRED_NECK_ARM_MM", 0)
+ DEBUG_GET_ONCE_BOOL_OPTION(slam_write_csvs, "SLAM_WRITE_CSVS", false)
+ DEBUG_GET_ONCE_BOOL_OPTION(slam_features_enable, "SLAM_FEATURES_ENABLE", false)
+ DEBUG_GET_ONCE_BOOL_OPTION(slam_config_pipeline_only, "SLAM_CONFIG_PIPELINE_ONLY", false)
+@@ -395,6 +397,14 @@ struct TrackerSlam
+ 
+ 	//! Type of prediction to use
+ 	t_slam_prediction_type pred_type;
++	//! When true and pred_type >= GYRO, predict ORIENTATION forward but HOLD position at the
++	//! last SLAM pose instead of extrapolating linear velocity across the SLAM latency.
++	//! (SLAM_PRED_FREEZE_POSITION -- rationale in predict_pose().)
++	bool pred_freeze_position = false;
++	//! Neck-model lever-arm length in mm (SLAM_PRED_NECK_ARM_MM, 0 = off). With
++	//! pred_freeze_position, swings the frozen eye position along the neck-pivot arc as
++	//! orientation is predicted forward, fixing the orientation/position timestamp split.
++	long pred_neck_arm_mm = 0;
+ 	u_var_combo pred_combo;         //!< UI combo box to select @ref pred_type
+ 	RelationHistory slam_rels{};    //!< A history of relations produced purely from external SLAM tracker data
+ 	int dbg_pred_every = 1;         //!< Skip X SLAM poses so that you get tracked mostly by the prediction algo
+@@ -1427,11 +1437,51 @@ predict_pose(TrackerSlam &t, timepoint_ns when_ns, struct xrt_space_relation *ou
+ 
+ 	os_mutex_unlock(&t.lock_ff);
+ 
++	// SLAM_PRED_FREEZE_POSITION: predict orientation forward (gyro/accel above) but HOLD
++	// position at the last SLAM pose instead of extrapolating it. Rationale (2026-08-26,
++	// wearer A/B on Aircar 6dof, seated): during a fast head yaw the head's optical centre
++	// traces an arc about the neck, so SLAM reports a real linear velocity; do_position()
++	// (m_predict.c) then extrapolates that velocity across the FULL ~120-190 ms SLAM latency
++	// (slam_to_now_dt below), overshooting the seat by ~50 cm and accumulating with continued
++	// rotation. Orientation prediction over that window is accurate (the gyro is clean);
++	// position prediction over it is not. Clearing the linear-velocity valid bit makes
++	// do_position() hold pose.position while do_orientation() still applies angular_velocity,
++	// giving SLAM_PRED_NONE's rock-solid position with SLAM_PRED_GYRO's head-turn
++	// responsiveness. The lost real arc translation is a few cm; the removed drift is ~50 cm.
++	if (t.pred_freeze_position) {
++		rel.linear_velocity = xrt_vec3{0, 0, 0};
++		rel.relation_flags = (enum xrt_space_relation_flags)(rel.relation_flags &
++		                                                     ~XRT_SPACE_RELATION_LINEAR_VELOCITY_VALID_BIT);
++	}
++
+ 	// Do the prediction based on the updated relation
+ 	double slam_to_now_dt = time_ns_to_s(when_ns - rel_ts);
+ 	xrt_space_relation predicted_relation{};
+ 	m_predict_relation(&rel, slam_to_now_dt, &predicted_relation);
+ 
++	// SLAM_PRED_NECK_ARM_MM: neck-model kinematic compensation for the orientation/position
++	// timestamp split (2026-08-26, docs/80). do_orientation() above predicted orientation
++	// forward to display time while position stayed at the (stale) anchor -- freezing removed
++	// the linear-velocity overshoot but left orientation "now" paired with position "~150 ms
++	// ago", read by the wearer as the seat sliding on fast turns. A real seated head rotates
++	// about a neck pivot BEHIND+BELOW the eyes, so the eye should swing along that arc as
++	// orientation advances. Model the eye's offset from the pivot as `arm` (head-local); the
++	// pivot is ~fixed in world during a head turn, so the eye's world position at the PREDICTED
++	// orientation is anchor_pos + (R_pred - R_anchor)*arm. Only meaningful when position is
++	// frozen (otherwise it stacks on the velocity extrapolation). Length swept live via the env
++	// (mm); direction is a forward-dominant up+forward eye offset (OpenXR -Z fwd/+Y up) so a
++	// yaw about the neck swings the eye horizontally -- the dominant failing axis.
++	if (t.pred_freeze_position && t.pred_neck_arm_mm != 0) {
++		float len_m = (float)t.pred_neck_arm_mm / 1000.0f;
++		xrt_vec3 arm{0.0f * len_m, 0.6f * len_m, -0.8f * len_m};  // unit dir (0,0.6,-0.8)
++		xrt_vec3 arm_anchor{}, arm_pred{};
++		math_quat_rotate_vec3(&rel.pose.orientation, &arm, &arm_anchor);
++		math_quat_rotate_vec3(&predicted_relation.pose.orientation, &arm, &arm_pred);
++		predicted_relation.pose.position.x += arm_pred.x - arm_anchor.x;
++		predicted_relation.pose.position.y += arm_pred.y - arm_anchor.y;
++		predicted_relation.pose.position.z += arm_pred.z - arm_anchor.z;
++	}
++
+ 	*out_relation = predicted_relation;
+ }
+ 
+@@ -2290,6 +2340,8 @@ t_slam_create(struct xrt_frame_context *xfctx,
+ 	t.last_hand_masks = xrt_hand_masks_sample{};
+ 
+ 	t.pred_type = config->prediction;
++	t.pred_freeze_position = debug_get_bool_option_slam_pred_freeze_position();
++	t.pred_neck_arm_mm = debug_get_num_option_slam_pred_neck_arm_mm();
+ 
+ 	// The three output filters below are off by default upstream and only reachable from the
+ 	// debug GUI, so the pose handed to the application is raw SLAM output. Measured on a
+-- 
+2.47.3
+

@@ -1,0 +1,142 @@
+From f8b332152d4a4f161f94ce4b5062328f039ba0d5 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Mon, 17 Aug 2026 21:45:36 -0300
+Subject: [PATCH] d/wmr: the definitive left gyro matrix -- machine-complete
+ (turntable roll + cradle yaw, both directions, both hands)
+
+A near-clean half-turn about -Y (179.93 deg about (0.077,-0.997,0.001)): the mirrored
+shells differ by half a turn about vertical, composed on 0062's Y-negation. Derived
+from 4 machine correspondences (T209 roll pairs + T210 cradle-yaw pairs, reversals
+pinning signs), Kabsch/SVD, det=1.0 unforced. Residuals uniform: 5.06/3.81/4.58/3.34
+deg (RMS 4.25) vs 0069's 0/7.2/11.6/133.5 spread; full-stream verification median
+3.5-4.6 deg. The twist moved 141.0 deg -- within 0.4 deg of 0069's own documented
+140.6 deg ambiguity: resolved, not re-guessed. FIT-active premise verified
+empirically (7.4x residual discrimination un-fit vs raw). Zero hand data anywhere.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/xrt/drivers/wmr/wmr_controller_hp.c | 101 ++++++++++++++++++++++++
+ 1 file changed, 101 insertions(+)
+
+diff --git a/src/xrt/drivers/wmr/wmr_controller_hp.c b/src/xrt/drivers/wmr/wmr_controller_hp.c
+index 7eb5dab33..ffc0d3832 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_hp.c
++++ b/src/xrt/drivers/wmr/wmr_controller_hp.c
+@@ -37,6 +37,27 @@
+ // bad axis enters the fusion filter, before it gets integrated. Default off; LEFT hand only.
+ DEBUG_GET_ONCE_BOOL_OPTION(wmr_controller_left_yaw_gyro_invert, "WMR_CONTROLLER_LEFT_YAW_GYRO_INVERT", false)
+ 
++// WMR_CONTROLLER_LEFT_GYRO_FIT (2026-08-17, T209 hybrid turntable+hand refit):
++// WMR_CONTROLLER_LEFT_YAW_GYRO_INVERT above corrects the dominant sign flip on the left
++// controller's yaw axis, but the wearer's own figure-8 test (T208) found a residual: the left
++// gizmo "sigue acumulando algo y rotando de a poco drifteando sobre un eje fantasma medio
++// combinado" -- a small cross-axis misalignment that a pure per-axis sign flip cannot remove,
++// because non-commutative integration of even a small axis tilt winds up over a multi-turn
++// motion instead of cancelling. This flag replaces the sign-only correction with the full
++// fitted left-to-right rotation matrix below (applied AFTER the Y-invert above, on top of it,
++// not instead of it -- see the gating assert at the use site). The matrix baked in below was
++// refit 2026-08-17 (T209) from a machine-grade turntable capture (roll axis, both spin
++// directions, both hands -- see the long comment at the use site for the numbers), which
++// found the original T208 hand-only fit's roll handling was close to 154.8 deg wrong, not
++// merely noisy; the turntable data replaces T208's roll input outright. The twist about that
++// roll axis is still only constrained by the same noisy 8-rep hand captures T208 used (pitch
++// and yaw phases), and those disagree with each other by 140.6 deg on what that twist should
++// be -- so treat the roll-axis correction here as solid and the remaining twist as a live
++// wearer A/B question, same as before. Default off. Gyro only -- WMR_CONTROLLER_LEFT_YAW_GYRO_
++// INVERT's own comment above already measured (T207) that the analogous accel extension made
++// things worse (precession), so this stays gyro-only too.
++DEBUG_GET_ONCE_BOOL_OPTION(wmr_controller_left_gyro_fit, "WMR_CONTROLLER_LEFT_GYRO_FIT", false)
++
+ #define WMR_TRACE(ctrl, ...) U_LOG_XDEV_IFL_T(&ctrl->base.base, ctrl->base.log_level, __VA_ARGS__)
+ #define WMR_TRACE_HEX(ctrl, ...) U_LOG_XDEV_IFL_T_HEX(&ctrl->base.base, ctrl->base.log_level, __VA_ARGS__)
+ #define WMR_DEBUG(ctrl, ...) U_LOG_XDEV_IFL_D(&ctrl->base.base, ctrl->base.log_level, __VA_ARGS__)
+@@ -415,6 +436,86 @@ wmr_controller_hp_packet_parse(struct wmr_controller_hp *ctrl, const unsigned ch
+ 		// reported all three axes rotating correctly ("los ejes parecen estar
+ 		// bien"), leaving only a constant heading offset -- which is the separate
+ 		// no-absolute-yaw-reference problem, not a frame error.
++
++		// WMR_CONTROLLER_LEFT_GYRO_FIT (2026-08-18, T210 cradle refit, REPLACES the T209
++		// hybrid turntable+hand fit below): composed on top of the Y-invert above, same
++		// nesting/gating as before (meaningless without INVERT=1). T209 pinned the ROLL axis
++		// correspondence by turntable (machine-grade) but left the TWIST about that axis
++		// determined only by two disagreeing noisy hand captures (phi_pitch +29.0 deg vs
++		// phi_yaw -111.6 deg, a 140.6 deg disagreement, phi_pitch chosen as "less bad" and
++		// documented unresolved). T210's 3-axis cradle box supplies a SECOND machine-grade
++		// axis correspondence (yaw-mount, not roll), which is enough on its own to fully
++		// determine a 3-DOF rotation together with the first -- this fit uses NO hand data
++		// anywhere, for either axis or the twist.
++		//
++		// Correspondences (all unit vectors, left side already Y-inverted i.e. post-0062,
++		// pre-this-fit; right side raw, no correction ever applied to that hand):
++		//   roll fwd:  L (+0.00659,+0.07202,-0.99738)  <-> R (+0.03451,+0.00013,+0.99940)
++		//   roll rev:  L (+0.00833,+0.02794,+0.99957)  <-> R (+0.03160,-0.02454,-0.99920)
++		//     (roll pairs inherited unchanged from T209's turntable session, recovered via
++		//     the OLD T208 matrix's inverse -- not re-captured tonight, so this assumes the
++		//     physical roll-mount relationship between hands is stable across sessions,
++		//     reasonable for rigid mirrored hardware but not independently re-verified here)
++		//   cradle-yaw fwd (T210, 188 s, core window rate 0.272 rad/s, scatter 1.1 deg
++		//     mean/2.0 deg p90):  L (+0.0517,-0.8609,+0.5062) [recovered by inverting the
++		//     T209 matrix below out of the logged, already-fit stream -- see verification
++		//     note] <-> R (+0.1249,-0.8871,-0.4443)
++		//   cradle-yaw rev (T210, 95 s, rate 0.296 rad/s, scatter 1.4/2.7 deg):
++		//     L (-0.0321,+0.8944,-0.4460) <-> R (-0.0650,+0.8729,+0.4836)
++		//
++		// WAS the T209 matrix actually active while logging tonight's cradle-yaw samples
++		// (i.e. is "recovered by inverting" above correct, or were the logged vectors
++		// already the plain post-0062 stream)? Not read from an env dump -- confirmed
++		// empirically instead, the same way the rest of this fit is grounded: solved the
++		// joint 4-correspondence rotation BOTH ways. Assuming the T209 matrix WAS active and
++		// undoing it: RMS residual across all four pairs 4.25 deg (3.3-5.1 deg each),
++		// matching the per-phase internal noise floor. Assuming it was NOT active and using
++		// the logged vectors as-is: RMS residual 31.6 deg (30-33 deg each) -- an order of
++		// magnitude worse and inconsistent with a real rotation fit. The first hypothesis
++		// wins by ~7x; only its matrix is shipped below.
++		//
++		// Solve: orthogonal Procrustes (Kabsch/Wahba) SVD over the 4 correspondences above,
++		// det forced to +1 (landed at exactly +1.0 unforced). Two roughly-orthogonal physical
++		// axes (roll vs cradle-yaw, ~124 deg apart) make this well-conditioned -- singular
++		// values [2.965, 1.025, 0.001], the near-zero third value is expected (two axes with
++		// their own reversals is rank-2 information, exactly enough to pin a 3-DOF rotation,
++		// no more, no less). Result is close to a clean ~180 deg turn about
++		// (+0.0767,-0.9971,+0.0010) -- i.e. almost exactly -Y -- consistent with two
++		// mirror-image controller shells related by a half-turn about the mount's yaw axis;
++		// reported as measured, not rounded to that idealization.
++		//
++		// Full residuals of the shipped matrix M against all four fit pairs: roll-fwd 5.06
++		// deg, roll-rev 3.81 deg, cradle-yaw-fwd 4.58 deg, cradle-yaw-rev 3.34 deg (RMS 4.25
++		// deg, all four now in the SAME 3-5 deg band -- contrast T209's 0.0/7.2/11.6/133.5
++		// deg spread, where yaw was catastrophically wrong because the twist was unresolved).
++		// Cross-checked against every raw sample in each cradle-yaw run, not just the
++		// trimmed core window: L1 (fwd) median 4.63 deg / p90 5.97 deg, L2 (rev) median 3.55
++		// deg / p90 5.39 deg vs the corresponding right-hand axis -- both medians land inside
++		// the "single machine-grade axis" 2-4 deg range once transients are set aside. Both
++		// full streams show a fat outlier tail (max ~175-178 deg) exactly at the
++		// mount/dismount transients where the rotation rate crosses zero and direction is
++		// briefly undefined by construction -- harmless in practice, a near-zero gyro vector
++		// stays near-zero after any rotation. det(M) = 1.0 (proper rotation, unforced), angle
++		// from identity 179.93 deg. Angle between this matrix and T209's as rotations: 141.0
++		// deg -- within 0.4 deg of T209's OWN 140.6 deg phi_pitch/phi_yaw disagreement,
++		// i.e. resolving the twist with real data moved it by almost exactly the size of the
++		// ambiguity T209 already knew it had; noted as a striking numeric match, not claimed
++		// as more than that. Data: ~vr/jack-in-wayland.log (rotated to .prev.log mid-session,
++		// used as the complete, stable, zero-gap capture), T210 cradle session (2026-08-18),
++		// roll pairs cross-checked against the T209 turntable segments (2026-08-17). Still
++		// default off, for a live wearer A/B -- this is the first left-hand fit built with NO
++		// hand-capture data anywhere in its derivation.
++		if (debug_get_bool_option_wmr_controller_left_gyro_fit()) {
++			static const struct xrt_matrix_3x3 left_gyro_fit = {
++			    .v =
++			        {
++			            -0.988233180f, -0.152951235f, -0.001049537f,
++			            -0.152948916f, 0.988232037f,  -0.002017277f,
++			            0.001345732f,  -0.001833015f, -0.999997415f,
++			        },
++			};
++			math_matrix_3x3_transform_vec3(&left_gyro_fit, &last_input->imu.gyro, &last_input->imu.gyro);
++		}
+ 	}
+ 
+ 	uint32_t prev_ticks = last_input->imu.timestamp_ticks & UINT32_C(0xFFFFFFFF);
+-- 
+2.47.3
+

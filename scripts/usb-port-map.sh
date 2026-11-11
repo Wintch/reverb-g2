@@ -1,0 +1,334 @@
+#!/usr/bin/env bash
+# Which physical USB socket can the Reverb G2 actually use, answered from Linux alone.
+#
+# THE PROBLEM. On this hardware some rear USB3 sockets work with the headset and some do not,
+# and the motherboard manual does not say which -- the split is by USB CONTROLLER, and a cheap
+# board's manual never mentions that its rear ports are wired to two different xHCI controllers.
+# Until now the only knowledge of which sockets work came from Windows and from
+# memory. That is not something you can hand to someone else.
+#
+# WHY THE OBVIOUS METHOD FAILED. docs/00 tried to tell sockets apart with ID_PATH and could not:
+# two physically different sockets both resolved to pci-0000:07:00.3-usb-0:1. The fix is to stop
+# asking for a device path and read the ROOT-HUB PORT TOPOLOGY instead -- /sys/bus/usb/devices/
+# usbN/N-0:1.0/usbN-portM exists for every physical port, occupied or not, so every socket has a
+# stable name (usb4-port2) whether or not anything is plugged into it.
+#
+#   map      -- name every physical port and its controller. Needs NO headset; run it once per
+#               machine, then plug anything into a socket to learn which port it is.
+#   qualify  -- with the headset plugged in NOW, walk the ladder (SuperSpeed branch -> USB2
+#               branch -> activation -> DP hotplug), say exactly where it stopped, and append the
+#               verdict to the ledger so the map becomes knowledge instead of memory.
+#
+# The ledger is per machine on purpose: the port map is a property of the BOARD, not of the
+# headset. docs/00's own table was written on a different box (A520 chipset, xHCI at 07:00.3)
+# than the one this was written on (B450, xHCI at 09:00.3), and copying one board's answer onto
+# another is exactly the mistake this file exists to prevent.
+
+set -uo pipefail
+
+LEDGER="${USB_PORT_LEDGER:-$HOME/vr/usb-port-ledger.jsonl}"
+PANEL_PY="${PANEL_PY:-$(dirname "${BASH_SOURCE[0]}")/panel.py}"
+G2_IDS="03f0:0580 045e:0659 04b4:6504 04b4:6506 0bda:4c15"
+
+board() { cat /sys/devices/virtual/dmi/id/board_name 2>/dev/null || echo unknown; }
+
+controller_of() {  # root hub name -> "PCI  description"
+    local hub="$1" pci desc
+    pci=$(basename "$(readlink -f "/sys/bus/usb/devices/$hub/.." 2>/dev/null)")
+    desc=$(lspci -s "${pci#0000:}" 2>/dev/null | cut -d: -f3- | sed 's/^ *//')
+    echo "$pci|${desc:-unknown}"
+}
+
+cmd_map() {
+    echo "board: $(board)"
+    echo
+    for hub in /sys/bus/usb/devices/usb*; do
+        local h ctl pci desc speed
+        h=$(basename "$hub")
+        IFS='|' read -r pci desc <<<"$(controller_of "$h")"
+        speed=$(cat "$hub/speed" 2>/dev/null)
+        printf "%s  [%s]  %s Mbps\n" "$h" "$pci" "$speed"
+        printf "    %s\n" "$desc"
+        for p in "$hub"/*-0:1.0/"$h"-port*; do
+            [ -e "$p" ] || continue
+            local pn state occupant dev
+            pn=$(basename "$p")
+            state=$(cat "$p/state" 2>/dev/null)
+            occupant=""
+            # The port's device symlink, when something is attached, names the bus path (e.g. 4-2).
+            dev=$(basename "$(readlink -f "$p/device" 2>/dev/null)" 2>/dev/null)
+            if [ -n "$dev" ] && [ -e "/sys/bus/usb/devices/$dev/idVendor" ]; then
+                occupant="$(cat "/sys/bus/usb/devices/$dev/idVendor"):$(cat "/sys/bus/usb/devices/$dev/idProduct")"
+                occupant="$dev  $occupant  $(cat "/sys/bus/usb/devices/$dev/product" 2>/dev/null)"
+            fi
+            printf "      %-14s %-14s %s\n" "$pn" "$state" "$occupant"
+        done
+        echo
+    done
+    echo "Two controllers with rear sockets on both is the whole point: sockets on different"
+    echo "controllers are NOT interchangeable for this headset. Plug a mouse into a socket to"
+    echo "learn which usbN-portM it is, then check the ledger:"
+    echo "  $LEDGER"
+}
+
+g2_census() {  # prints "n/5" and sets G2_PRESENT/G2_MISSING
+    local n=0
+    G2_MISSING=""
+    for id in $G2_IDS; do
+        if lsusb | grep -q "$id"; then n=$((n + 1)); else G2_MISSING="$G2_MISSING $id"; fi
+    done
+    echo "$n"
+}
+
+g2_port() {  # the root-hub port one of the headset's own hubs sits on -- its stable address
+    # Tries the SuperSpeed hub first and the USB2 hub second, because WHICH of them appears is
+    # exactly what varies between socket types: a USB2-only socket has no SuperSpeed hub to find,
+    # and looking only for that one reported "no socket" for the very case being diagnosed.
+    local want d dev
+    for want in 6504 6506; do
+        for d in /sys/bus/usb/devices/*; do
+            [ -e "$d/idVendor" ] || continue
+            if [ "$(cat "$d/idVendor")" = "04b4" ] && [ "$(cat "$d/idProduct")" = "$want" ]; then
+                dev=$(basename "$d")
+                echo "${dev%%.*}"   # 4-2.1 -> 4-2, the socket itself and not the internal hub
+                return
+            fi
+        done
+    done
+    echo ""
+}
+
+have() { lsusb | grep -q "$1"; }
+
+# The plain-language line, from the project's shared translation layer (scripts/vr_i18n.py), so
+# the person holding the cable gets an instruction and not a diagnosis. The technical verdict
+# still goes to the ledger -- both audiences are real, they are just not the same audience.
+say() {
+    python3 - "$(dirname "${BASH_SOURCE[0]}")" "$1" <<'PY' 2>/dev/null
+import sys
+sys.path.insert(0, sys.argv[1])
+try:
+    from vr_i18n import t
+    print(t(sys.argv[2]))
+except Exception:
+    pass
+PY
+}
+action() { local m; m=$(say "$1"); [ -n "$m" ] && { echo; echo "   >> $m"; }; }
+
+cmd_qualify() {
+    local label="${1:-}"
+    [ -z "$label" ] && { echo "usage: $0 qualify \"<name you can say out loud, e.g. 'trasero abajo junto al HDMI'>\"" >&2; exit 2; }
+
+    # The window deliberately reaches BACKWARDS. Enumeration happens when the cable goes in,
+    # which is seconds-to-minutes before anyone gets to a terminal to run this -- a window that
+    # starts "now" reports a silent port for every real failure and calls it the quiet variant.
+    # Found by running it: the first bad-socket capture printed "nothing above" while the kernel
+    # had logged four "Cannot enable" lines a minute earlier.
+    local since; since="${QUALIFY_LOG_WINDOW:-10 min ago}"
+    echo "board: $(board)   label: $label   kernel window: $since"
+    echo
+
+    # --- rung 1: does anything of the headset enumerate at all ---
+    # Verbose on purpose while this is still being learned: the five devices are not
+    # interchangeable and "3/5" hides WHICH three, which is the entire diagnosis. Each line says
+    # what that device is for, so a missing one reads as a lost capability and not as a number.
+    local n port ctl pci desc
+    # SAMPLED, not sampled once. This link drops its USB2 branch by itself several times a
+    # minute (T226: 3.47/min on Windows, 0.92-4.63 on Linux, ~3 s each), so a single census
+    # cannot tell a bad socket from an ordinary dropout -- it would condemn a good socket
+    # roughly one reading in twenty. Watching for CENSUS_SAMPLE_S seconds and reporting the
+    # BEST census seen separates them: a transient recovers inside ~3 s, a bad socket never does.
+    local best=0 seen="" t_end
+    t_end=$(( $(date +%s) + ${CENSUS_SAMPLE_S:-20} ))
+    while [ "$(date +%s)" -lt "$t_end" ]; do
+        n=$(g2_census)
+        seen="$seen$n"
+        [ "$n" -gt "$best" ] && best="$n"
+        [ "$best" = 5 ] && break
+        sleep 2
+    done
+    n="$best"
+    port=$(g2_port)
+    echo "1. USB census: $n/5   (best of ${#seen} samples over ${CENSUS_SAMPLE_S:-20}s: $seen)"
+    for spec in "04b4:6504|SuperSpeed hub|the USB3 side of the cable's active hub" \
+                "045e:0659|HoloLens Sensors|cameras, IMU and the controller tunnel -- ALL tracking" \
+                "04b4:6506|USB2 hub|the USB2 side of the same hub" \
+                "03f0:0580|companion|panel on/off, activation, IPD, proximity/presence" \
+                "0bda:4c15|audio|headphones and mic"; do
+        IFS='|' read -r id nm what <<<"$spec"
+        if lsusb | grep -q "$id"; then
+            printf "     [ok]      %-11s %-18s %s\n" "$id" "$nm" "$what"
+        else
+            printf "     [MISSING] %-11s %-18s %s\n" "$id" "$nm" "$what"
+        fi
+    done
+    if [ "$n" = 0 ]; then
+        verdict="DEAD: nothing enumerates. Check headset power first; if powered, this is the WRONG PLUG SIDE (T184: matched orientation = 0/5 always) -- flip the C plug 180 degrees, same port."
+        echo "   -> $verdict"; action usb_action_nothing; action usb_action_flip_plug; ledger "$label" "" "" "$n" "$verdict"; return
+    fi
+
+    if [ -n "$port" ]; then
+        local hub="usb${port%%-*}" spd
+        IFS='|' read -r pci desc <<<"$(controller_of "$hub")"
+        spd=$(cat "/sys/bus/usb/devices/$hub/speed" 2>/dev/null)
+        echo
+        echo "   socket      : $port  (root hub $hub, ${spd} Mbps)"
+        echo "   controller  : $pci"
+        echo "                 $desc"
+        # The sibling root hub is what says whether this physical socket has a SuperSpeed side
+        # at all -- a black USB2 socket simply has no 10 Gbps partner behind it.
+        echo "   this controller's root hubs:"
+        for h in /sys/bus/usb/devices/usb*; do
+            local hn hp
+            hn=$(basename "$h")
+            hp=$(controller_of "$hn" | cut -d'|' -f1)
+            [ "$hp" = "$pci" ] || continue
+            printf "                 %-6s %6s Mbps\n" "$hn" "$(cat "$h/speed" 2>/dev/null)"
+        done
+    fi
+
+    # --- rung 2: the USB2 branch, the one that actually distinguishes sockets ---
+    # The SuperSpeed pair can come up on a socket where the USB2 pair never will. That asymmetry
+    # is the documented signature of a socket the headset cannot use (docs/22), and it is why a
+    # census of 2/5 is a VERDICT and not a transient.
+    # The early return below is skipped when the companion is present: activation depends on the
+    # companion and nothing else, so a socket can be bad for tracking and still able to light the
+    # panel. Reporting "incomplete" and stopping would hide that distinction.
+    if [ "$n" -lt 5 ] && ! have 03f0:0580; then
+        # WHICH branch is missing is the diagnosis, not how many devices are missing. The two
+        # partial states mean opposite things and send the user to opposite places.
+        local ss=no usb2=no hint=usb_action_cable
+        have 04b4:6504 && have 045e:0659 && ss=yes
+        have 04b4:6506 && have 03f0:0580 && usb2=yes
+        echo "2. INCOMPLETE ($n/5): SuperSpeed branch=$ss, USB2 branch=$usb2 -- kernel, last $since:"
+        echo "   -- kernel lines that name a failure --"
+        journalctl -k --since "$since" 2>/dev/null | grep -iE "usb|xhci" | grep -iE "error -[0-9]+|cannot enable|not accepting address|unable to enumerate|device descriptor read" | tail -10 | sed 's/^/     /'
+        echo "     (nothing above = the 'quiet' variant: the port never even tries. Also a fail.)"
+        echo "   -- everything the kernel said about USB in this window, for context --"
+        # Serial numbers are stripped: this output gets pasted into chats and issues, and the
+        # headset's USB serial is exactly the kind of identifier that should not travel.
+        journalctl -k --since "$since" 2>/dev/null | grep -iE "usb ?[0-9]|xhci" | sed 's/SerialNumber: .*/SerialNumber: <redacted>/' | tail -20 | sed 's/^/     /'
+        if [ "$ss" = yes ] && [ "$usb2" = no ]; then
+            # THIS IS THE PLUG SEAT, NOT THE SOCKET -- and it took three wrong versions of this
+            # verdict to arrive at what docs/22 had already measured in a ten-seat matrix on this
+            # same controller. The same physical port yields different branch subsets on
+            # different INSERTIONS: rear A #1 gave SS-only, rear A #2 gave USB2-only, and a 180
+            # degree flip of the C plug inside the C-to-A adapter gave 5/5 on that same port. A
+            # phone enumerated fine on a port where the G2's USB2 pair had failed seven times in
+            # a row -- port absolved, seat condemned. Mechanism on file: SS pins sit at the tip of
+            # the connector tongue and the USB2 pair mid-connector, so seating depth and angle
+            # select which group mates.
+            #
+            # And "it stayed 2/5 for a whole minute" does NOT make it the socket: docs/22
+            # measured a half-dead seat as rock-stable, "ZERO spontaneous events, no
+            # self-recovery, no flapping". Stability rules out the storm and nothing else.
+            # 2/5 with SS up is the signature of the CORRECT plug side (T184: the wrong side
+            # gives 0/5, always). The measured lever for this exact state is T186: PC-end
+            # USB-C unplug, cold ~8-10 s, replug same port same side -- 6/6 clean 5/5. A flip
+            # here would land on 0/5.
+            hint=usb_action_cold_replug
+            verdict="PARTIAL SEAT ($n/5): SuperSpeed up, USB2 branch absent -- no companion, so no panel, no activation, no audio, no IPD, no presence. The plug side is CORRECT (the wrong side gives 0/5, T184). Documented lever: PC-end USB-C unplug, ~10 s cold, replug SAME port SAME side (T186, 6/6). Do NOT flip; suspect socket/cable only after several cold replugs fail."
+        elif [ "$usb2" = yes ] && [ "$ss" = no ]; then
+            hint=usb_action_usb2_only
+            # MEASURED 2026-08-19, and it corrected this line: on a USB2-only socket the
+            # HoloLens Sensors device does NOT disappear -- it enumerates at high speed on the
+            # 480 Mbps hub instead of SuperSpeed. So "no cameras" was wrong. What is true is
+            # that the whole headset then shares one 480 Mbps bus: four 640x480 mono streams at
+            # 30 fps alone are ~295 Mbps before audio and companion traffic, against a real-world
+            # USB2 bulk ceiling near 300-400. Tracking is not structurally impossible here, it is
+            # bandwidth-marginal -- which is a thing to MEASURE, not to assert either way.
+            verdict="USB2-ONLY SOCKET ($n/5): the SuperSpeed hub is absent, so the whole headset is running on one 480 Mbps bus. HoloLens Sensors still enumerates (at high speed), so this is not automatically dead -- but the camera streams alone need ~295 Mbps of a bus that also carries audio and the companion. Expect marginal or failing tracking. Use a blue USB3 socket."
+        else
+            hint=usb_action_cable
+            verdict="PARTIAL ($n/5), neither branch complete: treat as a bad socket and re-seat before concluding anything."
+        fi
+        echo "   -> $verdict"; action "$hint"; ledger "$label" "$port" "$pci" "$n" "$verdict"; return
+    fi
+    if [ "$n" -lt 5 ]; then
+        local ss=no
+        have 04b4:6504 && have 045e:0659 && ss=yes
+        echo "2. INCOMPLETE ($n/5) but the companion IS present -- continuing, because activation"
+        echo "   needs the companion and nothing else. SuperSpeed branch=$ss."
+        [ "$ss" = no ] && echo "   Whatever happens below, tracking on this socket is bandwidth-marginal at best."
+    else
+        echo "2. all five devices present"
+    fi
+
+    # --- rung 3: activation. Enumerating is not the same as usable. ---
+    # Said BEFORE activating, not after: the logo comes up during this step and the person is
+    # looking at the visor while it does. By the time a verdict prints they have already decided
+    # it worked. Measured 2026-08-19 (T231): the logo lit on a USB2-only socket that cannot
+    # carry the cameras -- "veo el logo HP" is not a pass, and it is the first thing anyone sees.
+    action usb_logo_means
+    echo "3. activating the panel ($PANEL_PY activate)"
+    if ! python3 "$PANEL_PY" activate >/tmp/usb-port-qualify.$$ 2>&1; then
+        sed 's/^/     /' /tmp/usb-port-qualify.$$; rm -f /tmp/usb-port-qualify.$$
+        verdict="ENUMERATES BUT DOES NOT ACTIVATE: all five devices present and the activation sequence failed. Companion HID is reachable but not answering -- see docs/22's ladder."
+        echo "   -> $verdict"; ledger "$label" "$port" "$pci" "$n" "$verdict"; return
+    fi
+    rm -f /tmp/usb-port-qualify.$$
+
+    # --- rung 4: the only proof that matters -- the panel's own connector APPEARS ---
+    # Baselined before activation on purpose: desktop monitors also read "connected", so the
+    # headset is not "a connected DP" -- it is the connector that was NOT there a second ago.
+    # Counting all connected outputs would have declared success on any machine with a monitor.
+    local i conn="" before hint=usb_action_ok
+    before=$(for c in /sys/class/drm/card*-DP-*; do
+                 [ "$(cat "$c/status" 2>/dev/null)" = connected ] && basename "$c"
+             done | sort | tr '\n' ' ')
+    for i in $(seq 1 20); do
+        sleep 0.5
+        for c in /sys/class/drm/card*-DP-*; do
+            [ "$(cat "$c/status" 2>/dev/null)" = connected ] || continue
+            case " $before " in *" $(basename "$c") "*) continue ;; esac
+            conn="$conn $(basename "$c")"
+        done
+        [ -n "$conn" ] && break
+    done
+    echo "   (already connected before activating:${before:- none})"
+    echo "4. DP connectors that APPEARED after activating:${conn:- none}"
+    # Three outcomes, deliberately not collapsed into two. The middle one is the trap: if the
+    # panel was already awake from an earlier activation its connector is already present, so
+    # "no new connector" is not a failure -- but it is also not a proof, and reporting it as
+    # GOOD would be a check that cannot fail. Power-cycle the headset and re-run to get a real
+    # rung 4.
+    if [ -n "$conn" ] && [ "$n" -lt 5 ]; then
+        # MEASURED 2026-08-19 and it is the finding of the night: the panel came up on a USB2-only
+        # socket. DP hotplug is driven by the companion ALONE -- it never touches the SuperSpeed
+        # branch -- so "the panel lit" is not evidence that the socket is good. Saying GOOD here,
+        # as this did on the first run, would tell someone to leave the cable on a socket where
+        # tracking cannot work.
+        verdict="PANEL YES, TRACKING NO ($n/5): activation succeeded and the panel connector appeared ($conn), which proves the companion path works -- but the SuperSpeed branch is missing, so this socket cannot carry the cameras properly. Do not settle here."
+        hint=usb_action_usb2_only
+    elif [ -n "$conn" ]; then
+        verdict="GOOD SOCKET: 5/5, activation accepted, panel connector appeared ($conn). Proven end to end."
+        hint=usb_action_ok
+    elif [ -n "$before" ]; then
+        verdict="RUNG 4 NOT PROVEN ($n/5): activation accepted, but a DP connector was already present before activating ($before), so this run could not observe the hotplug. Power-cycle the headset and re-run to prove it."
+    else
+        verdict="ENUMERATES AND ACTIVATES BUT NO PANEL ($n/5): activation accepted, and no DP connector ever appeared. This is the docs/22 dark-panel class, not a socket problem -- check the cable's video side."
+    fi
+    echo "   -> $verdict"
+    [ -n "$conn" ] && action "${hint:-usb_action_ok}"
+    ledger "$label" "$port" "$pci" "$n" "$verdict"
+}
+
+ledger() {
+    mkdir -p "$(dirname "$LEDGER")"
+    python3 - "$LEDGER" "$(board)" "$1" "$2" "$3" "$4" "$5" <<'PY'
+import json, sys, datetime
+path, board, label, port, pci, census, verdict = sys.argv[1:8]
+row = dict(when=datetime.datetime.now().isoformat(timespec="seconds"), board=board,
+           label=label, port=port, controller=pci, census=census, verdict=verdict)
+with open(path, "a") as f:
+    f.write(json.dumps(row, ensure_ascii=False) + "\n")
+print(f"\nrecorded in {path}")
+PY
+}
+
+case "${1:-map}" in
+    map) cmd_map ;;
+    qualify) shift; cmd_qualify "$@" ;;
+    *) echo "usage: $0 [map | qualify \"<socket label>\"]" >&2; exit 2 ;;
+esac

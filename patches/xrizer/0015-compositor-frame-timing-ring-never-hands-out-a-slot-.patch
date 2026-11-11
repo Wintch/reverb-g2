@@ -1,0 +1,124 @@
+From b60b271d088d377dcaaac6b48fe95b6029adfaae Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Mon, 12 Oct 2026 22:51:35 -0300
+Subject: [PATCH] compositor: frame-timing ring never hands out a slot being
+ written
+
+0006's FrameTimingRing reused slot count % 128 for the next frame while a
+GetFrameTimings(128) reader could still ask for that slot as its oldest
+entry, so it could read the newest, not yet published frame as the oldest
+(a non-monotonic array) or wait on the writer's lock. GetFrameTimings also
+re-read the live count for each entry, so a push in between shifted the
+numbering and skipped a frame.
+
+The ring now has one slot more than the history it exposes, a read is
+validated against the count after the copy, and GetFrameTimings reads
+every entry against one snapshot of the count.
+
+Found by the 2026-10-12 code review (reverb-g2 docs/147, X03-5, X03-1).
+
+Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
+---
+ src/compositor.rs | 50 +++++++++++++++++++++++++++++++++++------------
+ 1 file changed, 37 insertions(+), 13 deletions(-)
+
+diff --git a/src/compositor.rs b/src/compositor.rs
+index 525ea8e..88f670f 100644
+--- a/src/compositor.rs
++++ b/src/compositor.rs
+@@ -105,14 +105,16 @@ struct FrameMetrics {
+ /// left as a reason to keep the timing fictional.)
+ ///
+ /// One lock per slot instead. The writer touches exactly the slot it is filling; a reader
+-/// touches exactly the slot it is asked for. They can only meet on the same slot, which needs
+-/// the reader to be a full ring -- 128 frames, ~1.4 s at 90 Hz -- behind the writer, and both
+-/// critical sections are a copy of a handful of floats. Deliberately NOT a seqlock: that is the
++/// touches exactly the slot it is asked for. The ring has one slot more than the history it
++/// exposes, so the slot being written is never one a reader can ask for, not even the oldest
++/// of a full-history request; a reader that stalls long enough for the writer to lap it sees
++/// the count move and gets `None` instead of a newer frame. Both critical sections are a copy
++/// of a handful of floats. Deliberately NOT a seqlock: that is the
+ /// textbook answer and it would make the writer strictly wait-free, but it needs `UnsafeCell`
+ /// and hand-reasoned orderings, and nothing measured here justifies that yet. If contention is
+ /// ever actually observed, the seqlock is the named upgrade.
+ struct FrameTimingRing {
+-    slots: [RwLock<FrameTimingEntry>; FRAME_TIMING_HISTORY_LEN],
++    slots: [RwLock<FrameTimingEntry>; FRAME_TIMING_HISTORY_LEN + 1],
+     /// Total frames ever completed. `count % LEN` is the next slot to write, and the value
+     /// doubles as "how much history exists", so no separate length needs to stay in sync.
+     count: AtomicU64,
+@@ -128,13 +130,14 @@ impl Default for FrameTimingRing {
+ }
+ 
+ impl FrameTimingRing {
+-    /// Number of frames available to read, saturating at the ring size.
++    /// Number of frames available to read, saturating at the history length.
++    #[cfg(test)]
+     fn len(&self) -> usize {
+         (self.count.load(Ordering::Acquire) as usize).min(FRAME_TIMING_HISTORY_LEN)
+     }
+ 
+     fn push(&self, entry: FrameTimingEntry) {
+-        let idx = (self.count.load(Ordering::Relaxed) as usize) % FRAME_TIMING_HISTORY_LEN;
++        let idx = (self.count.load(Ordering::Relaxed) as usize) % (FRAME_TIMING_HISTORY_LEN + 1);
+         *self.slots[idx].write().unwrap() = entry;
+         // Published last, with Release, so a reader that observes the new count also observes
+         // the slot contents it points at.
+@@ -144,12 +147,30 @@ impl FrameTimingRing {
+     /// `frames_ago` = 0 is the most recently completed frame. `None` once it runs past the
+     /// history that exists.
+     fn get(&self, frames_ago: usize) -> Option<FrameTimingEntry> {
+-        let count = self.count.load(Ordering::Acquire) as usize;
++        self.get_at(self.snapshot(), frames_ago)
++    }
++
++    /// The completed-frame count, to read several entries against one consistent numbering.
++    fn snapshot(&self) -> usize {
++        self.count.load(Ordering::Acquire) as usize
++    }
++
++    /// Like [`Self::get`], counted back from a [`Self::snapshot`] rather than from the live
++    /// count, so frames pushed meanwhile do not shift the numbering mid-read.
++    fn get_at(&self, count: usize, frames_ago: usize) -> Option<FrameTimingEntry> {
+         if frames_ago >= count.min(FRAME_TIMING_HISTORY_LEN) {
+             return None;
+         }
+-        let idx = (count - 1 - frames_ago) % FRAME_TIMING_HISTORY_LEN;
+-        Some(*self.slots[idx].read().unwrap())
++        let abs = count - 1 - frames_ago;
++        let entry = *self.slots[abs % (FRAME_TIMING_HISTORY_LEN + 1)]
++            .read()
++            .unwrap();
++        // The slot is reused by frame abs + LEN + 1, written while the count equals that
++        // value. If the count has got there, the copy may be from the newer frame.
++        if self.count.load(Ordering::Acquire) as usize > abs + FRAME_TIMING_HISTORY_LEN {
++            return None;
++        }
++        Some(entry)
+     }
+ }
+ 
+@@ -794,13 +815,16 @@ impl vr::IVRCompositor029_Interface for Compositor {
+         }
+ 
+         let refresh_rate_ms = 1000.0 / self.openxr.get_refresh_rate();
+-        let count = (nFrames as usize).min(self.metrics.history.len());
++        let snapshot = self.metrics.history.snapshot();
++        let count = (nFrames as usize).min(snapshot.min(FRAME_TIMING_HISTORY_LEN));
+ 
+         // Ascending order (oldest to newest), last entry is the most recent frame, per the
+-        // documented contract -- so entry i counts back (count - 1 - i) frames from now.
++        // documented contract -- so entry i counts back (count - 1 - i) frames from the
++        // snapshot. Reading against one snapshot keeps the array contiguous while
++        // PostPresentHandoff pushes from another thread.
+         for i in 0..count {
+-            let Some(entry) = self.metrics.history.get(count - 1 - i) else {
+-                // The ring wrapped underneath us mid-read; stop at what we did fill rather
++            let Some(entry) = self.metrics.history.get_at(snapshot, count - 1 - i) else {
++                // The writer lapped this reader mid-read; stop at what we did fill rather
+                 // than reporting frames we did not write.
+                 return i as u32;
+             };
+-- 
+2.47.3
+

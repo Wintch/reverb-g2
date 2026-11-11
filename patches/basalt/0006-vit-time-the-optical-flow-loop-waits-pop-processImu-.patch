@@ -1,0 +1,61 @@
+From a167e1b9163bb38ba8973431ad94f07c16f6786c Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Mon, 17 Aug 2026 02:04:16 -0300
+Subject: [PATCH 6/8] vit: time the optical-flow loop waits (pop + processImu)
+ for the SLAM collapse
+
+processFrame (~10ms) and VIO opt/marg (~2ms) are both fast during the collapse, and keypoints
+are bounded -- so the ~600ms is in the loop's WAITS, not compute. processImu blocks popping IMU
+up to the image timestamp; with frames dropped ~18-at-a-time in the collapse, each processed
+image jumps ~600ms, so processImu integrates a ~600ms IMU gap. Time the image-pop wait and
+processImu to confirm. Off by default (VIT_COLLAPSE_LOG).
+---
+ .../optical_flow/frame_to_frame_optical_flow.h   | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/include/basalt/optical_flow/frame_to_frame_optical_flow.h b/include/basalt/optical_flow/frame_to_frame_optical_flow.h
+index 53bdc73..b8e17e8 100644
+--- a/include/basalt/optical_flow/frame_to_frame_optical_flow.h
++++ b/include/basalt/optical_flow/frame_to_frame_optical_flow.h
+@@ -127,8 +127,16 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
+     using std::make_shared;
+     OpticalFlowInput::Ptr img;
+ 
++    // Env-gated (VIT_COLLAPSE_LOG): the SLAM collapse is not in any compute stage
++    // (processFrame ~10ms, VIO opt/marg ~2ms) -- it is in the loop's WAITS. Time the
++    // input-image pop wait and processImu (which blocks popping IMU up to the image
++    // timestamp -- suspected culprit during the ~600ms/frame collapse).
++    static const bool loop_log = std::getenv("VIT_COLLAPSE_LOG") != nullptr;
+     while (true) {
++      std::chrono::steady_clock::time_point lt_pop0, lt_pop1, lt_imu0, lt_imu1;
++      if (loop_log) lt_pop0 = std::chrono::steady_clock::now();
+       input_img_queue.pop(img);
++      if (loop_log) lt_pop1 = lt_imu0 = lt_imu1 = std::chrono::steady_clock::now();
+ 
+       if (img == nullptr) {
+         if (output_queue) output_queue->push(nullptr);
+@@ -148,13 +156,21 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
+         latest_state = make_shared<PoseVelBiasState<double>>(*predicted_state);
+       }
+ 
++      if (loop_log) lt_imu0 = std::chrono::steady_clock::now();
+       if (first_state_arrived) {
+         auto pim = processImu(img->t_ns);
+         pim.predictState(*latest_state, constants::g, *predicted_state);
+       }
++      if (loop_log) lt_imu1 = std::chrono::steady_clock::now();
+       img->addTime("frontend_preintegration_computed");
+ 
+       processFrame(img->t_ns, img);
++
++      if (loop_log) {
++        double pop_ms = std::chrono::duration<double, std::milli>(lt_pop1 - lt_pop0).count();
++        double imu_ms = std::chrono::duration<double, std::milli>(lt_imu1 - lt_imu0).count();
++        std::cout << "vit_loop pop_ms=" << pop_ms << " imu_ms=" << imu_ms << std::endl;
++      }
+     }
+   }
+ 
+-- 
+2.47.3
+

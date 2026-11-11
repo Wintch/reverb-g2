@@ -1,0 +1,65 @@
+From bed24fe3af5981b28e614b1e21054028d3b1411b Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Mon, 12 Oct 2026 22:06:37 -0300
+Subject: [PATCH] d/wmr: Restart the controller fusion clock after an idle run
+
+0035 skips the fusion for the firmware's idle packets (all-zero IMU
+counts), but m_imu_3dof keeps last.timestamp_ns at the last sample before
+the idle run while the controller's own timestamps keep advancing. The
+first live sample after a wake then computes dt over the whole idle gap
+(seconds to minutes) and integrates the wake-up gyro over it as one step.
+Replaying m_imu_3dof_update with a modest pick-up rate gives tens of
+degrees of heading error right after the wake, which the gravity term
+fixes for tilt but not for yaw; with the constellation yaw lock a hand
+can stay wrong until restart.
+
+Track the idle run and, on its first live sample, put the fusion back in
+M_IMU_3DOF_STATE_START: that update only takes the timestamp, and the
+orientation and gyro bias are kept.
+
+Found by the 2026-10-12 code review (reverb-g2 docs/147, headline #3).
+
+Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
+---
+ src/xrt/drivers/wmr/wmr_controller_hp.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/src/xrt/drivers/wmr/wmr_controller_hp.c b/src/xrt/drivers/wmr/wmr_controller_hp.c
+index b2b89ace6..0c2ad71ca 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_hp.c
++++ b/src/xrt/drivers/wmr/wmr_controller_hp.c
+@@ -236,6 +236,9 @@ struct wmr_controller_hp
+ 	//! Zeroed-IMU (idle) packets seen, for the throttled log below.
+ 	uint64_t zeroed_imu_count;
+ 
++	//! True while the IMU fields are idle zeros: the fusion clock has not advanced since.
++	bool imu_idle;
++
+ 	//! True once last_inputs.battery has been set at least once by a real packet -- guards
+ 	//! get_battery_status() from reporting a fake 0% before the controller has said anything.
+ 	bool has_battery_sample;
+@@ -563,11 +566,21 @@ handle_input_packet(struct wmr_controller_base *wcb, uint64_t time_ns, uint8_t *
+ 		// get_tracked_pose, which freezes the reported pose with zero velocities. Between the two,
+ 		// a resting controller finally just sits still.
+ 		ctrl->zeroed_imu_count++;
++		ctrl->imu_idle = true;
+ 		if (ctrl->zeroed_imu_count == 1 || (ctrl->zeroed_imu_count % 1000) == 0) {
+ 			WMR_DEBUG(ctrl, "idle (zeroed) IMU packet -- fusion paused [%" PRIu64 " so far]",
+ 			          ctrl->zeroed_imu_count);
+ 		}
+ 	} else if (b) {
++		if (ctrl->imu_idle) {
++			// First live sample after an idle run. The fusion clock stopped at the last sample
++			// before it, so this one would integrate the whole idle gap (seconds to minutes) as a
++			// single step of the wake-up gyro. Restart the clock instead: the next update only
++			// takes the timestamp, the orientation and gyro bias are kept.
++			ctrl->imu_idle = false;
++			wcb->fusion.state = M_IMU_3DOF_STATE_START;
++			WMR_DEBUG(ctrl, "IMU live again after an idle run -- fusion clock restarted");
++		}
+ 		m_imu_3dof_update(&wcb->fusion,
+ 		                  ctrl->last_inputs.imu.timestamp_ticks * WMR_MOTION_CONTROLLER_NS_PER_TICK,
+ 		                  &ctrl->last_inputs.imu.acc, &ctrl->last_inputs.imu.gyro);
+-- 
+2.47.3
+

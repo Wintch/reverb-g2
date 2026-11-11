@@ -1,0 +1,30 @@
+From fba458a7c4cc5f5a1324ce2fcecbb56da93cbb72 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Wed, 12 Aug 2026 19:21:51 -0300
+Subject: [PATCH 24/27] d/wmr: Make the two WMR_CONSTELLATION_CONTROLLERS
+ declarations agree (opt-in)
+
+The option is declared in both wmr_hmd.c and wmr_camera.c. The constellation branch
+flipped only the hmd one to true, so with the variable unset the HMD created a
+constellation tracker while the camera path never assigned the controller exposure
+slots that feed it -- a starved tracker, not a disabled one. Both are false again;
+the launcher passes the value explicitly.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ src/xrt/drivers/wmr/wmr_hmd.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_hmd.c b/src/xrt/drivers/wmr/wmr_hmd.c
+index 78ffdd005..a94b55367 100644
+--- a/src/xrt/drivers/wmr/wmr_hmd.c
++++ b/src/xrt/drivers/wmr/wmr_hmd.c
+@@ -85,7 +85,7 @@ DEBUG_GET_ONCE_BOOL_OPTION(wmr_handtracking, "WMR_HANDTRACKING", true)
+ //! Whether to run the optical LED constellation tracker for controller positional tracking.
+ //! Default on since 0017 (patches/monado/0017): controllers report a real fused position, not
+ //! just orientation. See docs/03-controllers.md.
+-DEBUG_GET_ONCE_BOOL_OPTION(wmr_constellation_controllers, "WMR_CONSTELLATION_CONTROLLERS", true)
++DEBUG_GET_ONCE_BOOL_OPTION(wmr_constellation_controllers, "WMR_CONSTELLATION_CONTROLLERS", false)
+ 
+ #ifdef XRT_FEATURE_SLAM
+ //! Whether to submit samples to the SLAM tracker from the start.

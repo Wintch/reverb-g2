@@ -1,0 +1,94 @@
+From 76d71a8085a9eef551b27c2dd5cc151b8738af88 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Thu, 13 Aug 2026 20:41:14 -0300
+Subject: [PATCH] vit: bound the optical flow input queue and drop the oldest
+ frame, not the newest
+
+With the optical flow slower than the camera (measured on a G2 rig 2026-08-13:
+~26 fps processed vs 30 fps in, at every thread count tried), input_img_queue's
+default capacity of 10 sits permanently full. Every frame then waits ~380 ms in
+the queue before the frontend sees it, and the pose the caller anchors its IMU
+dead reckoning to ends up 0.5-0.9 s old -- measured end to end from Monado: the
+delivered head pose wandered 10-25 mm at rest while raw SLAM sat at 0.3-0.9 mm,
+all of it IMU integration noise over the stale-anchor horizon.
+
+vio_enforce_realtime cannot fix this: it drops in the VIO stage, downstream of
+this queue (measured: enabling it moved nothing). The blocking push also parks
+the caller's camera thread, back-pressuring Monado into dropping frames blindly
+at its own door.
+
+Cap the queue at 2 and make push_frame drop the OLDEST frame -- the same
+push-the-newest policy monado_out_state_queue already uses. Same effective frame
+rate, but the frontend always gets the freshest image. Deterministic mode keeps
+the lossless blocking push, its lockstep depends on it.
+
+Measured on the same rig, same config, headset motionless on a desk:
+  frame-to-pose age:        p50 819 ms -> 109 ms
+  delivered pos residual:   p50 9.8 mm / p90 24.6 mm -> 0.57 mm / 1.23 mm
+  delivered rot residual:   p99 0.146 deg -> 0.107 deg
+  raw SLAM pos step p99:    2.3 mm -> 1.4 mm (fresher, evenly spaced frames)
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/vit/vit_tracker.cpp | 31 ++++++++++++++++++++++++++++++-
+ 1 file changed, 30 insertions(+), 1 deletion(-)
+
+diff --git a/src/vit/vit_tracker.cpp b/src/vit/vit_tracker.cpp
+index 5be3270..e1c37be 100644
+--- a/src/vit/vit_tracker.cpp
++++ b/src/vit/vit_tracker.cpp
+@@ -120,6 +120,7 @@ struct Tracker::Implementation {
+   bool use_double = false;
+   bool deterministic = false;
+   int num_threads = 1;
++  size_t input_frames_dropped = 0;  //!< Frames dropped by push_frame's drop-oldest policy
+ 
+   // VIO members
+   struct {
+@@ -400,6 +401,15 @@ struct Tracker::Implementation {
+     image_data_queue = &opt_flow_ptr->input_img_queue;
+     ASSERT_(image_data_queue != nullptr);
+ 
++    // The queue's default capacity of 10 is a latency reservoir, not a safety margin: with
++    // the optical flow slower than the camera (measured on a G2 rig, 2026-08-13: ~26 fps
++    // processed vs 30 fps in) it sits permanently full, so every frame waits ~380 ms in it
++    // before the frontend even sees it, and the pose the integrator anchors to ends up
++    // 0.5-0.9 s old. vio_enforce_realtime cannot fix this: it drops in the VIO stage,
++    // downstream of this queue. Two slots keep the frontend busy while the next frame is
++    // being assembled; push_frame's drop-oldest policy (below) does the rest.
++    image_data_queue->set_capacity(2);
++
+     vio = VioEstimatorFactory::getVioEstimator(vio_config, calib, constants::g, true, use_double);
+     imu_data_queue = &vio->imu_data_queue;
+     ASSERT_(imu_data_queue != nullptr);
+@@ -509,7 +519,26 @@ struct Tracker::Implementation {
+     if (i == cam_count - 1) {
+       partial_frame->addTime("frames_read");
+       partial_frame->addTime("frames_pushed");
+-      image_data_queue->push(partial_frame);
++      if (deterministic) {
++        // Deterministic mode runs caller and frontend in lockstep; dropping would desync it.
++        image_data_queue->push(partial_frame);
++      } else {
++        // Push the newest, drop the oldest -- same policy as monado_out_state_queue above.
++        // A blocking push against a full queue parks the caller's camera thread, which
++        // back-pressures the integration into dropping frames blindly at its own door while
++        // the frames that do get through age in the queue as pure latency. Dropping the
++        // OLDEST here keeps the same effective frame rate but always hands the frontend the
++        // freshest image there is.
++        OpticalFlowInput::Ptr dropped;
++        while (!image_data_queue->try_push(partial_frame)) {
++          if (image_data_queue->try_pop(dropped)) {
++            if (++input_frames_dropped % 300 == 0) {
++              std::cout << "vit: input_img_queue dropped " << input_frames_dropped
++                        << " frames so far (frontend slower than camera)" << std::endl;
++            }
++          }
++        }
++      }
+       if (show_gui) ui.update_last_image(partial_frame);
+       if (deterministic) pop_state();
+     }
+-- 
+2.47.3
+

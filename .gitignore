@@ -1,0 +1,48 @@
+# This repo publishes code, patches and documentation only. Everything else
+# (captures, photos, logs, build output, generated data, private notes) stays
+# out on purpose: the repo is public, and a capture or a photo can carry
+# something personal without anyone noticing at upload time.
+#
+# Deny everything, then allow by extension. A new file type has to be added
+# here deliberately before it can be committed.
+*
+!*/
+!.gitignore
+!.gitattributes
+!LICENSE
+!*.md
+!*.txt
+!*.py
+!*.sh
+!*.c
+!*.h
+!*.ps1
+!*.patch
+!*.diff
+!*.service
+!*.rules
+!*.conf
+!*.toml
+!*.json
+!*.jsonl
+!*.csv
+!*.html
+!*.example
+
+# Narrow binary exceptions, each one referenced by a doc.
+!docs/*.png
+!forum-attachments/*.bin
+
+# Never, even when the extension is allowed above.
+local-notes/
+CLAUDE.local.md
+NEXT-STEP.md
+power-on-stats.jsonl
+scripts/.private-patterns
+__pycache__/
+nv-debug-*/
+nv-report-*/
+windows-kit2/
+experiments/webcam/
+# Calibration captures: the numbers live in docs/ and docs/pruebas.jsonl.
+docs/led-photometry/

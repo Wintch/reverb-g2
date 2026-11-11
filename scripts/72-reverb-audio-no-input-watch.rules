@@ -1,0 +1,9 @@
+# The Reverb G2's own USB audio codec (Realtek 0bda:4c15, behind the WMR hub) exposes a
+# "Consumer Control" HID interface (media-key-style buttons) alongside its audio function.
+# That interface re-enumerates on every disconnect/reconnect cycle (device is flaky on this
+# unit, see docs/06-known-issues.md), and each time it does, systemd-logind re-registers it
+# as a "system button" device to watch - separate from the ALSA/PipeWire audio node, which
+# is already suppressed via wireplumber.conf.d/51-disable-reverb-headset-audio.conf. This
+# strips the input-key tag udev's input_id builtin assigns, so logind stops treating it as
+# a button device worth watching, and its repeated re-registration stops generating churn.
+SUBSYSTEM=="input", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="4c15", ENV{ID_INPUT_KEY}="", ENV{ID_INPUT}=""

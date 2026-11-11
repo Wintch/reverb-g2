@@ -1,0 +1,179 @@
+From 3fa3cc2b68c75c89ecb33089a2600c31b4b6d58b Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Wed, 19 Aug 2026 16:12:21 -0300
+Subject: [PATCH] d/wmr: debounce XR_EXT_user_presence, asymmetrically, and say
+ when the channel goes quiet
+
+T224's first hardware run of WMR_USER_PRESENCE confirmed the chain works (worn reads
+raw 1, resting reads 0) and immediately showed why it could not be enabled as it stood:
+through a real donning gesture the raw byte alternated 0,1,0,1 before settling. Reported
+straight through, that flicker toggles presence, and a title turns a presence toggle into
+a pause -- i.e. the game pausing and unpausing in the wearer's face while they are still
+putting the headset on. That is worse than not having the feature.
+
+A candidate state now has to hold before it is committed, and the two directions are
+deliberately asymmetric: WMR_USER_PRESENCE_DON_MS (250) to enter "worn",
+WMR_USER_PRESENCE_DOFF_MS (1000) to leave it. A spurious resume is invisible; a spurious
+pause interrupts a session, so leaving "worn" costs more evidence than entering it. Either
+window set to 0 disables that direction.
+
+Also stamps the arrival time of every proximity message, not just its changes, and logs a
+throttled notice once no update has arrived for 30 s. The distinction matters because the
+message is CHANGE-DRIVEN: "the sensor calmly reports the same value" and "the companion
+died" are indistinguishable from the value alone, and T224 lost the doff measurement twice
+to exactly that ambiguity. The committed state is deliberately NOT cleared when the channel
+goes quiet -- for a worn headset that is the safe direction, doff-to-pause quietly stopping
+rather than pausing a live session -- but a consumer deserves to be told the feature is
+frozen rather than reporting. The companion was measured surviving only ~1-3 minutes per
+session on this hardware: long enough to look healthy at launch and be gone by the time
+anyone tests it.
+
+Still unmeasured, twice attempted: the doff transition itself, and therefore whether the
+provisional non-zero threshold is right in that direction. Both windows are guesses chosen
+for their failure mode, not calibrated values.
+
+Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
+---
+ src/xrt/drivers/wmr/wmr_hmd.c | 68 +++++++++++++++++++++++++++++++----
+ src/xrt/drivers/wmr/wmr_hmd.h | 29 +++++++++++++++
+ 2 files changed, 91 insertions(+), 6 deletions(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_hmd.c b/src/xrt/drivers/wmr/wmr_hmd.c
+index 7d12d7918..1eabe77d7 100644
+--- a/src/xrt/drivers/wmr/wmr_hmd.c
++++ b/src/xrt/drivers/wmr/wmr_hmd.c
+@@ -113,6 +113,13 @@ DEBUG_GET_ONCE_BOOL_OPTION(wmr_hmd_gyro_mount_fix, "WMR_HMD_GYRO_MOUNT_FIX", fal
+ //! validates the threshold in wmr_hmd_update_inputs(). Zero behavior change when unset.
+ DEBUG_GET_ONCE_BOOL_OPTION(wmr_user_presence, "WMR_USER_PRESENCE", false)
+ 
++//! Debounce windows for XR_EXT_user_presence, in milliseconds (reverb-g2 T224). Asymmetric on
++//! purpose -- see the `presence` struct's comment in wmr_hmd.h. A spurious resume is invisible;
++//! a spurious pause interrupts the session, so leaving "worn" costs more evidence than entering
++//! it. 0 on either disables that direction's debounce.
++DEBUG_GET_ONCE_NUM_OPTION(wmr_user_presence_don_ms, "WMR_USER_PRESENCE_DON_MS", 250)
++DEBUG_GET_ONCE_NUM_OPTION(wmr_user_presence_doff_ms, "WMR_USER_PRESENCE_DOFF_MS", 1000)
++
+ 
+ #define WMR_TRACE(d, ...) U_LOG_XDEV_IFL_T(&d->base, d->log_level, __VA_ARGS__)
+ #define WMR_DEBUG(d, ...) U_LOG_XDEV_IFL_D(&d->base, d->log_level, __VA_ARGS__)
+@@ -621,6 +628,12 @@ control_ipd_value_decode(struct wmr_hmd *wh, const unsigned char *buffer, int si
+ 
+ 	wh->raw_ipd = ipd_value;
+ 	wh->proximity_sensor = proximity;
++	// Arrival time, not change time: presence needs to know the CHANNEL is alive, and this
++	// message is change-driven, so "no update" and "no change" look identical from the value
++	// alone. T224 lost the doff measurement twice to exactly that ambiguity -- the companion
++	// died mid-gesture and the byte simply never came, which is indistinguishable from a
++	// sensor calmly reporting the same thing.
++	wh->presence.last_update_ns = os_monotonic_get_ns();
+ 
+ 	if (changed) {
+ 		WMR_DEBUG(wh, "Proximity sensor %d IPD: %d", proximity, ipd_value);
+@@ -2255,15 +2268,58 @@ wmr_hmd_update_inputs(struct xrt_device *xdev)
+ 		// session confirms whether the sensor is genuinely binary or an analog value
+ 		// that merely idles at 0. The raw value is always logged on change (below) so
+ 		// a real threshold can be picked from live data without a rebuild.
+-		bool worn = wh->proximity_sensor != 0;
++		bool raw_worn = wh->proximity_sensor != 0;
++		uint64_t now_ns = os_monotonic_get_ns();
++
++		/*
++		 * Debounce (T224). The raw byte alternated 0,1,0,1 through a measured donning
++		 * gesture, so a candidate state has to hold for its window before it is committed.
++		 * Windows are asymmetric: see the struct comment in wmr_hmd.h for why leaving
++		 * "worn" deliberately costs more evidence than entering it.
++		 */
++		if (raw_worn != wh->presence.candidate) {
++			wh->presence.candidate = raw_worn;
++			wh->presence.candidate_since_ns = now_ns;
++		}
++
++		if (wh->presence.candidate != wh->presence.committed) {
++			// Entering "worn" uses the don window, leaving it uses the doff window.
++			uint64_t window_ms = (uint64_t)(wh->presence.candidate
++			                                    ? debug_get_num_option_wmr_user_presence_don_ms()
++			                                    : debug_get_num_option_wmr_user_presence_doff_ms());
++			uint64_t held_ns = now_ns - wh->presence.candidate_since_ns;
++			if (held_ns >= window_ms * U_TIME_1MS_IN_NS) {
++				wh->presence.committed = wh->presence.candidate;
++				WMR_INFO(wh, "User presence: %s (raw proximity sensor value %u, held %llu ms)",
++				         wh->presence.committed ? "WORN" : "NOT WORN", wh->proximity_sensor,
++				         (unsigned long long)(held_ns / U_TIME_1MS_IN_NS));
++			}
++		}
+ 
+-		if (input->value.boolean != worn) {
+-			WMR_INFO(wh, "User presence: %s (raw proximity sensor value %u)",
+-			         worn ? "WORN" : "NOT WORN", wh->proximity_sensor);
++		/*
++		 * Stale-channel notice. The committed state is deliberately NOT touched here: when
++		 * the companion dies the last state stands, which for a worn headset is the safe
++		 * direction (doff-to-pause quietly stops working rather than pausing a live
++		 * session). But a consumer deciding anything on presence deserves to know the
++		 * channel went quiet, because T224 measured the companion surviving only ~1-3
++		 * minutes per session on degraded hardware -- long enough to look healthy at launch
++		 * and be gone by the time anyone tests the feature.
++		 */
++		const uint64_t PRESENCE_STALE_NS = 30 * U_TIME_1S_IN_NS;
++		if (wh->presence.last_update_ns != 0 && (now_ns - wh->presence.last_update_ns) > PRESENCE_STALE_NS) {
++			wh->presence.stale_log_count++;
++			if (wh->presence.stale_log_count == 1 || (wh->presence.stale_log_count % 5000) == 0) {
++				WMR_INFO(wh,
++				         "User presence: no proximity update for %llu s -- holding '%s'. The "
++				         "companion channel is the dependency here; if it is storming, this "
++				         "feature is effectively frozen, not reporting.",
++				         (unsigned long long)((now_ns - wh->presence.last_update_ns) / U_TIME_1S_IN_NS),
++				         wh->presence.committed ? "WORN" : "NOT WORN");
++			}
+ 		}
+ 
+-		input->value.boolean = worn;
+-		input->timestamp = os_monotonic_get_ns();
++		input->value.boolean = wh->presence.committed;
++		input->timestamp = now_ns;
+ 		break;
+ 	}
+ 
+diff --git a/src/xrt/drivers/wmr/wmr_hmd.h b/src/xrt/drivers/wmr/wmr_hmd.h
+index 1d94898d8..26fa06d70 100644
+--- a/src/xrt/drivers/wmr/wmr_hmd.h
++++ b/src/xrt/drivers/wmr/wmr_hmd.h
+@@ -129,6 +129,35 @@ struct wmr_hmd
+ 	//! Latest proximity sensor value read from the device.
+ 	uint8_t proximity_sensor;
+ 
++	/*!
++	 * Debounce state for XR_EXT_user_presence (reverb-g2 T223/T224).
++	 *
++	 * The raw byte is NOT clean: measured live during a real donning gesture it alternated
++	 * 0,1,0,1 before settling at 1. Reported straight through, that flicker would toggle
++	 * presence, and a presence toggle is what a title turns into a pause -- i.e. the game
++	 * pausing and unpausing in a wearer's face while they are still putting the headset on.
++	 * So a candidate state must persist before it is committed.
++	 *
++	 * The two directions are deliberately NOT symmetric, and the asymmetry is the whole
++	 * point: entering "worn" is cheap to get wrong (a spurious resume is invisible), while
++	 * entering "not worn" is expensive (a spurious pause interrupts a session). The same
++	 * reasoning the T224 session recorded for the channel-death case: this feature rides the
++	 * companion device, the least reliable channel in the stack, and it must always fail
++	 * TOWARD "worn", never toward "absent".
++	 */
++	struct
++	{
++		//! State currently reported to the app.
++		bool committed;
++		//! Candidate state waiting out its debounce window, and when it first appeared.
++		bool candidate;
++		uint64_t candidate_since_ns;
++		//! When the companion last delivered a proximity value at all. 0 = never.
++		uint64_t last_update_ns;
++		//! Throttle for the stale-channel notice.
++		uint64_t stale_log_count;
++	} presence;
++
+ 	struct hololens_sensors_packet packet;
+ 
+ 	struct
+-- 
+2.47.3
+

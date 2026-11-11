@@ -1,0 +1,71 @@
+From 2c62c54177ee48c261788f975d290664ba2472bf Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Mon, 17 Aug 2026 01:37:38 -0300
+Subject: [PATCH 4/8] vit: deep VIO instrumentation for the SLAM collapse
+ (VIT_COLLAPSE_LOG)
+
+Reproduced the T192-T195 pose-rate collapse on a second machine (KDE/X11/NVIDIA-550/60Hz,
+~10min onset, near-constant ~600ms stall, NO companion storm -- confirming it is a portable
+Basalt VIO bug, independent of the companion path and the environment). The vit_tracker
+IN/OUT instrumentation localised it to a periodic ~600ms stall with the input queue backing
+up; this pins it deeper: time optimize() vs marginalize() and log frame_states / frame_poses
+/ landmarks / marg prior dimension per frame, to catch which structure grows over the ~10min
+onset. Off by default (one getenv).
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/vi_estimator/sqrt_keypoint_vio.cpp | 23 +++++++++++++++++++++++
+ 1 file changed, 23 insertions(+)
+
+diff --git a/src/vi_estimator/sqrt_keypoint_vio.cpp b/src/vi_estimator/sqrt_keypoint_vio.cpp
+index 9d45fe1..480fe30 100644
+--- a/src/vi_estimator/sqrt_keypoint_vio.cpp
++++ b/src/vi_estimator/sqrt_keypoint_vio.cpp
+@@ -47,6 +47,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ 
+ #include <basalt/linearization/linearization_base.hpp>
+ #include <memory>
++#include <chrono>
++#include <cstdlib>
+ 
+ #include <tbb/blocked_range.h>
+ #include <tbb/parallel_for.h>
+@@ -1641,14 +1643,35 @@ bool SqrtKeypointVioEstimator<Scalar_>::optimize() {
+ template <class Scalar_>
+ bool SqrtKeypointVioEstimator<Scalar_>::optimize_and_marg(const std::map<int64_t, int>& num_points_connected,
+                                                           const std::unordered_set<KeypointId>& lost_landmaks) {
++  // Env-gated deep VIO instrumentation (VIT_COLLAPSE_LOG): time optimize() vs marginalize()
++  // separately and log the state sizes that could grow unbounded over a session. The SLAM
++  // pose-rate collapse (T192-T195) reproduced as a periodic ~600ms stall with a slow (~10 min)
++  // onset -- consistent with the optimization window / map growing until each optimize takes
++  // ~600ms. This pins WHICH structure grows and WHERE the time goes. Off by default.
++  static const bool vio_log = std::getenv("VIT_COLLAPSE_LOG") != nullptr;
++
+   bool success = true;
+ 
++  std::chrono::steady_clock::time_point t0, t1, t2;
++  if (vio_log) t0 = std::chrono::steady_clock::now();
++
+   success &= optimize();
+   if (!success) return false;
+ 
++  if (vio_log) t1 = std::chrono::steady_clock::now();
++
+   success &= marginalize(num_points_connected, lost_landmaks);
+   if (!success) return false;
+ 
++  if (vio_log) {
++    t2 = std::chrono::steady_clock::now();
++    double opt_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
++    double marg_ms = std::chrono::duration<double, std::milli>(t2 - t1).count();
++    std::cout << "vit_vio opt_ms=" << opt_ms << " marg_ms=" << marg_ms
++              << " frame_states=" << frame_states.size() << " frame_poses=" << frame_poses.size()
++              << " landmarks=" << lmdb.numLandmarks() << " marg_H=" << marg_data.H.rows() << std::endl;
++  }
++
+   return success;
+ }
+ 
+-- 
+2.47.3
+

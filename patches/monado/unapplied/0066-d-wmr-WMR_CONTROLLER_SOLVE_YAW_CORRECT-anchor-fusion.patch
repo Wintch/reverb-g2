@@ -1,0 +1,218 @@
+From b17ae1827c76b5c78338fe8e8ef8110130ef2720 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Mon, 17 Aug 2026 19:03:04 -0300
+Subject: [PATCH] d/wmr: WMR_CONTROLLER_SOLVE_YAW_CORRECT -- anchor fusion
+ heading to gate-accepted constellation solves
+
+The missing absolute yaw reference (gravity anchors pitch/roll; nothing anchored
+heading -- boot attitude was the heading, T207's 'axes fine, pointing wrong').
+Hooked strictly inside 0047's gravity-gate acceptance path (gate off = structural
+no-op), solve brought into the fusion convention via the gate's own Rx180 bridge
+identity, yaw isolated by swing-twist about world +Y with atan2 extraction, applied
+under data_lock as a pure-Y correction with gain*error capped at 2deg/step.
+Default 0 = off; suggested 0.05 (converges a 90deg boot offset in ~4-7s at the
+documented solve rates). Both hands. Rate-limited convergence log.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/xrt/drivers/wmr/wmr_controller_base.c | 156 ++++++++++++++++++++++
+ src/xrt/drivers/wmr/wmr_controller_base.h |   2 +
+ 2 files changed, 158 insertions(+)
+
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.c b/src/xrt/drivers/wmr/wmr_controller_base.c
+index e692ae009..556d25bfd 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.c
++++ b/src/xrt/drivers/wmr/wmr_controller_base.c
+@@ -65,6 +65,16 @@ DEBUG_GET_ONCE_BOOL_OPTION(wmr_controller_orient_fix, "WMR_CONTROLLER_ORIENT_FIX
+ //! pose. See the use site: 200 ms was shorter than the interval samples actually arrive at.
+ DEBUG_GET_ONCE_NUM_OPTION(wmr_constellation_max_age_ms, "WMR_CONSTELLATION_MAX_AGE_MS", 500)
+ DEBUG_GET_ONCE_FLOAT_OPTION(wmr_constellation_gravity_gate_deg, "WMR_CONSTELLATION_GRAVITY_GATE_DEG", 14.0f)
++//! Gain applied to the yaw-only heading discrepancy between a GATE-ACCEPTED constellation
++//! solve (see WMR_CONSTELLATION_GRAVITY_GATE_DEG just above) and the IMU fusion's own,
++//! unreferenced heading (2026-08-17, docs/pruebas.jsonl T206/T207: gyro-Y dynamics are now
++//! correct on both hands via WMR_CONTROLLER_LEFT_YAW_GYRO_INVERT, 0062, but heading itself is
++//! still arbitrary-at-boot -- there is no magnetometer, so nothing anchors yaw the way gravity
++//! anchors pitch/roll). 0 (default) = off. See the long comment at the use site
++//! (apply_solve_yaw_correction, called from constellation_sample_store) for the frame chain,
++//! the gain/cap convergence design, and why this can ONLY use gate-accepted solves. Suggested
++//! live value: 0.05 (5% of the measured yaw error corrected per accepted solve).
++DEBUG_GET_ONCE_FLOAT_OPTION(wmr_controller_solve_yaw_correct, "WMR_CONTROLLER_SOLVE_YAW_CORRECT", 0.0f)
+ 
+ //! Radial thumbstick deadzone, applied by the per-model packet parsers. Off by default.
+ DEBUG_GET_ONCE_FLOAT_OPTION(wmr_stick_deadzone, "WMR_STICK_DEADZONE", 0.0f)
+@@ -1177,6 +1187,139 @@ wmr_controller_base_init(struct wmr_controller_base *wcb,
+ #define WMR_CONSTELLATION_LED_RADIUS_M 0.003f
+ #define WMR_CONSTELLATION_LED_VISIBILITY_ANGLE DEG_TO_RAD(75)
+ 
++//! WMR_CONTROLLER_SOLVE_YAW_CORRECT (2026-08-17, T206/T207): nudges the IMU fusion's heading
++//! toward a GATE-ACCEPTED constellation solve's absolute orientation. Called ONLY from the
++//! gravity gate's "sample passed" path in constellation_sample_store, below -- never from an
++//! ungated sample. That is a hard requirement, not a convenience: the gate is precisely what
++//! tells apart a true-lobe solve (agrees with gravity, and per 0047 with the whole rigid body
++//! frame) from a wrong-lobe flip ghost that can disagree by ~180 deg for reasons that have
++//! nothing to do with the fusion's actual heading offset -- feeding an ungated sample's "yaw
++//! error" into this would just as happily learn the ghost's heading as the real one.
++//!
++//! Frame chain -- REUSES 0047's identified bridge, does not re-derive it. The gate above
++//! establishes, empirically and on every accepted sample, that the WORLD-DOWN vector expressed
++//! in the solve's (LED-model) body frame equals the same vector expressed in the fusion's (IMU)
++//! body frame, conjugated by Rx180 (down_imu.y = -down_imu.y; down_imu.z = -down_imu.z). 0047's
++//! own derivation (Wahba on paired RELATIVE ROTATIONS, not just one direction) showed this is a
++//! rigid bridge between the two body frames -- valid for any body-frame vector, not only
++//! gravity -- so the same Rx180 conjugation carries over to full orientations. Both
++//! sample->pose.orientation and wcb->fusion.rot are genuine world_from_bodyFrame quaternions in
++//! the SAME xrt world (that shared "world" is exactly what makes the gate's down-vector
++//! comparison meaningful in the first place); they differ only in which body-frame convention
++//! (LED vs IMU) their right-hand side uses. Working the gate's own vector identity through the
++//! quaternion sandwich algebra (q_rotate_vec3(q, v) = q * v * q^-1) gives, for the FULL
++//! orientation:
++//!
++//!   solve_orientation  ~=  imu_orientation * Rx180        (Rx180 = {1,0,0,0}, self-inverse)
++//!
++//! so bringing the solve into the fusion's own convention is one product:
++//! solve_in_fusion_frame = solve_orientation * Rx180 -- exactly mirrored below.
++//!
++//! World axis: this file's gate uses down = {0,-1,0}, i.e. xrt world space is Y-UP here.
++//! (Checked, not assumed -- t_tracker_slam.cpp's SLAM_CORRECTION_SPREAD_MS, 0059, decomposes
++//! yaw about {0,0,1}, but that is Basalt's own internal tracker frame, a different subsystem;
++//! this driver's own world is Y-up per the gate immediately below.) Twist axis is {0,1,0}.
++//!
++//! Convergence design: yaw_error_rad is the FULL signed discrepancy (can be up to +-180 deg
++//! right after boot -- an arbitrary heading vs the solve's absolute one, and that large error
++//! at first contact is expected, not a bug). Only `gain` of it (default suggestion 0.05, i.e.
++//! 5%) is applied per accepted solve, and the applied step is further capped at +-2 deg so one
++//! bad-but-gate-passing sample can never produce a visible snap. At the measured 4-8 accepted
++//! solves/s per controller (docs/03), a 90 deg boot offset needs ~9 deg first-order steps
++//! (0.05 * 90 deg = 4.5 deg, immediately clamped to the 2 deg cap) so the very first handful of
++//! solves run cap-limited; past that (error under 40 deg, 0.05 * 40 = 2 deg, the cap stops
++//! binding) it decays geometrically as (1 - gain) per solve, i.e. e-folding after roughly
++//! ln(0.5)/ln(1-0.05) ~= 13.5 accepted solves -- at 4-8/s that is a ~1.7-3.4 s half-life, so a
++//! 90 deg boot offset should read as visually settled (a couple of degrees left) within about
++//! 4-7 seconds of the controller coming into camera view, converging smoothly rather than
++//! snapping. This is the intended trade-off requested for this feature, not an oversight.
++static void
++apply_solve_yaw_correction(struct wmr_controller_base *wcb,
++                           const struct t_constellation_tracker_sample *sample,
++                           float gain)
++{
++	// Rx180: the WMR y/z axes-swap convention this whole driver already applies elsewhere
++	// (wmr_hmd.c's "Correct swapped axes", and WMR_CONTROLLER_WMR_AXES's own comment above) --
++	// 0047's identified LED-model <-> IMU-fusion body frame bridge, self-inverse.
++	static const struct xrt_quat rx180 = {1.f, 0.f, 0.f, 0.f};
++	// xrt world is Y-up in this file (see the gate's own `down = {0,-1,0}` just below).
++	static const struct xrt_vec3 world_up = {0.f, 1.f, 0.f};
++	// Cap on the CORRECTION ACTUALLY APPLIED per accepted solve (post-gain), not on the raw
++	// measured error -- see the convergence-design comment above.
++	const float max_step_rad = 2.0f * ((float)M_PI / 180.0f);
++	// Rate-limited convergence log: once for the very first correction (so it's visible
++	// immediately that the feature is live), then every 20 accepted solves after that (roughly
++	// every 2.5-5 s at the measured 4-8 solves/s/controller) so a session log shows the error
++	// shrinking over time instead of one line per accepted solve.
++	const uint32_t log_every = 20;
++
++	struct xrt_quat solve_in_fusion_frame;
++	math_quat_rotate(&sample->pose.orientation, &rx180, &solve_in_fusion_frame);
++
++	os_mutex_lock(&wcb->data_lock);
++	struct xrt_quat fusion_rot = wcb->fusion.rot;
++
++	// World-frame rotation taking the fusion's CURRENT belief to the solve's belief -- same
++	// "target * inverse(current)" pattern t_tracker_slam.cpp's reset-offset transform (0057)
++	// uses for its own anchor-matching problem.
++	struct xrt_quat fusion_inv;
++	math_quat_invert(&fusion_rot, &fusion_inv);
++	struct xrt_quat full_delta;
++	math_quat_rotate(&solve_in_fusion_frame, &fusion_inv, &full_delta);
++
++	// Yaw-only twist about world-up, mirroring how 0057/0059 isolate heading from a full
++	// relative rotation (there about their own Z-up; here about this file's Y-up) -- roll/pitch
++	// (the swing half) are gravity-truth already and must never be touched by this feature.
++	struct xrt_quat swing_discarded, yaw_only;
++	math_quat_decompose_swing_twist(&full_delta, &world_up, &swing_discarded, &yaw_only);
++
++	// yaw_only is a unit quaternion representing a pure rotation about +-world_up (its x/z
++	// components are ~0 by construction -- the projection onto {0,1,0} inside
++	// math_quat_decompose_swing_twist zeroes them). atan2, not acos(w), so the SIGN survives
++	// and the result stays well-defined all the way through +-180 deg.
++	float yaw_error_rad = 2.0f * atan2f(yaw_only.y, yaw_only.w);
++
++	float step_rad = gain * yaw_error_rad;
++	if (step_rad > max_step_rad) {
++		step_rad = max_step_rad;
++	} else if (step_rad < -max_step_rad) {
++		step_rad = -max_step_rad;
++	}
++
++	// Pure-Y-axis correction quaternion for step_rad, built directly rather than via
++	// math_quat_from_swing_twist (that helper's twist is hardcoded to the Z axis -- see its
++	// use in t_tracker_slam.cpp -- which would be the wrong axis for this Y-up file). For a
++	// rotation confined to one fixed axis this is exactly slerp(identity, yaw_only, gain)
++	// re-clamped to max_step_rad: slerp between identity and a single-axis rotation is linear
++	// in angle along that same axis, so constructing the angle directly and clamping IT is
++	// equivalent to slerping and then clamping, and lets the cap apply cleanly.
++	struct xrt_quat correction = {0.f, sinf(step_rad * 0.5f), 0.f, cosf(step_rad * 0.5f)};
++
++	// Apply on the LEFT (world-frame composition), same convention t_tracker_slam.cpp's own
++	// apply_correction_spread (0059) uses for its yaw nudge: new_world_from_body = correction *
++	// old_world_from_body. Safe to write wcb->fusion.rot directly here: it is m_imu_3dof's sole
++	// persistent orientation state (m_imu_3dof_update integrates gyro into it and renormalizes
++	// in place, m_imu_3dof.c:380/393/409 -- no separate internal copy to go stale), and this
++	// whole read-modify-write runs under the same data_lock every other reader/writer of
++	// wcb->fusion.rot already uses (get_tracked_pose, the gate above, m_imu_3dof_update itself
++	// via wmr_controller_hp.c's receive path).
++	struct xrt_quat corrected_rot;
++	math_quat_rotate(&correction, &fusion_rot, &corrected_rot);
++	math_quat_normalize(&corrected_rot);
++	wcb->fusion.rot = corrected_rot;
++
++	wcb->constellation.solve_yaw_correction_count++;
++	uint64_t count = wcb->constellation.solve_yaw_correction_count;
++	os_mutex_unlock(&wcb->data_lock);
++
++	if (count == 1 || (count % log_every) == 0) {
++		WMR_INFO(wcb,
++		         "solve-yaw correct [%s]: error=%.1f deg step=%.2f deg gain=%.3f (%llu corrections so far)",
++		         wcb->base.str, (double)(yaw_error_rad * 180.0 / M_PI), (double)(step_rad * 180.0 / M_PI),
++		         (double)gain, (unsigned long long)count);
++	}
++}
++
+ //! @ref t_constellation_tracker_device::push_constellation_tracker_sample. Feeds @ref
+ //! wmr_controller_base.constellation.relation_history, which is what both the reported position and
+ //! the tracker's own prior are read from. The last_* fields below are kept for the debug GUI.
+@@ -1282,6 +1425,19 @@ constellation_sample_store(struct t_constellation_tracker_device *device, struct
+ 				}
+ 				return;
+ 			}
++
++			// WMR_CONTROLLER_SOLVE_YAW_CORRECT: this sample just survived the gravity
++			// gate above -- vetted as the true lobe, not a flip ghost -- so, and ONLY
++			// so, it may steer the fusion's heading. See apply_solve_yaw_correction's
++			// own doc comment for the frame chain and the convergence math. Deliberately
++			// inside this `if (imu_ts != 0)` block, not after it: with the gate disabled
++			// (WMR_CONSTELLATION_GRAVITY_GATE_DEG=0) no sample is actually vetted, and an
++			// unvetted sample's "yaw error" is meaningless -- so solve-yaw correction is a
++			// no-op in that configuration too, by construction, not by an extra check.
++			float solve_yaw_gain = debug_get_float_option_wmr_controller_solve_yaw_correct();
++			if (solve_yaw_gain > 0.0f) {
++				apply_solve_yaw_correction(wcb, sample, solve_yaw_gain);
++			}
+ 		}
+ 	}
+ 
+diff --git a/src/xrt/drivers/wmr/wmr_controller_base.h b/src/xrt/drivers/wmr/wmr_controller_base.h
+index df0e1df0f..f85117648 100644
+--- a/src/xrt/drivers/wmr/wmr_controller_base.h
++++ b/src/xrt/drivers/wmr/wmr_controller_base.h
+@@ -166,6 +166,8 @@ struct wmr_controller_base
+ 		uint64_t out_of_range_count;
+ 		//! Samples rejected by the IMU gravity gate (wrong lobe of the solve's bistability).
+ 		uint64_t gravity_gate_drop_count;
++		//! Gate-accepted solves that fed WMR_CONTROLLER_SOLVE_YAW_CORRECT (0 while off).
++		uint64_t solve_yaw_correction_count;
+ 
+ 		/*!
+ 		 * Every constellation sample this controller receives, keyed by the sample's own
+-- 
+2.47.3
+

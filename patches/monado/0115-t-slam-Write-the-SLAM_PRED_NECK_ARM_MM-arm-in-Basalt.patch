@@ -1,0 +1,58 @@
+From 085bbfb07f9ca4753d31ae3e5636e4bb452b1120 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Mon, 12 Oct 2026 22:08:05 -0300
+Subject: [PATCH] t/slam: Write the SLAM_PRED_NECK_ARM_MM arm in Basalt's body
+ frame
+
+0097 rotates the neck arm with Basalt's raw quaternions but wrote it as
+the OpenXR vector (0, 0.6, -0.8). wmr_hmd_correct_pose_from_basalt()
+negates the y and z of the orientation, a conjugation by a 180 degree X
+rotation that changes the body frame as well as the world frame, so the
+OpenXR arm is (0, -0.6, 0.8) in the raw frame. With the OpenXR vector the
+compensation came out exactly negated: the eye was modelled behind and
+below the neck pivot. Replaying the correction code on random rotation
+pairs gives a delivered/desired ratio of -1.000 before and +1.000 after.
+
+docs/80 had ruled this out by treating the correction as a linear map on
+the summed position only; it also changes the orientation's body frame.
+The 2026-08-29 wearer A/B (0 ~ 100 < 150 < 200, "more arm = worse") is
+what the inverted sign predicts. The launcher profiles that set this knob
+(100 and 150 mm) were tuned against the inverted sign and need a new A/B.
+
+Found by the 2026-10-12 code review (reverb-g2 docs/147, M14-1).
+
+Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
+---
+ src/xrt/auxiliary/tracking/t_tracker_slam.cpp | 14 +++++++++++---
+ 1 file changed, 11 insertions(+), 3 deletions(-)
+
+diff --git a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+index 99d877bf3..4cbc7c984 100644
+--- a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
++++ b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+@@ -1774,11 +1774,19 @@ predict_pose(TrackerSlam &t, timepoint_ns when_ns, struct xrt_space_relation *ou
+ 	// pivot is ~fixed in world during a head turn, so the eye's world position at the PREDICTED
+ 	// orientation is anchor_pos + (R_pred - R_anchor)*arm. Only meaningful when position is
+ 	// frozen (otherwise it stacks on the velocity extrapolation). Length swept live via the env
+-	// (mm); direction is a forward-dominant up+forward eye offset (OpenXR -Z fwd/+Y up) so a
+-	// yaw about the neck swings the eye horizontally -- the dominant failing axis.
++	// (mm); direction is a forward-dominant up+forward eye offset, (0, 0.6, -0.8) in OpenXR
++	// (-Z fwd/+Y up), so a yaw about the neck swings the eye horizontally -- the dominant
++	// failing axis.
++	//
++	// The arm must be written in Basalt's raw body frame, because these are Basalt's raw
++	// quaternions. wmr_hmd_correct_pose_from_basalt() negates the y and z of the orientation,
++	// which is a conjugation by a 180 deg X rotation: it changes the body frame as well as the
++	// world frame. The OpenXR arm (0, 0.6, -0.8) is therefore (0, -0.6, 0.8) here. Written as
++	// the OpenXR vector, the compensation came out exactly negated (eye behind and below the
++	// pivot); checked numerically against the correction code on random rotations.
+ 	if (t.pred_freeze_position && t.pred_neck_arm_mm != 0) {
+ 		float len_m = (float)t.pred_neck_arm_mm / 1000.0f;
+-		xrt_vec3 arm{0.0f * len_m, 0.6f * len_m, -0.8f * len_m};  // unit dir (0,0.6,-0.8)
++		xrt_vec3 arm{0.0f * len_m, -0.6f * len_m, 0.8f * len_m}; // OpenXR (0,0.6,-0.8), raw frame
+ 		xrt_vec3 arm_anchor{}, arm_pred{};
+ 		math_quat_rotate_vec3(&rel.pose.orientation, &arm, &arm_anchor);
+ 		math_quat_rotate_vec3(&predicted_relation.pose.orientation, &arm, &arm_pred);
+-- 
+2.47.3
+

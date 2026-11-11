@@ -1,0 +1,9 @@
+show-gui=0
+# Edit config-path to the absolute location of P2.json in your checkout (a TOML file cannot expand $HOME);
+# jack-in-wayland.sh generates its own TOML at launch with $HOME resolved.
+config-path="/home/<user>/vr/basalt-variants/P2.json"
+marg-data=""
+print-queue=0
+use-double=0
+deterministic=0
+num-threads=6

@@ -1,0 +1,449 @@
+From c5b8bbeb66c02867e6b115be6669ef67a6063956 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Tue, 18 Aug 2026 05:57:35 -0300
+Subject: [PATCH] t/constellation: WMR_CONSTELLATION_SEED_PRIOR -- seeded
+ recovery from the trusted fusion heading (layer 3 of the yaw-ghost saga,
+ default off)
+
+T215 measured that judging candidates (0074/0076) is not enough: the left
+delivers position only 4.55pct because the blind search rarely CONSTRUCTS
+the true-lobe assignment for its yaw-symmetric LED ring. This layer
+GENERATES the hypothesis: when both ordinary fast-path attempts miss,
+compose a seed from last_known_pose's position (a half-turn ghost's
+position error is small) + the trusted fusion orientation (0076's
+callback, same env gating), then (1) tryDeviceBlobRecovery with the seed
+overriding the RANSAC-PnP initial guess and prior window -- refinement
+starts in the TRUE local minimum -- and (2) tryDevicePose with the seed
+as direct candidate for devices with no labeled blobs. Also closes a
+residual 0076 gap: the un-seeded recovery call site never gated its
+RANSAC-PnP result against trusted yaw. Fires on every fast-path miss
+(cheap, reuses existing calls; no throttle needed). Rate-limited
+per-device attempt/success counters. Byte-identical with the env unset.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ .../constellation/t_constellation_tracker.cpp | 267 ++++++++++++++++--
+ .../t_constellation_tracker_internal.hpp      |  42 ++-
+ 2 files changed, 289 insertions(+), 20 deletions(-)
+
+diff --git a/src/xrt/tracking/constellation/t_constellation_tracker.cpp b/src/xrt/tracking/constellation/t_constellation_tracker.cpp
+index 3285ce632..9ded1094b 100644
+--- a/src/xrt/tracking/constellation/t_constellation_tracker.cpp
++++ b/src/xrt/tracking/constellation/t_constellation_tracker.cpp
+@@ -44,6 +44,18 @@ DEBUG_GET_ONCE_NUM_OPTION(constellation_max_blobs, "WMR_CONSTELLATION_MAX_BLOBS"
+ // Default 0 = off. See the long comment in Camera::processSampleSlow.
+ DEBUG_GET_ONCE_NUM_OPTION(constellation_lost_search_div, "WMR_CONSTELLATION_LOST_SEARCH_DIV", 0)
+ 
++// Assignment-prior SEEDING (reverb-g2 T215, following on from 0074/0076's reject-and-prefer
++// gates on the yaw-flip ghost problem). Those gates judge candidates the blind correspondence
++// search already produced; T215 measured that isn't enough on its own -- the left controller's
++// yaw-symmetric LED ring means the search rarely CONSTRUCTS the true-lobe assignment at all
++// (position delivered only 4.55% of samples, vs 30.3% on the right). This composes a candidate
++// pose from the trusted fusion orientation plus a position from an existing prior and tries it
++// directly (see Camera::trySeededRecovery), instead of waiting for the blind search to stumble
++// onto it. Default off: it only ever engages when a trusted orientation is ALSO available (see
++// that function's own gating), so this is a second, independent switch layered on top of
++// WMR_CONSTELLATION_YAW_PRIOR_DEG's own enablement, not a replacement for it.
++DEBUG_GET_ONCE_BOOL_OPTION(constellation_seed_prior, "WMR_CONSTELLATION_SEED_PRIOR", false)
++
+ /*
+  *
+  * Helper functions
+@@ -76,6 +88,30 @@ num_blobs_for_device(CameraSample &sample, t_constellation_device_id_t device_id
+ 	return out_num_blobs;
+ }
+ 
++// Per-device, rate-limited seeded-recovery diagnostics (reverb-g2 T215, "assignment-prior
++// SEEDING", Camera::trySeededRecovery below). Plain fixed-size arrays, not atomics and not a
++// std::map: the SAME device can be visited concurrently by more than one camera's own
++// fast-processing thread (one thread per camera, see Camera::fast_processing_thread), so these
++// counters genuinely race across threads -- tolerated as a diagnostic-only benign race, same
++// trade pose_metrics.c's own trusted_yaw_reject_count/trusted_yaw_deprioritize_count already
++// make (see that file's comment). Fixed-size and bounds-checked rather than a std::map: a
++// concurrent unlocked map insertion is a real memory-safety hazard, not just an imprecise
++// counter, whereas racing a plain integer increment in a fixed slot is not.
++// XRT_CONSTELLATION_MAX_DEVICES is already the hard cap this file uses elsewhere for
++// per-sample device arrays (see CameraSample::putDeviceState).
++static uint64_t seed_recovery_attempt_count[XRT_CONSTELLATION_MAX_DEVICES] = {};
++static uint64_t seed_recovery_success_count[XRT_CONSTELLATION_MAX_DEVICES] = {};
++
++static uint64_t *
++seed_recovery_counter_slot(uint64_t *counters, t_constellation_device_id_t device_id)
++{
++	static uint64_t discard; // Out-of-range device id: never expected in practice, diagnostics only.
++	if (device_id < 0 || device_id >= XRT_CONSTELLATION_MAX_DEVICES) {
++		return &discard;
++	}
++	return &counters[device_id];
++}
++
+ /*
+  *
+  * CameraSample implementations
+@@ -336,7 +372,9 @@ Camera::tryDeviceBlobRecovery(std::unique_ptr<Device> &device,
+                               CameraSample &sample,
+                               DeviceState &device_state,
+                               xrt_pose &Tcv_cam_world,
+-                              std::optional<xrt_pose> &Tcv_world_device_prior)
++                              std::optional<xrt_pose> &Tcv_world_device_prior,
++                              const xrt_pose *Tcv_world_device_seed_override,
++                              const pose_metrics_trusted_orientation *trusted_orientation)
+ {
+ 	auto tracker = this->tracker;
+ 
+@@ -356,9 +394,25 @@ Camera::tryDeviceBlobRecovery(std::unique_ptr<Device> &device,
+ 		return false;
+ 	}
+ 
++	// Tcv_world_device_seed_override (reverb-g2 T215, "assignment-prior SEEDING") replaces the
++	// ordinary Tcv_world_device_prior for BOTH purposes below when supplied: the RANSAC-PnP
++	// solver's initial guess (a better guess than the identity/prior fallback measurably matters
++	// here -- the whole reason the seeded caller exists is that the ordinary guesses converge to
++	// the LED ring's ghost lobe), and the prior window pose_metrics_evaluate_pose_with_prior
++	// validates the refined result against just below (using the ordinary, possibly-stale or
++	// still-poisoned Tcv_world_device_prior as that reference here would defeat the seed: a
++	// correct, seed-derived result would get rejected for disagreeing with a wrong prior). The
++	// ordinary call site (processSampleFast) never supplies this, so `have_prior_for_check` is
++	// exactly `Tcv_world_device_prior.has_value()` there, byte-identical to before this parameter
++	// existed.
+ 	xrt_pose Tcv_cam_device_prior;
+-	if (Tcv_world_device_prior.has_value()) {
++	bool have_prior_for_check = false;
++	if (Tcv_world_device_seed_override != nullptr) {
++		math_pose_transform(&Tcv_cam_world, Tcv_world_device_seed_override, &Tcv_cam_device_prior);
++		have_prior_for_check = true;
++	} else if (Tcv_world_device_prior.has_value()) {
+ 		math_pose_transform(&Tcv_cam_world, &Tcv_world_device_prior.value(), &Tcv_cam_device_prior);
++		have_prior_for_check = true;
+ 	} else {
+ 		// The RANSAC should still be able to run with an identity pose.
+ 		Tcv_cam_device_prior = XRT_POSE_IDENTITY;
+@@ -374,8 +428,8 @@ Camera::tryDeviceBlobRecovery(std::unique_ptr<Device> &device,
+ 	}
+ 
+ 	pose_metrics score;
+-	// Evaluate the pose, using the prior if available
+-	if (Tcv_world_device_prior.has_value()) {
++	// Evaluate the pose, using the prior/seed if available
++	if (have_prior_for_check) {
+ 		// prior_must_match=true makes this cheap recovery path hard-reject any
+ 		// candidate outside the prior window -- but the window is a fixed
+ 		// +-10cm/30deg (MIN_POS_ERROR/MIN_ROT_ERROR, never updated anywhere)
+@@ -411,22 +465,167 @@ Camera::tryDeviceBlobRecovery(std::unique_ptr<Device> &device,
+ 		pose_metrics_evaluate_pose_with_prior(&score, &Tcv_cam_device, true, &Tcv_cam_device_prior,
+ 		                                      &pos_window, &rot_window, sample.blobs,
+ 		                                      sample.blob_count, &device->params.led_model, device->id,
+-		                                      &this->model, NULL, NULL);
++		                                      &this->model, NULL, trusted_orientation);
+ 	} else {
+ 		pose_metrics_evaluate_pose(&score, &Tcv_cam_device, sample.blobs, sample.blob_count,
+-		                           &device->params.led_model, device->id, &this->model, NULL, NULL);
++		                           &device->params.led_model, device->id, &this->model, NULL,
++		                           trusted_orientation);
+ 	}
+ 
+ 	if (POSE_HAS_FLAGS(&score, POSE_MATCH_GOOD)) {
+ 		CT_DEBUG(tracker, "Camera %p RANSAC-PnP recovered pose for device %d from %u blobs", (void *)this,
+ 		         device->id, sample.blob_count);
+-		this->pushPose(sample,         //
+-		               device_state,   //
+-		               device,         //
+-		               score,          //
+-		               Tcv_cam_device, //
+-		               true);          //
++		this->pushPose(sample,               //
++		               device_state,         //
++		               device,               //
++		               score,                //
++		               Tcv_cam_device,       //
++		               true,                 //
++		               trusted_orientation); //
++
++		return true;
++	}
++
++	return false;
++}
++
++/*!
++ * Assignment-prior SEEDING (reverb-g2 T215, docs/pruebas.jsonl -- the third layer of the
++ * yaw-ghost saga, following 0074's device-side reject gate and 0076's tracker-side
++ * trusted-orientation plumbing). Both of those JUDGE candidates the blind correspondence
++ * search already produced; T215 measured that's not enough on its own for the left
++ * controller's yaw-symmetric LED ring -- the search rarely CONSTRUCTS the true-lobe
++ * assignment at all (position delivered only 4.55% of samples, vs 30.3% on the right,
++ * even with 0076 filtering what it does find). This composes a candidate pose directly
++ * from the trusted heading instead of waiting for the blind search to stumble onto it.
++ *
++ * Placement/trigger: called from Camera::processSampleFast, as the LAST fast-path attempt
++ * for a device, after both ordinary tryDevicePose calls (predicted-prior, then
++ * last-known-pose) have already failed this frame -- i.e. every frame the ordinary fast
++ * path was about to give up and either wipe this device's blob associations or defer to
++ * the (rate-limited, far less frequent) slow combinatorial search. This placement was
++ * chosen over "every N frames lost" because the seeded attempt below is cheap (no
++ * combinatorics -- at most one RANSAC-PnP refine plus one reprojection match, the same
++ * per-frame cost tryDeviceBlobRecovery/tryDevicePose already pay), so there is no reason
++ * to throttle it; running it on every fast-path miss maximises how many chances per
++ * second the true lobe gets to be reconstructed, which is exactly what the measured
++ * scarcity needs. It was NOT placed as "immediately after the slow thread rejects a
++ * ghost" (the design doc's other suggested trigger) because that event isn't visible at
++ * the call site: correspondence_search_find_one_pose reports a trusted-yaw-rejected
++ * candidate identically to "found nothing at all" (found_pose == false either way) -- the
++ * fast-path-miss placement fires in both of those cases anyway, so it subsumes that
++ * trigger without needing new plumbing to distinguish them.
++ *
++ * Seed composition: orientation from the device's trusted fusion heading (@ref
++ * getTrustedWorldPose, the same callback 0076 already wires up via
++ * WMR_CONSTELLATION_YAW_PRIOR_DEG's enablement -- no new env for that half); position from
++ * @p Tcv_world_device_last_known if available, else @p Tcv_world_device_prior. Preferring
++ * last-known over the predicted prior is deliberate: a half-turn yaw-flip ghost's POSITION
++ * error is small (same handful of LEDs, just reprojected under the wrong assignment), so
++ * even a last_known_pose written by a recent ghost is still a usable position anchor --
++ * whereas the predicted prior extrapolates m_relation_history, which (pre-0076, or for any
++ * sample that slipped past both gates) could itself carry a poisoned entry forward.
++ *
++ * Two-attempt cascade, in order: (1) tryDeviceBlobRecovery with the seed pose overriding
++ * its usual PnP initial guess -- most robust to a coarse position guess, since PnP solves
++ * for pose from whatever correspondences blob continuity already labeled, using the seed
++ * only to steer the (otherwise locally-convergent, and therefore genuinely ambiguous on a
++ * symmetric LED ring) iterative solver toward the true lobe instead of the ghost. (2)
++ * tryDevicePose with the seed pose as the candidate directly -- pure reprojection-derived
++ * assignment, no PnP, covering a device with nothing labeled for it at all this frame
++ * (long occlusion, never acquired this session). Both reuse existing, already-hardened
++ * machinery; no new pose-matching logic was written for this feature.
++ */
++bool
++Camera::trySeededRecovery(std::unique_ptr<Device> &device,
++                          CameraSample &sample,
++                          DeviceState &device_state,
++                          xrt_pose &Tcv_cam_world,
++                          std::optional<xrt_pose> &Tcv_world_device_prior,
++                          std::optional<xrt_pose> &Tcv_world_device_last_known,
++                          const pose_metrics_trusted_orientation *trusted_orientation)
++{
++	if (!debug_get_bool_option_constellation_seed_prior()) {
++		return false;
++	}
++
++	// Reuses WMR_CONSTELLATION_YAW_PRIOR_DEG's own enablement: trusted_orientation is only
++	// non-null when getTrustedOrientation (called once per device per sample by our caller)
++	// already found a locked, trusted heading -- no separate lock/threshold logic here.
++	if (trusted_orientation == nullptr) {
++		return false;
++	}
++
++	auto tracker = this->tracker;
++
++	// Position source for the seed -- see this function's own header comment for why
++	// last-known is preferred over the ordinary predicted prior.
++	const xrt_pose *position_source = nullptr;
++	if (Tcv_world_device_last_known.has_value()) {
++		position_source = &Tcv_world_device_last_known.value();
++	} else if (Tcv_world_device_prior.has_value()) {
++		position_source = &Tcv_world_device_prior.value();
++	} else {
++		// Nothing to seed a position with -- a trusted heading alone can't localize the
++		// device anywhere in the frame.
++		return false;
++	}
++
++	float yaw_threshold_rad = 0.0f;
++	std::optional<xrt_pose> Tcv_world_trusted_pose =
++	    this->getTrustedWorldPose(device, sample.timestamp_ns, &yaw_threshold_rad);
++	if (!Tcv_world_trusted_pose.has_value()) {
++		// Shouldn't normally happen given trusted_orientation != nullptr above (same
++		// callback, same gating) -- stay defensive against a tracking source answering
++		// the two queries inconsistently a few lines apart under real concurrency.
++		return false;
++	}
++
++	xrt_pose Tcv_world_device_seed = *position_source;
++	Tcv_world_device_seed.orientation = Tcv_world_trusted_pose->orientation;
++
++	uint64_t *attempt_count = seed_recovery_counter_slot(seed_recovery_attempt_count, device->id);
++	(*attempt_count)++;
++	if (*attempt_count == 1 || (*attempt_count % 100) == 0) {
++		CT_INFO(tracker,
++		        "constellation seed-prior: attempting seeded recovery for device %d (seed pos "
++		        "%.3f,%.3f,%.3f from %s, %llu attempts so far for this device)",
++		        device->id, Tcv_world_device_seed.position.x, Tcv_world_device_seed.position.y,
++		        Tcv_world_device_seed.position.z,
++		        Tcv_world_device_last_known.has_value() ? "last-known pose" : "predicted prior",
++		        (unsigned long long)*attempt_count);
++	}
++
++	auto log_success = [&](const char *path_desc) {
++		uint64_t *success_count = seed_recovery_counter_slot(seed_recovery_success_count, device->id);
++		(*success_count)++;
++		if (*success_count == 1 || (*success_count % 100) == 0) {
++			CT_INFO(tracker,
++			        "constellation seed-prior: RECOVERED device %d via seeded %s hypothesis "
++			        "(%llu successes / %llu attempts so far for this device)",
++			        device->id, path_desc, (unsigned long long)*success_count,
++			        (unsigned long long)*attempt_count);
++		}
++	};
+ 
++	// Attempt 1: RANSAC-PnP refinement seeded with our (trusted-orientation,
++	// chosen-position) hypothesis, using whatever blobs continuity has already labeled
++	// for this device (same >=4-LED precondition tryDeviceBlobRecovery's own
++	// ransac_pnp_pose call already enforces internally, so this is a cheap no-op when
++	// there aren't any).
++	if (this->tryDeviceBlobRecovery(device, sample, device_state, Tcv_cam_world, Tcv_world_device_prior,
++	                                &Tcv_world_device_seed, trusted_orientation)) {
++		log_success("PnP-refined");
++		return true;
++	}
++
++	// Attempt 2: pure reprojection-based match directly from the seed pose, no PnP
++	// refinement -- covers a device with nothing labeled for it at all this frame.
++	// Reuses tryDevicePose verbatim, just with our seeded candidate in place of the
++	// ordinary predicted/last-known pose it's normally called with.
++	if (this->tryDevicePose(device, sample, device_state, Tcv_cam_world, Tcv_world_device_prior,
++	                        Tcv_world_device_seed, trusted_orientation)) {
++		log_success("reprojection-only");
+ 		return true;
+ 	}
+ 
+@@ -782,6 +981,21 @@ Camera::processSampleFast(CameraSample &sample)
+ 			continue; // try the next device, we found a pose!
+ 		}
+ 
++		// Assignment-prior SEEDING (reverb-g2 T215, WMR_CONSTELLATION_SEED_PRIOR, default
++		// off -- see Camera::trySeededRecovery's own doc comment for the full design). Last
++		// fast-path attempt: every ordinary fast path above already failed this frame, so
++		// this device is about to either lose its blob associations or fall through to the
++		// far less frequent slow search -- try one more, cheap, trusted-heading-seeded
++		// hypothesis first. Reuses has_last_known/Tcv_world_device_last_known computed just
++		// above instead of re-querying device->data_lock a second time.
++		std::optional<xrt_pose> Tcv_world_device_last_known_opt =
++		    has_last_known ? std::optional<xrt_pose>(Tcv_world_device_last_known) : std::nullopt;
++		if (this->trySeededRecovery(device, sample, device_state, Tcv_cam_world, Tcv_world_device_predicted,
++		                            Tcv_world_device_last_known_opt, trusted_orientation_ptr)) {
++			CT_DEBUG(tracker, "Fast processing for device %d succeeded with seeded recovery", device->id);
++			continue; // try the next device, we found a pose!
++		}
++
+ 		if (wipe_blob_associations) {
+ 			// Blob-based recovery failed, unmark all blobs for this device.
+ 			for (uint32_t i = 0; i < sample.blob_count; i++) {
+@@ -1007,8 +1221,8 @@ Camera::pushPose(CameraSample &camera_sample,
+ 	CT_DEBUG(tracker, "Found pose for device %d", device->id);
+ }
+ 
+-std::optional<pose_metrics_trusted_orientation>
+-Camera::getTrustedOrientation(std::unique_ptr<Device> &device, xrt_pose &Tcv_world_cam, int64_t when_ns)
++std::optional<xrt_pose>
++Camera::getTrustedWorldPose(std::unique_ptr<Device> &device, int64_t when_ns, float *out_yaw_threshold_rad)
+ {
+ 	if (device->params.tracking_source == nullptr) {
+ 		return std::nullopt;
+@@ -1030,20 +1244,35 @@ Camera::getTrustedOrientation(std::unique_ptr<Device> &device, xrt_pose &Tcv_wor
+ 		return std::nullopt;
+ 	}
+ 
+-	// Convert into THIS camera's frame -- the exact same convert-then-transform-then-invert shape
+-	// tryDevicePose's own Tcv_cam_device_prior conversion uses a few lines above this function's
+-	// callers, just applied to an orientation-only pose (position is irrelevant to the result: pose
+-	// composition's rotation output never depends on the child pose's translation).
+ 	xrt_pose Txr_world_trusted_pose = XRT_POSE_IDENTITY;
+ 	Txr_world_trusted_pose.orientation = Txr_world_trusted_orientation;
+ 	xrt_pose Tcv_world_trusted_pose;
+ 	math_pose_convert_opencv(&Txr_world_trusted_pose, &Tcv_world_trusted_pose);
+ 
++	if (out_yaw_threshold_rad != nullptr) {
++		*out_yaw_threshold_rad = yaw_threshold_rad;
++	}
++	return Tcv_world_trusted_pose;
++}
++
++std::optional<pose_metrics_trusted_orientation>
++Camera::getTrustedOrientation(std::unique_ptr<Device> &device, xrt_pose &Tcv_world_cam, int64_t when_ns)
++{
++	// Convert into THIS camera's frame -- the exact same convert-then-transform-then-invert shape
++	// tryDevicePose's own Tcv_cam_device_prior conversion uses a few lines above this function's
++	// callers, just applied to an orientation-only pose (position is irrelevant to the result: pose
++	// composition's rotation output never depends on the child pose's translation).
++	float yaw_threshold_rad = 0.0f;
++	std::optional<xrt_pose> Tcv_world_trusted_pose = this->getTrustedWorldPose(device, when_ns, &yaw_threshold_rad);
++	if (!Tcv_world_trusted_pose.has_value()) {
++		return std::nullopt;
++	}
++
+ 	xrt_pose Tcv_cam_world;
+ 	math_pose_invert(&Tcv_world_cam, &Tcv_cam_world);
+ 
+ 	xrt_pose Tcv_cam_trusted_pose;
+-	math_pose_transform(&Tcv_cam_world, &Tcv_world_trusted_pose, &Tcv_cam_trusted_pose);
++	math_pose_transform(&Tcv_cam_world, &Tcv_world_trusted_pose.value(), &Tcv_cam_trusted_pose);
+ 
+ 	pose_metrics_trusted_orientation trusted{};
+ 	trusted.orientation = Tcv_cam_trusted_pose.orientation;
+diff --git a/src/xrt/tracking/constellation/t_constellation_tracker_internal.hpp b/src/xrt/tracking/constellation/t_constellation_tracker_internal.hpp
+index 8ffcb0329..2623de226 100644
+--- a/src/xrt/tracking/constellation/t_constellation_tracker_internal.hpp
++++ b/src/xrt/tracking/constellation/t_constellation_tracker_internal.hpp
+@@ -326,12 +326,42 @@ public: // Methods (t_constellation_tracker.cpp)
+ 	              xrt_pose &Tcv_world_device_candidate,
+ 	              const pose_metrics_trusted_orientation *trusted_orientation = nullptr);
+ 
++	//! Continuity-based recovery: refines whatever blobs are still labeled for @p device from a
++	//! previous frame via RANSAC-PnP. @p Tcv_world_device_seed_override, when non-null (reverb-g2
++	//! T215, "assignment-prior SEEDING"), replaces BOTH the PnP solver's initial guess AND the
++	//! prior window @ref pose_metrics_evaluate_pose_with_prior validates the refined result
++	//! against -- normally both of those come from @p Tcv_world_device_prior (or identity). @p
++	//! trusted_orientation, when non-null, is threaded through to the pose_metrics evaluation (and
++	//! to @ref pushPose) exactly like @ref tryDevicePose already does; the ordinary call site
++	//! (processSampleFast) passes neither and is therefore byte-identical to before this feature
++	//! existed.
+ 	bool
+ 	tryDeviceBlobRecovery(std::unique_ptr<Device> &device,
+ 	                      CameraSample &sample,
+ 	                      DeviceState &device_state,
+ 	                      xrt_pose &Tcv_cam_world,
+-	                      std::optional<xrt_pose> &Tcv_world_device_prior);
++	                      std::optional<xrt_pose> &Tcv_world_device_prior,
++	                      const xrt_pose *Tcv_world_device_seed_override = nullptr,
++	                      const pose_metrics_trusted_orientation *trusted_orientation = nullptr);
++
++	//! Assignment-prior SEEDING (reverb-g2 T215, WMR_CONSTELLATION_SEED_PRIOR, default off):
++	//! composes a candidate WORLD pose from the device's TRUSTED fusion orientation (fresh, not
++	//! subject to the yaw-ghost problem this whole feature exists to route around) plus a POSITION
++	//! taken from an existing prior (@p Tcv_world_device_last_known preferred, @p
++	//! Tcv_world_device_prior as fallback) and tries it via the two existing fast-recovery
++	//! mechanisms in turn -- @ref tryDeviceBlobRecovery (PnP-refined, if continuity has left this
++	//! device's blobs labeled) then @ref tryDevicePose (pure reprojection-derived assignment
++	//! otherwise). No-op (returns false immediately) unless the option is on AND @p
++	//! trusted_orientation is non-null, i.e. unless @ref getTrustedOrientation already found a
++	//! locked, trusted heading for this device this frame -- see that function's own gating.
++	bool
++	trySeededRecovery(std::unique_ptr<Device> &device,
++	                  CameraSample &sample,
++	                  DeviceState &device_state,
++	                  xrt_pose &Tcv_cam_world,
++	                  std::optional<xrt_pose> &Tcv_world_device_prior,
++	                  std::optional<xrt_pose> &Tcv_world_device_last_known,
++	                  const pose_metrics_trusted_orientation *trusted_orientation);
+ 
+ 	void
+ 	processSampleSlow(CameraSample &sample);
+@@ -360,6 +390,16 @@ public: // Methods (t_constellation_tracker.cpp)
+ 	std::optional<pose_metrics_trusted_orientation>
+ 	getTrustedOrientation(std::unique_ptr<Device> &device, xrt_pose &Tcv_world_cam, int64_t when_ns);
+ 
++	//! The WORLD-frame (OpenCV convention, i.e. Tcv_world_*, matching Tcv_world_device_predicted/
++	//! Tcv_world_device_last_known's own convention) half of @ref getTrustedOrientation's own
++	//! conversion chain, factored out so @ref trySeededRecovery can build a WORLD candidate pose
++	//! from the trusted orientation without duplicating the raw tracking-source callback query and
++	//! its yaw_threshold_rad validity check. @ref getTrustedOrientation itself is implemented in
++	//! terms of this helper (same behavior as before this function existed, just factored). Returns
++	//! std::nullopt under the identical conditions @ref getTrustedOrientation would.
++	std::optional<xrt_pose>
++	getTrustedWorldPose(std::unique_ptr<Device> &device, int64_t when_ns, float *out_yaw_threshold_rad);
++
+ public: // Methods (constellation_debug_scribble.cpp)
+ 	void
+ 	debugScribbleSample(CameraSample &sample, bool fast);
+-- 
+2.47.3
+

@@ -1,0 +1,104 @@
+From 607614bb6b93a325f64a44b0c95c04dc893952ec Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Wed, 12 Aug 2026 10:50:47 -0300
+Subject: [PATCH] a/tracking: Drop non-monotonic camera frame bundles instead
+ of forwarding them
+
+t_slam already detected frames whose timestamp was not greater than the last
+one for that camera -- and then warned and pushed them to the tracker anyway.
+That is not survivable downstream: Basalt asserts on it and aborts the whole
+process,
+
+  Assertion (prev_frame->t_ns < curr_frame->t_ns) failed in
+  basalt::SqrtKeypointVioEstimator<float>::initialize(...)::<lambda()>:
+  sqrt_keypoint_vio.cpp:311: frame timestamps not monotonically increasing?!
+
+taking monado-service down mid-session with SIGABRT. This happened three times
+on 2026-08-12 with three different triggers -- disk I/O from the EuRoC
+recorder, CPU load from denser feature detection, and a `CamerasDmaReset` /
+`DMA CMT ERR` burst reported by the headset itself -- so it is not an exotic
+condition, it is whatever makes the camera clock hiccup, which on a WMR
+headset is anything that disturbs the USB link.
+
+Drop the frame instead. It must be dropped as a whole bundle: the tracker
+requires every camera in one bundle to carry the same timestamp, so dropping
+cam0 and pushing cam1 only trades one assert for another. cam0 decides,
+the rest of the bundle follows.
+
+Tracking stalls until the camera clock passes the last accepted timestamp
+again, which for a large backwards jump (7.5s was measured) means seconds of
+no visual updates. That is deliberate -- the alternative is handing the
+tracker a frame older than one it has already integrated -- and it is logged
+about once a second while it lasts, plus a recovery line with the total, so
+it can never be a silent stall.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ src/xrt/auxiliary/tracking/t_tracker_slam.cpp | 43 +++++++++++++++++++
+ 1 file changed, 43 insertions(+)
+
+diff --git a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+index 9a256d2f1..dc95464d1 100644
+--- a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
++++ b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+@@ -289,6 +289,8 @@ struct TrackerSlam
+ 	// Used mainly for checking that the timestamps come in order
+ 	timepoint_ns last_imu_ts;                     //!< Last received IMU sample timestamp
+ 	vector<timepoint_ns> last_cam_ts;             //!< Last received image timestamp per cam
++	bool dropping_bundle = false;                 //!< Drop the rest of a non-monotonic frame bundle
++	int dropped_bundles = 0;                      //!< Consecutive bundles dropped for that reason
+ 	struct xrt_hand_masks_sample last_hand_masks; //!< Last received hand masks info
+ 	Mutex last_hand_masks_mutex;                  //!< Mutex for @ref last_hand_masks
+ 
+@@ -1300,7 +1302,48 @@ receive_frame(TrackerSlam &t, struct xrt_frame *frame, uint32_t cam_index)
+ 	timepoint_ns &last_ts = t.last_cam_ts[cam_index];
+ 	timepoint_ns ts = (int64_t)frame->timestamp;
+ 	SLAM_TRACE("[%" PRId64 "] cam%d frame t=%" PRId64, os_monotonic_get_ns(), cam_index, ts);
++	// A non-monotonic timestamp used to be warned about and then pushed anyway. That is not
++	// survivable downstream: Basalt asserts on it and takes the whole process down
++	// (sqrt_keypoint_vio.cpp:311 "frame timestamps not monotonically increasing?!" -> SIGABRT,
++	// killing monado-service mid-session). Seen three times on 2026-08-12 with three different
++	// triggers -- disk I/O from the EuRoC recorder, CPU load from denser feature detection, and
++	// a `CamerasDmaReset` burst from the headset itself -- so it is not an exotic condition, it
++	// is whatever makes the camera clock hiccup.
++	//
++	// Drop the frame instead. It has to be dropped as a whole BUNDLE: the tracker requires every
++	// camera in one bundle to carry the same timestamp, so pushing cam1 after having dropped
++	// cam0 trades one assert for another. cam0 decides, the rest follow.
++	//
++	// Note this stalls tracking until the camera clock passes the last accepted timestamp
++	// again, which for a large backwards jump can be seconds. That is deliberate: the
++	// alternative is feeding the tracker a frame older than the one it already integrated,
++	// which is the crash. The stall is logged so it can never be silent.
++	if (cam_index == 0) {
++		bool drop = last_ts >= ts;
++		if (drop && !t.dropping_bundle) {
++			t.dropped_bundles = 0;
++		}
++		t.dropping_bundle = drop;
++	}
++	if (t.dropping_bundle) {
++		if (cam_index == 0) {
++			if (t.dropped_bundles % 30 == 0) { // ~1 s of camera frames between messages
++				SLAM_WARN("Dropping frame bundles: cam0 frame (%" PRId64
++				          ") is older than the last accepted (%" PRId64 ") by %" PRId64
++				          " ns (%d dropped so far)",
++				          ts, last_ts, last_ts - ts, t.dropped_bundles + 1);
++			}
++			t.dropped_bundles++;
++		}
++		return;
++	}
++	if (t.dropped_bundles > 0 && cam_index == 0) {
++		SLAM_INFO("Camera clock recovered after dropping %d frame bundles", t.dropped_bundles);
++		t.dropped_bundles = 0;
++	}
+ 	if (last_ts >= ts) {
++		// Not cam0, so the bundle was already accepted: warn but keep the timestamp coherent
++		// with cam0's rather than dropping half a bundle.
+ 		SLAM_WARN("Frame (%" PRId64 ") is older than last (%" PRId64 ") by %" PRId64 " ns", ts, last_ts,
+ 		          last_ts - ts);
+ 	}
+-- 
+2.47.3
+

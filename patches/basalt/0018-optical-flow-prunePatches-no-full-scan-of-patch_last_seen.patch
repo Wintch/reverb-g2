@@ -1,0 +1,55 @@
+From 662e3cb635223ff34c610fb42313072824da8704 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Thu, 27 Aug 2026 20:36:19 -0300
+Subject: [PATCH] optical_flow: prunePatches -- only stamp ids that own a
+ patch; drops the every-30-frames full scan of patch_last_seen
+
+---
+ .../frame_to_frame_optical_flow.h             | 22 +++++++++++--------
+ 1 file changed, 13 insertions(+), 9 deletions(-)
+
+diff --git a/include/basalt/optical_flow/frame_to_frame_optical_flow.h b/include/basalt/optical_flow/frame_to_frame_optical_flow.h
+index 5534219..a6ad57e 100644
+--- a/include/basalt/optical_flow/frame_to_frame_optical_flow.h
++++ b/include/basalt/optical_flow/frame_to_frame_optical_flow.h
+@@ -687,10 +687,18 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
+     }();
+     if (grace <= 0) return;
+     const int64_t now = static_cast<int64_t>(frame_counter);
++    // reverb-g2 0018: only stamp ids that actually own a patch. Before, bundle ids without a
++    // patch (from before a reset, or detected while recall was off) accumulated in
++    // patch_last_seen and needed their own full-map scan every 30 frames (below, now gone) --
++    // the same unamortized-sweep shape 0016 removed one map over, ~300k entries in one frame.
++    // With this guard patch_last_seen is a subset of patches' keys, and the amortized sweep
++    // that erases an expired patch erases its stamp too, so nothing is ever left behind.
+     for (const auto& kps : transforms->keypoints)
+-      for (const auto& kv : kps) patch_last_seen[kv.first] = now;
++      for (const auto& kv : kps)
++        if (patches.count(kv.first) != 0) patch_last_seen[kv.first] = now;
+     if (latest_lm_bundle != nullptr)
+-      for (const auto& id : latest_lm_bundle->lmids) patch_last_seen[id] = now;
++      for (const auto& id : latest_lm_bundle->lmids)
++        if (patches.count(id) != 0) patch_last_seen[id] = now;
+ 
+     // reverb-g2 0016: amortize the sweep. The first version erased the whole map once every 30
+     // frames; measured live (K soak on 0015), every one of those frames cost ~88 ms against
+@@ -716,13 +724,9 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
+         }
+       }
+     }
+-    // patch_last_seen entries without a patch (bundle ids from before a reset, etc.) age out
+-    // the same way, a slice per frame: bounded by the same grace, no separate full scan.
+-    if (now % 30 == 15) {
+-      for (auto it = patch_last_seen.begin(); it != patch_last_seen.end();) {
+-        if (now - it->second > grace && patches.count(it->first) == 0) it = patch_last_seen.erase(it); else ++it;
+-      }
+-    }
++    // (0018: the separate every-30-frames full scan of patch_last_seen for patch-less entries
++    // is gone -- see the guard above; the comment that called it "a slice per frame" was wrong,
++    // it walked the whole map in one frame.)
+   }
+ 
+   Keypoints addPointsForCamera(size_t cam_id) {
+-- 
+2.47.3
+

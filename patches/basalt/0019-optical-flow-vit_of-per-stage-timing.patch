@@ -1,0 +1,78 @@
+From 957a893e90cf65bea278bf4767245ced258876f3 Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Thu, 27 Aug 2026 20:41:19 -0300
+Subject: [PATCH] optical_flow: per-stage timing in the vit_of collapse-log
+ line (pyr/track/detect/filter/prune ms)
+
+---
+ .../frame_to_frame_optical_flow.h             | 20 ++++++++++++++++++-
+ 1 file changed, 19 insertions(+), 1 deletion(-)
+
+diff --git a/include/basalt/optical_flow/frame_to_frame_optical_flow.h b/include/basalt/optical_flow/frame_to_frame_optical_flow.h
+index a6ad57e..ca2b77e 100644
+--- a/include/basalt/optical_flow/frame_to_frame_optical_flow.h
++++ b/include/basalt/optical_flow/frame_to_frame_optical_flow.h
+@@ -256,9 +256,14 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
+     // unbounded when recall is enabled). Off by default (one getenv).
+     static const bool of_log = std::getenv("VIT_COLLAPSE_LOG") != nullptr;
+     std::chrono::steady_clock::time_point of_t0, of_rec0, of_rec1;
++    // reverb-g2 0019: per-stage stamps for the vit_of line. recall_ms alone under-reported
++    // recall's real cost by an order of magnitude -- the recall-gated patch build lives in
++    // addPoints() and prunePatches() runs after filterPoints(), both outside [of_rec0, of_rec1].
++    std::chrono::steady_clock::time_point of_pyr, of_track, of_add, of_filt, of_prune;
+     if (of_log) {
+       of_t0 = std::chrono::steady_clock::now();
+       of_rec0 = of_rec1 = of_t0;
++      of_pyr = of_track = of_add = of_filt = of_prune = of_t0;
+     }
+ 
+     if (t_ns < 0) {
+@@ -302,6 +307,7 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
+         }
+       });
+       new_img_vec->addTime("frontend_pyramid_created");
++      if (of_log) of_pyr = std::chrono::steady_clock::now();
+ 
+       OpticalFlowResult::Ptr new_transforms;
+       new_transforms.reset(new OpticalFlowResult);
+@@ -324,6 +330,7 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
+                     new_img_vec->masks.at(i), new_img_vec->masks.at(i), T_c1_c2, i, i);
+       }
+       new_img_vec->addTime("frontend_tracking_ended");
++      if (of_log) of_track = std::chrono::steady_clock::now();
+ 
+       transforms = new_transforms;
+       transforms->input_images = new_img_vec;
+@@ -335,8 +342,11 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
+       if (of_log) of_rec1 = std::chrono::steady_clock::now();
+       transforms->input_images->addTime("frontend_recall_ended");
+       addPoints();
++      if (of_log) of_add = std::chrono::steady_clock::now();
+       filterPoints();
++      if (of_log) of_filt = std::chrono::steady_clock::now();
+       if (config.optical_flow_recall_enable) prunePatches();  // reverb-g2 0014, see the method
++      if (of_log) of_prune = std::chrono::steady_clock::now();
+       transforms->input_images->addTime("frontend_filter_ended");
+     }
+ 
+@@ -370,8 +380,16 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
+       }
+       double total_ms = std::chrono::duration<double, std::milli>(of_t1 - of_t0).count();
+       double recall_ms = std::chrono::duration<double, std::milli>(of_rec1 - of_rec0).count();
++      auto ms = [](std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b) {
++        return std::chrono::duration<double, std::milli>(b - a).count();
++      };
++      // 0019: stage deltas (first frame / non-log frames print zeros). detect_ms = addPoints()
++      // = FAST detection + cam0->camN matching + (recall on) the pyramid patch build.
+       std::cout << "vit_of total_ms=" << total_ms << " recall_ms=" << recall_ms << " keypoints=" << nkp
+-                << " patches=" << patches.size() << " outq_dropped=" << output_results_dropped << std::endl;
++                << " patches=" << patches.size() << " outq_dropped=" << output_results_dropped
++                << " pyr_ms=" << ms(of_t0, of_pyr) << " track_ms=" << ms(of_pyr, of_track)
++                << " detect_ms=" << ms(of_rec1, of_add) << " filter_ms=" << ms(of_add, of_filt)
++                << " prune_ms=" << ms(of_filt, of_prune) << std::endl;
+     }
+ 
+     frame_counter++;
+-- 
+2.47.3
+

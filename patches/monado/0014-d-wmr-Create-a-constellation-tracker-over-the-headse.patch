@@ -1,0 +1,333 @@
+From 45142634aac25e7f382043cbbef118b30ebf5e5f Mon Sep 17 00:00:00 2001
+From: brunduk <nikolai.viktorovich@gmail.com>
+Date: Tue, 11 Aug 2026 03:44:01 -0300
+Subject: [PATCH] d/wmr: Create a constellation tracker over the headset's
+ cameras
+
+Add WMR_CONSTELLATION_CONTROLLERS (default off), which builds a
+t_constellation_tracker with a single camera mosaic covering the
+headset's tracking cameras, and routes the per-camera LED blobs
+produced by the previous patch into it.
+
+Unlike the Rift's sensors, which sit still on a desk and get a fixed
+pose in the room, the WMR tracking cameras are attached to the headset
+and move with it, so the mosaic is given a tracking source that reports
+the headset's own tracked pose (SLAM or 3dof, whichever is live,
+including the wh->offset correction) and each camera's pose_in_origin
+is its extrinsics relative to the middle of the eyes.
+
+wmr_source_create() takes the resulting blob sinks so the blobwatch
+chain has somewhere to push to; passing NULL keeps the previous
+debug-visualisation-only behaviour, which is what happens whenever the
+option is off.
+
+No devices are registered with the tracker yet, so it has nothing to
+solve for and no reported pose changes. wmr_hmd_get_cam_calib() loses
+its XRT_MAYBE_UNUSED, it now has a second caller.
+
+Signed-off-by: brunduk <nikolai.viktorovich@gmail.com>
+---
+ src/xrt/drivers/wmr/wmr_hmd.c    | 139 ++++++++++++++++++++++++++++++-
+ src/xrt/drivers/wmr/wmr_hmd.h    |  29 +++++++
+ src/xrt/drivers/wmr/wmr_source.c |  16 ++--
+ src/xrt/drivers/wmr/wmr_source.h |  15 +++-
+ 4 files changed, 189 insertions(+), 10 deletions(-)
+
+diff --git a/src/xrt/drivers/wmr/wmr_hmd.c b/src/xrt/drivers/wmr/wmr_hmd.c
+index 1ad2f5ba9..6a2024988 100644
+--- a/src/xrt/drivers/wmr/wmr_hmd.c
++++ b/src/xrt/drivers/wmr/wmr_hmd.c
+@@ -82,6 +82,11 @@ DEBUG_GET_ONCE_NUM_OPTION(sleep_seconds, "WMR_DISPLAY_INIT_SLEEP_SECONDS", 4)
+ //! Specifies whether the user wants to use the hand tracker.
+ DEBUG_GET_ONCE_BOOL_OPTION(wmr_handtracking, "WMR_HANDTRACKING", true)
+ 
++//! Opt-in for now: creates the constellation tracker over the headset's own tracking cameras.
++//! No devices are registered with it yet, so with this on the tracker exists and consumes blobs
++//! but nothing changes about any reported pose.
++DEBUG_GET_ONCE_BOOL_OPTION(wmr_constellation_controllers, "WMR_CONSTELLATION_CONTROLLERS", false)
++
+ #ifdef XRT_FEATURE_SLAM
+ //! Whether to submit samples to the SLAM tracker from the start.
+ DEBUG_GET_ONCE_OPTION(slam_submit_from_start, "SLAM_SUBMIT_FROM_START", NULL)
+@@ -1263,7 +1268,7 @@ wmr_hmd_destroy(struct xrt_device *xdev)
+ 	u_device_free(&wh->base);
+ }
+ 
+-XRT_MAYBE_UNUSED static struct t_camera_calibration
++static struct t_camera_calibration
+ wmr_hmd_get_cam_calib(struct wmr_hmd *wh, int cam_index)
+ {
+ 	struct t_camera_calibration res;
+@@ -1294,6 +1299,127 @@ wmr_hmd_get_cam_calib(struct wmr_hmd *wh, int cam_index)
+ 	return res;
+ }
+ 
++static void
++wmr_hmd_constellation_head_get_tracked_pose(struct t_constellation_tracker_tracking_source *tts,
++                                            int64_t when_ns,
++                                            struct xrt_space_relation *out_relation)
++{
++	struct wmr_constellation_head_source *source = (struct wmr_constellation_head_source *)tts;
++	struct wmr_hmd *wh = source->wh;
++
++	// Deliberately the device entry point, not one of the two tracker-specific helpers: this has to
++	// follow whatever the head is actually being tracked by right now (SLAM when it is up, 3dof
++	// otherwise), including the wh->offset correction, exactly like any other consumer sees it.
++	xrt_result_t xret = xrt_device_get_tracked_pose(&wh->base, XRT_INPUT_GENERIC_HEAD_POSE, when_ns, out_relation);
++	if (xret != XRT_SUCCESS) {
++		U_ZERO(out_relation);
++	}
++}
++
++/*!
++ * Build the constellation tracker over the headset's own tracking cameras.
++ *
++ * The camera mosaic is the whole set of tracking cameras: they are on one rigid body and are
++ * exposure-synchronised with each other, which is exactly the mosaic contract. Their origin
++ * moves with the head, so the mosaic gets a tracking source rather than the fixed room pose a
++ * Rift sensor gets.
++ *
++ * On success fills @p out_blob_sinks with one sink per tracking camera, to be handed to
++ * wmr_source_create() so the blobwatch output added in the previous patch reaches the tracker.
++ * No devices are registered here yet -- that is the next patch -- so the tracker has nothing to
++ * solve for and no pose anywhere changes.
++ *
++ * @return true if the tracker was created.
++ */
++static bool
++wmr_hmd_setup_constellation_tracker(struct wmr_hmd *wh, struct t_blob_sink **out_blob_sinks)
++{
++	if (wh->config.tcam_count <= 0) {
++		WMR_WARN(wh, "No tracking cameras, cannot do constellation tracking");
++		return false;
++	}
++
++	wh->constellation.head_source.base.get_tracked_pose = wmr_hmd_constellation_head_get_tracked_pose;
++	wh->constellation.head_source.wh = wh;
++
++	struct t_constellation_tracker_params params = {
++	    .flags = T_CONSTELLATION_TRACKER_FLAGS_NONE,
++	    .num_mosaics = 1,
++	};
++	struct t_constellation_tracker_camera_mosaic *mosaic = &params.mosaics[0];
++	mosaic->tracking_origin = &wh->constellation.head_source.base;
++
++	// Same 180-degree-about-X flip wmr_config_precompute_transforms() uses: WMR is X right, Y
++	// down, Z forward; OpenXR is X right, Y up, Z backward. The saved P_ht0_me is already in
++	// OpenXR coordinates but the per-camera extrinsics in the config are not, so they have to be
++	// converted before the two can be composed.
++	const struct xrt_pose P_oxr_wmr = {{.x = 1.0f, .y = 0.0f, .z = 0.0f, .w = 0.0f}, XRT_VEC3_ZERO};
++	struct xrt_pose P_wmr_oxr = {0};
++	math_pose_invert(&P_oxr_wmr, &P_wmr_oxr);
++
++	// P_A_B is the placement of B in A's frame (see conventions.md), so both stored transforms
++	// point the wrong way for what is wanted here and have to be inverted: the config gives
++	// P_ci_c0 and P_ht0_me, and what goes into pose_in_origin is the placement of each camera
++	// in the middle-of-the-eyes frame, P_me_ci = P_me_ht0 * P_ht0_ci.
++	struct xrt_pose P_me_ht0 = {0};
++	math_pose_invert(&wh->config.sensors.transforms.P_ht0_me, &P_me_ht0);
++
++	for (int i = 0; i < wh->config.tcam_count && i < XRT_TRACKING_MAX_CAMS; i++) {
++		// P_A_B is such that B = P_A_B * A, see conventions.md. tcams[i]->pose is P_ci_c0.
++		struct xrt_pose P_ci_c0 = wh->config.tcams[i]->pose;
++
++		if (i == 2 || i == 3) {
++			//! @note Same quirk wmr_hmd_fill_slam_cams_calibration() handles: the G2v2
++			//! calibration json has the HT2 and HT3 extrinsics flipped with respect to the
++			//! order the third and fourth images arrive over usb.
++			P_ci_c0 = wh->config.tcams[i == 2 ? 3 : 2]->pose;
++		}
++
++		struct xrt_pose P_c0_ci = {0};
++		math_pose_invert(&P_ci_c0, &P_c0_ci);
++
++		// Sandwich into OpenXR coordinates -- the camera extrinsics in the config are raw WMR
++		// while the stored P_ht0_me is already OpenXR, so the two cannot be chained as they are.
++		struct xrt_pose P_oxr_c0_ci = {0};
++		math_pose_transform(&P_c0_ci, &P_wmr_oxr, &P_oxr_c0_ci);
++		math_pose_transform(&P_oxr_wmr, &P_oxr_c0_ci, &P_oxr_c0_ci);
++
++		// c0 == ht0, so this lands the camera in the frame the head pose fed to the mosaic
++		// above is expressed in.
++		struct xrt_pose P_me_ci = {0};
++		math_pose_transform(&P_me_ht0, &P_oxr_c0_ci, &P_me_ci);
++
++		mosaic->cameras[mosaic->num_cameras++] = (struct t_constellation_tracker_camera){
++		    .calibration = wmr_hmd_get_cam_calib(wh, i),
++		    .has_concrete_pose = true,
++		    .pose_in_origin = P_me_ci,
++		};
++
++		// Worth printing: a rigid transform preserves the distances between the cameras, so
++		// these positions can be checked against the raw extrinsics in the config without any
++		// hardware -- getting the composition backwards collapses them onto each other instead,
++		// which is exactly how the first version of this was caught.
++		WMR_DEBUG(wh, "Constellation camera %d at (%f, %f, %f) in head space", i, P_me_ci.position.x,
++		          P_me_ci.position.y, P_me_ci.position.z);
++	}
++
++	int ret = t_constellation_tracker_create(&wh->tracking.xfctx, &params, &wh->constellation.tracker);
++	if (ret != 0) {
++		WMR_ERROR(wh, "Failed to create the constellation tracker with code %d", ret);
++		wh->constellation.tracker = NULL;
++		return false;
++	}
++
++	for (size_t i = 0; i < mosaic->num_cameras; i++) {
++		out_blob_sinks[i] = mosaic->cameras[i].blob_sink;
++	}
++
++	WMR_INFO(wh, "Constellation tracker created over %zu tracking cameras (no devices registered yet)",
++	         mosaic->num_cameras);
++
++	return true;
++}
++
+ XRT_MAYBE_UNUSED static struct xrt_vec2
+ wmr_hmd_camera_project(struct wmr_hmd *wh, struct xrt_vec3 p3d)
+ {
+@@ -2009,8 +2135,17 @@ wmr_hmd_create(enum wmr_headset_type hmd_type,
+ 	// Switch on IMU on the HMD.
+ 	hololens_sensors_enable_imu(wh);
+ 
++	// Has to happen before the source is created: the source needs the tracker's blob sinks to
++	// hook the controller-frame blobwatches up to, and they only exist once the tracker does.
++	struct t_blob_sink *ctrl_blob_sinks[XRT_TRACKING_MAX_CAMS] = {NULL};
++	bool constellation_ok = false;
++	if (debug_get_bool_option_wmr_constellation_controllers()) {
++		constellation_ok = wmr_hmd_setup_constellation_tracker(wh, ctrl_blob_sinks);
++	}
++
+ 	// Switch on data streams on the HMD (only cameras for now as IMU is not yet integrated into wmr_source)
+-	wh->tracking.source = wmr_source_create(&wh->tracking.xfctx, dev_holo, wh->config);
++	wh->tracking.source =
++	    wmr_source_create(&wh->tracking.xfctx, dev_holo, wh->config, constellation_ok ? ctrl_blob_sinks : NULL);
+ 
+ 	struct xrt_slam_sinks sinks = {0};
+ 	struct xrt_device *hand_device = NULL;
+diff --git a/src/xrt/drivers/wmr/wmr_hmd.h b/src/xrt/drivers/wmr/wmr_hmd.h
+index e8e5ebc8c..678411b99 100644
+--- a/src/xrt/drivers/wmr/wmr_hmd.h
++++ b/src/xrt/drivers/wmr/wmr_hmd.h
+@@ -15,6 +15,8 @@
+ #pragma once
+ 
+ #include "tracking/t_tracking.h"
++#include "tracking/t_constellation.h"
++#include "constellation/t_constellation_tracker.h"
+ #include "xrt/xrt_device.h"
+ #include "xrt/xrt_frame.h"
+ #include "xrt/xrt_prober.h"
+@@ -54,6 +56,18 @@ struct wmr_headset_descriptor
+ 	void (*screen_enable_func)(struct wmr_hmd *wh, bool enable);
+ };
+ 
++/*!
++ * Adapts the headset's own tracked pose to the interface the constellation tracker wants for
++ * the origin of a camera mosaic.
++ *
++ * @implements t_constellation_tracker_tracking_source
++ */
++struct wmr_constellation_head_source
++{
++	struct t_constellation_tracker_tracking_source base;
++	struct wmr_hmd *wh;
++};
++
+ /*!
+  * @implements xrt_device
+  */
+@@ -146,6 +160,21 @@ struct wmr_hmd
+ 		bool imu2me;
+ 	} tracking;
+ 
++	//! Optional constellation (LED) tracking of the controllers, see WMR_CONSTELLATION_CONTROLLERS.
++	struct
++	{
++		//! NULL unless the option is on and setup succeeded.
++		struct t_constellation_tracker *tracker;
++
++		/*!
++		 * The camera mosaic's origin. Unlike a Rift, whose sensors sit on a desk, the WMR
++		 * tracking cameras are bolted to the headset and move with it, so the mosaic's origin
++		 * has to follow the head pose instead of being a fixed point in the room. This feeds
++		 * that pose to the tracker.
++		 */
++		struct wmr_constellation_head_source head_source;
++	} constellation;
++
+ 	//! Whether to track the HMD with 6dof SLAM or fallback to the `fusion` 3dof tracker
+ 	bool slam_over_3dof;
+ 
+diff --git a/src/xrt/drivers/wmr/wmr_source.c b/src/xrt/drivers/wmr/wmr_source.c
+index a439604fb..f9fb4e38f 100644
+--- a/src/xrt/drivers/wmr/wmr_source.c
++++ b/src/xrt/drivers/wmr/wmr_source.c
+@@ -299,7 +299,10 @@ wmr_source_node_destroy(struct xrt_frame_node *node)
+ 
+ //! Create and open the frame server for IMU/camera streaming.
+ struct xrt_fs *
+-wmr_source_create(struct xrt_frame_context *xfctx, struct xrt_prober_device *dev_holo, struct wmr_hmd_config cfg)
++wmr_source_create(struct xrt_frame_context *xfctx,
++                  struct xrt_prober_device *dev_holo,
++                  struct wmr_hmd_config cfg,
++                  struct t_blob_sink *const *ctrl_blob_sinks)
+ {
+ 	DRV_TRACE_MARKER();
+ 
+@@ -332,15 +335,16 @@ wmr_source_create(struct xrt_frame_context *xfctx, struct xrt_prober_device *dev
+ 	}
+ 	ws->in_sinks.imu = &ws->imu_sink;
+ 
+-	// Controller-tracking (frametype 0x2) frames: run LED blob detection per camera and show it in the debug
+-	// GUI. Debug-only for now -- no t_constellation_tracker exists yet, so the visualizer's downstream blob
+-	// sink is NULL.
++	// Controller-tracking (frametype 0x2) frames: run LED blob detection per camera, show it in the debug
++	// GUI, and forward the blobs to the constellation tracker's sink for this camera when there is one.
++	// ctrl_blob_sinks is NULL unless WMR_CONSTELLATION_CONTROLLERS is set, in which case the visualizer's
++	// downstream sink stays NULL and this is exactly the previous debug-only behaviour.
+ 	struct xrt_frame_sink *ctrl_cam_sinks[WMR_MAX_CAMERAS] = {NULL};
+ 	for (int i = 0; i < cfg.tcam_count; i++) {
+ 		u_sink_debug_init(&ws->ctrl_blob_debug_sinks[i]);
+ 
+-		struct t_blob_sink *blob_sink = NULL;
+-		u_sink_blob_visualizer_create(xfctx, NULL, &ws->ctrl_blob_debug_sinks[i], cfg.tcams[i]->roi.extent.w,
++		struct t_blob_sink *blob_sink = ctrl_blob_sinks != NULL ? ctrl_blob_sinks[i] : NULL;
++		u_sink_blob_visualizer_create(xfctx, blob_sink, &ws->ctrl_blob_debug_sinks[i], cfg.tcams[i]->roi.extent.w,
+ 		                              cfg.tcams[i]->roi.extent.h, &blob_sink);
+ 
+ 		struct t_rift_blobwatch_params bw_params = {
+diff --git a/src/xrt/drivers/wmr/wmr_source.h b/src/xrt/drivers/wmr/wmr_source.h
+index 4d2623c22..0e19f804d 100644
+--- a/src/xrt/drivers/wmr/wmr_source.h
++++ b/src/xrt/drivers/wmr/wmr_source.h
+@@ -13,6 +13,7 @@
+ #include "xrt/xrt_frameserver.h"
+ #include "xrt/xrt_prober.h"
+ #include "xrt/xrt_tracking.h"
++#include "tracking/t_constellation.h"
+ 
+ /*!
+  * WMR video/IMU data sources
+@@ -26,9 +27,19 @@
+ extern "C" {
+ #endif
+ 
+-//! Create and return the data source as a @ref xrt_fs ready for data streaming.
++/*!
++ * Create and return the data source as a @ref xrt_fs ready for data streaming.
++ *
++ * @param ctrl_blob_sinks Optional, may be NULL, and individual entries may be NULL. One
++ *        @ref t_blob_sink per tracking camera, to receive the LED blobs detected in the
++ *        controller-tracking frames. When NULL the blobs are only visualized in the debug
++ *        GUI and go nowhere else, which is the pre-constellation-tracker behaviour.
++ */
+ struct xrt_fs *
+-wmr_source_create(struct xrt_frame_context *xfctx, struct xrt_prober_device *dev_holo, struct wmr_hmd_config cfg);
++wmr_source_create(struct xrt_frame_context *xfctx,
++                  struct xrt_prober_device *dev_holo,
++                  struct wmr_hmd_config cfg,
++                  struct t_blob_sink *const *ctrl_blob_sinks);
+ 
+ //! @todo IMU data should be generated from within the data source, but right
+ //! now we need this function because it is being generated from wmr_hmd
